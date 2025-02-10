@@ -122,6 +122,7 @@ harness = false
 static_vcruntime = "2"
 embed-resource = "3.0.1"
 winres = "0.1"
+windows_x86_64_msvc = "0.53"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]

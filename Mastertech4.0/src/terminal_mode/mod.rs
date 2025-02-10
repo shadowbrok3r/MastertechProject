@@ -1,13 +1,7 @@
-use button::{Button, State, TURQUOISE};
-use crossbeam::channel::{self, Receiver, Sender};
-use database::schema::{prestashop_schema, TicketData};
-use json_widget::JsonWidget;
-use ratatui::prelude::*;
 use ratatui::{
     crossterm::{
         event::{
-            self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-            MouseButton, MouseEventKind,
+            self, DisableMouseCapture, EnableMouseCapture, Event
         },
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -16,41 +10,26 @@ use ratatui::{
     style::{Color, Style},
     symbols,
     text::Line,
-    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
+    widgets::{Block, Borders, Tabs},
 };
+use tabs::{service_order::render_tur_sheet_tab, Tab};
+use tui_scrollview::ScrollViewState;
+use database::schema::{prestashop_schema, TicketData};
+use crossbeam::channel::{self, Receiver, Sender};
+use widgets::{json_viewer::JsonWidget, button::{Button, State}};
+use ratatui::prelude::*;
 use serde_json::Value;
-use std::io;
-use tui_input::backend::crossterm::EventHandler;
+use colors::{C_CYAN, C_DEEPPINK, C_MEDIUMSLATEBLUE, TURQUOISE};
 use tui_input::Input;
-use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
+use std::io;
 
-pub mod json_widget;
-pub mod button;
+pub mod widgets;
+pub mod colors;
+pub mod tabs;
+pub mod events;
 
-////////////////////////////////////
-// Add color constants referencing the scheme
-////////////////////////////////////
-const DEEPPINK: Color = Color::Rgb(255, 20, 147);
-const CYAN: Color = Color::Cyan;
-const SPRINGGREEN: Color = Color::Rgb(0, 255, 127);
-const MEDIUMSLATEBLUE: Color = Color::Rgb(123, 104, 238);
-const DARKORANGE: Color = Color::Rgb(255, 140, 0);
-// etc...
 
-////////////////////////////////////
-// Main App Code
-////////////////////////////////////
-
-#[derive(Debug, Clone, Copy)]
-enum Tab {
-    TurSheet,
-    Scripts,
-    SystemInfo,
-    Extra,
-}
-
-// #[derive(Debug)]
-struct App<'a> {
+pub struct App<'a> {
     input: Input,
     logs: Vec<String>,
     _ticket_data: TicketData,
@@ -174,144 +153,12 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
         let _ = app.receive_ticket();
         terminal.draw(|f| ui::<B>(f, &mut app))?;
 
-        match event::read()? {
-            Event::Key(key_event) => {
-                // Exit on Ctrl + C
-                if key_event.code == KeyCode::Char('c')
-                    && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                {
-                    return Ok(());
-                }
-
-                // Send keystroke to input field
-                app.input.handle_event(&Event::Key(key_event));
-
-                match key_event.code {
-                    KeyCode::Enter => {
-                        let user_input = app.input.value();
-                        app.get_ticket(user_input);
-                        app.log_message(&format!("(Enter) 'Get Ticket' with input: {}", user_input));
-                    }
-                    // We'll let left/right arrow change tabs, just as an example
-                    KeyCode::Right => {
-                        app.selected_tab = match app.selected_tab {
-                            Tab::TurSheet => Tab::Scripts,
-                            Tab::Scripts => Tab::SystemInfo,
-                            Tab::SystemInfo => Tab::Extra,
-                            Tab::Extra => Tab::TurSheet,
-                        };
-                    }
-                    KeyCode::Left => {
-                        app.selected_tab = match app.selected_tab {
-                            Tab::TurSheet => Tab::Extra,
-                            Tab::Scripts => Tab::TurSheet,
-                            Tab::SystemInfo => Tab::Scripts,
-                            Tab::Extra => Tab::SystemInfo,
-                        };
-                    }
-                    KeyCode::Down => {
-                        // Move highlight in JSON widget, etc.
-                        app.json_widget.next_edit();
-                    }
-                    KeyCode::Up => {
-                        app.json_widget.prev_edit();
-                    }
-                    _ => {}
-                }
-            }
-            Event::Mouse(mouse_event) => {
-                match mouse_event.kind {
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        let c = mouse_event.column;
-                        let r = mouse_event.row;
-
-                        // 1) Check if 'Get Ticket' is clicked
-                        if let Some(area) = app.get_ticket_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                let user_input = app.input.value();
-                                app.log_message(&format!("(Click) 'Get Ticket' with input: {}", user_input));
-                                app.get_ticket_button_state = State::Active;
-                            } else {
-                                app.get_ticket_button_state = State::Normal;
-                            }
-                        }
-
-                        // 2) Check if 'Submit Ticket' is clicked
-                        if let Some(area) = app.submit_ticket_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.log_message("(Click) 'Submit Ticket'");
-                                app.submit_ticket_button_state = State::Active;
-                            } else {
-                                app.submit_ticket_button_state = State::Normal;
-                            }
-                        }
-
-                        // 3) Check if 'Tuneup' is clicked
-                        if let Some(area) = app.tuneup_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.log_message("(Click) 'Tuneup'");
-                                app.tuneup_button_state = State::Active;
-                            } else {
-                                app.tuneup_button_state = State::Normal;
-                            }
-                        }
-
-                        // 4) Check if 'QC' is clicked
-                        if let Some(area) = app.qc_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.log_message("(Click) 'QC'");
-                                app.qc_button_state = State::Active;
-                            } else {
-                                app.qc_button_state = State::Normal;
-                            }
-                        }
-                    }
-                    MouseEventKind::Moved => {
-                        let c = mouse_event.column;
-                        let r = mouse_event.row;
-
-                        // 1) Hover 'Get Ticket'
-                        if let Some(area) = app.get_ticket_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.get_ticket_button_state = State::Selected;
-                            } else {
-                                app.get_ticket_button_state = State::Normal;
-                            }
-                        }
-
-                        // 2) Hover 'Submit'
-                        if let Some(area) = app.submit_ticket_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.submit_ticket_button_state = State::Selected;
-                            } else {
-                                app.submit_ticket_button_state = State::Normal;
-                            }
-                        }
-
-                        // 3) Hover 'Tuneup'
-                        if let Some(area) = app.tuneup_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.tuneup_button_state = State::Selected;
-                            } else {
-                                app.tuneup_button_state = State::Normal;
-                            }
-                        }
-
-                        // 4) Hover 'QC'
-                        if let Some(area) = app.qc_button_area {
-                            if c >= area.x && c < area.x + area.width && r >= area.y && r < area.y + area.height {
-                                app.qc_button_state = State::Selected;
-                            } else {
-                                app.qc_button_state = State::Normal;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Event::Resize(_, _) => {}
-            _ => {}
-        }
+        let _read_events = match event::read()? {
+            Event::Key(key_event) => app.handle_key_event(key_event),
+            Event::Mouse(mouse_event) => app.handle_mouse_event(mouse_event),
+            Event::Resize(_, _) => Ok(()),
+            _ => Ok(())
+        };
     }
 }
 
@@ -334,16 +181,16 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
         Tab::SystemInfo => 2,
         Tab::Extra => 3,
     };
-
+    
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Tabs")
-                .border_style(Style::default().fg(MEDIUMSLATEBLUE))
+                .border_style(Style::default().fg(C_MEDIUMSLATEBLUE))
         )
         .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(DEEPPINK))
+        .highlight_style(Style::default().fg(C_DEEPPINK))
         .divider(symbols::DOT)
         .select(selected_idx);
 
@@ -369,109 +216,7 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
     }
 }
 
-////////////////////////////////
-// TUR SHEET TAB with Input Field
-////////////////////////////////
-fn render_tur_sheet_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
-    let vertical_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-        ])
-        .split(area);
 
-    // (A) Input row + 2 buttons
-    let input_button_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(15),
-            Constraint::Percentage(15),
-        ])
-        .split(vertical_chunks[0]);
-
-    // Input field
-    let width = input_button_chunks[0].width.saturating_sub(2);
-    let scroll_offset = app.input.visual_scroll(width as usize);
-
-    let input_widget = Paragraph::new(app.input.value())
-        .style(Style::default().fg(DEEPPINK))
-        .scroll((0, scroll_offset as u16))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Input")
-                .border_style(Style::default().fg(MEDIUMSLATEBLUE))
-        );
-    f.render_widget(input_widget, input_button_chunks[0]);
-
-    // Cursor in input
-    let cursor_x = input_button_chunks[0].x + ((app.input.visual_cursor()).max(scroll_offset) - scroll_offset) as u16 + 1;
-    let cursor_y = input_button_chunks[0].y + 1;
-    f.set_cursor_position(Position::new(cursor_x, cursor_y));
-
-    // 'Get Ticket' button
-    let get_ticket_button = Button::new(Line::from("Get Ticket"), input_button_chunks[1])
-        .theme(TURQUOISE)
-        .state(app.get_ticket_button_state);
-
-    f.render_widget(get_ticket_button, input_button_chunks[1]);
-    // app.get_ticket_button_area = Some(input_button_chunks[1]);
-
-    // 'Submit Ticket' button
-    let submit_button = Button::new(Line::from("Submit"), input_button_chunks[2])
-        .theme(TURQUOISE)
-        .state(app.submit_ticket_button_state);
-
-    app.buttons.push(submit_button);
-    
-    f.render_widget(submit_button, input_button_chunks[2]);
-    // app.submit_ticket_button_area = Some(input_button_chunks[2]);
-
-    // (B) Logs + JSON
-    let horizontal_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(vertical_chunks[1]);
-
-    // Logs
-    let items: Vec<ListItem> = app.logs.iter().map(|log| {
-        ListItem::new(log.clone()).style(
-            Style::default().fg(Color::Rgb(224, 255, 255))
-        )
-    }).collect();
-
-    let logs_list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Logs")
-            .border_style(Style::default().fg(SPRINGGREEN))
-    );
-    f.render_widget(logs_list, horizontal_chunks[0]);
-
-    // JSON viewer
-    let text = app.json_widget.render_text();
-    let paragraph = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Json Viewer")
-                .border_style(Style::default().fg(DEEPPINK))
-        );
-
-    let size = Size {
-        width: horizontal_chunks[1].width,
-        height: horizontal_chunks[1].height,
-    };
-    let mut scroll_view = ScrollView::new(size)
-        .scrollbars_visibility(ScrollbarVisibility::Always);
-    scroll_view.render_widget(paragraph, scroll_view.area());
-    f.render_stateful_widget(scroll_view, horizontal_chunks[1], &mut app.json_scroll_state);
-}
 
 ////////////////////////////////
 // SCRIPTS TAB with Buttons
@@ -513,7 +258,7 @@ fn render_extra_tab<B: Backend>(_app: &mut App, f: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Extra")
-        .border_style(Style::default().fg(CYAN));
+        .border_style(Style::default().fg(C_CYAN));
 
     f.render_widget(block, area);
 }
