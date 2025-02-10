@@ -49,7 +49,8 @@ enum Tab {
     Extra,
 }
 
-struct App {
+// #[derive(Debug)]
+struct App<'a> {
     input: Input,
     logs: Vec<String>,
     _ticket_data: TicketData,
@@ -65,6 +66,7 @@ struct App {
     prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
     prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
 
+    buttons: Vec<Button<'a>>,
     //////////////////////////////////
     // Button areas for TUR Sheet
     //////////////////////////////////
@@ -82,7 +84,7 @@ struct App {
     qc_button_state: State,
 }
 
-impl Default for App {
+impl Default for App <'_>{
     fn default() -> Self {
         let (prestashop_api_tx, prestashop_api_rx) = channel::unbounded();
         Self {
@@ -102,11 +104,12 @@ impl Default for App {
             qc_button_area: None,
             tuneup_button_state: State::Normal,
             qc_button_state: State::Normal,
+            buttons: Vec::new(),
         }
     }
 }
 
-impl App {
+impl <'a> App <'a> {
     fn new() -> Self {
         Self::default()
     }
@@ -344,6 +347,7 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
         .divider(symbols::DOT)
         .select(selected_idx);
 
+    
     f.render_widget(tabs, outer_chunks[0]);
 
     // (2) Main content area depends on which tab is selected
@@ -408,20 +412,22 @@ fn render_tur_sheet_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
     f.set_cursor_position(Position::new(cursor_x, cursor_y));
 
     // 'Get Ticket' button
-    let get_ticket_button = Button::new(Line::from("Get Ticket"))
+    let get_ticket_button = Button::new(Line::from("Get Ticket"), input_button_chunks[1])
         .theme(TURQUOISE)
         .state(app.get_ticket_button_state);
 
     f.render_widget(get_ticket_button, input_button_chunks[1]);
-    app.get_ticket_button_area = Some(input_button_chunks[1]);
+    // app.get_ticket_button_area = Some(input_button_chunks[1]);
 
     // 'Submit Ticket' button
-    let submit_button = Button::new(Line::from("Submit"))
+    let submit_button = Button::new(Line::from("Submit"), input_button_chunks[2])
         .theme(TURQUOISE)
         .state(app.submit_ticket_button_state);
 
+    app.buttons.push(submit_button);
+    
     f.render_widget(submit_button, input_button_chunks[2]);
-    app.submit_ticket_button_area = Some(input_button_chunks[2]);
+    // app.submit_ticket_button_area = Some(input_button_chunks[2]);
 
     // (B) Logs + JSON
     let horizontal_chunks = Layout::default()
@@ -480,18 +486,18 @@ fn render_scripts_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
         .split(area);
 
     // (1) Tuneup
-    let tuneup_button = Button::new(Line::from("Tuneup"))
+    let tuneup_button = Button::new(Line::from("Tuneup"), chunks[0])
         .theme(TURQUOISE)
         .state(app.tuneup_button_state);
     f.render_widget(tuneup_button, chunks[0]);
-    app.tuneup_button_area = Some(chunks[0]);
+    // app.tuneup_button_area = Some(chunks[0]);
 
     // (2) QC
-    let qc_button = Button::new(Line::from("QC"))
+    let qc_button = Button::new(Line::from("QC"), chunks[1])
         .theme(TURQUOISE)
         .state(app.qc_button_state);
     f.render_widget(qc_button, chunks[1]);
-    app.qc_button_area = Some(chunks[1]);
+    // app.qc_button_area = Some(chunks[1]);
 }
 
 fn render_system_info_tab<B: Backend>(_app: &mut App, f: &mut Frame, area: Rect) {

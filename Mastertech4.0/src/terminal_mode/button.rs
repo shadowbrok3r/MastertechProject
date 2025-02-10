@@ -7,16 +7,27 @@ use ratatui::{
 };
 use std::fmt::Debug;
 
+use super::App;
+
 
 /// ------------------------------
 /// Custom Button widget
 /// ------------------------------
-#[derive(Debug, Clone)]
+/// Holds info for each button:
+/// - `label`: what text to display
+/// - `state`: normal, selected, active, etc.
+/// - `theme`: coloring for the button
+/// - `area`: updated at runtime (where the button was drawn)
+/// - `on_click`: optional callback to do something when the button is clicked
+// #[derive(Debug)]
 pub struct Button<'a> {
     label: Line<'a>,
     theme: Theme,
     state: State,
+    area: Option<Rect>,
+    on_click: Option<Box<dyn FnMut(&mut App)>>,
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
@@ -92,14 +103,14 @@ pub const DARKORANGE: Theme = Theme {
     shadow: Color::Rgb(255, 140, 0),
 };
 
-
-
 impl<'a> Button<'a> {
-    pub fn new<T: Into<Line<'a>>>(label: T) -> Self {
+    pub fn new<T: Into<Line<'a>>>(label: T, area: Rect) -> Self {
         Button {
             label: label.into(),
             theme: TURQUOISE,
             state: State::Normal,
+            area: Some(area),
+            on_click: None,
         }
     }
 
@@ -122,6 +133,8 @@ impl<'a> Button<'a> {
             State::Active => (t.background, t.text, t.highlight, t.shadow),
         }
     }
+
+    // pub fn click(&mut self)
 }
 
 impl<'a> Widget for Button<'a> {

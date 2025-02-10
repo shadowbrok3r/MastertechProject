@@ -1,11 +1,10 @@
+use ratatui::{prelude::*, widgets::{Block, Borders, Paragraph}};
+use itertools::{Itertools, Position};
+use serde_json::{Map, Number, Value};
+use color_eyre::eyre::Context;
 use std::io;
 
-use color_eyre::eyre::Context;
-use itertools::{Itertools, Position};
-use ratatui::{prelude::*, widgets::{Block, Borders, Paragraph}};
-use serde_json::{Map, Number, Value};
-
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct JsonWidget {
     style: JsonWidgetStyle,
     json: Value,
@@ -132,7 +131,6 @@ pub struct EditPosition {
     line_index: usize,
     span_index: usize,
 }
-
 trait Visit {
     fn visit_value(&mut self, value: &Value) {
         match value {
