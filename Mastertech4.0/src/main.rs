@@ -121,41 +121,41 @@ async fn main() -> eframe::Result<()> {
     // Configure log level and log file
     // displays::tabs::logger::logging::builder().init().unwrap();
 
-    // let log_level = log::LevelFilter::Info;
-    // let log_file = std::fs::File::create("output.log").unwrap();
-    // simplelog::WriteLogger::init(
-    //     log_level,
-    //     simplelog::Config::default(),
-    //     log_file
-    // ).unwrap();
+    let log_level = log::LevelFilter::Info;
+    let log_file = std::fs::File::create("output.log").unwrap();
+    simplelog::WriteLogger::init(
+        log_level,
+        simplelog::Config::default(),
+        log_file
+    ).unwrap();
 
-    // let eframe_app = eframe::run_native(
-    //     format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
-    //     eframe::NativeOptions {
-    //         viewport: eframe::egui::ViewportBuilder::default()
-    //             .with_inner_size([945.0, 750.0])
-    //             .with_drag_and_drop(true)
-    //             .with_icon(load_icon())
-    //             .with_always_on_top(),
-    //         ..Default::default()
-    //     },
-    //     Box::new(|cc| {
-    //         Ok(
-    //             Box::new(
-    //                 MasterTechApp::new(cc)
-    //             )
-    //         )
-    //     }),
-    // );
+    let eframe_app = eframe::run_native(
+        format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
+        eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default()
+                .with_inner_size([945.0, 750.0])
+                .with_drag_and_drop(true)
+                .with_icon(load_icon())
+                .with_always_on_top(),
+            ..Default::default()
+        },
+        Box::new(|cc| {
+            Ok(
+                Box::new(
+                    MasterTechApp::new(cc)
+                )
+            )
+        }),
+    );
 
-    // if let Err(e) = eframe_app { 
-        // info!("Error running eframe_native: {e:?} \nswitching to secondary application");
-        // let res = terminal_mode::run_terminal_mode();
-        // if let Err(e) = res {
-        //     info!("Error running terminal app: {e:?}");
-        // }
-    // }
-    let _res = terminal_mode::run_terminal_mode();
+    if let Err(e) = eframe_app { 
+        info!("Error running eframe_native: {e:?} \nswitching to secondary application");
+        let res = terminal_mode::run_terminal_mode().await;
+        if let Err(e) = res {
+            info!("Error running terminal app: {e:?}");
+        }
+    }
+    // let _res = terminal_mode::run_terminal_mode();
     
     Ok(())
 }

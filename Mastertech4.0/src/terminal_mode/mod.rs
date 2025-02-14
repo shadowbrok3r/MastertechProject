@@ -1,264 +1,169 @@
+use events::EventHandler;
+use fx::{effect::{led_kbd_border, open_category, selected_category, UniqueEffectId}, EffectStage};
+use tabs::{MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
+use styling::{CATPPUCCIN, C_DEEPPINK};
+use widgets::HandleWidget;
+use std::io;
 use ratatui::{
     crossterm::{
-        event::{
-            self, DisableMouseCapture, EnableMouseCapture, Event
-        },
+        event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    },
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    symbols,
-    text::Line,
-    widgets::{Block, Borders, Tabs},
+    }, layout::{Constraint, Direction, Layout}, prelude::*, widgets::Block,
 };
-use tabs::{service_order::render_tur_sheet_tab, Tab};
-use tui_scrollview::ScrollViewState;
-use database::schema::{prestashop_schema, TicketData};
-use crossbeam::channel::{self, Receiver, Sender};
-use widgets::{json_viewer::JsonWidget, button::{Button, State}};
-use ratatui::prelude::*;
-use serde_json::Value;
-use colors::{C_CYAN, C_DEEPPINK, C_MEDIUMSLATEBLUE, TURQUOISE};
-use tui_input::Input;
-use std::io;
 
 pub mod widgets;
-pub mod colors;
 pub mod tabs;
 pub mod events;
+pub mod styling;
+pub mod fx;
+// impl <'a> App <'a> { fn log_message(&mut self, message: &str) { self.logs.push(message.to_string()); } }
 
-
-pub struct App<'a> {
-    input: Input,
-    logs: Vec<String>,
-    _ticket_data: TicketData,
-
-    // JSON
-    pub json_widget: JsonWidget,
-    json_scroll_state: ScrollViewState,
-
-    // Tab
-    selected_tab: Tab,
-
-    // Prestashop
-    prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
-    prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
-
-    buttons: Vec<Button<'a>>,
-    //////////////////////////////////
-    // Button areas for TUR Sheet
-    //////////////////////////////////
-    get_ticket_button_area: Option<Rect>,
-    submit_ticket_button_area: Option<Rect>,
-    get_ticket_button_state: State,
-    submit_ticket_button_state: State,
-
-    //////////////////////////////////
-    // Button areas for Scripts tab
-    //////////////////////////////////
-    tuneup_button_area: Option<Rect>,
-    qc_button_area: Option<Rect>,
-    tuneup_button_state: State,
-    qc_button_state: State,
+pub struct App<'a> { // logs: Vec<String>,
+    menu_bar: MenuBar<'a>,
+    scripts_tab: ScriptsTab<'a>,
+    service_tab: ServiceTab<'a>,
+    sysinfo_tab: SysinfoTab,
+    effect_stage: EffectStage<UniqueEffectId>,
+    first_run: bool,
+    event_handler: EventHandler
 }
 
 impl Default for App <'_>{
     fn default() -> Self {
-        let (prestashop_api_tx, prestashop_api_rx) = channel::unbounded();
         Self {
-            input: Input::default(),
-            logs: Vec::new(),
-            _ticket_data: Default::default(),
-            prestashop_api_tx,
-            prestashop_api_rx,
-            json_widget: JsonWidget::default(),
-            json_scroll_state: ScrollViewState::default(),
-            selected_tab: Tab::TurSheet,
-            get_ticket_button_area: None,
-            submit_ticket_button_area: None,
-            get_ticket_button_state: State::Normal,
-            submit_ticket_button_state: State::Normal,
-            tuneup_button_area: None,
-            qc_button_area: None,
-            tuneup_button_state: State::Normal,
-            qc_button_state: State::Normal,
-            buttons: Vec::new(),
+            menu_bar: MenuBar::new(),
+            scripts_tab: ScriptsTab::new(),
+            service_tab: ServiceTab::new(),
+            sysinfo_tab: SysinfoTab::new(),
+            effect_stage: EffectStage::default(),
+            event_handler: EventHandler::new(),
+            first_run: true
         }
     }
 }
 
-impl <'a> App <'a> {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn log_message(&mut self, message: &str) {
-        self.logs.push(message.to_string());
-    }
-
-    fn log_json(&mut self, value: Value) {
-        self.json_widget = JsonWidget::new(value);
-    }
-
-    fn get_ticket(&self, service_number: &str) {
-        let tx = self.prestashop_api_tx.clone();
-        let input = service_number.to_string();
-        log::info!("Getting payload with {input}");
-        if !input.is_empty() {
-            tokio::spawn(async move {
-                let prestashop_order = database::schema::utilities::get_prestashop_payload(&input).await?;
-                tx.try_send(prestashop_order)?;
-                Ok::<(), anyhow::Error>(())
-            });
-        }
-    }
-
-    fn receive_ticket(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        if let Ok(data) = self.prestashop_api_rx.try_recv() {
-            self.log_message(&serde_json::to_string(&data)?);
-            self.log_json(serde_json::to_value(&data)?);
-        }
-        Ok(())
-    }
-}
-
-pub fn run_terminal_mode() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app = App::new();
+    let app = App::default();
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;
+
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
+
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        log::info!("{:?}", err);
+        log::info!("ERR: {:?}", err);
     }
 
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: App<'a>) -> anyhow::Result<(), anyhow::Error> {
     loop {
-        let _ = app.receive_ticket();
-        terminal.draw(|f| ui::<B>(f, &mut app))?;
+        if let Ok(events) = app.event_handler.next() {
+            match events {
+                events::Event::Key(key_event) => {
+                    match key_event.code {
+                        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            log::info!("Quitting");
+                            break;
+                        }
+                        // We'll let left/right arrow change tabs
+                        KeyCode::Right => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                            app.menu_bar.selected_tab = match app.menu_bar.selected_tab {
+                                Tab::TurSheet => Tab::Scripts,
+                                Tab::Scripts => Tab::SystemInfo,
+                                Tab::SystemInfo => Tab::TurSheet,
+                            };
+                        }
+                        KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                            app.menu_bar.selected_tab = match app.menu_bar.selected_tab {
+                                Tab::TurSheet => Tab::SystemInfo,
+                                Tab::Scripts => Tab::TurSheet,
+                                Tab::SystemInfo => Tab::Scripts,
+                            };
+                        }
+                        _ => {}
+                    };
+                    match app.menu_bar.selected_tab() {
+                        Tab::TurSheet => app.service_tab.handle_key_event(key_event),
+                        Tab::Scripts => app.scripts_tab.handle_key_event(key_event),
+                        Tab::SystemInfo => app.service_tab.handle_key_event(key_event),
+                    };
+                },
+                events::Event::Mouse(mouse_event) => {
+                    app.menu_bar.handle_mouse_event(mouse_event);
+                    match app.menu_bar.selected_tab() {
+                        Tab::TurSheet => app.service_tab.handle_mouse_event(mouse_event),
+                        Tab::Scripts => app.scripts_tab.handle_mouse_event(mouse_event),
+                        Tab::SystemInfo => app.service_tab.handle_mouse_event(mouse_event),
+                    };
+                },
+                events::Event::Error => log::info!("Error in event loop"),
+                events::Event::Tick => {}
+            }
+        }
+        let _ = app.service_tab.receive_ticket();
 
-        let _read_events = match event::read()? {
-            Event::Key(key_event) => app.handle_key_event(key_event),
-            Event::Mouse(mouse_event) => app.handle_mouse_event(mouse_event),
-            Event::Resize(_, _) => Ok(()),
-            _ => Ok(())
-        };
+        terminal.draw(|f| {
+            // top-level layout has a row for tabs, then main content
+            let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
+            f.render_widget(bg, f.area());
+
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3), // for tabs
+                    Constraint::Min(1),    // rest of content
+                ]);
+
+            let outer_chunks = layout.split(f.area());
+
+            let tab_area = outer_chunks[0];
+            let main_content_area = outer_chunks[1];
+
+            if app.first_run {
+                app.first_run = false;
+                // let effect = selected_category(CATPPUCCIN.flamingo, tab_area);
+                let effect1 = selected_category(CATPPUCCIN.sapphire, main_content_area);
+                let effect2 = open_category(CATPPUCCIN.peach, tab_area);
+                let effect3 = led_kbd_border();
+                app.menu_bar.effect_stage.add_effect(effect3);
+                app.service_tab.effect_stage.add_effect(effect1);
+                app.effect_stage.add_effect(effect2);
+                // app.effect_stage.add_effect(effect1);        
+            }
+
+            app.menu_bar.draw::<B>(f, tab_area);
+            // (2) Render Main content area depends on which tab is selected
+            match app.menu_bar.selected_tab() {
+                Tab::TurSheet => app.service_tab.draw::<B>(f, main_content_area),
+                Tab::Scripts => app.scripts_tab.draw::<B>(f, main_content_area),
+                Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area)
+            }
+
+            // ----- Process TachyonFX Effects -----
+            // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
+            let fx_duration = tachyonfx::Duration::from_millis(16);
+            // Process all effects added to our effect_stage. They will update and render onto f's buffer.
+            app.menu_bar.effect_stage.process_effects(fx_duration, f.buffer_mut(), tab_area);
+            app.service_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
+            let area = f.area();
+            app.effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
+        })?;
     }
-}
-
-fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
-    // top-level layout has a row for tabs, then main content
-    let outer_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(1)
-        .constraints([
-            Constraint::Length(3), // for tabs
-            Constraint::Min(1),    // rest of content
-        ])
-        .split(f.area());
-
-    // (1) Render Tabs at top
-    let titles = ["TUR Sheet", "Scripts", "System Info", "Extra"];
-    let selected_idx = match app.selected_tab {
-        Tab::TurSheet => 0,
-        Tab::Scripts => 1,
-        Tab::SystemInfo => 2,
-        Tab::Extra => 3,
-    };
-    
-    let tabs = Tabs::new(titles)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Tabs")
-                .border_style(Style::default().fg(C_MEDIUMSLATEBLUE))
-        )
-        .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(C_DEEPPINK))
-        .divider(symbols::DOT)
-        .select(selected_idx);
-
-    
-    f.render_widget(tabs, outer_chunks[0]);
-
-    // (2) Main content area depends on which tab is selected
-    let main_area = outer_chunks[1];
-
-    match app.selected_tab {
-        Tab::TurSheet => {
-            render_tur_sheet_tab::<B>(app, f, main_area);
-        }
-        Tab::Scripts => {
-            render_scripts_tab::<B>(app, f, main_area);
-        }
-        Tab::SystemInfo => {
-            render_system_info_tab::<B>(app, f, main_area);
-        }
-        Tab::Extra => {
-            render_extra_tab::<B>(app, f, main_area);
-        }
-    }
-}
-
-
-
-////////////////////////////////
-// SCRIPTS TAB with Buttons
-////////////////////////////////
-fn render_scripts_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(area);
-
-    // (1) Tuneup
-    let tuneup_button = Button::new(Line::from("Tuneup"), chunks[0])
-        .theme(TURQUOISE)
-        .state(app.tuneup_button_state);
-    f.render_widget(tuneup_button, chunks[0]);
-    // app.tuneup_button_area = Some(chunks[0]);
-
-    // (2) QC
-    let qc_button = Button::new(Line::from("QC"), chunks[1])
-        .theme(TURQUOISE)
-        .state(app.qc_button_state);
-    f.render_widget(qc_button, chunks[1]);
-    // app.qc_button_area = Some(chunks[1]);
-}
-
-fn render_system_info_tab<B: Backend>(_app: &mut App, f: &mut Frame, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("System Info")
-        .border_style(Style::default().fg(Color::Yellow));
-
-    f.render_widget(block, area);
-}
-
-fn render_extra_tab<B: Backend>(_app: &mut App, f: &mut Frame, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Extra")
-        .border_style(Style::default().fg(C_CYAN));
-
-    f.render_widget(block, area);
+    Ok(())
 }
