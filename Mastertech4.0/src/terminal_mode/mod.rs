@@ -1,310 +1,275 @@
-use button::{Button, State, TURQUOISE};
-use crossbeam::channel::{self, Receiver, Sender};
-use database::schema::{prestashop_schema, TicketData};
-use json_widget::JsonWidget;
+use fx::{effect::{open_category, outline_selected_cells, UniqueEffectId}, EffectStage};
+use ratatui_splash_screen::{SplashConfig, SplashScreen};
+use tabs::{logger::Logger, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
+use styling::CATPPUCCIN;
+use tachyonfx::CellFilter;
+use widgets::HandleWidget;
+use events::EventHandler;
 use ratatui::prelude::*;
+use tui_logger::*;
+use std::io;
 use ratatui::{
     crossterm::{
-        event::{
-            self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-            MouseButton, MouseEventKind,
-        },
+        event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    },
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    }, layout::{Constraint, Direction, Flex, Layout}, widgets::Block,
 };
-use serde_json::Value;
-use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
-use std::io;
-use tui_input::backend::crossterm::EventHandler;
-use tui_input::Input;
 
-pub mod json_widget;
-pub mod button;
+pub mod widgets;
+pub mod tabs;
+pub mod events;
+pub mod styling;
+pub mod fx;
 
+static SPLASH_CONFIG: SplashConfig = SplashConfig {
+    image_data: include_bytes!("../assets/masterlogoV2.png"),
+    sha256sum: None,
+    render_steps: 30,
+    use_colors: true,
+};
 
+static SPLASH_CONFIG2: SplashConfig = SplashConfig {
+    image_data: include_bytes!("../assets/pcllogo.png"),
+    sha256sum: None,
+    render_steps: 30,
+    use_colors: true,
+};
 
-/// ------------------------------
-/// Main App Code
-/// ------------------------------
+// impl <'a> TerminalApp <'a> { fn log_message(&mut self, message: &str) { self.logs.push(message.to_string()); } }
 
-struct App {
-    input: Input,
-    logs: Vec<String>,
-    button_area: Option<Rect>,
-    button_state: State,
-    _ticket_data: TicketData,
-    pub json_widget: JsonWidget,
-    prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
-    prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
-    /// We'll keep a scroll state for the JSON viewer
-    json_scroll_state: ScrollViewState,
+pub struct TerminalApp<'a> { // logs: Vec<String>,
+    logger: Logger,
+    menu_bar: MenuBar<'a>,
+    scripts_tab: ScriptsTab<'a>,
+    service_tab: ServiceTab<'a>,
+    sysinfo_tab: SysinfoTab,
+    effect_stage: EffectStage<UniqueEffectId>,
+    first_run: bool,
+    event_handler: EventHandler
 }
 
-impl App {
-    fn new() -> Self {
-        let (prestashop_api_tx, prestashop_api_rx) = channel::unbounded();
+impl Default for TerminalApp <'_>{
+    fn default() -> Self {
         Self {
-            input: Input::default(),
-            logs: Vec::new(),
-            button_area: None,
-            button_state: State::Normal,
-            _ticket_data: Default::default(),
-            prestashop_api_tx,
-            prestashop_api_rx,
-            json_widget: JsonWidget::default(),
-            json_scroll_state: ScrollViewState::default(),
+            logger: Logger::new(),
+            menu_bar: MenuBar::new(),
+            scripts_tab: ScriptsTab::new(),
+            service_tab: ServiceTab::new(),
+            sysinfo_tab: SysinfoTab::new(),
+            effect_stage: EffectStage::default(),
+            event_handler: EventHandler::new(),
+            first_run: true,
         }
-    }
-
-    fn log_message(&mut self, message: &str) {
-        self.logs.push(message.to_string());
-    }
-
-    fn log_json(&mut self, value: Value) {
-        self.json_widget = JsonWidget::new(value)
-    }
-
-    fn get_ticket(&self, service_number: &str) {
-        let tx = self.prestashop_api_tx.clone();
-        let input = service_number.to_string();
-        log::info!("Getting payload with {input}");
-        if !input.is_empty() {
-            tokio::spawn(async move {
-                let prestashop_order = database::schema::utilities::get_prestashop_payload(&input).await?;
-                tx.try_send(prestashop_order)?;
-                Ok::<(), anyhow::Error>(())
-            });
-        }
-    }
-
-    fn receive_ticket(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        if let Ok(data) = self.prestashop_api_rx.try_recv() {
-            self.log_message(&serde_json::to_string(&data)?);
-            self.log_json(serde_json::to_value(&data)?);
-        }
-        Ok(())
     }
 }
 
-pub fn run_terminal_mode() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
+    // Init the logger
+    // Configure log level and log file
+    // let log_level = log::LevelFilter::Info;
+    // let log_file = std::fs::File::create("output.log").unwrap();
+    // simplelog::WriteLogger::init(
+    //     log_level,
+    //     simplelog::Config::default(),
+    //     log_file
+    // ).unwrap();
+
+
+    // Set max_log_level to Trace
+    tui_logger::init_logger(log::LevelFilter::Trace).unwrap();
+    // Set default level for unknown targets to Trace
+    tui_logger::set_default_level(log::LevelFilter::Info);
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app = App::new();
+    let app = TerminalApp::default();
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;
+
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
+
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        log::info!("{:?}", err);
+        log::info!("ERR: {:?}", err);
     }
 
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>) -> anyhow::Result<(), anyhow::Error> {
+    // render splash screen
+    let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
+    let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
     loop {
-        let _ = app.receive_ticket();
-        terminal.draw(|f| ui::<B>(f, &mut app))?;
-
-        match event::read()? {
-            Event::Key(key_event) => {
-                // Exit on Ctrl + C
-                if key_event.code == KeyCode::Char('c')
-                    && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                {
-                    return Ok(());
-                }
-
-                // Send keystroke to input field
-                app.input.handle_event(&Event::Key(key_event));
-
-                // If user presses Enter, treat it like clicking Get Ticket
-                match key_event.code {
-                    KeyCode::Enter => {
-                        let user_input = app.input.value();
-                        app.get_ticket(user_input);
-                        app.log_message(&format!("(Enter) 'Get Ticket' with input: {}", user_input));
-                    }
-                    // We'll also handle up/down to scroll in the JSON scrollview
-                    KeyCode::Down => {
-                        // Move highlight
-                        app.json_widget.next_edit();
-                        // Or scroll
-                        // app.json_scroll_state.scroll_down(1);
-                    }
-                    KeyCode::Up => {
-                        app.json_widget.prev_edit();
-                        // app.json_scroll_state.scroll_up(1);
-                    }
-                    KeyCode::Right => {
-                        // could do something else or next edit
-                        app.json_widget.next_edit();
-                    }
-                    KeyCode::Left => {
-                        app.json_widget.prev_edit();
-                    }
-                    _ => {}
-                }
-            }
-            Event::Mouse(mouse_event) => {
-                match mouse_event.kind {
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        if let Some(area) = app.button_area {
-                            if mouse_event.column >= area.x
-                                && mouse_event.column < area.x + area.width
-                                && mouse_event.row >= area.y
-                                && mouse_event.row < area.y + area.height
-                            {
-                                let user_input = app.input.value();
-                                app.log_message(&format!(
-                                    "(Click) 'Get Ticket' with input: {}",
-                                    user_input
-                                ));
-                                app.button_state = State::Active;
-                            } else {
-                                app.button_state = State::Normal;
-                            }
+        if let Ok(events) = app.event_handler.next() {
+            let current_tab = app.menu_bar.current_tab.borrow().clone();
+            match events {
+                events::Event::Key(key_event) => {
+                    
+                    match key_event.code {
+                        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            log::info!("Quitting");
+                            break;
                         }
-                    }
-                    MouseEventKind::Moved => {
-                        if let Some(area) = app.button_area {
-                            if mouse_event.column >= area.x
-                                && mouse_event.column < area.x + area.width
-                                && mouse_event.row >= area.y
-                                && mouse_event.row < area.y + area.height
-                            {
-                                app.button_state = State::Selected;
-                            } else {
-                                app.button_state = State::Normal;
-                            }
+                        // We'll let left/right arrow change tabs
+                        KeyCode::Right => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                            log::info!("Current tab: {current_tab:?}");
+                             match current_tab {
+                                Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Scripts),
+                                Tab::Scripts => app.menu_bar.set_active_tab(Tab::SystemInfo),
+                                Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Logs),
+                                Tab::Logs => app.menu_bar.set_active_tab(Tab::TurSheet),
+                            };
                         }
-                    }
-                    _ => {}
-                }
+                        KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                             match current_tab {
+                                Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Logs),
+                                Tab::Scripts => app.menu_bar.set_active_tab(Tab::TurSheet),
+                                Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Scripts),
+                                Tab::Logs => app.menu_bar.set_active_tab(Tab::SystemInfo),
+                            };
+                        }
+                        _ => {
+                            // Now dispatch key event to the active widget, and only one widget:
+                            let consumed = match current_tab {
+                                Tab::TurSheet => app.service_tab.handle_key_event(key_event),
+                                Tab::Scripts => app.scripts_tab.handle_key_event(key_event),
+                                Tab::SystemInfo => app.service_tab.handle_key_event(key_event),
+                                Tab::Logs => app.logger.handle_key_event(key_event)
+                            };
+
+                            if consumed {}
+                        }
+                    };
+                },
+                events::Event::Mouse(mouse_event) => {
+                    app.menu_bar.handle_mouse_event(&mouse_event);
+                     match current_tab {
+                        Tab::TurSheet => app.service_tab.handle_mouse_event(&mouse_event),
+                        Tab::Scripts => app.scripts_tab.handle_mouse_event(&mouse_event),
+                        Tab::SystemInfo => app.service_tab.handle_mouse_event(&mouse_event),
+                        Tab::Logs => {} //app.logs_tab,
+                    };
+                },
+                events::Event::Error => log::info!("Error in event loop"),
+                events::Event::Tick => {}
             }
-            Event::Resize(_, _) => {}
-            _ => {}
         }
+        let _ = app.service_tab.receive_ticket();
+
+        terminal.draw(|f| {
+            if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
+                let layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .margin(1)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ]).split(f.area());
+
+                f.render_widget(&mut splash_screen, layout[0]);
+                f.render_widget(&mut splash_screen2, layout[1]);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            } else {
+                // top-level layout has a row for tabs, then main content
+                let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
+                f.render_widget(bg, f.area());
+
+                let layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([
+                        Constraint::Percentage(8), // for tabs
+                        Constraint::Percentage(92),// rest of content
+                    ]);
+
+                let outer_chunks = layout.split(f.area());
+
+                let tab_layout = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Ratio(1,3),
+                        Constraint::Ratio(1,3),
+                        Constraint::Ratio(1,3),
+                    ]).split(outer_chunks[0]);
+
+                let tab_area = center_horizontal(tab_layout[1], tab_layout[1].width);
+                let main_content_area = outer_chunks[1];
+                
+                if app.first_run {
+                    app.first_run = false;
+                    // let effect = selected_category(CATPPUCCIN.flamingo, tab_area);
+                    let effect2 = open_category(CATPPUCCIN.peach, tab_area);
+                    let effect3 = outline_selected_cells(
+                        &mut app.menu_bar.effect_stage, 
+                        tab_area.as_size(),
+                        CATPPUCCIN.blue,
+                        CellFilter::FgColor(CATPPUCCIN.blue)
+                    );
+
+                    let effect1 = outline_selected_cells(
+                        &mut app.menu_bar.effect_stage, 
+                        tab_area.as_size(),
+                        CATPPUCCIN.maroon,
+                        CellFilter::FgColor(CATPPUCCIN.maroon)
+                    );
+
+                    app.menu_bar.effect_stage.add_effect(effect2);
+                    app.service_tab.effect_stage.add_effect(effect3);
+                    app.effect_stage.add_effect(effect1);
+                    // app.service_tab.effect_stage.add_effect(effect1);
+                }
+
+                app.menu_bar.draw::<B>(f, tab_area);
+                
+                // let logger = TuiLoggerWidget::default()
+                // .block(Block::bordered().title("Logs")
+                // .border_type(ratatui::widgets::BorderType::Rounded));
+
+                let buf = &mut Buffer::empty(Rect::ZERO);
+
+                // (2) Render Main content area depends on which tab is selected
+                match *app.menu_bar.current_tab.borrow() {
+                    Tab::TurSheet => app.service_tab.draw::<B>(f, main_content_area),
+                    Tab::Scripts => app.scripts_tab.draw::<B>(f, main_content_area),
+                    Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area),
+                    Tab::Logs => {
+                        buf.merge(f.buffer_mut());
+                        // logger.render(main_content_area, buf);
+                        app.logger.draw::<B>(f, main_content_area);
+                    },
+                }
+
+
+                // ----- Process TachyonFX Effects -----
+                // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
+                let fx_duration = tachyonfx::Duration::from_millis(16);
+                // Process all effects added to our effect_stage. They will update and render onto f's buffer.
+                app.menu_bar.effect_stage.process_effects(fx_duration, f.buffer_mut(), tab_area);
+                app.service_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
+                let area = f.area();
+                app.effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
+            }
+        })?;
     }
+    Ok(())
 }
 
-fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(1)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1)
-        ])
-        .split(f.area());
 
-    let input_and_button = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(80),
-            Constraint::Percentage(20)
-        ])
-        .split(chunks[0]);
-
-    let json_view = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50)
-        ])
-        .split(chunks[1]);
-
-    // (A) Render Input Box
-    let width = input_and_button[0].width.saturating_sub(2);
-    let scroll_offset = app.input.visual_scroll(width as usize);
-
-    let input_widget = Paragraph::new(app.input.value())
-        .style(Style::default().fg(Color::Rgb(255, 20, 147)))
-        .scroll((0, scroll_offset as u16))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Input")
-                .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
-                .style(Style::default().bg(Color::Rgb(10, 10, 14)))
-        );
-
-    f.render_widget(input_widget, input_and_button[0]);
-
-    // set cursor
-    let cursor_x = input_and_button[0].x + ((app.input.visual_cursor()).max(scroll_offset) - scroll_offset) as u16 + 1;
-    let cursor_y = input_and_button[0].y + 1;
-    f.set_cursor_position(Position { x: cursor_x, y: cursor_y });
-
-    // (B) Render Button
-    let get_ticket_button = Button::new(Line::from("Get Ticket"))
-        .theme(TURQUOISE)
-        .state(app.button_state);
-
-    f.render_widget(get_ticket_button, input_and_button[1]);
-    app.button_area = Some(input_and_button[1]);
-
-    // (C) Left side logs
-    let items: Vec<ListItem> = app
-        .logs
-        .iter()
-        .map(|log| {
-            ListItem::new(log.clone()).style(
-                Style::default().fg(Color::Rgb(224, 255, 255)),
-            )
-        })
-        .collect();
-
-    let logs_list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Logs")
-            .border_style(Style::default().fg(Color::Rgb(0, 255, 127)))
-            .style(Style::default().bg(Color::Rgb(8, 8, 12)))
-    );
-
-    f.render_widget(logs_list, json_view[0]);
-
-    // (D) Right side: JSON scrollable area
-    // We'll call 'render_text()' on the widget to get a styled Text object
-
-    let text = app.json_widget.render_text();
-    let paragraph = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Json Viewer")
-                .border_style(Style::default().fg(Color::Rgb(250, 8, 182)))
-                .style(Style::default().bg(Color::Rgb(10, 10, 14)))
-        );
-
-    // We create a `Size` using the width/height of the allocated area:
-    let size = Size {
-        width: json_view[1].width,
-        height: json_view[1].height,
-    };
-
-    // Wrap in a ScrollView from tui-scrollview
-    let mut scroll_view = ScrollView::new(size)
-        .scrollbars_visibility(ScrollbarVisibility::Always);
-
-    scroll_view.render_widget(paragraph, scroll_view.area());
-
-    f.render_stateful_widget(scroll_view, json_view[1], &mut app.json_scroll_state);
-    // paragraph
+fn center_horizontal(area: Rect, width: u16) -> Rect {
+    let [area] = Layout::horizontal([Constraint::Length(width)])
+        .flex(Flex::Center)
+        .areas(area);
+    area
 }
