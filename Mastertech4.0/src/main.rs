@@ -124,41 +124,57 @@ async fn main() -> eframe::Result<()> {
     // Configure log level and log file
     // displays::tabs::logger::logging::builder().init().unwrap();
 
-    let log_level = log::LevelFilter::Info;
-    let log_file = std::fs::File::create("output.log").unwrap();
-    simplelog::WriteLogger::init(
-        log_level,
-        simplelog::Config::default(),
-        log_file
-    ).unwrap();
+    let matches = clap::Command::new("Mastertech 4")
+        .version(env!("CARGO_PKG_VERSION"))
+        .author("Shadowbroker")
+        // .about("Accepts a command-line argument and prints it")
+        .arg(
+            clap::Arg::new("term")
+                .short('t')
+                .long("term")
+                .help("Run MasterTech in Terminal Mode")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches();
 
-    // let eframe_app = eframe::run_native(
-    //     format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
-    //     eframe::NativeOptions {
-    //         viewport: eframe::egui::ViewportBuilder::default()
-    //             .with_inner_size([945.0, 750.0])
-    //             .with_drag_and_drop(true)
-    //             .with_icon(load_icon())
-    //             .with_always_on_top(),
-    //         ..Default::default()
-    //     },
-    //     Box::new(|cc| {
-    //         Ok(
-    //             Box::new(
-    //                 MasterTechApp::new(cc)
-    //             )
-    //         )
-    //     }),
-    // );
+    if matches.get_flag("term") {
+        let _ = terminal_mode::run_terminal_mode().await;
+    } else {
+        let log_level = log::LevelFilter::Info;
+        let log_file = std::fs::File::create("output.log").unwrap();
+        simplelog::WriteLogger::init(
+            log_level,
+            simplelog::Config::default(),
+            log_file
+        ).unwrap();
+        let eframe_app = eframe::run_native(
+            format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
+            eframe::NativeOptions {
+                viewport: eframe::egui::ViewportBuilder::default()
+                    .with_inner_size([945.0, 750.0])
+                    .with_drag_and_drop(true)
+                    .with_icon(load_icon())
+                    .with_always_on_top(),
+                ..Default::default()
+            },
+            Box::new(|cc| {
+                Ok(
+                    Box::new(
+                        MasterTechApp::new(cc)
+                    )
+                )
+            }),
+        );
 
-    // if let Err(e) = eframe_app { 
-    //     // error!("Error running eframe_native: {e:?} \nswitching to secondary application");
-    //     let res = terminal_mode::run_terminal_mode();
-    //     if let Err(e) = res {
-    //         error!("Error running terminal app: {e:?}");
-    //     }
-    // }
-    let res = terminal_mode::run_terminal_mode();
+        if let Err(e) = eframe_app { 
+            error!("Error running eframe_native: {e:?} \nswitching to secondary application");
+            let res = terminal_mode::run_terminal_mode().await;
+            if let Err(e) = res {
+                error!("Error running terminal app: {e:?}");
+            }
+        }
+    }
+    
     Ok(())
 }
 

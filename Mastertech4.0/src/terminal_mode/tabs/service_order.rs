@@ -1,0 +1,189 @@
+use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, widgets::service_form::ServiceFormWidget};
+use database::schema::{prestashop_schema, utilities::get_prestashop_payload};
+use ratatui::{crossterm::event::KeyEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, ListState}, Frame};
+
+use crate::terminal_mode::widgets::HandleWidget;
+use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
+use crossbeam::channel::{self, Receiver, Sender};
+use ratatui::crossterm::event::MouseEvent;
+use ratatui::prelude::*;
+use std::cell::RefCell;
+
+// Define a virtual height for the service form content.
+const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 50; // adjust as needed
+
+////////////////////////////////
+// TUR SHEET TAB with SERVICE NUM INPUT
+////////////////////////////////
+/// ServiceTab Component
+pub struct ServiceTab<'a> {
+    // Prestashop
+    prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
+    prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
+    logs: RefCell<Vec<String>>,
+    log_state: ListState,
+    service_form_widget: ServiceFormWidget<'a>,
+    scroll_state: RefCell<ScrollViewState>,
+    pub effect_stage: EffectStage<UniqueEffectId>,
+    last_service_form_area: RefCell<Option<Rect>>, // Add this field
+}
+
+impl<'a> ServiceTab<'a> {
+    pub fn new() -> Self {
+        let (prestashop_api_tx, prestashop_api_rx) = channel::unbounded();
+        Self {
+            logs: RefCell::new(Vec::new()),
+            service_form_widget: ServiceFormWidget::new(),
+            scroll_state: RefCell::new(ScrollViewState::default()),
+            prestashop_api_tx,
+            prestashop_api_rx,
+            effect_stage: EffectStage::default(),
+            log_state: ListState::default(),
+            last_service_form_area: RefCell::new(None)
+        }
+    }
+
+    pub fn receive_ticket(&mut self) -> anyhow::Result<(), anyhow::Error> {
+        if let Ok(data) = self.prestashop_api_rx.try_recv() {
+            log::info!("{:?}", &serde_json::to_string(&data)?);
+            log::info!("{:?}", serde_json::to_value(&data)?);
+        }
+        Ok(())
+    }
+
+    fn get_ticket(&self, service_number: &str) {
+        let tx = self.prestashop_api_tx.clone();
+        let input = service_number.to_string();
+        log::info!("Getting payload with {input}");
+        if !input.is_empty() {
+            tokio::spawn(async move {
+                let prestashop_order = get_prestashop_payload(&input).await?;
+                tx.try_send(prestashop_order)?;
+                Ok::<(), anyhow::Error>(())
+            });
+        }
+    }
+}
+
+impl <'a> HandleWidget <'_> for ServiceTab <'_> {
+    /// Draw the entire ServiceTab, including its buttons
+    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        // ----- Process TachyonFX Effects -----
+        // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
+        let fx_duration = tachyonfx::Duration::from_millis(16);
+        // Process all effects added to our effect_stage. They will update and render onto f's buffer.
+        self.effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
+
+        // Divide the area into vertical chunks (input row + main content)
+        let vertical_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(1),
+            ])
+            .split(area);
+    
+        let area_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(5),
+                Constraint::Percentage(95),
+            ])
+            .split(vertical_chunks[1]);
+
+        let json_view_title_area = area_chunks[0];
+        let service_form_area = area_chunks[1];
+
+        // Save the computed visible area for later event handling.
+        self.last_service_form_area.replace(Some(service_form_area));
+
+        let service_form_title = Block::new()
+            .title(Line::from("Service Form").centered())
+            .borders(Borders::BOTTOM)
+            .border_type(ratatui::widgets::BorderType::Rounded);
+
+        // JSON viewer
+        let mut borders = Borders::RIGHT;
+        borders.set(Borders::LEFT, true);
+
+        // Create a scroll view with a fixed virtual content size.
+        // This ensures that even if `service_form_area` (the visible area) is small,
+        // the service form widget is rendered into a larger virtual buffer.
+        let virtual_size = Size {
+            width: service_form_area.width,
+            height: SERVICE_FORM_VIRTUAL_HEIGHT,
+        };
+        let mut scroll_view = ScrollView::new(virtual_size)
+            .vertical_scrollbar_visibility(
+                ScrollbarVisibility::Automatic
+            )
+            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+
+
+        self.service_form_widget.render(scroll_view.area(), scroll_view.buf_mut());
+
+        // Render JSON viewer scroll view.
+        service_form_title.render(json_view_title_area, f.buffer_mut());
+        scroll_view.render(service_form_area, f.buffer_mut(), &mut self.scroll_state.borrow_mut());
+    }
+    
+    /// Handle a mouse event, see if it hits our get_ticket_button or submit_button
+    fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        match mouse_event.kind {
+            ratatui::crossterm::event::MouseEventKind::ScrollDown => self.scroll_state.borrow_mut().scroll_down(),
+            ratatui::crossterm::event::MouseEventKind::ScrollUp => self.scroll_state.borrow_mut().scroll_up(),
+            ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.scroll_state.borrow_mut().scroll_left(),
+            ratatui::crossterm::event::MouseEventKind::ScrollRight => self.scroll_state.borrow_mut().scroll_right(),
+            _ => {
+                self.service_form_widget.check_active_field(&mouse_event);
+                // let service_num_is_active = self.order_number_field.is_active();
+
+                // Now, forward the event to the ServiceFormWidget.
+                // self.service_form_widget.handle_mouse_event(&mouse_event);
+                // self.service_form_widget.update_focus_from_mouse(&mouse_event);
+                // Retrieve the visible area for the service form from our stored state.
+                if let Some(visible_area) = *self.last_service_form_area.borrow() {
+                    let scroll_offset = self.scroll_state.borrow().offset().y; 
+                    let local_y = mouse_event.row
+                        .saturating_sub(visible_area.y)
+                        .saturating_add(scroll_offset);
+                    
+                    let local_x = mouse_event.column
+                        .saturating_sub(visible_area.x);
+
+                    // Convert the global mouse event coordinates into local coordinates relative to visible_area.
+                    let local_mouse_event = MouseEvent {
+                        column: local_x,
+                        row: local_y,
+                        kind: mouse_event.kind,
+                        modifiers: mouse_event.modifiers,
+                    };
+                    let c = mouse_event.column;
+                    let r = mouse_event.row;
+                    let inside = c >= visible_area.x 
+                        && c < visible_area.x + visible_area.width 
+                        && r >= visible_area.y 
+                        && r < visible_area.y + visible_area.height;
+                    if inside {
+                        // if service_num_is_active && mouse_event.kind == MouseEventKind::Down(crossterm::event::MouseButton::Right) {
+                        //     self.order_number_field.set_state(crate::terminal_mode::widgets::button::State::Normal);
+                        // }
+                        // Now forward the local event to the service form widget.
+                        // self.service_form_widget.update_focus_from_mouse(&local_mouse_event);
+                        self.service_form_widget.handle_mouse_event(&local_mouse_event);
+                    } else {
+                        let is_active = *self.service_form_widget.active_field.borrow();
+                        if is_active.is_some() {
+                            // self.service_form_widget.reset_all_states();
+                        }
+                    }
+                }
+                
+            }
+        }
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
+        self.service_form_widget.handle_key_event(key_event)
+    }
+}
