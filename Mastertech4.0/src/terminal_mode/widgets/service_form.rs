@@ -1,10 +1,9 @@
-use database::schema::utilities::get_prestashop_payload;
-use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Style, widgets::{Block, Borders, Widget, WidgetRef}, Frame};
+use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{data::ServiceData, styling::{CATPPUCCIN, CATPPUCCINTHEME}, widgets::SHORTCUT_SET};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use super::{button::{Button, State}, input_field::{InputField, InputFieldId}, ButtonType, ShrinkArea};
-
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::cell::RefCell;
+
 // ---------------------------------------------------------------------------
 /// ServiceFormWidget: The complete two‑column form.
 pub struct ServiceFormWidget<'a> {
@@ -167,7 +166,7 @@ impl<'a> ServiceFormWidget<'a> {
     
     /// The parent can call this after `render_ref()` to retrieve the local
     /// cursor position, then do `frame.set_cursor_position(...)`.
-    pub fn cursor_position(&self) -> Option<(u16, u16)> {
+    pub fn _cursor_position(&self) -> Option<(u16, u16)> {
         *self.cached_cursor_position.borrow()
     }
 
