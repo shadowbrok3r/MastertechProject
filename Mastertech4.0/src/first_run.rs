@@ -1,18 +1,17 @@
-use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use surrealdb::RecordId;
-use super::utilities::crypto::pass_hash::load_encrypted_user_data;
-use super::app_state::{AppState, MasterTechApp};
 use crate::{filesystem::system_info::generate_client_id, tabs::tur_sheet::scaffold::AsanaResponse};
-use super::filesystem::system_info::ComputerInfo;
+use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use database::{schema::{ComputerData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
+use super::utilities::crypto::pass_hash::load_encrypted_user_data;
+use super::filesystem::system_info::ComputerInfo;
+use super::app_state::{AppState, MasterTechApp};
 use eframe::egui::{Context, ViewportCommand};
 use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
 use super::pages::login_page::HASH;
 use std::sync::atomic::Ordering;
 use log::{debug, error, info};
+use surrealdb::RecordId;
 use tokio::spawn;
-
 
 impl MasterTechApp {
     pub fn first_run(&mut self) {

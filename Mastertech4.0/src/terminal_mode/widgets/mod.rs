@@ -5,6 +5,7 @@ use button::State;
 pub mod json_viewer;
 pub mod button;
 pub mod service_form;
+pub mod input_field;
 
 pub const SHORTCUT_SET: Set = Set {
     top_left:          "╭",  // Rounded top-left
@@ -18,7 +19,7 @@ pub const SHORTCUT_SET: Set = Set {
 };
 
 
-pub const SHORTCUT_SET_2: Set = Set {
+pub const _SHORTCUT_SET_2: Set = Set {
     top_left:          "◢",
     top_right:         "▜",
     bottom_left:       "▔",
@@ -70,9 +71,10 @@ pub trait HandleMouse: for<'a> ButtonType<'a> {
 }
 
 pub trait ButtonType <'a> {
-    fn on_click(&self, f: impl FnMut() + 'a) -> Self;
+    // fn on_click(&self, f: impl FnMut(&mut T) + 'a);
     fn click(&self);
     fn set_state(&self, state: State);
+    // #[allow(unused)]
     fn get_area(&self) -> Option<Rect>;
     fn is_active(&self) -> bool;
     fn set_area(&self, area: Rect);

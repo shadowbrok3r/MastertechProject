@@ -1,9 +1,9 @@
-use std::{borrow::BorrowMut, cell::RefCell, };
+use std::cell::RefCell;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::{prelude::*, widgets::*};
 use tui_logger::*;
 use log::*;
-pub use ratatui::crossterm::event::{self, Event, KeyCode as Key};
+pub use ratatui::crossterm::event::KeyCode as Key;
 
 pub struct Logger {
     mode: LoggerMode,
@@ -18,12 +18,6 @@ enum LoggerMode {
     #[default]
     Run,
     Quit,
-}
-
-#[derive(Debug)]
-enum AppEvent {
-    UiEvent(Event),
-    CounterChanged(Option<u16>),
 }
 
 //// Example for simple customized formatter
@@ -113,7 +107,7 @@ impl Logger {
     }
 
 
-    fn next_tab(&mut self) {
+    fn _next_tab(&mut self) {
         self.selected_tab = (self.selected_tab + 1) % self.tab_names.len();
     }
 
@@ -171,10 +165,8 @@ impl WidgetRef for &mut Logger {
             .set_default_display_level(LevelFilter::Off)
             .set_level_for_target("Logger", LevelFilter::Debug)
             .set_level_for_target("background-task", LevelFilter::Info);
-        let mut formatter: Option<Box<dyn LogFormatter>> = None;
-        if cfg!(feature = "formatter") {
-            formatter = Some(Box::new(MyLogFormatter {}));
-        }
+        let mut _formatter: Option<Box<dyn LogFormatter>> = None;
+        _formatter = Some(Box::new(MyLogFormatter {}));
 
         TuiLoggerWidget::default()
             .block(Block::bordered().title("Filtered Logs"))
@@ -190,7 +182,7 @@ impl WidgetRef for &mut Logger {
 
         TuiLoggerWidget::default()
             .block(Block::bordered().title("Unfiltered Logs"))
-            .opt_formatter(formatter)
+            .opt_formatter(_formatter)
             .output_separator('|')
             .output_timestamp(Some("%F %H:%M:%S%.3f".to_string()))
             .output_level(Some(TuiLoggerLevelOutput::Long))

@@ -1,10 +1,7 @@
+use ratatui::{crossterm::event::KeyEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders}, Frame};
 use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, widgets::service_form::ServiceFormWidget};
-use database::schema::{prestashop_schema, utilities::get_prestashop_payload};
-use ratatui::{crossterm::event::KeyEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, ListState}, Frame};
-
-use crate::terminal_mode::widgets::HandleWidget;
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
-use crossbeam::channel::{self, Receiver, Sender};
+use crate::terminal_mode::widgets::HandleWidget;
 use ratatui::crossterm::event::MouseEvent;
 use ratatui::prelude::*;
 use std::cell::RefCell;
@@ -17,11 +14,6 @@ const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 50; // adjust as needed
 ////////////////////////////////
 /// ServiceTab Component
 pub struct ServiceTab<'a> {
-    // Prestashop
-    prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
-    prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
-    logs: RefCell<Vec<String>>,
-    log_state: ListState,
     service_form_widget: ServiceFormWidget<'a>,
     scroll_state: RefCell<ScrollViewState>,
     pub effect_stage: EffectStage<UniqueEffectId>,
@@ -30,37 +22,11 @@ pub struct ServiceTab<'a> {
 
 impl<'a> ServiceTab<'a> {
     pub fn new() -> Self {
-        let (prestashop_api_tx, prestashop_api_rx) = channel::unbounded();
         Self {
-            logs: RefCell::new(Vec::new()),
             service_form_widget: ServiceFormWidget::new(),
             scroll_state: RefCell::new(ScrollViewState::default()),
-            prestashop_api_tx,
-            prestashop_api_rx,
             effect_stage: EffectStage::default(),
-            log_state: ListState::default(),
             last_service_form_area: RefCell::new(None)
-        }
-    }
-
-    pub fn receive_ticket(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        if let Ok(data) = self.prestashop_api_rx.try_recv() {
-            log::info!("{:?}", &serde_json::to_string(&data)?);
-            log::info!("{:?}", serde_json::to_value(&data)?);
-        }
-        Ok(())
-    }
-
-    fn get_ticket(&self, service_number: &str) {
-        let tx = self.prestashop_api_tx.clone();
-        let input = service_number.to_string();
-        log::info!("Getting payload with {input}");
-        if !input.is_empty() {
-            tokio::spawn(async move {
-                let prestashop_order = get_prestashop_payload(&input).await?;
-                tx.try_send(prestashop_order)?;
-                Ok::<(), anyhow::Error>(())
-            });
         }
     }
 }
@@ -135,7 +101,7 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
             ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.scroll_state.borrow_mut().scroll_left(),
             ratatui::crossterm::event::MouseEventKind::ScrollRight => self.scroll_state.borrow_mut().scroll_right(),
             _ => {
-                self.service_form_widget.check_active_field(&mouse_event);
+                self.service_form_widget.check_active_field();
                 // let service_num_is_active = self.order_number_field.is_active();
 
                 // Now, forward the event to the ServiceFormWidget.

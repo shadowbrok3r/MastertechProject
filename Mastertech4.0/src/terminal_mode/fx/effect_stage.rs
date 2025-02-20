@@ -62,7 +62,7 @@ impl<K: Clone + Debug + Ord> EffectStage<K> {
     /// * `key` - A unique identifier for the effect. If an effect with this key already exists,
     ///           the existing effect will be cancelled.
     /// * `fx` - The effect to be wrapped with unique identification and added to the stage.
-    pub fn add_unique_effect(&mut self, key: impl Into<K>, fx: Effect) {
+    pub fn _add_unique_effect(&mut self, key: impl Into<K>, fx: Effect) {
         let fx = self.unique(key, fx);
         self.add_effect(fx);
     }

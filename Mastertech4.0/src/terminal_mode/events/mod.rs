@@ -1,8 +1,8 @@
-use crossbeam::channel::{unbounded, Receiver, Sender, TryRecvError};
+use crossbeam::channel::{unbounded, Receiver, TryRecvError};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
-use tokio::task::JoinHandle;
 use futures::{FutureExt, StreamExt};
-pub mod exabind_event;
+
+pub mod action_handler;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
@@ -13,9 +13,7 @@ pub enum Event {
 }
 
 pub struct EventHandler {
-    pub tx: Sender<Event>,
-    pub rx: Receiver<Event>,
-    pub task: Option<JoinHandle<()>>,
+    rx: Receiver<Event>,
 }
 
 impl EventHandler {
@@ -25,7 +23,7 @@ impl EventHandler {
         let tick_rate = std::time::Duration::from_millis(250);
 
         let _tx = tx.clone();
-        let task = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick_rate);
 
             loop {
@@ -56,7 +54,7 @@ impl EventHandler {
             }
         });
 
-        Self { tx, rx, task: Some(task) }
+        Self { rx }
     }
 
     pub fn next(&mut self) -> anyhow::Result<Event, TryRecvError>{

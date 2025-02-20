@@ -6,7 +6,6 @@ use tachyonfx::CellFilter;
 use widgets::HandleWidget;
 use events::EventHandler;
 use ratatui::prelude::*;
-use tui_logger::*;
 use std::io;
 use ratatui::{
     crossterm::{
@@ -21,6 +20,7 @@ pub mod tabs;
 pub mod events;
 pub mod styling;
 pub mod fx;
+pub mod data;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
     image_data: include_bytes!("../assets/masterlogoV2.png"),
@@ -166,7 +166,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 events::Event::Tick => {}
             }
         }
-        let _ = app.service_tab.receive_ticket();
+        // let _ = app.service_tab..receive_ticket();
 
         terminal.draw(|f| {
             if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
@@ -265,7 +265,6 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
     }
     Ok(())
 }
-
 
 fn center_horizontal(area: Rect, width: u16) -> Rect {
     let [area] = Layout::horizontal([Constraint::Length(width)])
