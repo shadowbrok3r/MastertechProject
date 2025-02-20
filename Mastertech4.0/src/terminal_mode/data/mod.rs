@@ -49,4 +49,15 @@ impl ServiceData {
             });
         }
     }
+
+    // fn test_fn<T, R>(&mut self, f: impl FnMut(&mut T) -> R) {
+    //     // f(|t: &mut T| {});
+    // }
+
+    // fn another(&mut self) {
+    //     let x = self.test_fn::<ServiceData, bool>(|x| {
+
+    //         true
+    //     });
+    // }
 }
