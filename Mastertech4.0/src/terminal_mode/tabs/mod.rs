@@ -1,6 +1,6 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, style::Color, widgets::WidgetRef, Frame};
-use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME}, widgets::{button::{Button, State, Theme}, ButtonType, HandleWidget, ShrinkArea}};
-use std::{cell::RefCell, sync::Arc};
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, widgets::WidgetRef, Frame};
+use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}};
+use std::cell::RefCell;
 pub use service_order::*;
 pub use scripts::*;
 pub use sysinfo::*;
@@ -27,13 +27,8 @@ pub enum Tab {
 ////////////////////////////////
 #[derive(Clone)]
 pub struct MenuBar<'a> {
-    hovered_index: RefCell<Option<usize>>,
     pub current_tab: RefCell<Tab>,
     pub effect_stage: EffectStage<UniqueEffectId>,
-    theme: Theme,
-    state: RefCell<State>,
-    on_click: Arc<RefCell<Option<Box<dyn FnMut() + 'a>>>>,
-    area: RefCell<Option<Rect>>,
     ticket_tab: Button<'a>,
     scripts_tab: Button<'a>,
     system_tab: Button<'a>,
@@ -42,37 +37,14 @@ pub struct MenuBar<'a> {
 
 impl<'a> MenuBar<'a> {
     pub fn new() -> Self {
-        let theme = Theme {
-            text: CATPPUCCIN.pink,
-            background: Color::Rgb(20, 20, 24),
-            highlight: CATPPUCCIN.surface0,
-            shadow: CATPPUCCIN.overlay1,
-        };
 
         let menu_bar = Self {
-            hovered_index: RefCell::new(None),
             current_tab: RefCell::new(Tab::TurSheet),
             effect_stage: EffectStage::default(),
-            theme,
-            state: RefCell::new(State::Normal),
-            area: RefCell::new(None),
-            on_click: Arc::new(RefCell::new(None)),
-            ticket_tab: Button::new("Ticket")
-            .on_click(|| {
-                log::info!("Ticket Info Tab clicked");
-            }).theme(CATPPUCCINTHEME),
-            scripts_tab: Button::new("Scripts")
-            .on_click(|| {
-                log::info!("Clicked scripts tab");
-            }).theme(CATPPUCCINTHEME),
-            system_tab: Button::new("System")
-            .on_click(|| {
-                log::info!("System Tab clicked");
-            }).theme(CATPPUCCINTHEME),
-            logs_tab: Button::new("Logs")
-            .on_click(|| {
-                log::info!("Log Tab clicked");
-            }).theme(CATPPUCCINTHEME),
+            ticket_tab: Button::new("Ticket").theme(CATPPUCCINTHEME),
+            scripts_tab: Button::new("Scripts").theme(CATPPUCCINTHEME),
+            system_tab: Button::new("System").theme(CATPPUCCINTHEME),
+            logs_tab: Button::new("Logs").theme(CATPPUCCINTHEME),
         };
         menu_bar
     }

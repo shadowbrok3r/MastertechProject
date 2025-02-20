@@ -1,11 +1,9 @@
-use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Paragraph, Widget, WidgetRef}, Frame};
-use crate::{fx::{effect::{selected_category, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME, DEEPPINK, TURQUOISE}, widgets::SHORTCUT_SET};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use super::{button::{Button, State, Theme}, ButtonType, ShrinkArea};
-use tui_input::{backend::crossterm::EventHandler, Input};
+use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
+use crate::terminal_mode::{fx::{effect::{selected_category, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
+use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use super::{button::{State, Theme}, ButtonType};
 use tui_textarea::TextArea;
 use std::cell::RefCell;
-
 
 // ---------------------------------------------------------------------------
 // InputField: A wrapper around tui_input::Input for our form fields.
@@ -24,6 +22,17 @@ pub struct InputField <'a> {
     effect_stage: RefCell<EffectStage<UniqueEffectId>>,
     init: RefCell<bool>,
     block: RefCell<Option<Block<'a>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputFieldId {
+    CustomerName,
+    CustomerPhone,
+    SalesmanName,
+    TechnicianName,
+    CheckInNotes,
+    Recommendations,
+    ServiceNumber,
 }
 
 impl <'a> InputField <'a>{
@@ -61,14 +70,14 @@ impl <'a> InputField <'a>{
         }
     }
 
-    fn set_block(&self, block: Block<'a>) {
+    pub fn set_block(&self, block: Block<'a>) {
         self.block.replace(Some(block));
     }
 }
 
 impl <'a> WidgetRef for InputField <'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let (background, text_color, shadow, highlight) = self.colors();
+        let (_background, text_color, _shadow, highlight) = self.colors();
         
         self.add_effect(area);
         
@@ -103,23 +112,7 @@ impl <'a> WidgetRef for InputField <'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputFieldId {
-    CustomerName,
-    CustomerPhone,
-    SalesmanName,
-    TechnicianName,
-    CheckInNotes,
-    Recommendations,
-    ServiceNumber,
-}
-
 impl<'a> ButtonType<'a> for InputField <'a> {
-    fn on_click(&self, _f: impl FnMut() + 'a) -> Self {
-        // You might not need on_click for an input field.
-        self.clone()
-    }
-
     fn click(&self) {
         self.set_state(State::Active);
     }
@@ -195,5 +188,4 @@ impl<'a> ButtonType<'a> for InputField <'a> {
             _ => {}
         }
     }
-
 }

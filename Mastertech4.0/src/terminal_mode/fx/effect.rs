@@ -154,7 +154,7 @@ pub fn color_cycle_fg<I, P>(
 ///
 /// # Returns
 /// A persistent Effect that animates the keyboard border lights.
-pub fn led_kbd_border() -> Effect {
+pub fn _led_kbd_border() -> Effect {
     let [color_1, color_2, color_3] = Theme.kbd_led_colors();
 
     let color_cycle = PingPongColorCycle::new(color_1, &[
@@ -164,7 +164,7 @@ pub fn led_kbd_border() -> Effect {
 
     color_cycle_fg(color_cycle, 100, |cell| {
         let symbol = cell.symbol();
-        symbol != " " && !symbol.chars().next().map(is_box_drawing).unwrap_or(false)
+        symbol != " " && !symbol.chars().next().map(_is_box_drawing).unwrap_or(false)
     })
 }
 
@@ -179,7 +179,7 @@ fn _clear_cells(duration: Duration) -> Effect {
     })
 }
 
-fn is_box_drawing(c: char) -> bool {
+fn _is_box_drawing(c: char) -> bool {
     ('\u{2500}'..='\u{257F}').contains(&c)
 }
 

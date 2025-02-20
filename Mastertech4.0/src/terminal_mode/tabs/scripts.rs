@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, Frame};
+use ratatui::{crossterm::event::MouseEvent, layout::Rect, prelude::Backend, Frame};
 use crate::terminal_mode::{styling::TURQUOISE, widgets::{button::Button, ButtonType, HandleWidget}};
 
 ////////////////////////////////
@@ -13,23 +13,15 @@ pub struct ScriptsTab<'a> {
 impl<'a> ScriptsTab<'a> {
     pub fn new() -> Self {
         Self {
-            tuneup_button: Button::new("Tuneup")
-                .theme(TURQUOISE)
-                .on_click(|| {
-                    log::info!("Tuneup clicked!");
-                }),
-            qc_button: Button::new("QC")
-                .theme(TURQUOISE)
-                .on_click(|| {
-                    log::info!("QC clicked!");
-                }),
+            tuneup_button: Button::new("Tuneup").theme(TURQUOISE),
+            qc_button: Button::new("QC").theme(TURQUOISE),
         }
     }
 }
 
 impl <'a> HandleWidget <'_> for ScriptsTab <'_> {
     /// Draw the entire ScriptsTab, including its buttons
-    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+    fn draw<B: Backend>(&mut self, _f: &mut Frame, _area: Rect) {
 
         // Possibly do a Layout to figure out where each button should go
         // let chunks = Layout::default()

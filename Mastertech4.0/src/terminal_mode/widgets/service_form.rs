@@ -1,8 +1,9 @@
-use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}, Frame};
-use crate::terminal_mode::{fx::{effect::{selected_category, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME}, widgets::SHORTCUT_SET};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use super::{button::{Button, State, Theme}, ButtonType, ShrinkArea};
-use tui_textarea::TextArea;
+use database::schema::utilities::get_prestashop_payload;
+use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Style, widgets::{Block, Borders, Widget, WidgetRef}, Frame};
+use crate::terminal_mode::{data::ServiceData, styling::{CATPPUCCIN, CATPPUCCINTHEME}, widgets::SHORTCUT_SET};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use super::{button::{Button, State}, input_field::{InputField, InputFieldId}, ButtonType, ShrinkArea};
+
 use std::cell::RefCell;
 // ---------------------------------------------------------------------------
 /// ServiceFormWidget: The complete two‑column form.
@@ -37,6 +38,9 @@ pub struct ServiceFormWidget<'a> {
 
     /// The final cursor position after drawing, so the parent can read it
     pub cached_cursor_position: RefCell<Option<(u16, u16)>>,
+
+    /// Service information (this is where all of these fields' values will be stored)
+    pub service_data: ServiceData,
 }
 
 impl<'a> ServiceFormWidget<'a> {
@@ -61,11 +65,12 @@ impl<'a> ServiceFormWidget<'a> {
             recommendations: InputField::new("Recommendations"),
             active_field: RefCell::new(None),
             cached_cursor_position: RefCell::new(None),
+            service_data: ServiceData::default(),
         }
     }
 
-    pub fn reset_all_states(&self) {
-        let active_field = self.active_field.borrow();
+    pub fn _reset_all_states(&self) {
+        let _active_field = self.active_field.borrow();
         // Manually reset state for each input field
         
         self.customer_name.set_state(State::Normal);
@@ -125,8 +130,7 @@ impl<'a> ServiceFormWidget<'a> {
         }
     }
 
-    /// Update the focused input field based on a mouse event with local coordinates.
-    pub fn check_active_field(&self, mouse_event: &MouseEvent) {
+    pub fn check_active_field(&self) {
         // Check each field; if it's active, set it as the active field and return.
         if self.order_number.is_active() {
             self.set_active_field(InputFieldId::ServiceNumber);
@@ -166,6 +170,7 @@ impl<'a> ServiceFormWidget<'a> {
     pub fn cursor_position(&self) -> Option<(u16, u16)> {
         *self.cached_cursor_position.borrow()
     }
+
 }
 
 /// Implement the HandleWidget trait for ServiceFormWidget.
@@ -175,11 +180,12 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
         // Suppose we want to put the form in `size`
         self.render_ref(area, f.buffer_mut());
         // Then we see if the form has a cursor, and place it
-        if let Some((local_x, local_y)) = self.cursor_position() {
-            // If you're using a scroll offset or the form is inside a sub-rectangle,
-            // you'll add (offset_x, offset_y) to these local coords.
-            f.set_cursor_position((local_x, local_y));
-        }
+        // if let Some((local_x, local_y)) = self.cursor_position() {
+        //     // If you're using a scroll offset or the form is inside a sub-rectangle,
+        //     // you'll add (offset_x, offset_y) to these local coords.
+        //     f.set_cursor_position((local_x, local_y));
+        // }
+        
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
@@ -222,7 +228,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
                 KeyCode::Tab => {
                     let Some(active_field) = *self.active_field.borrow() else { return false; };
                     let input_idx = Self::get_input_idx(active_field);
-                    let current_field = Self::get_field_id_from_idx(input_idx);
+                    // let current_field = Self::get_field_id_from_idx(input_idx);
                     self.set_input_state_from_input_idx(input_idx, State::Normal);
                     log::info!("active field: {active_field:?} / input_idx: {input_idx:?}");
                     self.set_input_idx(input_idx + 1);
@@ -246,7 +252,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
                             InputFieldId::CheckInNotes => self.checkin_notes.input.borrow_mut().input(key_event),
                             InputFieldId::Recommendations => self.recommendations.input.borrow_mut().input(key_event),
                             InputFieldId::ServiceNumber => {
-                                let mut order_num_field = &mut self.order_number;
+                                let order_num_field = &mut self.order_number;
                                 let mut text_area_input = order_num_field.input.borrow_mut();
                                 let input = text_area_input.input(key_event);
                                 if input {
@@ -284,7 +290,7 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         // Reset cursor position before drawing
         *self.cached_cursor_position.borrow_mut() = None;
-        let style = Style::default().fg(CATPPUCCIN.teal);
+        // let style = Style::default().fg(CATPPUCCIN.teal);
         // For brevity, your real code might define constraints differently
         let rows = Layout::default()
             .direction(Direction::Vertical)
@@ -313,9 +319,7 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
         self.order_number.render_ref(row1[0], buf);
 
         let get_ticket_btn_area = row1[1].shrink(4, 0);
-        self.get_ticket_button.on_click(|| {
-
-        });
+        let input = self.order_number.input.borrow();
 
         self.get_ticket_button.render_ref(get_ticket_btn_area, buf);
 
@@ -389,10 +393,10 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
             .split(rows[5]);
 
         let webroot_key_btn_area = row5[0].shrink(4, 0);
-        self.webroot_key_button.render( webroot_key_btn_area, buf);
+        self.webroot_key_button.render_ref( webroot_key_btn_area, buf);
 
         let superanti_key_btn_area = row5[1].shrink(4, 0);
-        self.superanti_key_button.render( superanti_key_btn_area, buf);
+        self.superanti_key_button.render_ref( superanti_key_btn_area, buf);
 
         // Row 7: CheckIn Notes | Recommendations
         let row6 = Layout::default()
@@ -413,193 +417,3 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// InputField: A wrapper around tui_input::Input for our form fields.
-#[derive(Clone, Debug)]
-pub struct InputField <'a> {
-    /// The underlying tui‑input state.
-    pub input: RefCell<TextArea<'a>>,
-    /// Title shown as the field’s label.
-    title: &'static str,
-    /// Store the last drawn area.
-    area: RefCell<Option<Rect>>,
-    /// state of input field
-    state: RefCell<State>,
-    /// duh
-    theme: Theme,
-    effect_stage: RefCell<EffectStage<UniqueEffectId>>,
-    init: RefCell<bool>,
-    block: RefCell<Option<Block<'a>>>,
-}
-
-impl <'a> InputField <'a>{
-    pub fn new(title: &'static str) -> Self {
-        let mut text_area = TextArea::default();
-        text_area.set_style(Style::default().fg(CATPPUCCIN.text));
-
-        let input = RefCell::new(text_area);
-
-        Self {
-            input,
-            title,
-            block: RefCell::new(None),
-            area: RefCell::new(None),
-            state: RefCell::new(State::Normal),
-            theme: CATPPUCCINTHEME,
-            effect_stage: RefCell::new(EffectStage::default()),
-            init: RefCell::new(true),
-        }
-    }
-
-    fn set_cursor(&self) {
-        let mut input = self.input.borrow_mut();
-        match *self.state.borrow() {
-            State::Active => input.set_cursor_style(Style::default().fg(Color::Cyan)),
-            _ => input.set_cursor_style(Style::default().hidden())
-        }
-    }
-
-    fn add_effect(&self, area: Rect) {
-        if *self.init.borrow() {
-            *self.init.borrow_mut() = false;
-            let effect1 = selected_category(Color::LightRed, area);
-            self.effect_stage.borrow_mut().add_effect(effect1);
-        }
-    }
-
-    fn set_block(&self, block: Block<'a>) {
-        self.block.replace(Some(block));
-    }
-}
-
-impl <'a> WidgetRef for InputField <'a> {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let (background, text_color, shadow, highlight) = self.colors();
-        
-        self.add_effect(area);
-        
-        // ----- Process TachyonFX Effects -----
-        // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-        let fx_duration = tachyonfx::Duration::from_millis(16);
-        // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-        self.effect_stage.borrow_mut().process_effects(fx_duration, buf, *buf.area());
-
-        // buf.set_style(area, Style::default().bg(background).fg(text_color));
-        // Save the area for later use.
-        self.set_area(area);
-        
-        // Draw a bordered block with the field’s title.
-        let default_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .title(Line::raw(self.title).fg(text_color))
-            .style(Style::default().fg(highlight));
-
-        // Render the input's value in a Paragraph.
-        let mut input = self.input.borrow_mut();
-        let block = if let Some(block) = self.block.borrow().clone(){
-            block
-        } 
-        else { 
-            default_block 
-        };
-
-        input.set_block(block);
-        input.render(area, buf);
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputFieldId {
-    CustomerName,
-    CustomerPhone,
-    SalesmanName,
-    TechnicianName,
-    CheckInNotes,
-    Recommendations,
-    ServiceNumber,
-}
-
-impl<'a> ButtonType<'a> for InputField <'a> {
-    fn on_click(&self, _f: impl FnMut() + 'a) -> Self {
-        // You might not need on_click for an input field.
-        self.clone()
-    }
-
-    fn click(&self) {
-        self.set_state(State::Active);
-    }
-
-    fn set_state(&self, state: State) {
-        // log::info!("set_state => Setting {:?} to {state:?}", self.title);
-        self.state.replace(state);
-        self.set_cursor();
-    }
-
-    fn get_area(&self) -> Option<Rect> {
-        *self.area.borrow()
-    }
-    
-    fn set_area(&self, area: Rect) {
-        self.area.replace(Some(area));
-    }
-    
-    fn is_active(&self) -> bool {
-        if let State::Active = *self.state.borrow() {
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Helper method to get the right colors based on the current state.
-    fn colors(&self) -> (Color, Color, Color, Color) {
-        let t = self.theme;
-        match *self.state.borrow() {
-            State::Normal => (CATPPUCCIN.lavender, t.text, t.shadow, t.highlight),
-            State::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),
-            State::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
-            State::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
-        }
-    }
-
-    fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-        // If we haven’t assigned an area yet, do nothing
-        let Some(area) = *self.area.borrow() else { return; };
-
-        let c = mouse_event.column;
-        let r = mouse_event.row;
-
-        let inside = c >= area.x 
-            && c < area.x + area.width 
-            && r >= area.y 
-            && r < area.y + area.height;
-
-        match mouse_event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if inside {
-                    // Toggle: if already active, set to Normal; otherwise, set to Active.
-                    if self.is_active() {
-                        self.set_state(State::Normal);
-                    } else {
-                        self.set_state(State::Active);
-                    }
-                } else {
-                    self.set_state(State::Normal);
-                }
-            }
-            MouseEventKind::Moved => {
-                // Only change state on hover if we're not already active.
-                if !self.is_active(){
-                    if inside {
-                        self.set_state(State::Hovered);
-                    } else {
-                        self.set_state(State::Normal);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-}

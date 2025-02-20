@@ -1,10 +1,8 @@
 use ratatui::{
-    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::Rect, style::{Color, Style, Stylize}, text::Line, widgets::WidgetRef
+    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::Rect, style::{Color, Style}, text::Line, widgets::WidgetRef
 };
-
 use crate::terminal_mode::styling::TURQUOISE;
 use std::{cell::RefCell, fmt::Debug, sync::Arc};
-
 use super::{ButtonType, SHORTCUT_SET};
 
 
@@ -20,8 +18,7 @@ use super::{ButtonType, SHORTCUT_SET};
 ///     to make the button not take the entire area it resides in
 /// - `on_click`: optional callback to do something when the button is clicked
 #[derive(Clone)]
-pub struct Button<'a>
-{
+pub struct Button<'a> {
     label: Line<'a>,
     theme: Theme,
     state: RefCell<State>,
@@ -85,12 +82,6 @@ impl<'a> Button<'a> {
 }
 
 impl <'a> ButtonType<'a> for Button<'a> {
-    fn on_click(&self, f: impl FnMut() + 'a) -> Self {
-        // log::info!("on_click event fired: {:?}", self.label);
-        self.on_click.replace(Some(Box::new(f)));
-        self.clone()
-    }
-    
     /// For when something (mouse, keyboard) triggers a "click" on this Button.
     fn click(&self) {
         if let Some(callback) = self.on_click.borrow_mut().as_mut() {
