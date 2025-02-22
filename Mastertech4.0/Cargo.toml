@@ -1,7 +1,7 @@
 [package]
 name = "MasterTech"
 version = "4.3.2"
-edition = "2021"
+edition = "2024"
 description = "Mastertech"
 build = "build.rs"
 

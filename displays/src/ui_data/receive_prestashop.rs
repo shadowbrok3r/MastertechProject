@@ -86,7 +86,7 @@ impl SharedContext {
             task.service_ticket = Some(ticket.clone());
 
             for (title, modal) in self.opened_modals.iter_mut() {
-                if let ModalType::CreateTaskModal(ref mut create_task_modal) = modal {
+                if let ModalType::CreateTaskModal(create_task_modal) = modal {
                     info!("Updating modal data for {title}");
                     create_task_modal.tur = self.tur.clone();
                 }

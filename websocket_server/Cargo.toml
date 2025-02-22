@@ -3,7 +3,7 @@
 [package]
 name = "websocket_server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 # forced-target = "x86_64-unknown-linux-gnu"Z
 
 [dependencies]
