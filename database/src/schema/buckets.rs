@@ -139,7 +139,7 @@ impl Node {
                 let target_folder = self.find_or_create_folder_mut(&normalized_prefix);
 
                 match target_folder {
-                    Node::Folder(_, ref mut children) => {
+                    Node::Folder(_, children) => {
                         for (key, node) in new_map {
                             let clean_key = key.trim_end_matches('/').to_string(); // Trim trailing slashes
                             children.insert(clean_key.clone(), node);
@@ -174,7 +174,7 @@ impl Node {
 
         for part in parts {
             current = match current {
-                Node::Folder(_, ref mut children) => {
+                Node::Folder(_, children) => {
                     children.entry(part.to_string()).or_insert_with(|| {
                         let new_folder_prefix = format!("{}/", part);
                         Node::Folder(new_folder_prefix, HashMap::new())
@@ -208,7 +208,7 @@ impl Node {
     
         for part in parts {
             match current {
-                Node::Folder(_, ref mut children) => {
+                Node::Folder(_, children) => {
                     if let Some(node) = children.get_mut(part) {
                         info!("find_folder_mut -> Found part: '{}', Node: {:?}", part, node);
                         current = node;
@@ -245,7 +245,7 @@ impl Node {
     
         for part in parts {
             match current {
-                Node::Folder(_, ref children) => {
+                Node::Folder(_, children) => {
                     if let Some(node) = children.get(part) {
                         current = node;
                     } else {

@@ -259,12 +259,12 @@ impl FileSystem {
                 current_path.push(part);
     
                 if current_path.is_dir() {
-                    if let Node::Folder(_, ref mut folder) = current {
+                    if let Node::Folder(_, folder) = current {
                         let folder_path = current_path.display().to_string();
                         current = folder.entry(part_str.to_string()).or_insert_with(|| Node::Folder(folder_path, HashMap::new()));
                     }
                 } else if current_path.is_file() {
-                    if let Node::Folder(ref full_path, ref mut folder) = current {
+                    if let Node::Folder(full_path, folder) = current {
                         let file_full_path = format!("{}/{}", full_path, part_str);
                         folder.insert(part_str.to_string(), Node::File((file_full_path, part_str.to_string())));
                     }
@@ -588,7 +588,7 @@ impl FileSystem {
         self.navigate_to(normalized_prefix.clone());
     
         // Check if the folder's contents have already been fetched
-        if let Some(Node::Folder(_, ref children)) = self.root.find_folder(&normalized_prefix) {
+        if let Some(Node::Folder(_, children)) = self.root.find_folder(&normalized_prefix) {
             if !children.is_empty() && children.len() > 1 {
                 info!("Folder '{}' already fetched. No need to re-fetch.", normalized_prefix);
             } else {

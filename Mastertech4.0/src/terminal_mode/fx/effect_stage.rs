@@ -36,8 +36,8 @@ impl<K: Clone + Debug + Ord> EffectStage<K> {
     pub fn unique(&mut self, key: impl Into<K>, fx: Effect) -> Effect {
         let key = key.into();
         let ctx = self.uniques.entry(key.clone())
-            .and_modify(|ctx| ctx.borrow_mut().instance_id = self.rng.gen())
-            .or_insert_with(|| ref_count(UniqueContext::new(key.clone(), self.rng.gen())))
+            .and_modify(|ctx| ctx.borrow_mut().instance_id = self.rng.r#gen())
+            .or_insert_with(|| ref_count(UniqueContext::new(key.clone(), self.rng.r#gen())))
             .clone();
 
         Unique::new(ctx, fx).into_effect()
