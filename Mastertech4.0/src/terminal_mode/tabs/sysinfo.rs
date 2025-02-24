@@ -53,7 +53,7 @@ impl SysinfoTab {
             tokio::spawn(async move {
                 loop {
                     let _ = tx.try_send(get_sysinfo().await.unwrap_or_default());
-                    tokio::time::sleep(std::time::Duration::from_secs_f32(0.5)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs_f32(0.2)).await;
                 }
                 // log::info!("Res: {res:?}");
             });
@@ -72,7 +72,7 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
         }
 
         // Update history buffers (using a fixed maximum history length)
-        const HISTORY_LENGTH: usize = 200;
+        const HISTORY_LENGTH: usize = 20;
         self.cpu_history.push(self.system.cpu_percentage as f64);
         if self.cpu_history.len() > HISTORY_LENGTH {
             self.cpu_history.remove(0);
@@ -136,11 +136,11 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             .block(
                 Block::default().borders(Borders::ALL).title("CPU Usage").style(Style::default().fg(CATPPUCCIN.sky))
             )
-            .x_bounds([0.0, 100.0])
+            .x_bounds([0.0, 20.0])
             .y_bounds([0.0, 100.0])
             .paint(|ctx| {
                 // Draw each segment connecting consecutive points.
-                for window in cpu_points.windows(2) {
+                for window in interpolate_points(&cpu_points, 5).windows(2) {
                     if let [p1, p2] = window {
                         ctx.draw(&Line {
                             x1: p1.0,
@@ -152,8 +152,9 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
                     }
                 }
                 // Add simple axis labels.
-                ctx.print(0.0, 100.0, "0%");
-                ctx.print(0.0, 0.0, "100%");
+                ctx.print(0.0, 100.0, "100%");
+                ctx.print(0.0, 50.0, "50%");
+                ctx.print(0.0, 0.0, "0%");
             });
         f.render_widget_ref(cpu_canvas, chart_chunks[0]);
 
@@ -178,7 +179,7 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             .x_bounds([0.0, 100.0])
             .y_bounds([0.0, 100.0])
             .paint(|ctx| {
-                for window in mem_points.windows(2) {
+                for window in interpolate_points(&mem_points, 5).windows(2) {
                     if let [p1, p2] = window {
                         ctx.draw(&Line {
                             x1: p1.0,
@@ -189,8 +190,9 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
                         });
                     }
                 }
-                ctx.print(0.0, 100.0, "0%");
-                ctx.print(0.0, 0.0, "100%");
+                ctx.print(0.0, 100.0, "100%");
+                ctx.print(0.0, 50.0, "50%");
+                ctx.print(0.0, 0.0, "0%");
             });
         f.render_widget_ref(mem_canvas, chart_chunks[1]);
 
@@ -212,10 +214,10 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             .block(
                 Block::default().borders(Borders::ALL).title("GPU Usage").style(Style::default().fg(CATPPUCCIN.mauve))
             )
-            .x_bounds([0.0, 100.0])
+            .x_bounds([0.0, 20.0])
             .y_bounds([0.0, 100.0])
             .paint(|ctx| {
-                for window in gpu_points.windows(2) {
+                for window in interpolate_points(&gpu_points, 5).windows(2) {
                     if let [p1, p2] = window {
                         ctx.draw(&Line {
                             x1: p1.0,
@@ -226,8 +228,9 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
                         });
                     }
                 }
-                ctx.print(0.0, 100.0, "0%");
-                ctx.print(0.0, 0.0, "100%");
+                ctx.print(0.0, 100.0, "100%");
+                ctx.print(0.0, 50.0, "50%");
+                ctx.print(0.0, 0.0, "0%");
             });
         f.render_widget_ref(gpu_canvas, chart_chunks[2]);
 
@@ -317,14 +320,47 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
      }
 }
 
+
+fn interpolate_points(points: &[(f64, f64)], steps: usize) -> Vec<(f64, f64)> {
+    let mut new_points = Vec::new();
+    for window in points.windows(2) {
+        if let [p1, p2] = window {
+            new_points.push(*p1);
+            for s in 1..steps {
+                let t = s as f64 / steps as f64;
+                let x = p1.0 + (p2.0 - p1.0) * t;
+                let y = p1.1 + (p2.1 - p1.1) * t;
+                new_points.push((x, y));
+            }
+        }
+    }
+    if let Some(last) = points.last() {
+        new_points.push(*last);
+    }
+    new_points
+}
+
+
+
 fn smooth_history(history: &Vec<f64>, window: usize) -> Vec<f64> {
+    // If the window is too small or there’s not enough data, just return a clone.
+    if window < 2 || history.len() < window {
+        return history.clone();
+    }
+    let half = window / 2;
     let mut smoothed = Vec::with_capacity(history.len());
     for i in 0..history.len() {
-        // Determine the window range, clamping at the boundaries.
-        let start = if i >= window / 2 { i - window / 2 } else { 0 };
-        let end = (i + window / 2 + 1).min(history.len());
-        let sum: f64 = history[start..end].iter().sum();
-        smoothed.push(sum / (end - start) as f64);
+        let mut sum = 0.0;
+        let mut total_weight = 0.0;
+        let start = if i >= half { i - half } else { 0 };
+        let end = (i + half + 1).min(history.len());
+        for j in start..end {
+            // Triangular weight: maximum at the center, falling off linearly.
+            let weight = 1.0 - ((i as isize - j as isize).abs() as f64) / (half as f64 + 1.0);
+            sum += history[j] * weight;
+            total_weight += weight;
+        }
+        smoothed.push(sum / total_weight);
     }
     smoothed
 }
