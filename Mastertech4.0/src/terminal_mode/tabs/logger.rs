@@ -32,7 +32,7 @@ impl LogFormatter for MyLogFormatter {
             log::Level::Error => {
                 let st = Style::new().red().bold();
                 let sp = Span::styled("======", st);
-                let mayday = Span::from(" MAYDAY MAYDAY ".to_string());
+                let mayday = Span::from(" ERROR ".to_string());
                 let sp2 = Span::styled("======", st);
                 lines.push(Line::from(vec![sp, mayday, sp2]).alignment(Alignment::Center));
                 lines.push(
@@ -48,7 +48,7 @@ impl LogFormatter for MyLogFormatter {
             log::Level::Error => {
                 let st = Style::new().blue().bold();
                 let sp = Span::styled("======", st);
-                let mayday = Span::from(" MAYDAY SEEN ? ".to_string());
+                let mayday = Span::from(" ERROR ? ".to_string());
                 let sp2 = Span::styled("======", st);
                 lines.push(Line::from(vec![sp, mayday, sp2]).alignment(Alignment::Center));
             }

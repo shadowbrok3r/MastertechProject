@@ -15,6 +15,8 @@ use ratatui::{
     }, layout::{Constraint, Direction, Flex, Layout}, widgets::Block,
 };
 
+use crate::filesystem::system_info::get_sysinfo;
+
 pub mod widgets;
 pub mod tabs;
 pub mod events;
@@ -65,17 +67,6 @@ impl Default for TerminalApp <'_>{
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
-    // Init the logger
-    // Configure log level and log file
-    // let log_level = log::LevelFilter::Info;
-    // let log_file = std::fs::File::create("output.log").unwrap();
-    // simplelog::WriteLogger::init(
-    //     log_level,
-    //     simplelog::Config::default(),
-    //     log_file
-    // ).unwrap();
-
-
     // Set max_log_level to Trace
     tui_logger::init_logger(log::LevelFilter::Trace).unwrap();
     // Set default level for unknown targets to Trace
@@ -87,7 +78,10 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app = TerminalApp::default();
+    let mut app = TerminalApp::default();
+    if let Ok(sysinfo) = get_sysinfo().await {
+        app.sysinfo_tab.set_sysinfo(sysinfo);
+    }
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;
@@ -188,7 +182,6 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
 
                 let layout = Layout::default()
                     .direction(Direction::Vertical)
-                    .margin(1)
                     .constraints([
                         Constraint::Percentage(8), // for tabs
                         Constraint::Percentage(92),// rest of content
@@ -218,6 +211,20 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                         CellFilter::FgColor(CATPPUCCIN.blue)
                     );
 
+                    let effect4 = outline_selected_cells(
+                        &mut app.menu_bar.effect_stage, 
+                        tab_area.as_size(),
+                        CATPPUCCIN.lavender,
+                        CellFilter::FgColor(CATPPUCCIN.lavender)
+                    );
+
+                    let effect5 = outline_selected_cells(
+                        &mut app.menu_bar.effect_stage, 
+                        tab_area.as_size(),
+                        CATPPUCCIN.teal,
+                        CellFilter::FgColor(CATPPUCCIN.teal)
+                    );
+
                     let effect1 = outline_selected_cells(
                         &mut app.menu_bar.effect_stage, 
                         tab_area.as_size(),
@@ -226,16 +233,16 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                     );
 
                     app.menu_bar.effect_stage.add_effect(effect2);
-                    app.service_tab.effect_stage.add_effect(effect3);
+                    // app.service_tab.effect_stage.add_effect(effect3);
                     app.effect_stage.add_effect(effect1);
+                    app.sysinfo_tab.effect_stage.add_effect(effect3);
+                    app.sysinfo_tab.effect_stage.add_effect(effect4);
+                    app.sysinfo_tab.effect_stage.add_effect(effect5);
+                    // app.sysinfo_tab.effect_stage.add_effect(effect3);
                     // app.service_tab.effect_stage.add_effect(effect1);
                 }
 
                 app.menu_bar.draw::<B>(f, tab_area);
-                
-                // let logger = TuiLoggerWidget::default()
-                // .block(Block::bordered().title("Logs")
-                // .border_type(ratatui::widgets::BorderType::Rounded));
 
                 let buf = &mut Buffer::empty(Rect::ZERO);
 
@@ -258,6 +265,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 // Process all effects added to our effect_stage. They will update and render onto f's buffer.
                 app.menu_bar.effect_stage.process_effects(fx_duration, f.buffer_mut(), tab_area);
                 app.service_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
+                app.sysinfo_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
                 let area = f.area();
                 app.effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
             }

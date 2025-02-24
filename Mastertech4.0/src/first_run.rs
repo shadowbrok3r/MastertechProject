@@ -19,7 +19,9 @@ impl MasterTechApp {
         // let x = std::env::current_exe().unwrap();
         // std::fs::rename( x, "Mastertech1").unwrap();
         let tx = self.context.db_tx.clone();
-        let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
+        let pair = Arc::new(
+            (Mutex::new(ComputerData::default()), Condvar::new())
+        );
         let pair_clone = Arc::clone(&pair);
 
         spawn(async move {

@@ -2,7 +2,7 @@ use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, pre
 use crate::terminal_mode::{data::ServiceData, styling::{CATPPUCCIN, CATPPUCCINTHEME}, widgets::SHORTCUT_SET};
 use super::{button::{Button, State}, input_field::{InputField, InputFieldId}, ButtonType, ShrinkArea};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
 
 // ---------------------------------------------------------------------------
 /// ServiceFormWidget: The complete two‑column form.
@@ -10,7 +10,7 @@ pub struct ServiceFormWidget<'a> {
     input_idx: RefCell<i32>,
     get_ticket_button: Button<'a>,
     submit_button: Button<'a>,
-    order_number: InputField<'a>,
+    order_number: Rc<InputField<'a>>,
 
     // Row 1: Customer Info
     pub customer_name: InputField<'a>,
@@ -39,35 +39,50 @@ pub struct ServiceFormWidget<'a> {
     pub cached_cursor_position: RefCell<Option<(u16, u16)>>,
 
     /// Service information (this is where all of these fields' values will be stored)
-    pub service_data: ServiceData,
+    pub service_data: Arc<Mutex<ServiceData>>,
 }
 
 impl<'a> ServiceFormWidget<'a> {
     pub fn new() -> Self {
+        let service_data =  Arc::new(Mutex::new(ServiceData::default()));
+        let svc_data_clone = service_data.clone();
+        // Wrap the InputField in an Rc.
+        let service_num_field = Rc::new(InputField::new("Service #"));
+        // Clone the Rc pointer (both point to the same underlying InputField).
+        let service_num_field_clone = Rc::clone(&service_num_field);
+        let btn = Button::new("Get Ticket")
+            .theme(CATPPUCCINTHEME)
+            .on_click(move || {
+                // Borrow the text area inside the closure; this is the same instance.
+                let input = service_num_field_clone.input.borrow();
+                let txt = input.lines().get(0).map_or("", |v| v);
+
+                let mut svc_data = svc_data_clone.lock().unwrap();
+                svc_data.ticket_data.service_number = txt.to_string();
+                log::info!("service_data: {svc_data:?}");
+                svc_data.get_ticket();
+            });
         Self {
+            order_number: service_num_field,
+            get_ticket_button: btn,
             input_idx: RefCell::new(0),
-            // Single-line inputs for row 1 & 2:
             customer_name: InputField::new("Customer Name"),
             customer_phone: InputField::new("Customer Phone"),
             salesman_name: InputField::new("Salesman Name"),
             technician_name: InputField::new("Technician Name"),
-            order_number: InputField::new("Service #"),
-            // Buttons:
-            get_ticket_button: Button::new("Get Ticket").theme(CATPPUCCINTHEME),
             submit_button: Button::new("Submit").theme(CATPPUCCINTHEME),
             get_keys_button: Button::new("Get Keys").theme(CATPPUCCINTHEME),
             check_seb_button: Button::new("Check SEB").theme(CATPPUCCINTHEME),
             webroot_key_button: Button::new("Webroot Key").theme(CATPPUCCINTHEME),
             superanti_key_button: Button::new("SuperAnti Key").theme(CATPPUCCINTHEME),
-            // Multiline inputs:
             checkin_notes: InputField::new("CheckIn Notes"),
             recommendations: InputField::new("Recommendations"),
             active_field: RefCell::new(None),
             cached_cursor_position: RefCell::new(None),
-            service_data: ServiceData::default(),
+            service_data,
         }
     }
-
+    
     pub fn _reset_all_states(&self) {
         let _active_field = self.active_field.borrow();
         // Manually reset state for each input field
@@ -175,8 +190,11 @@ impl<'a> ServiceFormWidget<'a> {
 /// Implement the HandleWidget trait for ServiceFormWidget.
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'a> {
-    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {    
-        // Suppose we want to put the form in `size`
+    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {   
+        if let Ok(svc_data) = &mut self.service_data.lock() {
+            let _ = svc_data.receive();
+        }
+
         self.render_ref(area, f.buffer_mut());
         // Then we see if the form has a cursor, and place it
         // if let Some((local_x, local_y)) = self.cursor_position() {
@@ -318,7 +336,6 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
         self.order_number.render_ref(row1[0], buf);
 
         let get_ticket_btn_area = row1[1].shrink(4, 0);
-        let input = self.order_number.input.borrow();
 
         self.get_ticket_button.render_ref(get_ticket_btn_area, buf);
 
