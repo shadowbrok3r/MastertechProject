@@ -659,7 +659,7 @@ pub struct GetKeysResponse {
     pub superanti_key: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default )]
 pub struct SystemInformation {
     /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,

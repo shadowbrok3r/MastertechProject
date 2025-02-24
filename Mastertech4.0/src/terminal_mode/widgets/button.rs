@@ -75,10 +75,10 @@ impl<'a> Button<'a> {
         self
     }
 
-    // pub fn on_click(mut self, f: impl FnMut() + 'a) -> Self {
-    //     self.on_click.replace(Some(Box::new(f)));
-    //     self
-    // }
+    pub fn on_click(self, f: impl FnMut() + 'a) -> Self {
+        self.on_click.replace(Some(Box::new(f)));
+        self
+    }
 }
 
 impl <'a> ButtonType<'a> for Button<'a> {
@@ -86,7 +86,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
     fn click(&self) {
         if let Some(callback) = self.on_click.borrow_mut().as_mut() {
             log::info!("click callback fired");
-            callback(); // Call the callback without moving it.
+            callback(); // Call the callback
         }
     }
     
