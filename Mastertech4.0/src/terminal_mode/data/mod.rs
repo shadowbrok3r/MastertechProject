@@ -1,8 +1,8 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use database::schema::{prestashop_schema, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
-use crossbeam::channel::{Receiver, Sender};
+use database::schema::{prestashop_schema::PrestashopPayload, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
+use crossbeam::channel::Sender;
 use reqwest::Client;
 use surrealdb::RecordId;
 
@@ -15,15 +15,13 @@ pub struct ServiceData {
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
-    pub prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
-    prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
     send_specs: bool,
     client: Client,
 }
 
 impl Default for ServiceData {
     fn default() -> Self {
-        let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
+        
         
         let pair = Arc::new(
             (Mutex::new(ComputerData::default()), Condvar::new())
@@ -59,105 +57,98 @@ impl Default for ServiceData {
             task_notes: Default::default(),
             send_specs: true,
             client: Client::new(),
-
-            prestashop_api_tx,
-            prestashop_api_rx,
         }
     }
 }
 
 impl ServiceData {
-    pub fn receive(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        if let Ok(presta_data) = self.prestashop_api_rx.try_recv() {
-            log::info!("{:?}", serde_json::to_value(&presta_data)?);
-            let customer = &mut self.customer_data;
-            let ticket = &mut self.ticket_data;
-            let task = &mut self.task_data;
-            let task_notes = &mut self.task_notes;
+    pub fn receive(&mut self, presta_data: PrestashopPayload) {
+        log::info!("{:?}", serde_json::to_value(&presta_data).unwrap_or_default());
+        let customer = &mut self.customer_data;
+        let ticket = &mut self.ticket_data;
+        let task = &mut self.task_data;
+        let task_notes = &mut self.task_notes;
 
-            let service_details = presta_data.order.associations.order_service.clone();
-            let mut services: Vec<RecordId> = Vec::new();
+        let service_details = presta_data.order.associations.order_service.clone();
+        let mut services: Vec<RecordId> = Vec::new();
 
-            let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
-            let split_rep = presta_data.split_rep.clone().unwrap_or_default();
+        let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
+        let split_rep = presta_data.split_rep.clone().unwrap_or_default();
 
-            let sales_rep_initials = sales_rep.initials.clone();
-            let split_initials = split_rep.initials.clone();
+        let sales_rep_initials = sales_rep.initials.clone();
+        let split_initials = split_rep.initials.clone();
 
-            let email = sales_rep
-                .email
-                .split_once("@")
-                .clone()
-                .unwrap_or((&sales_rep_initials, ""))
-                .0
-                .to_string();
+        let email = sales_rep
+            .email
+            .split_once("@")
+            .clone()
+            .unwrap_or((&sales_rep_initials, ""))
+            .0
+            .to_string();
 
-            let email_split_rep = split_rep
-                .email
-                .split_once("@")
-                .clone()
-                .unwrap_or((&split_initials, ""))
-                .0
-                .to_string();
+        let email_split_rep = split_rep
+            .email
+            .split_once("@")
+            .clone()
+            .unwrap_or((&split_initials, ""))
+            .0
+            .to_string();
 
-            for msg in presta_data.customer_messages.iter() {
-                task_notes.push(TaskNotePayload {
-                    everest_initials: msg.id_employee.clone(),
-                    note: msg.message.clone(),
-                    ..Default::default()
-                })
-            }
-
-            customer.id = presta_data.customer.id.clone();
-            customer.cust_code = presta_data.customer.cust_code.clone();
-            customer.email = presta_data.customer.email.clone();
-            customer.name = presta_data.customer.name.clone();
-            customer.phone_number = presta_data.customer.phone_number.clone();
-            ticket.salesman = email_split_rep;
-            ticket.sales_rep = email.clone();
-            ticket.tech = email.clone();
-            log::info!(
-                "Salesman: {:?}\nTech: {:?}",
-                ticket.salesman.clone(),
-                ticket.tech.clone()
-            );
-            ticket.customer = Some(customer.clone());
-            ticket.checkin_rep = email;
-            ticket.terms = presta_data.order.payment.clone();
-            ticket.ticket_total = presta_data.order.total_products_wt.clone();
-            ticket.doc_alias = presta_data.order.order_type.clone();
-            ticket.service_number = presta_data.order.id.clone();
-            ticket.id = RecordId::from((
-                TICKET_TABLE.to_string(),
-                ticket.service_number.clone(),
-            ));
-
-            services.push(ticket.id.clone());
-            
-            if !service_details.is_empty() {
-                if service_details.len() == 1 {
-                    let svc = service_details.get(0);
-                    if let Some(service) = svc {
-                        ticket.checkin_notes = service.check_in_notes.clone();
-                    }
-                } else {
-                    log::info!("Theres a couple.... {:?}", service_details);
-                }
-            }
-
-            task.service_ticket = Some(ticket.clone());
+        for msg in presta_data.customer_messages.iter() {
+            task_notes.push(TaskNotePayload {
+                everest_initials: msg.id_employee.clone(),
+                note: msg.message.clone(),
+                ..Default::default()
+            })
         }
-        Ok(())
+
+        customer.id = presta_data.customer.id.clone();
+        customer.cust_code = presta_data.customer.cust_code.clone();
+        customer.email = presta_data.customer.email.clone();
+        customer.name = presta_data.customer.name.clone();
+        customer.phone_number = presta_data.customer.phone_number.clone();
+        ticket.salesman = email_split_rep;
+        ticket.sales_rep = email.clone();
+        ticket.tech = email.clone();
+        log::info!(
+            "Salesman: {:?}\nTech: {:?}",
+            ticket.salesman.clone(),
+            ticket.tech.clone()
+        );
+        ticket.customer = Some(customer.clone());
+        ticket.checkin_rep = email;
+        ticket.terms = presta_data.order.payment.clone();
+        ticket.ticket_total = presta_data.order.total_products_wt.clone();
+        ticket.doc_alias = presta_data.order.order_type.clone();
+        ticket.service_number = presta_data.order.id.clone();
+        ticket.id = RecordId::from((
+            TICKET_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+
+        services.push(ticket.id.clone());
+        
+        if !service_details.is_empty() {
+            if service_details.len() == 1 {
+                let svc = service_details.get(0);
+                if let Some(service) = svc {
+                    ticket.checkin_notes = service.check_in_notes.clone();
+                }
+            } else {
+                log::info!("Theres a couple.... {:?}", service_details);
+            }
+        }
+
+        task.service_ticket = Some(ticket.clone());
     }
     
-    pub fn get_ticket(&self) {
+    pub fn get_ticket(&self, tx: Sender<PrestashopPayload>) {
         let input = self.ticket_data.service_number.clone();
-        let tx = self.prestashop_api_tx.clone();
         if !input.is_empty() {
             tokio::spawn(async move {
-
                 let prestashop_order = get_prestashop_payload(&input).await?;
-                tx.try_send(prestashop_order)?;
+                let res = tx.try_send(prestashop_order);
+                log::info!("RES: {res:?}");
                 Ok::<(), anyhow::Error>(())
             });
         }
