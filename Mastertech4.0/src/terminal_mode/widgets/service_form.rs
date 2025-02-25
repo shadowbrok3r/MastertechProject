@@ -1,3 +1,5 @@
+use crossbeam::channel::{Receiver, Sender};
+use database::schema::prestashop_schema;
 use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{data::ServiceData, styling::{CATPPUCCIN, CATPPUCCINTHEME}, widgets::SHORTCUT_SET};
 use super::{button::{Button, State}, input_field::{InputField, InputFieldId}, ButtonType, ShrinkArea};
@@ -40,10 +42,14 @@ pub struct ServiceFormWidget<'a> {
 
     /// Service information (this is where all of these fields' values will be stored)
     pub service_data: Arc<Mutex<ServiceData>>,
+
+    pub prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
+    prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
 }
 
 impl<'a> ServiceFormWidget<'a> {
     pub fn new() -> Self {
+        let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let service_data =  Arc::new(Mutex::new(ServiceData::default()));
         let svc_data_clone = service_data.clone();
 
@@ -52,6 +58,8 @@ impl<'a> ServiceFormWidget<'a> {
 
         // Clone the Rc pointer (both point to the same underlying InputField).
         let service_num_field_clone = Rc::clone(&service_num_field);
+
+        let tx = prestashop_api_tx.clone();
         let get_ticket_button = Button::new("Get Ticket")
             .theme(CATPPUCCINTHEME)
             .on_click(move || {
@@ -62,7 +70,7 @@ impl<'a> ServiceFormWidget<'a> {
                 let mut svc_data = svc_data_clone.lock().unwrap();
                 svc_data.ticket_data.service_number = txt.to_string();
                 log::info!("service_data: {svc_data:?}");
-                svc_data.get_ticket();
+                svc_data.get_ticket(prestashop_api_tx.clone());
             });
 
         let submit_button = Button::new("Submit")
@@ -96,6 +104,9 @@ impl<'a> ServiceFormWidget<'a> {
             active_field: RefCell::new(None),
             cached_cursor_position: RefCell::new(None),
             service_data,
+
+            prestashop_api_tx: tx,
+            prestashop_api_rx,
         }
     }
     
@@ -207,8 +218,32 @@ impl<'a> ServiceFormWidget<'a> {
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {   
-        if let Ok(svc_data) = &mut self.service_data.lock() {
-            let _ = svc_data.receive();
+        if let Ok(presta_data) = self.prestashop_api_rx.try_recv() {
+            log::info!("GOT SOME MAIL");
+            if let Ok(svc_data) = &mut self.service_data.lock() {
+                let _ = svc_data.receive(presta_data);
+                let mut customer_name = self.customer_name.input.borrow_mut();
+                customer_name.select_all();
+                customer_name.cut();
+                customer_name.insert_str(svc_data.customer_data.name.clone());
+                let mut customer_phone = self.customer_phone.input.borrow_mut();
+                customer_phone.select_all();
+                customer_phone.cut();
+                customer_phone.insert_str(svc_data.customer_data.phone_number.clone());
+                let mut salesman_name = self.salesman_name.input.borrow_mut();
+                salesman_name.select_all();
+                salesman_name.cut();
+                salesman_name.insert_str(svc_data.ticket_data.sales_rep.clone());
+                let mut technician_name = self.technician_name.input.borrow_mut();
+                technician_name.select_all();
+                technician_name.cut();
+                technician_name.insert_str(svc_data.ticket_data.tech.clone());
+                let mut checkin_notes = self.checkin_notes.input.borrow_mut();
+                checkin_notes.select_all();
+                checkin_notes.cut();
+                checkin_notes.insert_str(svc_data.ticket_data.checkin_notes.clone());
+                log::info!("SVC DATA: {svc_data:?}");
+            }
         }
 
         self.render_ref(area, f.buffer_mut());
