@@ -72,7 +72,7 @@ impl ComputerInfo for ComputerData {
         };
         
         let sys = &mut machine.sysinfo.lock().await;
-        info!("GPU: {gpu_info:?}");
+        // info!("GPU: {gpu_info:?}");
         sys.refresh_all();
         
         info!("Filesystem -> get_computer_data -> Pulling Drive information");
@@ -278,7 +278,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     };
     
     let sys = &mut machine.sysinfo.lock().await;
-    info!("GPU: {gpu_info:?}");
+    // info!("GPU: {gpu_info:?}");
     sys.refresh_all();
     let mut cpu_percentage = f32::default();
     let mut cpu_clock = f32::default();

@@ -67,10 +67,10 @@ impl Default for TerminalApp <'_>{
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
-    // Set max_log_level to Trace
-    tui_logger::init_logger(log::LevelFilter::Trace).unwrap();
-    // Set default level for unknown targets to Trace
-    tui_logger::set_default_level(log::LevelFilter::Info);
+    // // Set max_log_level to Trace
+    // tui_logger::init_logger(log::LevelFilter::Trace).unwrap();
+    // // Set default level for unknown targets to Trace
+    // tui_logger::set_default_level(log::LevelFilter::Info);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

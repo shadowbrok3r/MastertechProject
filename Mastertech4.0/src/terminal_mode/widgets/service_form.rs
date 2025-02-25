@@ -46,11 +46,13 @@ impl<'a> ServiceFormWidget<'a> {
     pub fn new() -> Self {
         let service_data =  Arc::new(Mutex::new(ServiceData::default()));
         let svc_data_clone = service_data.clone();
+
         // Wrap the InputField in an Rc.
         let service_num_field = Rc::new(InputField::new("Service #"));
+
         // Clone the Rc pointer (both point to the same underlying InputField).
         let service_num_field_clone = Rc::clone(&service_num_field);
-        let btn = Button::new("Get Ticket")
+        let get_ticket_button = Button::new("Get Ticket")
             .theme(CATPPUCCINTHEME)
             .on_click(move || {
                 // Borrow the text area inside the closure; this is the same instance.
@@ -62,15 +64,29 @@ impl<'a> ServiceFormWidget<'a> {
                 log::info!("service_data: {svc_data:?}");
                 svc_data.get_ticket();
             });
+
+        let submit_button = Button::new("Submit")
+            .theme(CATPPUCCINTHEME);
+            // .on_click(move || {
+            //     // Borrow the text area inside the closure; this is the same instance.
+            //     let input = service_num_field_clone.input.borrow();
+            //     let txt = input.lines().get(0).map_or("", |v| v);
+
+            //     let mut svc_data = svc_data_clone.lock().unwrap();
+            //     svc_data.ticket_data.service_number = txt.to_string();
+            //     log::info!("service_data: {svc_data:?}");
+            //     svc_data.get_ticket();
+            // });
+
         Self {
             order_number: service_num_field,
-            get_ticket_button: btn,
             input_idx: RefCell::new(0),
             customer_name: InputField::new("Customer Name"),
             customer_phone: InputField::new("Customer Phone"),
             salesman_name: InputField::new("Salesman Name"),
             technician_name: InputField::new("Technician Name"),
-            submit_button: Button::new("Submit").theme(CATPPUCCINTHEME),
+            get_ticket_button,
+            submit_button,
             get_keys_button: Button::new("Get Keys").theme(CATPPUCCINTHEME),
             check_seb_button: Button::new("Check SEB").theme(CATPPUCCINTHEME),
             webroot_key_button: Button::new("Webroot Key").theme(CATPPUCCINTHEME),
