@@ -1,3 +1,5 @@
+use std::{collections::HashMap, time::Instant};
+
 use crossbeam::channel::{Receiver, Sender};
 use ratatui::{
     crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Color, Style}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState}, Frame
@@ -11,14 +13,23 @@ pub struct SysinfoTab {
     first_run: bool,
     process_scroll_state: ScrollbarState,
     process_table_state: TableState,
-    cpu_history: Vec<f64>,
-    mem_history: Vec<f64>,
-    gpu_history: Vec<f64>,
-    
+    cpu_history: Vec<Sample>,
+    mem_history: Vec<Sample>,
+    gpu_history: Vec<Sample>,
+    component_temp_history: HashMap<String, Vec<Sample>>,
+
     tx: Sender<SystemInformation>,
     rx: Receiver<SystemInformation>,
 
+    start_time: Instant,
     pub effect_stage: EffectStage<UniqueEffectId>,
+}
+
+/// A sample that records the elapsed time (in seconds) and the value.
+#[derive(Debug)]
+struct Sample {
+    time: f64,  // seconds since start
+    value: f64,
 }
 
 impl SysinfoTab {
@@ -34,7 +45,9 @@ impl SysinfoTab {
             cpu_history: Vec::new(),
             mem_history: Vec::new(),
             gpu_history: Vec::new(),
-            
+            component_temp_history: HashMap::new(),
+
+            start_time: Instant::now(),
             effect_stage: EffectStage::default(),
 
             tx, 
@@ -45,6 +58,52 @@ impl SysinfoTab {
     pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) -> &mut Self {
         self.system = sysinfo;
         self
+    }
+
+    /// Call this on every update (or in your draw loop) to record the latest value.
+    fn update_history(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.start_time).as_secs_f64();
+
+        // CPU history
+        self.cpu_history.push(Sample {
+            time: elapsed,
+            value: self.system.cpu_percentage as f64,
+        });
+        // Memory history
+        let mem_percent = if self.system.total_memory > 0.0 {
+            self.system.used_memory / self.system.total_memory * 100.0
+        } else {
+            0.0
+        };
+        self.mem_history.push(Sample {
+            time: elapsed,
+            value: mem_percent as f64,
+        });
+        // GPU history
+        let gpu_percent = self
+            .system
+            .gpu_info
+            .usage
+            .get(0)
+            .map(|u| u.gpu as f64)
+            .unwrap_or(0.0);
+        self.gpu_history.push(Sample {
+            time: elapsed,
+            value: gpu_percent,
+        });
+        // Component temperatures: update history for each component.
+        for (comp, &temp) in self.system.component_temps.iter() {
+            self.component_temp_history
+                .entry(comp.clone())
+                .or_insert_with(Vec::new)
+                .push(Sample {
+                    time: elapsed,
+                    value: temp as f64,
+                });
+        }
+        log::info!("self.component_temp_history: {:?}", self.component_temp_history);
+        // (Optionally, trim histories if they exceed a desired maximum length.)
     }
 
     fn get_sysinfo(&mut self) {
@@ -63,6 +122,7 @@ impl SysinfoTab {
 
 impl<'a> HandleWidget<'a> for SysinfoTab {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        self.update_history();
         if self.first_run {
             self.first_run = false;
             self.get_sysinfo();
@@ -71,75 +131,64 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             self.set_sysinfo(sysinfo);
         }
 
-        // Update history buffers (using a fixed maximum history length)
-        const HISTORY_LENGTH: usize = 20;
-        self.cpu_history.push(self.system.cpu_percentage as f64);
-        if self.cpu_history.len() > HISTORY_LENGTH {
-            self.cpu_history.remove(0);
+        // Update histories and fetch new sysinfo if available.
+        self.update_history();
+        if self.first_run {
+            self.first_run = false;
+            self.get_sysinfo();
         }
-        let mem_percent = if self.system.total_memory > 0.0 {
-            self.system.used_memory / self.system.total_memory * 100.0
+        if let Ok(sysinfo) = self.rx.try_recv() {
+            self.set_sysinfo(sysinfo);
+        }
+
+        // --- Overall Layout ---
+        // Split the terminal vertically into two halves:
+        // Top half for charts (2 rows × 2 columns)
+        // Bottom half for textual info (left) and process list (right).
+        let overall_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(area);
+
+        // --- Top Half: 2×2 Grid of Charts ---
+        // Split the top half horizontally into two equal columns.
+        let top_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(overall_chunks[0]);
+
+        // Left column: split vertically into two equal panels.
+        let left_grid = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(top_columns[0]);
+
+        // Right column: split vertically into two equal panels.
+        let right_grid = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(top_columns[1]);
+
+        // Define a time window for the usage charts.
+        let time_window = 10.0; // seconds
+        let current_time = Instant::now().duration_since(self.start_time).as_secs_f64();
+        let lower_bound = if current_time > time_window {
+            current_time - time_window
         } else {
             0.0
         };
-        self.mem_history.push(mem_percent.into());
-        if self.mem_history.len() > HISTORY_LENGTH {
-            self.mem_history.remove(0);
-        }
-        let gpu_percent = self
-            .system
-            .gpu_info
-            .usage
-            .get(0)
-            .map(|u| u.gpu as f64)
-            .unwrap_or(0.0);
-        self.gpu_history.push(gpu_percent);
-        if self.gpu_history.len() > HISTORY_LENGTH {
-            self.gpu_history.remove(0);
-        }
 
-        // Split horizontally: left (65%) for charts, right (35%) for process table and footer.
-        let h_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)].as_ref())
-            .split(area);
-
-        // Left side: stack CPU, Memory, and GPU charts vertically.
-        let chart_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(34),
-                ]
-                .as_ref(),
-            )
-            .split(h_chunks[0]);
-
-        // --- CPU Chart ---
-        let smoothed_cpu = smooth_history(&self.cpu_history, 3);
-        let cpu_points: Vec<(f64, f64)> = self
-            .cpu_history
+        // --- CPU Chart (Left‑Top) ---
+        let cpu_points: Vec<(f64, f64)> = self.cpu_history
             .iter()
-            .enumerate()
-            .map(|(i, &val)| {
-                let x = if smoothed_cpu.len() > 1 {
-                    i as f64 / ((smoothed_cpu.len() - 1) as f64) * 100.0
-                } else {
-                    0.0
-                };
-                (x, val)
-            })
+            .filter(|s| s.time >= lower_bound)
+            .map(|s| (s.time, s.value))
             .collect();
         let cpu_canvas = Canvas::default()
-            .block(
-                Block::default().borders(Borders::ALL).title("CPU Usage").style(Style::default().fg(CATPPUCCIN.sky))
-            )
-            .x_bounds([0.0, 20.0])
+            .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
+            .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
             .paint(|ctx| {
-                // Draw each segment connecting consecutive points.
                 for window in interpolate_points(&cpu_points, 5).windows(2) {
                     if let [p1, p2] = window {
                         ctx.draw(&Line {
@@ -147,36 +196,29 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
                             y1: p1.1,
                             x2: p2.0,
                             y2: p2.1,
-                            color: CATPPUCCIN.maroon,
+                            color: Color::Red,
                         });
                     }
                 }
-                // Add simple axis labels.
-                ctx.print(0.0, 100.0, "100%");
-                ctx.print(0.0, 50.0, "50%");
-                ctx.print(0.0, 0.0, "0%");
+                ctx.print(lower_bound, 0.0, "100%");
+                ctx.print(lower_bound, 100.0, "0%");
             });
-        f.render_widget_ref(cpu_canvas, chart_chunks[0]);
+        f.render_widget_ref(cpu_canvas, left_grid[0]);
 
-        // --- Memory Chart ---
-        let mem_points: Vec<(f64, f64)> = self
-            .mem_history
+        // --- Memory Chart (Left‑Bottom) ---
+        let mem_points: Vec<(f64, f64)> = self.mem_history
             .iter()
-            .enumerate()
-            .map(|(i, &val)| {
-                let x = if self.mem_history.len() > 1 {
-                    i as f64 / ((self.mem_history.len() - 1) as f64) * 100.0
-                } else {
-                    0.0
-                };
-                (x, val)
-            })
+            .filter(|s| s.time >= lower_bound)
+            .map(|s| (s.time, s.value))
             .collect();
         let mem_canvas = Canvas::default()
             .block(
-                Block::default().borders(Borders::ALL).title("Memory Usage").style(Style::default().fg(CATPPUCCIN.rosewater))
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Memory Usage")
+                    .style(Style::default().fg(CATPPUCCIN.rosewater)),
             )
-            .x_bounds([0.0, 100.0])
+            .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
             .paint(|ctx| {
                 for window in interpolate_points(&mem_points, 5).windows(2) {
@@ -190,34 +232,29 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
                         });
                     }
                 }
-                ctx.print(0.0, 100.0, "100%");
-                ctx.print(0.0, 50.0, "50%");
-                ctx.print(0.0, 0.0, "0%");
+                ctx.print(lower_bound, 0.0, "100%");
+                ctx.print(lower_bound, 100.0, "0%");
             });
-        f.render_widget_ref(mem_canvas, chart_chunks[1]);
+        f.render_widget_ref(mem_canvas, left_grid[1]);
 
-        // --- GPU Chart ---
-        let gpu_points: Vec<(f64, f64)> = self
-            .gpu_history
+        // --- GPU Chart (Right‑Top) ---
+        let gpu_points: Vec<(f64, f64)> = self.gpu_history
             .iter()
-            .enumerate()
-            .map(|(i, &val)| {
-                let x = if self.gpu_history.len() > 1 {
-                    i as f64 / ((self.gpu_history.len() - 1) as f64) * 100.0
-                } else {
-                    0.0
-                };
-                (x, val)
-            })
+            .filter(|s| s.time >= lower_bound)
+            .map(|s| (s.time, s.value))
             .collect();
+        let gpu_points_interp = interpolate_points(&gpu_points, 5);
         let gpu_canvas = Canvas::default()
             .block(
-                Block::default().borders(Borders::ALL).title("GPU Usage").style(Style::default().fg(CATPPUCCIN.mauve))
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("GPU Usage")
+                    .style(Style::default().fg(CATPPUCCIN.mauve)),
             )
-            .x_bounds([0.0, 20.0])
+            .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
             .paint(|ctx| {
-                for window in interpolate_points(&gpu_points, 5).windows(2) {
+                for window in gpu_points_interp.windows(2) {
                     if let [p1, p2] = window {
                         ctx.draw(&Line {
                             x1: p1.0,
@@ -228,19 +265,124 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
                         });
                     }
                 }
-                ctx.print(0.0, 100.0, "100%");
-                ctx.print(0.0, 50.0, "50%");
-                ctx.print(0.0, 0.0, "0%");
+                ctx.print(lower_bound, 0.0, "100%");
+                ctx.print(lower_bound, 100.0, "0%");
             });
-        f.render_widget_ref(gpu_canvas, chart_chunks[2]);
+        f.render_widget_ref(gpu_canvas, right_grid[0]);
 
-        // Right side: split vertically into the process table and a footer.
-        let v_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(5), Constraint::Length(4)].as_ref())
-            .split(h_chunks[1]);
+        // --- Component Temperatures Chart (Right‑Bottom) ---
+        // For each component, try to filter to samples in the current window.
+        // If that yields an empty set, fall back to the entire history.
+        let mut comp_effective: HashMap<&String, Vec<(f64, f64)>> = HashMap::new();
+        for (comp, history) in &self.component_temp_history {
+            let filtered: Vec<(f64, f64)> = history
+                .iter()
+                .filter(|s| s.time >= lower_bound)
+                .map(|s| (s.time, s.value))
+                .collect();
+            let effective = if filtered.is_empty() {
+                // If no recent samples, use all available samples.
+                history.iter().map(|s| (s.time, s.value)).collect()
+            } else {
+                filtered
+            };
+            comp_effective.insert(comp, effective);
+        }
 
-        // --- Process Table ---
+        // Compute overall min and max across all effective histories.
+        let mut overall_temp_min = f64::INFINITY;
+        let mut overall_temp_max = f64::NEG_INFINITY;
+        for (_comp, points) in comp_effective.iter() {
+            for &(_t, val) in points {
+                if val < overall_temp_min { overall_temp_min = val; }
+                if val > overall_temp_max { overall_temp_max = val; }
+            }
+        }
+        if overall_temp_min == f64::INFINITY || overall_temp_max == f64::NEG_INFINITY {
+            overall_temp_min = 0.0;
+            overall_temp_max = 100.0;
+        }
+        // Ensure at least a 1°C difference.
+        if (overall_temp_max - overall_temp_min).abs() < 1.0 {
+            overall_temp_max = overall_temp_min + 1.0;
+        }
+
+        // For a Celsius graph we want the highest temperature at the top,
+        // so we swap the y bounds.
+        let temp_canvas = Canvas::default()
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Component Temps"),
+            )
+            .x_bounds([lower_bound, current_time])
+            .y_bounds([overall_temp_max, overall_temp_min])
+            .paint(|ctx| {
+                
+                // A palette for different components.
+                let comp_colors = [
+                    Color::Yellow,
+                    Color::Green,
+                    Color::Blue,
+                    Color::Magenta,
+                    Color::Cyan,
+                    Color::White,
+                ];
+
+                // For each component, draw its effective history.
+                for (idx, (comp, points)) in comp_effective.iter().enumerate() {
+                    let interp = interpolate_points(points, 5);
+                    let color = comp_colors[idx % comp_colors.len()];
+                    for window in interp.windows(2) {
+                        if let [p1, p2] = window {
+                            ctx.draw(&Line {
+                                x1: p1.0,
+                                y1: p1.1,
+                                x2: p2.0,
+                                y2: p2.1,
+                                color,
+                            });
+                        }
+                    }
+                    // Print the component name (label) near the first point.
+                    if let Some(first) = interp.first() {
+                        ctx.print(first.0, overall_temp_max, comp.to_string());
+                    }
+                }
+                // Print the dynamic y-axis labels.
+                ctx.print(lower_bound, overall_temp_max, format!("{:.1}°C", overall_temp_max));
+                ctx.print(lower_bound, overall_temp_min, format!("{:.1}°C", overall_temp_min));
+            });
+        f.render_widget_ref(temp_canvas, right_grid[1]);
+
+
+        // --- Bottom Half: Textual Info & Process List ---
+        // Split the bottom half horizontally into two columns:
+        // Left: System details and (optionally) other textual info.
+        // Right: Process list.
+        let bottom_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+            .split(overall_chunks[1]);
+
+        // Left column: System Details Panel.
+        let details_block = Block::default().borders(Borders::ALL).title("System Details");
+        f.render_widget(details_block, bottom_chunks[0]);
+        let details_text = format!(
+            "Name: {}\nKernel: {}\nOS: {}\nHostname: {}\nCPUs: {}\nDisks: {}",
+            self.system.name,
+            self.system.kernel_version,
+            self.system.os_version,
+            self.system.hostname,
+            self.system.number_of_cpus,
+            self.system.disks,
+        );
+        let details_paragraph = Paragraph::new(details_text)
+            .style(Style::default().fg(Color::White));
+        f.render_widget(details_paragraph, inner_rect(bottom_chunks[0], 1));
+
+        // Right column: Process List Panel.
+        self.system.processes.sort_by(|a, b| b.cpu_usage.total_cmp(&a.cpu_usage));
         let header = Row::new(
             ["PID", "Name", "CPU %", "Memory"]
                 .iter()
@@ -264,39 +406,30 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             Constraint::Length(10),
         ])
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Processes").style(Style::default().fg(CATPPUCCIN.red)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Processes")
+                .style(Style::default().fg(CATPPUCCIN.red)),
+        )
         .highlight_symbol(">>")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::WhenSelected);
-        f.render_stateful_widget(table, v_chunks[0], &mut self.process_table_state);
-
-        // --- Scrollbar ---
+        f.render_stateful_widget(table, bottom_chunks[1], &mut self.process_table_state);
+        // Render a scrollbar for the process list.
         f.render_stateful_widget(
             Scrollbar::default()
                 .orientation(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None),
-            v_chunks[0].inner(Margin {
+            bottom_chunks[1].inner(Margin {
                 vertical: 1,
                 horizontal: 1,
             }),
             &mut self.process_scroll_state,
         );
-
-        // --- Footer ---
-        let footer = Paragraph::new("(Esc) quit | (↑/↓) scroll")
-            .style(Style::default().fg(CATPPUCCIN.text).bg(Color::Rgb(10, 10, 12)))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(ratatui::widgets::BorderType::Double)
-                    .border_style(Style::default().fg(CATPPUCCIN.blue)),
-            )
-            .centered();
-        f.render_widget_ref(footer, v_chunks[1]);
     }
     
     // fn handle_mouse_event(&self, mouse_event: &ratatui::crossterm::event::MouseEvent) { 
-
     //     match mouse_event.kind {
     //         // ratatui::crossterm::event::MouseEventKind::Down(mouse_button) => todo!(),
     //         // ratatui::crossterm::event::MouseEventKind::Up(mouse_button) => todo!(),
@@ -342,25 +475,12 @@ fn interpolate_points(points: &[(f64, f64)], steps: usize) -> Vec<(f64, f64)> {
 
 
 
-fn smooth_history(history: &Vec<f64>, window: usize) -> Vec<f64> {
-    // If the window is too small or there’s not enough data, just return a clone.
-    if window < 2 || history.len() < window {
-        return history.clone();
+// Helper to create an inner rect with a margin
+fn inner_rect(area: Rect, margin: u16) -> Rect {
+    Rect {
+        x: area.x + margin,
+        y: area.y + margin,
+        width: area.width.saturating_sub(margin * 2),
+        height: area.height.saturating_sub(margin * 2),
     }
-    let half = window / 2;
-    let mut smoothed = Vec::with_capacity(history.len());
-    for i in 0..history.len() {
-        let mut sum = 0.0;
-        let mut total_weight = 0.0;
-        let start = if i >= half { i - half } else { 0 };
-        let end = (i + half + 1).min(history.len());
-        for j in start..end {
-            // Triangular weight: maximum at the center, falling off linearly.
-            let weight = 1.0 - ((i as isize - j as isize).abs() as f64) / (half as f64 + 1.0);
-            sum += history[j] * weight;
-            total_weight += weight;
-        }
-        smoothed.push(sum / total_weight);
-    }
-    smoothed
 }

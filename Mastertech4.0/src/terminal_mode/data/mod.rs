@@ -1,7 +1,9 @@
 use std::sync::{Arc, Condvar, Mutex};
 
-use database::schema::{prestashop_schema, utilities::get_prestashop_payload, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
+use chrono::{DateTime, SecondsFormat, Utc};
+use database::schema::{prestashop_schema, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
 use crossbeam::channel::{Receiver, Sender};
+use reqwest::Client;
 use surrealdb::RecordId;
 
 use crate::filesystem::system_info::ComputerInfo;
@@ -15,6 +17,8 @@ pub struct ServiceData {
     pub task_notes: Vec<TaskNotePayload>,
     pub prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
     prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
+    send_specs: bool,
+    client: Client,
 }
 
 impl Default for ServiceData {
@@ -53,6 +57,8 @@ impl Default for ServiceData {
             customer_data: Default::default(),
             computer_data: comp_data.clone(),
             task_notes: Default::default(),
+            send_specs: true,
+            client: Client::new(),
 
             prestashop_api_tx,
             prestashop_api_rx,
@@ -157,6 +163,31 @@ impl ServiceData {
         }
     }
 
-    // fn test_fn<T, R>(&mut self, f: impl FnMut(&mut T) -> R) { f(|t: &mut T| {}); }
-    // fn another(&mut self) { let x = self.test_fn::<ServiceData, bool>(|x| { true }); }
+    pub fn submit_tur_mastertech(&mut self) {
+        let mut task_data = self.task_data.clone();
+        let customer_data = self.customer_data.clone();
+        let ticket_data = self.ticket_data.clone();
+        let computer_data = self.computer_data.clone();
+        let task_notes = self.task_notes.clone();
+
+        task_data.due_date = DateTime::<Utc>::default().to_rfc3339_opts(SecondsFormat::Secs, true);
+        let send_specs = self.send_specs.clone();
+        tokio::spawn(async move {
+            let send_payload_result = create_full_task_payload(
+                ticket_data.into(),
+                customer_data,
+                computer_data,
+                task_data.into(),
+                task_notes,
+                send_specs,
+            )
+            .await;
+            log::info!("send_payload_result: {send_payload_result:?}");
+        });
+    }
+
+    
 }
+
+// fn test_fn<T, R>(&mut self, f: impl FnMut(&mut T) -> R) { f(|t: &mut T| {}); }
+// fn another(&mut self) { let x = self.test_fn::<ServiceData, bool>(|x| { true }); }

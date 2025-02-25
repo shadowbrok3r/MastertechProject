@@ -138,6 +138,13 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
+        let log_level = log::LevelFilter::Info;
+        let log_file = std::fs::File::create("output.log").unwrap();
+        simplelog::WriteLogger::init(
+            log_level,
+            simplelog::Config::default(),
+            log_file
+        ).unwrap();
         let _ = terminal_mode::run_terminal_mode().await;
     } else {
         let log_level = log::LevelFilter::Info;
