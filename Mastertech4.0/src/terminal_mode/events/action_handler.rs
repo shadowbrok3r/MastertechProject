@@ -1,5 +1,10 @@
 use crate::terminal_mode::{data::ServiceData, tabs::ServiceTab, widgets::service_form::ServiceFormWidget};
 
+pub enum WidgetEvent {
+    ButtonClick,
+    UpdateText(String),
+    
+}
 
 
 pub trait ActionHandler<T> {
