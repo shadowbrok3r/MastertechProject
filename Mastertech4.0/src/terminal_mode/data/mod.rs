@@ -1,12 +1,14 @@
-use std::sync::{Arc, Condvar, Mutex};
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use database::schema::{prestashop_schema::PrestashopPayload, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
-use crossbeam::channel::Sender;
-use reqwest::Client;
-use surrealdb::RecordId;
-
 use crate::filesystem::system_info::ComputerInfo;
+use chrono::{DateTime, SecondsFormat, Utc};
+use std::sync::{Arc, Condvar, Mutex};
+use crossbeam::channel::Sender;
+use surrealdb::RecordId;
+use reqwest::Client;
+
+use super::events::action_handler::{ApiEvent, WidgetEvent};
+
 
 #[derive(Debug)]
 pub struct ServiceData {
@@ -17,12 +19,12 @@ pub struct ServiceData {
     pub task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
     client: Client,
+
+    event_sender: Sender<WidgetEvent>,
 }
 
-impl Default for ServiceData {
-    fn default() -> Self {
-        
-        
+impl ServiceData {
+    pub fn new(event_sender: Sender<WidgetEvent>) -> Self {
         let pair = Arc::new(
             (Mutex::new(ComputerData::default()), Condvar::new())
         );
@@ -57,6 +59,7 @@ impl Default for ServiceData {
             task_notes: Default::default(),
             send_specs: true,
             client: Client::new(),
+            event_sender
         }
     }
 }
@@ -142,13 +145,13 @@ impl ServiceData {
         task.service_ticket = Some(ticket.clone());
     }
     
-    pub fn get_ticket(&self, tx: Sender<PrestashopPayload>) {
+    pub fn get_ticket(&self) {
         let input = self.ticket_data.service_number.clone();
         if !input.is_empty() {
+            let tx = self.event_sender.clone();
             tokio::spawn(async move {
                 let prestashop_order = get_prestashop_payload(&input).await?;
-                let res = tx.try_send(prestashop_order);
-                log::info!("RES: {res:?}");
+                tx.try_send(WidgetEvent::Api(ApiEvent::GetTicket(prestashop_order)))?;
                 Ok::<(), anyhow::Error>(())
             });
         }

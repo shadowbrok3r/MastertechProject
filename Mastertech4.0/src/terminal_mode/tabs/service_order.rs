@@ -1,5 +1,6 @@
-use ratatui::{crossterm::event::KeyEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders}, Frame};
-use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, widgets::service_form::ServiceFormWidget};
+use crossbeam::channel::Sender;
+use ratatui::{crossterm::event::KeyEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
+use crate::terminal_mode::{events::action_handler::WidgetEvent, fx::{effect::UniqueEffectId, EffectStage}, widgets::service_form::ServiceFormWidget};
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 use crate::terminal_mode::widgets::HandleWidget;
 use ratatui::crossterm::event::MouseEvent;
@@ -14,16 +15,21 @@ const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 50; // adjust as needed
 ////////////////////////////////
 /// ServiceTab Component
 pub struct ServiceTab<'a> {
-    service_form_widget: ServiceFormWidget<'a>,
+    // Wrap the widget so it can be shared.
+    pub service_form_widget: std::rc::Rc<std::cell::RefCell<ServiceFormWidget<'a>>>,
     scroll_state: RefCell<ScrollViewState>,
     pub effect_stage: EffectStage<UniqueEffectId>,
-    last_service_form_area: RefCell<Option<Rect>>, // Add this field
+    last_service_form_area: RefCell<Option<Rect>>,
+
 }
 
 impl<'a> ServiceTab<'a> {
-    pub fn new() -> Self {
+    pub fn new(event_sender: Sender<WidgetEvent>) -> Self {
+        let service_form_widget = std::rc::Rc::new(std::cell::RefCell::new(
+            ServiceFormWidget::new(event_sender)
+        ));
         Self {
-            service_form_widget: ServiceFormWidget::new(),
+            service_form_widget: service_form_widget,
             scroll_state: RefCell::new(ScrollViewState::default()),
             effect_stage: EffectStage::default(),
             last_service_form_area: RefCell::new(None)
@@ -85,11 +91,11 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
             )
             .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
 
-
-        self.service_form_widget.render(scroll_view.area(), scroll_view.buf_mut());
+        let svc_form = self.service_form_widget.borrow();
+        svc_form.render_ref(scroll_view.area(), scroll_view.buf_mut());
 
         // Render JSON viewer scroll view.
-        service_form_title.render(json_view_title_area, f.buffer_mut());
+        service_form_title.render_ref(json_view_title_area, f.buffer_mut());
         scroll_view.render(service_form_area, f.buffer_mut(), &mut self.scroll_state.borrow_mut());
     }
     
@@ -101,7 +107,7 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
             ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.scroll_state.borrow_mut().scroll_left(),
             ratatui::crossterm::event::MouseEventKind::ScrollRight => self.scroll_state.borrow_mut().scroll_right(),
             _ => {
-                self.service_form_widget.check_active_field();
+                self.service_form_widget.borrow().check_active_field();
                 // let service_num_is_active = self.order_number_field.is_active();
 
                 // Now, forward the event to the ServiceFormWidget.
@@ -136,9 +142,9 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
                         // }
                         // Now forward the local event to the service form widget.
                         // self.service_form_widget.update_focus_from_mouse(&local_mouse_event);
-                        self.service_form_widget.handle_mouse_event(&local_mouse_event);
+                        self.service_form_widget.borrow_mut().handle_mouse_event(&local_mouse_event);
                     } else {
-                        let is_active = *self.service_form_widget.active_field.borrow();
+                        let is_active = *self.service_form_widget.borrow().active_field.borrow();
                         if is_active.is_some() {
                             // self.service_form_widget.reset_all_states();
                         }
@@ -150,6 +156,6 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
-        self.service_form_widget.handle_key_event(key_event)
+        self.service_form_widget.borrow_mut().handle_key_event(key_event)
     }
 }
