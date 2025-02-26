@@ -82,17 +82,22 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     // tui_logger::init_logger(log::LevelFilter::Trace).unwrap();
     // // Set default level for unknown targets to Trace
     // tui_logger::set_default_level(log::LevelFilter::Info);
-
+    log::info!("STARTING TERM MODE");
     enable_raw_mode()?;
+    log::info!("Hooking StdOut");
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    log::info!("Creating Crossterm backend");
     let backend = CrosstermBackend::new(stdout);
+    log::info!("Creating Terminal");
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = TerminalApp::default();
+    log::info!("Retrieving sysinfo");
     if let Ok(sysinfo) = get_sysinfo().await {
         app.sysinfo_tab.set_sysinfo(sysinfo);
     }
+    log::info!("Running app");
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;

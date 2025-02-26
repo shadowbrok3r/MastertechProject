@@ -222,7 +222,7 @@ unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
     }
     
     log::info!("Microsoft Update is not enabled. Enabling it now...");
-    service_manager.AddService(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID),  &BSTR::from(""))?;
+    unsafe { service_manager.AddService(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID),  &BSTR::from("")) }?;
     log::info!("Microsoft Update has been successfully enabled.");
     Ok(())
 }
@@ -232,34 +232,34 @@ unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> R
     let search_result = match selection {
         2 => {
             log::info!("ServerSelection: Windows Update");
-            update_searcher.SetServerSelection(ServerSelection(2))?;
-            update_searcher.Search(
+            unsafe { update_searcher.SetServerSelection(ServerSelection(2)) }?;
+            unsafe { update_searcher.Search(
                 &BSTR::from(
                     "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
                     // "(IsInstalled=0 and DeploymentAction='Installation' and BrowseOnly=1 or BrowseOnly=0) or (IsHidden=1 and IsInstalled=0)"
                 )
-            )?
+            ) }?
         },
         3 => {
             log::info!("ServerSelection: Microsoft Update");
-            update_searcher.SetServerSelection(ServerSelection(3))?;
-            update_searcher.SetServiceID(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID))?;
-            update_searcher.Search(
+            unsafe { update_searcher.SetServerSelection(ServerSelection(3)) }?;
+            unsafe { update_searcher.SetServiceID(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID)) }?;
+            unsafe { update_searcher.Search(
                 &BSTR::from(
                     "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
                     // "IsInstalled=0 and DeploymentAction='Installation'"
                 )
-            )?
+            ) }?
         },
         _ => return Err(windows::core::Error::from_win32()),
     };
     
-    let update_result = search_result.Updates()?;
-    for i in 0..update_result.Count()? {
+    let update_result = unsafe { search_result.Updates() }?;
+    for i in 0..unsafe { update_result.Count() }? {
         let update = update_result.get_Item(i)?;
         if update.IsInstalled()?.as_bool() {
             log::info!("Update already installed, removing: {:?}", update.Title()?);
-            update_result.RemoveAt(i)?;
+            unsafe { update_result.RemoveAt(i) }?;
         } else {
             log::info!("Adding update to collection: {:?}", update.Title()?);
         }

@@ -15,7 +15,7 @@ fn main() {
         println!("cargo:rerun-if-changed=MasterTech.rc");
         println!("cargo:rerun-if-changed=build.rs");
         let _ = embed_resource::compile("src/assets/MasterTech.rc", embed_resource::NONE);
-        // println!("cargo rustc -- -Ctarget-feature=+crt-static");
+        println!("cargo rustc -- -Ctarget-feature=+crt-static");
         // println!("cargo:rustc-link-lib=static=stdc++");
         let mut res = winres::WindowsResource::new();
         res.set_manifest(r#"
