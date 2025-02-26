@@ -50,11 +50,11 @@ debug = true
 strip = false
 lto = false
 
-[profile.release]
+# [profile.release]
 # strip = true
 # debug = false
 # opt-level = 3
-lto = true
+# lto = true
 
 # Optimize all dependencies even in debug builds:
 # [profile.dev.package."*"]

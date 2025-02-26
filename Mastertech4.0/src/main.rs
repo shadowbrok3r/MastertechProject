@@ -1,4 +1,3 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use app_state::{AppState, MainPages, MasterTechApp};
 use displays::ui_tools::theme_config::set_custom_style;
 use eframe::egui::{Context, IconData, Window};
@@ -138,14 +137,15 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
-        let log_level = log::LevelFilter::Info;
-        let log_file = std::fs::File::create("output.log").unwrap();
+        let log_level = log::LevelFilter::Trace;
+        let log_file = std::fs::File::create("GOTFLAG.log").unwrap();
         simplelog::WriteLogger::init(
             log_level,
             simplelog::Config::default(),
             log_file
         ).unwrap();
-        let _ = terminal_mode::run_terminal_mode().await;
+        let res = terminal_mode::run_terminal_mode().await;
+        log::info!("TERM MODE: {res:?}");
     } else {
         let log_level = log::LevelFilter::Info;
         let log_file = std::fs::File::create("output.log").unwrap();
