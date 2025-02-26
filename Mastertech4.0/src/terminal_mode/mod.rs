@@ -1,4 +1,4 @@
-use fx::{effect::{open_category, outline_selected_cells, UniqueEffectId}, EffectStage};
+use fx::{effect::{ outline_selected_cells, UniqueEffectId}, EffectStage};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use tabs::{logger::Logger, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
 use styling::CATPPUCCIN;
@@ -215,43 +215,43 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 if app.first_run {
                     app.first_run = false;
                     // let effect = selected_category(CATPPUCCIN.flamingo, tab_area);
-                    let effect2 = open_category(CATPPUCCIN.peach, tab_area);
-                    let effect3 = outline_selected_cells(
-                        &mut app.menu_bar.effect_stage, 
-                        tab_area.as_size(),
-                        CATPPUCCIN.blue,
-                        CellFilter::FgColor(CATPPUCCIN.blue)
-                    );
+                    // let effect2 = open_category(CATPPUCCIN.peach, tab_area);
+                    // let effect2 = outline_selected_cells(
+                    //     &mut app.menu_bar.effect_stage, 
+                    //     tab_area.as_size(),
+                    //     CATPPUCCIN.blue,
+                    //     CellFilter::All
+                    // );
 
-                    let effect4 = outline_selected_cells(
-                        &mut app.menu_bar.effect_stage, 
-                        tab_area.as_size(),
-                        CATPPUCCIN.lavender,
-                        CellFilter::FgColor(CATPPUCCIN.lavender)
-                    );
+                    // let effect4 = outline_selected_cells(
+                    //     &mut app.menu_bar.effect_stage, 
+                    //     main_content_area.as_size(),
+                    //     CATPPUCCIN.lavender,
+                    //     CellFilter::FgColor(CATPPUCCIN.lavender)
+                    // );
 
-                    let effect5 = outline_selected_cells(
-                        &mut app.menu_bar.effect_stage, 
-                        tab_area.as_size(),
-                        CATPPUCCIN.teal,
-                        CellFilter::FgColor(CATPPUCCIN.teal)
-                    );
+                    // let effect5 = outline_selected_cells(
+                    //     &mut app.menu_bar.effect_stage, 
+                    //     main_content_area.as_size(),
+                    //     CATPPUCCIN.teal,
+                    //     CellFilter::FgColor(CATPPUCCIN.teal)
+                    // );
 
                     let effect1 = outline_selected_cells(
                         &mut app.menu_bar.effect_stage, 
-                        tab_area.as_size(),
+                        main_content_area.as_size(),
                         CATPPUCCIN.maroon,
                         CellFilter::FgColor(CATPPUCCIN.maroon)
                     );
 
-                    app.menu_bar.effect_stage.add_effect(effect2);
+                    // app.menu_bar.effect_stage.add_effect(effect2);
                     // app.service_tab.effect_stage.add_effect(effect3);
                     app.effect_stage.add_effect(effect1);
-                    app.sysinfo_tab.effect_stage.add_effect(effect3);
-                    app.sysinfo_tab.effect_stage.add_effect(effect4);
-                    app.sysinfo_tab.effect_stage.add_effect(effect5);
                     // app.sysinfo_tab.effect_stage.add_effect(effect3);
-                    // app.service_tab.effect_stage.add_effect(effect1);
+                    // app.sysinfo_tab.effect_stage.add_effect(effect4);
+                    // app.sysinfo_tab.effect_stage.add_effect(effect5);
+                    // app.sysinfo_tab.effect_stage.add_effect(effect3);
+                    // app.service_tab.effect_stage.add_effect(effect5);
                 }
 
                 app.menu_bar.draw::<B>(f, tab_area);
@@ -274,13 +274,13 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
 
                 // ----- Process TachyonFX Effects -----
                 // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-                let fx_duration = tachyonfx::Duration::from_millis(16);
+                // let fx_duration = tachyonfx::Duration::from_millis(16);
                 // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-                app.menu_bar.effect_stage.process_effects(fx_duration, f.buffer_mut(), tab_area);
-                app.service_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
-                app.sysinfo_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
-                let area = f.area();
-                app.effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
+                // app.menu_bar.effect_stage.process_effects(fx_duration, f.buffer_mut(), tab_area);
+                // app.service_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
+                // app.sysinfo_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
+                // let area = f.area();
+                // app.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
             }
         })?;
     }

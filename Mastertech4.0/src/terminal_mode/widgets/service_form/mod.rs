@@ -1,5 +1,5 @@
 
-use crate::terminal_mode::{data::ServiceData, events::action_handler::{ApiEvent, WidgetEvent, WidgetId}, styling::CATPPUCCINTHEME};
+use crate::terminal_mode::{data::ServiceData, events::action_handler::{ApiEvent, WidgetEvent, WidgetId}, styling::{CATPPUCCINTHEME, MEDIUMSLATEBLUE, SPRINGGREEN}};
 use super::{button::{Button, State}, input_field::{InputField, InputFieldId}, ButtonType};
 use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
 use crossbeam::channel::Sender;
@@ -65,7 +65,7 @@ impl<'a> ServiceFormWidget<'a> {
         let sender_clone3 = event_sender.clone();
         let sender_clone4 = event_sender.clone();
         let get_ticket_button = Button::new("Get Ticket")
-            .theme(CATPPUCCINTHEME)
+            .theme(MEDIUMSLATEBLUE)
             .on_click(move || {
                 // And then send a ButtonClick event to trigger get_ticket().
                 let _ = sender_clone.try_send(WidgetEvent::ButtonClick {
@@ -74,7 +74,7 @@ impl<'a> ServiceFormWidget<'a> {
             });
 
         let get_keys_button = Button::new("Get Keys")
-            .theme(CATPPUCCINTHEME)
+            .theme(SPRINGGREEN)
             .on_click(move || {
                 // And then send a ButtonClick event to trigger get_ticket().
                 let _ = sender_clone2.try_send(WidgetEvent::Api(ApiEvent::GetKeys));
