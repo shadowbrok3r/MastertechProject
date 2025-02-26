@@ -45,9 +45,6 @@ pub struct ServiceFormWidget<'a> {
 
     /// Service information (this is where all of these fields' values will be stored)
     pub service_data: Arc<Mutex<ServiceData>>,
-
-    /// A sender for broadcasting widget events.
-    event_sender: Sender<WidgetEvent>,
     
     client: Client,
 
@@ -64,6 +61,8 @@ impl<'a> ServiceFormWidget<'a> {
         let sender_clone2 = event_sender.clone();
         let sender_clone3 = event_sender.clone();
         let sender_clone4 = event_sender.clone();
+        let sender_clone5 = event_sender.clone();
+        let sender_clone6 = event_sender.clone();
         let get_ticket_button = Button::new("Get Ticket")
             .theme(MEDIUMSLATEBLUE)
             .on_click(move || {
@@ -80,18 +79,28 @@ impl<'a> ServiceFormWidget<'a> {
                 let _ = sender_clone2.try_send(WidgetEvent::Api(ApiEvent::GetKeys));
             });
 
-        let check_seb_button = Button::new("Check SEB").theme(CATPPUCCINTHEME);
-        let submit_button = Button::new("Submit").theme(CATPPUCCINTHEME);
+        let check_seb_button = Button::new("Check SEB")
+            .theme(CATPPUCCINTHEME)
+            .on_click(move || {
+                let _ = sender_clone3.try_send(WidgetEvent::Api(ApiEvent::CheckSeb));
+            });
+
+        let submit_button = Button::new("Submit")
+            .theme(CATPPUCCINTHEME)
+            .on_click(move || {
+                let _ = sender_clone4.try_send(WidgetEvent::Api(ApiEvent::SubmitTur));
+            });
 
         let webroot_key_button = Button::new("Webroot Key")
             .theme(CATPPUCCINTHEME)
             .on_click(move || {
-                let _ = sender_clone3.try_send(WidgetEvent::CopyWebroot);
+                let _ = sender_clone5.try_send(WidgetEvent::CopyWebroot);
             });
+
         let superanti_key_button = Button::new("SuperAnti Key")
             .theme(CATPPUCCINTHEME)
             .on_click(move || {
-                let _ = sender_clone4.try_send(WidgetEvent::CopySuperAnti);
+                let _ = sender_clone6.try_send(WidgetEvent::CopySuperAnti);
             });
 
         Self {
@@ -110,7 +119,6 @@ impl<'a> ServiceFormWidget<'a> {
             webroot_key_button,
             superanti_key_button,
             service_data,
-            event_sender,
             client: Client::new(),
             keys: GetKeysResponse::default(),
             active_field: RefCell::new(None),

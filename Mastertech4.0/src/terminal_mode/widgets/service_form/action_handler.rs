@@ -1,11 +1,14 @@
+use std::collections::HashMap;
+
 use crate::{
-    tabs::tur_sheet::get_ticket::SendRequest, 
+    tabs::tur_sheet::get_ticket::{request_seb_info, SendRequest}, 
     terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent, WidgetId}
 };
 
 use database::schema::{
-    utilities::PhoneNumberFormatter, GetKeysResponse
+    utilities::PhoneNumberFormatter, GetKeysResponse, LocalSebData
 };
+use reqwest::header::CONTENT_TYPE;
 
 use super::ServiceFormWidget;
 
@@ -102,9 +105,29 @@ impl <'a> ActionHandler for ServiceFormWidget <'a>{
             }
             WidgetEvent::Api(ApiEvent::CheckSeb) => {
                 if let Ok(svc_data) = self.service_data.lock() {
-                    let cust_email = &svc_data.customer_data.email;
+                    let cust_email = svc_data.customer_data.email.clone();
                     if !cust_email.is_empty() {
+                        let client = self.client.clone();
+                        tokio::spawn(async move {
+                            let mut params: HashMap<&str, &str> = HashMap::new();
+                            params.insert("user_email", "logan.lees@pclaptops.com");
+                            params.insert("user_password", "Poolparty1");
+                            params.insert("application", "carbonite");
+                            params.insert("action", "search");
+                            params.insert("search", &cust_email);
 
+                            let response = client
+                                .post("https://scaffold.pclaptops.com/api/index")
+                                .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+                                .form(&params)
+                                .send()
+                                .await?;
+
+                            let response_json: Vec<serde_json::Value> = response.json().await?;
+                            log::info!("SEB Response: {:?}", response_json);
+                            
+                            Ok::<(), anyhow::Error>(())
+                        });
                     }
                 }
             }
