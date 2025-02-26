@@ -19,6 +19,7 @@ use super::{ButtonType, SHORTCUT_SET};
 /// - `on_click`: optional callback to do something when the button is clicked
 #[derive(Clone)]
 pub struct Button<'a> {
+    title: &'a str,
     label: Line<'a>,
     theme: Theme,
     state: RefCell<State>,
@@ -60,9 +61,10 @@ impl <'a, F: FnMut()> ButtonType<'a> for Button<'a, F> {
 */
 
 impl<'a> Button<'a> {
-    pub fn new<T: Into<Line<'a>>>(label: T) -> Self {
+    pub fn new(label: &'a str) -> Self {
         Button {
-            label: label.into(),
+            title: label.clone(),
+            label: Line::raw(label),
             theme: TURQUOISE,
             state: RefCell::new(State::Normal),
             area: RefCell::new(None),
@@ -73,6 +75,14 @@ impl<'a> Button<'a> {
     pub const fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
+    }
+
+    pub fn set_label(&mut self, label: String) {
+        self.label = Line::raw(label);
+    }
+
+    pub fn get_label(&self) -> &str {
+        &self.title
     }
 
     pub fn on_click(self, f: impl FnMut() + 'a) -> Self {

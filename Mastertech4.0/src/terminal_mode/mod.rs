@@ -4,7 +4,7 @@ use tabs::{logger::Logger, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
 use styling::CATPPUCCIN;
 use tachyonfx::CellFilter;
 use widgets::HandleWidget;
-use events::EventHandler;
+use events::{action_handler::EventManager, EventHandler};
 use ratatui::prelude::*;
 use std::io;
 use ratatui::{
@@ -48,20 +48,31 @@ pub struct TerminalApp<'a> { // logs: Vec<String>,
     sysinfo_tab: SysinfoTab,
     effect_stage: EffectStage<UniqueEffectId>,
     first_run: bool,
-    event_handler: EventHandler
+    event_handler: EventHandler,
+    event_manager: EventManager<'a>,
 }
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
+        // Create a global event channel.
+        let (event_sender, event_receiver) = crossbeam::channel::unbounded();
+        let mut event_manager = EventManager::new(event_receiver);
+        let service_tab = ServiceTab::new(event_sender.clone());
+
+        // Register the ServiceFormWidget with the event manager.
+        // Here we clone the Rc so both ServiceTab and the EventManager share it.
+        event_manager.register_handler(service_tab.service_form_widget.clone());
+
         Self {
             logger: Logger::new(),
             menu_bar: MenuBar::new(),
             scripts_tab: ScriptsTab::new(),
-            service_tab: ServiceTab::new(),
+            service_tab,
             sysinfo_tab: SysinfoTab::new(),
             effect_stage: EffectStage::default(),
             event_handler: EventHandler::new(),
             first_run: true,
+            event_manager
         }
     }
 }
@@ -160,7 +171,6 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 events::Event::Tick => {}
             }
         }
-        // let _ = app.service_tab..receive_ticket();
 
         terminal.draw(|f| {
             if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
@@ -176,6 +186,8 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 f.render_widget(&mut splash_screen2, layout[1]);
                 std::thread::sleep(std::time::Duration::from_millis(50));
             } else {
+                
+                app.event_manager.process_events();
                 // top-level layout has a row for tabs, then main content
                 let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
                 f.render_widget(bg, f.area());
@@ -258,6 +270,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                     },
                 }
 
+                // app.service_tab.service_form_widget.receive();
 
                 // ----- Process TachyonFX Effects -----
                 // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
