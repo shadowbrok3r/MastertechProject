@@ -40,11 +40,6 @@ impl<'a> ServiceTab<'a> {
 impl <'a> HandleWidget <'_> for ServiceTab <'_> {
     /// Draw the entire ServiceTab, including its buttons
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        // ----- Process TachyonFX Effects -----
-        // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-        let fx_duration = tachyonfx::Duration::from_millis(16);
-        // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-        self.effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
 
         // Divide the area into vertical chunks (input row + main content)
         let vertical_chunks = Layout::default()

@@ -5,6 +5,8 @@ pub use service_order::*;
 pub use scripts::*;
 pub use sysinfo::*;
 
+use super::styling::{CYAN, DARKORANGE, DEEPPINK};
+
 pub mod scripts;
 pub mod service_order;
 pub mod sysinfo;
@@ -42,9 +44,9 @@ impl<'a> MenuBar<'a> {
             current_tab: RefCell::new(Tab::TurSheet),
             effect_stage: EffectStage::default(),
             ticket_tab: Button::new("Ticket").theme(CATPPUCCINTHEME),
-            scripts_tab: Button::new("Scripts").theme(CATPPUCCINTHEME),
-            system_tab: Button::new("System").theme(CATPPUCCINTHEME),
-            logs_tab: Button::new("Logs").theme(CATPPUCCINTHEME),
+            scripts_tab: Button::new("Scripts").theme(CYAN),
+            system_tab: Button::new("System").theme(DEEPPINK),
+            logs_tab: Button::new("Logs").theme(DARKORANGE),
         };
         menu_bar
     }

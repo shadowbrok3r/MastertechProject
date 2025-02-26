@@ -1,7 +1,8 @@
 use ratatui::{
-    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::Rect, style::{Color, Style}, text::Line, widgets::WidgetRef
+    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Margin, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, Borders, WidgetRef}
 };
-use crate::terminal_mode::styling::TURQUOISE;
+use tachyonfx::{CellFilter, Effect};
+use crate::terminal_mode::{fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, TURQUOISE}};
 use std::{cell::RefCell, fmt::Debug, sync::Arc};
 use super::{ButtonType, SHORTCUT_SET};
 
@@ -26,6 +27,8 @@ pub struct Button<'a> {
     on_click: Arc<RefCell<Option<Box<dyn FnMut() + 'a>>>>,
     // on_click: Arc<RefCell<Option<F>>>,
     area: RefCell<Option<Rect>>,
+    effect_stage: RefCell<EffectStage<UniqueEffectId>>,
+    init: RefCell<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,36 +48,27 @@ pub struct Theme {
     pub shadow: Color,
 }
 
-/*
-pub struct Button<'a, F>
-where 
-    F: FnMut(),
-
-impl<'a, F> Button<'a, F> 
-where 
-    F: FnMut(),
-{
-    pub fn new<T: Into<Line<'a>>>(label: T) -> Self 
-    where
-        F: Default,
-impl <'a, F: FnMut()> ButtonType<'a> for Button<'a, F> {
-*/
-
 impl<'a> Button<'a> {
     pub fn new(label: &'a str) -> Self {
         Button {
-            title: label.clone(),
+            title: label,
             label: Line::raw(label),
             theme: TURQUOISE,
             state: RefCell::new(State::Normal),
             area: RefCell::new(None),
             on_click: Arc::new(RefCell::new(None)),
+            effect_stage: RefCell::new(EffectStage::default()),
+            init: RefCell::new(true),
         }
     }
 
     pub const fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
+    }
+
+    pub fn _set_effect(&self, effect: Effect) {
+        self.effect_stage.borrow_mut().add_effect(effect);
     }
 
     pub fn set_label(&mut self, label: String) {
@@ -125,7 +119,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
         let t = self.theme;
         match *self.state.borrow() {
             State::Normal => (t.background, t.text, t.shadow, t.highlight),
-            State::Selected => (t.highlight, t.text, t.shadow, t.highlight),
+            State::Selected => (t.background, t.text, Color::White, Color::White),
             State::Active => (t.background, t.text, t.highlight, t.shadow),
             State::Hovered => (t.background, t.text, t.highlight, t.shadow),
         }
@@ -164,19 +158,61 @@ impl <'a> ButtonType<'a> for Button<'a> {
     }
 }
 
+// impl<'a> WidgetRef for Button<'a> {
+//     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+//         let (background, text, shadow, highlight) = self.colors();
+//         // let new_area = Rect::new(0, 0, 5, 2).clamp(area);
+//         buf.set_style(area, Style::new().fg(text));
+
+//         // render top line if there's enough space
+//         if area.height > 2 {
+//             buf.set_string(
+//                 area.x,
+//                 area.y,
+//                 "▔".repeat(area.width as usize),
+//                 Style::new().fg(background)//.bg(background),
+//             );
+//         }
+//         // render bottom line if there's enough space
+//         if area.height > 1 {
+//             buf.set_string(
+//                 area.x,
+//                 area.y + area.height - 1,
+//                 "▁".repeat(area.width as usize),
+//                 Style::new().fg(shadow).bg(background),
+//             );
+//         }
+//         // render label centered
+//         buf.set_line(
+//             area.x + (area.width.saturating_sub(self.label.width() as u16)) / 2,
+//             area.y + (area.height.saturating_sub(1)) / 2,
+//             &self.label,
+//             area.width,
+//         );
+//         self.set_area(area);
+//     }
+// }
+
 // impl ratatui::widgets::StatefulWidgetRef for Button {type State;}
 
 impl <'a> WidgetRef for Button<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();
+        let mut init = self.init.borrow_mut();
+        if *init {
+            *init = false;
+            let mut effect_stage = self.effect_stage.borrow_mut();
+            let effect1 = outline_selected_cells(
+                &mut effect_stage, 
+                area.as_size(),
+                background,
+                CellFilter::FgColor(Color::White)
+            );
+            effect_stage.add_effect(effect1);
+        }
 
-        // let block = Block::default()
-        //     .fg(text)
-        //     .borders(Borders::ALL)
-        //     .border_set(SHORTCUT_SET)
-        //     // .border_type(ratatui::widgets::BorderType::Rounded)
-        //     .border_style(Style::default().blue());
-
+        buf.set_style(area, Style::default().fg(text));
+        // block.render_ref(area, buf);
         // Draw top border with rounded corners
         if area.height > 1 {
             let mut top_str = String::new();
@@ -213,7 +249,7 @@ impl <'a> WidgetRef for Button<'a> {
                 width: area.width.saturating_sub(2),
                 height: 1,  // Exactly 1 row per iteration
             };
-            buf.set_style(inner_rect, Style::default().bg(background).fg(text));
+            buf.set_style(inner_rect, Style::default().fg(text)); // .bg(background)
 
             // Right border
             buf.set_string(
@@ -245,13 +281,15 @@ impl <'a> WidgetRef for Button<'a> {
         buf.set_line(label_x, label_y, &self.label, area.width);
 
         self.set_area(area);
+        let fx_duration = tachyonfx::Duration::from_millis(16);
+        self.effect_stage.borrow_mut().process_effects(fx_duration, buf, area);
     }
 }
 
+ 
+
 
 /*
-
-
 impl <'a> Widget for Button<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();
@@ -293,74 +331,7 @@ impl <'a> Widget for Button<'a> {
     }
 }
     
-use super::{colors::{Theme, BLUE}, State};
-use ratatui::{
-    style::{Color, Style},
-    buffer::Buffer, layout::Rect, text::Line, widgets::Widget
-};
 
-#[derive(Debug, Clone)]
-pub struct Button<'a> {
-    pub label: Line<'a>,
-    pub theme: Theme,
-    pub state: State,
-}
-
-
-/// A button with a label that can be themed.
-impl<'a> Button<'a> {
-    pub fn new<T: Into<Line<'a>>>(label: T) -> Self {
-        Button {
-            label: label.into(),
-            theme: BLUE,
-            state: State::Normal,
-        }
-    }
-
-    pub const fn theme(mut self, theme: Theme) -> Self {
-        self.theme = theme;
-        self
-    }
-
-    pub const fn state(mut self, state: State) -> Self {
-        self.state = state;
-        self
-    }
-}
-
-impl<'a> Widget for Button<'a> {
-    #[allow(clippy::cast_possible_truncation)]
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let (background, text, shadow, highlight) = self.colors();
-        buf.set_style(area, Style::new().bg(background).fg(text));
-
-        // render top line if there's enough space
-        if area.height > 2 {
-            buf.set_string(
-                area.x,
-                area.y,
-                "▔".repeat(area.width as usize),
-                Style::new().fg(highlight).bg(background),
-            );
-        }
-        // render bottom line if there's enough space
-        if area.height > 1 {
-            buf.set_string(
-                area.x,
-                area.y + area.height - 1,
-                "▁".repeat(area.width as usize),
-                Style::new().fg(shadow).bg(background),
-            );
-        }
-        // render label centered
-        buf.set_line(
-            area.x + (area.width.saturating_sub(self.label.width() as u16)) / 2,
-            area.y + (area.height.saturating_sub(1)) / 2,
-            &self.label,
-            area.width,
-        );
-    }
-}
 
 impl Button<'_> {
     const fn colors(&self) -> (Color, Color, Color, Color) {

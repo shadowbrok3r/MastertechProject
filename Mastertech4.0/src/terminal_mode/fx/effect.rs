@@ -97,7 +97,7 @@ pub fn open_category(
         prolong_start(timer, coalesce(timer_c))
             .with_cell_selection(border_cells),
         // plays out first, but must come last to not be overridden by the above effects
-        slide_in(UpToDown, area.height * 2, 0, CATPPUCCIN.crust, timer),
+        slide_in(UpToDown, area.height * 2, 0, Color::Rgb(0, 204, 204), timer),
     ]).with_area(area)
 }
 
