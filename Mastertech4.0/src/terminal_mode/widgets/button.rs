@@ -20,7 +20,7 @@ use super::{ButtonType, SHORTCUT_SET};
 /// - `on_click`: optional callback to do something when the button is clicked
 #[derive(Clone)]
 pub struct Button<'a> {
-    title: &'a str,
+    title: String,
     label: Line<'a>,
     theme: Theme,
     state: RefCell<State>,
@@ -51,7 +51,7 @@ pub struct Theme {
 impl<'a> Button<'a> {
     pub fn new(label: &'a str) -> Self {
         Button {
-            title: label,
+            title: label.to_string(),
             label: Line::raw(label),
             theme: TURQUOISE,
             state: RefCell::new(State::Normal),
@@ -72,7 +72,8 @@ impl<'a> Button<'a> {
     }
 
     pub fn set_label(&mut self, label: String) {
-        self.label = Line::raw(label);
+        self.title = label.clone();
+        self.label = Line::raw(label.clone());
     }
 
     pub fn get_label(&self) -> &str {
@@ -157,43 +158,6 @@ impl <'a> ButtonType<'a> for Button<'a> {
         }
     }
 }
-
-// impl<'a> WidgetRef for Button<'a> {
-//     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-//         let (background, text, shadow, highlight) = self.colors();
-//         // let new_area = Rect::new(0, 0, 5, 2).clamp(area);
-//         buf.set_style(area, Style::new().fg(text));
-
-//         // render top line if there's enough space
-//         if area.height > 2 {
-//             buf.set_string(
-//                 area.x,
-//                 area.y,
-//                 "▔".repeat(area.width as usize),
-//                 Style::new().fg(background)//.bg(background),
-//             );
-//         }
-//         // render bottom line if there's enough space
-//         if area.height > 1 {
-//             buf.set_string(
-//                 area.x,
-//                 area.y + area.height - 1,
-//                 "▁".repeat(area.width as usize),
-//                 Style::new().fg(shadow).bg(background),
-//             );
-//         }
-//         // render label centered
-//         buf.set_line(
-//             area.x + (area.width.saturating_sub(self.label.width() as u16)) / 2,
-//             area.y + (area.height.saturating_sub(1)) / 2,
-//             &self.label,
-//             area.width,
-//         );
-//         self.set_area(area);
-//     }
-// }
-
-// impl ratatui::widgets::StatefulWidgetRef for Button {type State;}
 
 impl <'a> WidgetRef for Button<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
@@ -290,6 +254,43 @@ impl <'a> WidgetRef for Button<'a> {
 
 
 /*
+
+// impl<'a> WidgetRef for Button<'a> {
+//     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+//         let (background, text, shadow, highlight) = self.colors();
+//         // let new_area = Rect::new(0, 0, 5, 2).clamp(area);
+//         buf.set_style(area, Style::new().fg(text));
+
+//         // render top line if there's enough space
+//         if area.height > 2 {
+//             buf.set_string(
+//                 area.x,
+//                 area.y,
+//                 "▔".repeat(area.width as usize),
+//                 Style::new().fg(background)//.bg(background),
+//             );
+//         }
+//         // render bottom line if there's enough space
+//         if area.height > 1 {
+//             buf.set_string(
+//                 area.x,
+//                 area.y + area.height - 1,
+//                 "▁".repeat(area.width as usize),
+//                 Style::new().fg(shadow).bg(background),
+//             );
+//         }
+//         // render label centered
+//         buf.set_line(
+//             area.x + (area.width.saturating_sub(self.label.width() as u16)) / 2,
+//             area.y + (area.height.saturating_sub(1)) / 2,
+//             &self.label,
+//             area.width,
+//         );
+//         self.set_area(area);
+//     }
+// }
+
+// impl ratatui::widgets::StatefulWidgetRef for Button {type State;}
 impl <'a> Widget for Button<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();

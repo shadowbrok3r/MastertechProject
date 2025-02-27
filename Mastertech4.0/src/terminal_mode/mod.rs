@@ -12,10 +12,10 @@ use ratatui::{
         event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    }, layout::{Constraint, Direction, Flex, Layout}, widgets::Block,
+    }, layout::{Constraint, Direction, Flex, Layout},
 };
 
-use crate::filesystem::system_info::get_sysinfo;
+use crate::filesystem::system_info::get_sysinfo_no_gpu;
 
 pub mod widgets;
 pub mod tabs;
@@ -78,10 +78,11 @@ impl Default for TerminalApp <'_>{
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
-    // // Set max_log_level to Trace
-    // tui_logger::init_logger(log::LevelFilter::Trace).unwrap();
-    // // Set default level for unknown targets to Trace
-    // tui_logger::set_default_level(log::LevelFilter::Info);
+    // Set max_log_level to Trace
+    tui_logger::init_logger(log::LevelFilter::Info).unwrap();
+    // Set default level for unknown targets to Trace
+    tui_logger::set_default_level(log::LevelFilter::Info);
+
     log::info!("STARTING TERM MODE");
     enable_raw_mode()?;
     log::info!("Hooking StdOut");
@@ -94,9 +95,9 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
 
     let mut app = TerminalApp::default();
     log::info!("Retrieving sysinfo");
-    // if let Ok(sysinfo) = get_sysinfo().await {
-    //     app.sysinfo_tab.set_sysinfo(sysinfo);
-    // }
+    if let Ok(sysinfo) = get_sysinfo_no_gpu().await {
+        app.sysinfo_tab.set_sysinfo(sysinfo);
+    }
     log::info!("Running app");
     let res = run_app(&mut terminal, app);
 
@@ -197,8 +198,10 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 
                 app.event_manager.process_events();
                 // top-level layout has a row for tabs, then main content
-                let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
-                f.render_widget(bg, f.area());
+                // let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
+                // f.render_widget(bg, f.area());
+                let area = f.area();
+                f.buffer_mut().set_style(area, Style::default().bg(Color::Rgb(8, 8, 12)));
 
                 let layout = Layout::default()
                     .direction(Direction::Vertical)
