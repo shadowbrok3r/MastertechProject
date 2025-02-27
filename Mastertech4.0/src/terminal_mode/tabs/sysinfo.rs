@@ -4,7 +4,7 @@ use crossbeam::channel::{Receiver, Sender};
 use ratatui::{
     crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::Style, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, WidgetRef}, Frame
 };
-use crate::{filesystem::system_info::get_sysinfo, terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCIN, widgets::HandleWidget}};
+use crate::{filesystem::system_info::{get_sysinfo, get_sysinfo_no_gpu}, terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCIN, widgets::HandleWidget}};
 use database::schema::SystemInformation;
 
 pub struct SysinfoTab {
@@ -65,7 +65,7 @@ impl SysinfoTab {
             let tx = self.tx.clone();
             tokio::spawn(async move {
                 loop {
-                    let _ = tx.try_send(get_sysinfo().await.unwrap_or_default());
+                    let _ = tx.try_send(get_sysinfo_no_gpu().await.unwrap_or_default());
                     tokio::time::sleep(std::time::Duration::from_secs_f32(0.2)).await;
                 }
                 // log::info!("Res: {res:?}");
