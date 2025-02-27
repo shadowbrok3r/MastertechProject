@@ -94,9 +94,9 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
 
     let mut app = TerminalApp::default();
     log::info!("Retrieving sysinfo");
-    if let Ok(sysinfo) = get_sysinfo().await {
-        app.sysinfo_tab.set_sysinfo(sysinfo);
-    }
+    // if let Ok(sysinfo) = get_sysinfo().await {
+    //     app.sysinfo_tab.set_sysinfo(sysinfo);
+    // }
     log::info!("Running app");
     let res = run_app(&mut terminal, app);
 
@@ -119,8 +119,11 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
 
 fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>) -> anyhow::Result<(), anyhow::Error> {
     // render splash screen
+    log::info!("Running splash");
     let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
+    log::info!("Running splash 2");
     let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
+    log::info!("Entering main loop");
     loop {
         if let Ok(events) = app.event_handler.next() {
             let current_tab = app.menu_bar.current_tab.borrow().clone();
