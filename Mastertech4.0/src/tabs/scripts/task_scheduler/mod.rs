@@ -1,91 +1,91 @@
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct ScheduledTask {
     #[serde(rename = "CimClass")]
-    cim_class: CimClass,
+    pub cim_class: CimClass,
     #[serde(rename = "CimInstanceProperties")]
-    cim_instance_properties: Vec<String>,
+    pub cim_instance_properties: Vec<String>,
     #[serde(rename = "CimSystemProperties")]
-    cim_system_properties: CimSystemProperties,
+    pub cim_system_properties: CimSystemProperties,
     #[serde(rename = "State")]
-    state: Option<u8>,
+    pub state: Option<u8>,
     #[serde(rename = "Actions")]
-    actions: Option<Vec<String>>,
+    pub actions: Option<Vec<String>>,
     #[serde(rename = "Author")]
-    author: Option<String>,
+    pub author: Option<String>,
     #[serde(rename = "Date")]
-    date: Option<String>,
+    pub date: Option<String>,
     #[serde(rename = "Description")]
-    description: Option<String>,
+    pub description: Option<String>,
     #[serde(rename = "Documentation")]
-    documentation: Option<String>,
+    pub documentation: Option<String>,
     #[serde(rename = "Principal")]
-    principal: Option<Principal>,
+    pub principal: Option<Principal>,
     #[serde(rename = "SecurityDescriptor")]
-    security_descriptor: Option<String>,
+    pub security_descriptor: Option<String>,
     #[serde(rename = "Settings")]
-    settings: Option<Settings>,
+    pub settings: Option<Settings>,
     #[serde(rename = "Source")]
-    source: Option<String>,
+    pub source: Option<String>,
     #[serde(rename = "TaskName")]
-    task_name: Option<String>,
+    pub task_name: Option<String>,
     #[serde(rename = "TaskPath")]
-    task_path: Option<String>,
+    pub task_path: Option<String>,
     #[serde(rename = "Triggers")]
-    triggers: Option<Vec<String>>,
+    pub triggers: Option<Vec<String>>,
     #[serde(rename = "URI")]
-    uri: Option<String>,
+    pub uri: Option<String>,
     #[serde(rename = "Version")]
-    version: Option<String>,
+    pub version: Option<String>,
     #[serde(rename = "PSComputerName")]
-    ps_computer_name: Option<String>,
+    pub ps_computer_name: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct CimClass {
+pub struct CimClass {
     #[serde(rename = "CimSuperClassName")]
-    cim_super_class_name: Option<String>,
+    pub cim_super_class_name: Option<String>,
     #[serde(rename = "CimSuperClass")]
-    cim_super_class: Option<String>,
+    pub cim_super_class: Option<String>,
     #[serde(rename = "CimClassProperties")]
-    cim_class_properties: Option<String>,
+    pub cim_class_properties: Option<String>,
     #[serde(rename = "CimClassQualifiers")]
-    cim_class_qualifiers: Option<String>,
+    pub cim_class_qualifiers: Option<String>,
     #[serde(rename = "CimClassMethods")]
-    cim_class_methods: Option<String>,
+    pub cim_class_methods: Option<String>,
     #[serde(rename = "CimSystemProperties")]
-    cim_system_properties: Option<String>,
+    pub cim_system_properties: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct CimSystemProperties {
+pub struct CimSystemProperties {
     #[serde(rename = "Namespace")]
-    namespace: Option<String>,
+    pub namespace: Option<String>,
     #[serde(rename = "ServerName")]
-    server_name: Option<String>,
+    pub server_name: Option<String>,
     #[serde(rename = "ClassName")]
-    class_name: Option<String>,
+    pub class_name: Option<String>,
     #[serde(rename = "Path")]
-    path: Option<String>,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct Principal {
+pub struct Principal {
     #[serde(rename = "CimClass")]
-    cim_class: Option<String>,
+    pub cim_class: Option<String>,
     #[serde(rename = "CimInstanceProperties")]
-    cim_instance_properties: Option<String>,
+    pub cim_instance_properties: Option<String>,
     #[serde(rename = "CimSystemProperties")]
-    cim_system_properties: Option<String>,
+    pub cim_system_properties: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct Settings {
+pub struct Settings {
     #[serde(rename = "CimClass")]
-    cim_class: Option<String>,
+    pub cim_class: Option<String>,
     #[serde(rename = "CimInstanceProperties")]
-    cim_instance_properties: Option<String>,
+    pub cim_instance_properties: Option<String>,
     #[serde(rename = "CimSystemProperties")]
-    cim_system_properties: Option<String>,
+    pub cim_system_properties: Option<String>,
 }
 
 /// Enum for specifying possible task triggers
@@ -150,8 +150,8 @@ impl ScheduledTaskBuilder {
         let ps = powershell_script::PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         ps.run(&script)?;
@@ -162,12 +162,12 @@ impl ScheduledTaskBuilder {
 /// Functions for listing, modifying, and deleting tasks
 impl ScheduledTask {
     /// Lists all scheduled tasks
-    pub async fn list_tasks() -> Result<Vec<ScheduledTask>, anyhow::Error> {
+    pub fn list_tasks() -> Result<Vec<ScheduledTask>, anyhow::Error> {
         let ps = powershell_script::PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         let output = ps.run(r#"Get-ScheduledTask | ConvertTo-Json"#)?;
@@ -187,8 +187,8 @@ impl ScheduledTask {
         let ps = powershell_script::PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         ps.run(&script)?;
@@ -209,8 +209,8 @@ impl ScheduledTask {
         let ps = powershell_script::PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         ps.run(&script)?;

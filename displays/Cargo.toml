@@ -9,6 +9,7 @@ tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
+ratatui = { version = "0.29.0", features = ["crossterm", "unstable-widget-ref", "serde"] }
 parking_lot = "0.12"
 ewebsock = "0.8"
 zstd = "0.13"

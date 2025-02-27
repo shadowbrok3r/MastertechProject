@@ -8,6 +8,9 @@ use std::sync::Arc;
 use log::{error, info};
 use anyhow::{Context, Result};
 
+pub mod ratagui;
+pub mod terminal_line;
+
 #[derive(Serialize, Deserialize, Default)]
 pub struct EguiFrame {
     pub frame_index: u64,

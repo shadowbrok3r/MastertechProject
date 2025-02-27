@@ -1,4 +1,4 @@
-use ratatui::{buffer::Buffer, crossterm::event::KeyEventKind, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
+use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::State, input_field::InputFieldId, ButtonType, ShrinkArea, SHORTCUT_SET}};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 
@@ -16,12 +16,12 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
         // Since our Button now uses interior mutability for its area,
         // the call to handle_mouse_event (which internally calls self.get_area())
         // will work as expected.
-        self.get_keys_button.handle_mouse_event(&mouse_event);
-        self.check_seb_button.handle_mouse_event(&mouse_event);
-        self.webroot_key_button.handle_mouse_event(&mouse_event);
-        self.superanti_key_button.handle_mouse_event(&mouse_event);
-        self.get_ticket_button.handle_mouse_event(&mouse_event);
-        self.submit_button.handle_mouse_event(&mouse_event);
+        self.get_keys_btn.handle_mouse_event(&mouse_event);
+        self.check_seb_btn.handle_mouse_event(&mouse_event);
+        self.webroot_key_btn.handle_mouse_event(&mouse_event);
+        self.superanti_key_btn.handle_mouse_event(&mouse_event);
+        self.get_ticket_btn.handle_mouse_event(&mouse_event);
+        self.submit_btn.handle_mouse_event(&mouse_event);
 
         self.customer_name.handle_mouse_event(&mouse_event);
         self.customer_phone.handle_mouse_event(&mouse_event);
@@ -143,11 +143,11 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
 
         let get_ticket_btn_area = row1[1].shrink(4, 0);
 
-        self.get_ticket_button.render_ref(get_ticket_btn_area, buf);
+        self.get_ticket_btn.render_ref(get_ticket_btn_area, buf);
 
         // -- Submit button
         let submit_btn_area = row1[3].shrink(4, 0);
-        self.submit_button.render_ref(submit_btn_area, buf);
+        self.submit_btn.render_ref(submit_btn_area, buf);
 
         // Row 2: Salesman Name | Technician Name
         let row2 = Layout::default()
@@ -195,11 +195,11 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
 
         // Left button
         let get_keys_btn_area = row4[0].shrink(4, 0);
-        self.get_keys_button.render_ref(get_keys_btn_area, buf);
+        self.get_keys_btn.render_ref(get_keys_btn_area, buf);
 
         // Right button
         let check_seb_btn_area = row4[1].shrink(4, 0);
-        self.check_seb_button.render_ref(check_seb_btn_area, buf);
+        self.check_seb_btn.render_ref(check_seb_btn_area, buf);
 
         // Row 6: CheckIn Notes | Recommendations
         let row5 = Layout::default()
@@ -213,10 +213,10 @@ impl<'a> WidgetRef for ServiceFormWidget<'a> {
             .split(rows[5]);
 
         let webroot_key_btn_area = row5[0].shrink(4, 0);
-        self.webroot_key_button.render_ref( webroot_key_btn_area, buf);
+        self.webroot_key_btn.render_ref( webroot_key_btn_area, buf);
 
         let superanti_key_btn_area = row5[1].shrink(4, 0);
-        self.superanti_key_button.render_ref( superanti_key_btn_area, buf);
+        self.superanti_key_btn.render_ref( superanti_key_btn_area, buf);
 
         // Row 7: CheckIn Notes | Recommendations
         let row6 = Layout::default()

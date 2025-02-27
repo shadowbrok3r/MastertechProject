@@ -5,7 +5,7 @@ pub use service_order::*;
 pub use scripts::*;
 pub use sysinfo::*;
 
-use super::styling::{CYAN, DARKORANGE, DEEPPINK};
+use super::{events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK}};
 
 pub mod scripts;
 pub mod service_order;
@@ -43,10 +43,10 @@ impl<'a> MenuBar<'a> {
         let menu_bar = Self {
             current_tab: RefCell::new(Tab::TurSheet),
             effect_stage: EffectStage::default(),
-            ticket_tab: Button::new("Ticket").theme(CATPPUCCINTHEME),
-            scripts_tab: Button::new("Scripts").theme(CYAN),
-            system_tab: Button::new("System").theme(DEEPPINK),
-            logs_tab: Button::new("Logs").theme(DARKORANGE),
+            ticket_tab: Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME),
+            scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN),
+            system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK),
+            logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DARKORANGE),
         };
         menu_bar
     }

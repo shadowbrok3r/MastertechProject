@@ -3,11 +3,10 @@ use database::schema::{prestashop_schema::PrestashopPayload, utilities::{create_
 use crate::filesystem::system_info::ComputerInfo;
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::sync::{Arc, Condvar, Mutex};
-use crossbeam::channel::Sender;
 use surrealdb::RecordId;
-use reqwest::Client;
+// use reqwest::Client;
 
-use super::events::action_handler::{ApiEvent, WidgetEvent};
+use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
 
 
 #[derive(Debug)]
@@ -18,13 +17,11 @@ pub struct ServiceData {
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
-    client: Client,
-
-    event_sender: Sender<WidgetEvent>,
+    // client: Client,
 }
 
 impl ServiceData {
-    pub fn new(event_sender: Sender<WidgetEvent>) -> Self {
+    pub fn new() -> Self {
         let pair = Arc::new(
             (Mutex::new(ComputerData::default()), Condvar::new())
         );
@@ -58,13 +55,10 @@ impl ServiceData {
             computer_data: comp_data.clone(),
             task_notes: Default::default(),
             send_specs: true,
-            client: Client::new(),
-            event_sender
+            // client: Client::new(),
         }
     }
-}
-
-impl ServiceData {
+    
     pub fn receive(&mut self, presta_data: PrestashopPayload) {
         log::info!("{:?}", serde_json::to_value(&presta_data).unwrap_or_default());
         let customer = &mut self.customer_data;
@@ -148,10 +142,10 @@ impl ServiceData {
     pub fn get_ticket(&self) {
         let input = self.ticket_data.service_number.clone();
         if !input.is_empty() {
-            let tx = self.event_sender.clone();
+            let tx = get_event_sender();
             tokio::spawn(async move {
                 let prestashop_order = get_prestashop_payload(&input).await?;
-                tx.try_send(WidgetEvent::Api(ApiEvent::GetTicket(prestashop_order)))?;
+                tx.try_send(WidgetEvent::Api(ApiEvent::GetTicketResponse(prestashop_order)))?;
                 Ok::<(), anyhow::Error>(())
             });
         }
@@ -182,6 +176,7 @@ impl ServiceData {
 
     
 }
+
 
 // fn test_fn<T, R>(&mut self, f: impl FnMut(&mut T) -> R) { f(|t: &mut T| {}); }
 // fn another(&mut self) { let x = self.test_fn::<ServiceData, bool>(|x| { true }); }
