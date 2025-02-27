@@ -56,8 +56,8 @@ impl InstalledProgram {
         let ps = powershell_script::PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         let output = ps.run(script)?;
@@ -87,8 +87,8 @@ impl InstalledProgram {
         let ps = powershell_script::PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         let script = format!(
@@ -127,8 +127,8 @@ impl InstalledProgram {
             let ps = powershell_script::PsScriptBuilder::new()
                 .no_profile(true)
                 .non_interactive(true)
-                .hidden(false)
-                .print_commands(true)
+                .hidden(true)
+                .print_commands(false)
                 .build();
 
             let output = ps.run(&script)?;

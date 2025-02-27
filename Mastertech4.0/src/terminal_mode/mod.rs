@@ -4,9 +4,9 @@ use tabs::{logger::Logger, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
 use styling::CATPPUCCIN;
 use tachyonfx::CellFilter;
 use widgets::HandleWidget;
-use events::{action_handler::EventManager, EventHandler};
+use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui::prelude::*;
-use std::io;
+use std::{cell::RefCell, io, rc::Rc};
 use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
@@ -43,7 +43,7 @@ static SPLASH_CONFIG2: SplashConfig = SplashConfig {
 pub struct TerminalApp<'a> { // logs: Vec<String>,
     logger: Logger,
     menu_bar: MenuBar<'a>,
-    scripts_tab: ScriptsTab<'a>,
+    scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: ServiceTab<'a>,
     sysinfo_tab: SysinfoTab,
     effect_stage: EffectStage<UniqueEffectId>,
@@ -55,18 +55,18 @@ pub struct TerminalApp<'a> { // logs: Vec<String>,
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
         // Create a global event channel.
-        let (event_sender, event_receiver) = crossbeam::channel::unbounded();
-        let mut event_manager = EventManager::new(event_receiver);
-        let service_tab = ServiceTab::new(event_sender.clone());
-
+        let mut event_manager = EventManager::new(get_event_receiver());
+        let service_tab = ServiceTab::new();
+        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new()));
         // Register the ServiceFormWidget with the event manager.
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.service_form_widget.clone());
+        event_manager.register_handler(scripts_tab.clone());
 
         Self {
             logger: Logger::new(),
             menu_bar: MenuBar::new(),
-            scripts_tab: ScriptsTab::new(),
+            scripts_tab,
             service_tab,
             sysinfo_tab: SysinfoTab::new(),
             effect_stage: EffectStage::default(),
@@ -82,6 +82,14 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     tui_logger::init_logger(log::LevelFilter::Info).unwrap();
     // Set default level for unknown targets to Trace
     tui_logger::set_default_level(log::LevelFilter::Info);
+
+    // let log_level = log::LevelFilter::Trace;
+    // let log_file = std::fs::File::create("output.log").unwrap();
+    // simplelog::WriteLogger::init(
+    //     log_level,
+    //     simplelog::Config::default(),
+    //     log_file
+    // ).unwrap();
 
     log::info!("STARTING TERM MODE");
     enable_raw_mode()?;
@@ -158,7 +166,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                             // Now dispatch key event to the active widget, and only one widget:
                             let consumed = match current_tab {
                                 Tab::TurSheet => app.service_tab.handle_key_event(key_event),
-                                Tab::Scripts => app.scripts_tab.handle_key_event(key_event),
+                                Tab::Scripts => app.scripts_tab.borrow_mut().handle_key_event(key_event),
                                 Tab::SystemInfo => app.service_tab.handle_key_event(key_event),
                                 Tab::Logs => app.logger.handle_key_event(key_event)
                             };
@@ -171,7 +179,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                     app.menu_bar.handle_mouse_event(&mouse_event);
                      match current_tab {
                         Tab::TurSheet => app.service_tab.handle_mouse_event(&mouse_event),
-                        Tab::Scripts => app.scripts_tab.handle_mouse_event(&mouse_event),
+                        Tab::Scripts => app.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::SystemInfo => app.service_tab.handle_mouse_event(&mouse_event),
                         Tab::Logs => {} //app.logs_tab,
                     };
@@ -272,7 +280,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 // (2) Render Main content area depends on which tab is selected
                 match *app.menu_bar.current_tab.borrow() {
                     Tab::TurSheet => app.service_tab.draw::<B>(f, main_content_area),
-                    Tab::Scripts => app.scripts_tab.draw::<B>(f, main_content_area),
+                    Tab::Scripts => app.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area),
                     Tab::Logs => {
                         buf.merge(f.buffer_mut());

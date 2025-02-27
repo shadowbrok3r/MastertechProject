@@ -1,33 +1,39 @@
 use database::schema::prestashop_schema::PrestashopPayload;
+use crossbeam::channel::{Receiver, Sender};
+use once_cell::sync::Lazy;
+
+// Define a global event sender (wrapped in `Arc<Mutex<T>>` for safe access)
+static GLOBAL_EVENT_SENDER: Lazy<(Sender<WidgetEvent>, Receiver<WidgetEvent>)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+pub fn get_event_sender() -> Sender<WidgetEvent> {
+    GLOBAL_EVENT_SENDER.0.clone()
+}
+
+pub fn get_event_receiver() -> Receiver<WidgetEvent> {
+    GLOBAL_EVENT_SENDER.1.clone()
+}
 
 
 /// An enum representing all widget identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WidgetId {
-    ServiceForm,
-    // Add other widget IDs as needed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WidgetId(pub String);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ApiEvent {
+    GetTicketResponse(PrestashopPayload)
 }
 
 /// A common event enum that all widgets use.
 pub enum WidgetEvent {
-    ButtonClick { widget_id: WidgetId },
-    UpdateText { widget_id: WidgetId, text: String },
-    CopyWebroot,
-    CopySuperAnti,
+    ButtonClick { widget_id: WidgetId},
+    // UpdateText { widget_id: WidgetId, text: String },
     Api(ApiEvent)
-}
-
-pub enum ApiEvent {
-    GetTicket(PrestashopPayload),
-    SubmitTur,
-    GetKeys,
-    CheckSeb,
 }
 
 /// Trait for any widget (or component) that can handle events.
 pub trait ActionHandler {
-    /// Returns the unique widget identifier.
-    fn widget_id(&self) -> WidgetId;
+    // Returns the unique widget identifier.
+    // fn widget_id(&self) -> WidgetId;
     /// Process an incoming event.
     fn handle_event(&mut self, event: &WidgetEvent);
 }

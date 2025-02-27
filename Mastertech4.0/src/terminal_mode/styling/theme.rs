@@ -91,3 +91,19 @@ impl ExabindTheme for Theme {
 
 const COLORS: Catppuccin = Catppuccin::new();
 
+pub static BASE_COLORS: [Color; 14] = [
+    COLORS.rosewater,
+    COLORS.flamingo,
+    COLORS.pink,
+    COLORS.mauve,
+    COLORS.red,
+    COLORS.maroon,
+    COLORS.peach,
+    COLORS.yellow,
+    COLORS.green,
+    COLORS.teal,
+    COLORS.sky,
+    COLORS.sapphire,
+    COLORS.blue,
+    COLORS.lavender,
+];

@@ -1,8 +1,9 @@
+use crossbeam::channel::Sender;
 use ratatui::{
-    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Margin, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, Borders, WidgetRef}
+    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::Rect, style::{Color, Style}, text::Line, widgets:: WidgetRef
 };
 use tachyonfx::{CellFilter, Effect};
-use crate::terminal_mode::{fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, TURQUOISE}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE};
 use std::{cell::RefCell, fmt::Debug, sync::Arc};
 use super::{ButtonType, SHORTCUT_SET};
 
@@ -20,6 +21,7 @@ use super::{ButtonType, SHORTCUT_SET};
 /// - `on_click`: optional callback to do something when the button is clicked
 #[derive(Clone)]
 pub struct Button<'a> {
+    id: WidgetId,
     title: String,
     label: Line<'a>,
     theme: Theme,
@@ -29,6 +31,7 @@ pub struct Button<'a> {
     area: RefCell<Option<Rect>>,
     effect_stage: RefCell<EffectStage<UniqueEffectId>>,
     init: RefCell<bool>,
+    event_sender: Sender<WidgetEvent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,8 +52,9 @@ pub struct Theme {
 }
 
 impl<'a> Button<'a> {
-    pub fn new(label: &'a str) -> Self {
+    pub fn new(label: &'a str, id: WidgetId) -> Self {
         Button {
+            id,
             title: label.to_string(),
             label: Line::raw(label),
             theme: TURQUOISE,
@@ -59,8 +63,13 @@ impl<'a> Button<'a> {
             on_click: Arc::new(RefCell::new(None)),
             effect_stage: RefCell::new(EffectStage::default()),
             init: RefCell::new(true),
+            event_sender: get_event_sender()
         }
     }
+
+    // pub fn id(&self) -> &WidgetId {
+    //     &self.id
+    // }
 
     pub const fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
@@ -80,7 +89,7 @@ impl<'a> Button<'a> {
         &self.title
     }
 
-    pub fn on_click(self, f: impl FnMut() + 'a) -> Self {
+    pub fn _on_click(self, f: impl FnMut() + 'a) -> Self {
         self.on_click.replace(Some(Box::new(f)));
         self
     }
@@ -91,7 +100,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
     fn click(&self) {
         if let Some(callback) = self.on_click.borrow_mut().as_mut() {
             log::info!("click callback fired");
-            callback(); // Call the callback
+            callback(); // Error here because i dont pass an arg to callback(*)
         }
     }
     
@@ -99,7 +108,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
         self.state.replace(state);
     }
 
-    fn get_area(&self) -> Option<Rect> {
+    fn _get_area(&self) -> Option<Rect> {
         *self.area.borrow()
     }
     
@@ -140,6 +149,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
                 if c >= area.x && c < area.x + area.width &&
                    r >= area.y && r < area.y + area.height {
                     self.set_state(State::Active);
+                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone() });
                     self.click(); // calls our on_click callback
                 } else {
                     self.set_state(State::Normal);
@@ -149,6 +159,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
                 // If you want hover behavior, do it here
                 if c >= area.x && c < area.x + area.width &&
                    r >= area.y && r < area.y + area.height {
+                    // self.event_sender.try_send(WidgetEvent::Hover { widget_id: self.id });
                     self.set_state(State::Selected);
                 } else {
                     self.set_state(State::Normal);

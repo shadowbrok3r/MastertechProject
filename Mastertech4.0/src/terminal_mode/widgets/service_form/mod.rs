@@ -1,8 +1,7 @@
 
-use crate::terminal_mode::{data::ServiceData, events::action_handler::{ApiEvent, WidgetEvent, WidgetId}, styling::{CATPPUCCINTHEME, MEDIUMSLATEBLUE, SPRINGGREEN}};
+use crate::terminal_mode::{data::ServiceData, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}};
 use super::{button::{Button, State}, input_field::{InputField, InputFieldId}, ButtonType};
 use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
-use crossbeam::channel::Sender;
 use database::schema::GetKeysResponse;
 use reqwest::Client;
 
@@ -13,8 +12,8 @@ pub mod render;
 /// ServiceFormWidget: The complete two‑column form.
 pub struct ServiceFormWidget<'a> {
     input_idx: RefCell<i32>,
-    get_ticket_button: Button<'a>,
-    submit_button: Button<'a>,
+    get_ticket_btn: Button<'a>,
+    submit_btn: Button<'a>,
     order_number: Rc<InputField<'a>>,
 
     // Row 1: Customer Info
@@ -26,12 +25,12 @@ pub struct ServiceFormWidget<'a> {
     pub technician_name: InputField<'a>,
 
     // Row 3: Two buttons
-    pub get_keys_button: Button<'a>,
-    pub check_seb_button: Button<'a>,
+    pub get_keys_btn: Button<'a>,
+    pub check_seb_btn: Button<'a>,
 
     // Row 4: Two buttons
-    pub webroot_key_button: Button<'a>,
-    pub superanti_key_button: Button<'a>,
+    pub webroot_key_btn: Button<'a>,
+    pub superanti_key_btn: Button<'a>,
 
     // Row 5: Multiline text fields
     pub checkin_notes: InputField<'a>,
@@ -52,56 +51,11 @@ pub struct ServiceFormWidget<'a> {
 }
 
 impl<'a> ServiceFormWidget<'a> {
-    pub fn new(event_sender: Sender<WidgetEvent>) -> Self {
-        let service_data =  Arc::new(Mutex::new(ServiceData::new(event_sender.clone())));
-
+    pub fn new() -> Self {
+        let service_data =  Arc::new(Mutex::new(ServiceData::new()));
         // Wrap the InputField in an Rc.
         let service_num_field = Rc::new(InputField::new("Service #"));
-        let sender_clone = event_sender.clone();
-        let sender_clone2 = event_sender.clone();
-        let sender_clone3 = event_sender.clone();
-        let sender_clone4 = event_sender.clone();
-        let sender_clone5 = event_sender.clone();
-        let sender_clone6 = event_sender.clone();
-        let get_ticket_button = Button::new("Get Ticket")
-            .theme(MEDIUMSLATEBLUE)
-            .on_click(move || {
-                // And then send a ButtonClick event to trigger get_ticket().
-                let _ = sender_clone.try_send(WidgetEvent::ButtonClick {
-                    widget_id: WidgetId::ServiceForm,
-                });
-            });
-
-        let get_keys_button = Button::new("Get Keys")
-            .theme(SPRINGGREEN)
-            .on_click(move || {
-                // And then send a ButtonClick event to trigger get_ticket().
-                let _ = sender_clone2.try_send(WidgetEvent::Api(ApiEvent::GetKeys));
-            });
-
-        let check_seb_button = Button::new("Check SEB")
-            .theme(CATPPUCCINTHEME)
-            .on_click(move || {
-                let _ = sender_clone3.try_send(WidgetEvent::Api(ApiEvent::CheckSeb));
-            });
-
-        let submit_button = Button::new("Submit")
-            .theme(CATPPUCCINTHEME)
-            .on_click(move || {
-                let _ = sender_clone4.try_send(WidgetEvent::Api(ApiEvent::SubmitTur));
-            });
-
-        let webroot_key_button = Button::new("Webroot Key")
-            .theme(CATPPUCCINTHEME)
-            .on_click(move || {
-                let _ = sender_clone5.try_send(WidgetEvent::CopyWebroot);
-            });
-
-        let superanti_key_button = Button::new("SuperAnti Key")
-            .theme(CATPPUCCINTHEME)
-            .on_click(move || {
-                let _ = sender_clone6.try_send(WidgetEvent::CopySuperAnti);
-            });
+        // .on_click(move || {tx.try_send(WidgetEvent::ButtonClick { widget_id: WidgetId::GetTicket});});
 
         Self {
             order_number: service_num_field,
@@ -112,12 +66,36 @@ impl<'a> ServiceFormWidget<'a> {
             technician_name: InputField::new("Technician Name"),
             checkin_notes: InputField::new("CheckIn Notes"),
             recommendations: InputField::new("Recommendations"),
-            get_ticket_button,
-            submit_button,
-            get_keys_button,
-            check_seb_button,
-            webroot_key_button,
-            superanti_key_button,
+            get_ticket_btn: Button::new(
+                    "Get Ticket",
+                    WidgetId("GetTicket".to_owned())
+                )
+                .theme(MEDIUMSLATEBLUE),
+            submit_btn: Button::new(
+                    "Submit",
+                    WidgetId("SubmitTur".to_owned())
+                )
+                .theme(DEEPPINK),
+            get_keys_btn: Button::new(
+                    "Get Keys",
+                    WidgetId("GetKeys".to_owned())
+                )
+                .theme(CATPPUCCINTHEME),
+            check_seb_btn: Button::new(
+                    "Check SEB",
+                    WidgetId("CheckSeb".to_owned())
+                )
+                .theme(CATPPUCCINTHEME),
+            webroot_key_btn: Button::new(
+                    "Webroot Key",
+                    WidgetId("CopyWebroot".to_owned())
+                )
+                .theme(SPRINGGREEN),
+            superanti_key_btn: Button::new(
+                    "SuperAnti Key",
+                    WidgetId("CopySuperAnti".to_owned())
+                )
+                .theme(DEEPPINK),
             service_data,
             client: Client::new(),
             keys: GetKeysResponse::default(),

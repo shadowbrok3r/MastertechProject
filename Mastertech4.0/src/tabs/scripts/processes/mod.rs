@@ -46,8 +46,8 @@ impl ProcessCreationEvent {
         let ps = PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         log::info!("Starting process monitoring...");

@@ -123,7 +123,7 @@ impl<'a> ButtonType<'a> for InputField <'a> {
         self.set_cursor();
     }
 
-    fn get_area(&self) -> Option<Rect> {
+    fn _get_area(&self) -> Option<Rect> {
         *self.area.borrow()
     }
     

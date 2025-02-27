@@ -86,8 +86,8 @@ impl StartupProgram {
         let ps = PsScriptBuilder::new()
             .no_profile(true)
             .non_interactive(true)
-            .hidden(false)
-            .print_commands(true)
+            .hidden(true)
+            .print_commands(false)
             .build();
 
         let output = ps.run(ps_script)?;

@@ -1,10 +1,10 @@
-use std::{collections::HashMap, time::Instant};
 
-use crossbeam::channel::{Receiver, Sender};
 use ratatui::{
     crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::Style, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, WidgetRef}, Frame
 };
-use crate::{filesystem::system_info::{get_sysinfo, get_sysinfo_no_gpu}, terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCIN, widgets::HandleWidget}};
+use crate::{filesystem::system_info::get_sysinfo_no_gpu, terminal_mode::{styling::CATPPUCCIN, widgets::HandleWidget}}; // fx::{effect::UniqueEffectId, EffectStage}
+use std::{collections::HashMap, time::Instant};
+use crossbeam::channel::{Receiver, Sender};
 use database::schema::SystemInformation;
 
 pub struct SysinfoTab {
@@ -22,7 +22,7 @@ pub struct SysinfoTab {
     rx: Receiver<SystemInformation>,
 
     start_time: Instant,
-    pub effect_stage: EffectStage<UniqueEffectId>,
+    // pub effect_stage: EffectStage<UniqueEffectId>,
 }
 
 /// A sample that records the elapsed time (in seconds) and the value.
@@ -48,7 +48,7 @@ impl SysinfoTab {
             component_temp_history: HashMap::new(),
 
             start_time: Instant::now(),
-            effect_stage: EffectStage::default(),
+            // effect_stage: EffectStage::default(),
 
             tx, 
             rx,

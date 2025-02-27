@@ -1,6 +1,5 @@
-use crossbeam::channel::Sender;
 use ratatui::{crossterm::event::KeyEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetEvent, fx::{effect::UniqueEffectId, EffectStage}, widgets::service_form::ServiceFormWidget};
+use crate::terminal_mode::widgets::service_form::ServiceFormWidget; // fx::{effect::UniqueEffectId, EffectStage}
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 use crate::terminal_mode::widgets::HandleWidget;
 use ratatui::crossterm::event::MouseEvent;
@@ -18,20 +17,20 @@ pub struct ServiceTab<'a> {
     // Wrap the widget so it can be shared.
     pub service_form_widget: std::rc::Rc<std::cell::RefCell<ServiceFormWidget<'a>>>,
     scroll_state: RefCell<ScrollViewState>,
-    pub effect_stage: EffectStage<UniqueEffectId>,
+    // pub effect_stage: EffectStage<UniqueEffectId>,
     last_service_form_area: RefCell<Option<Rect>>,
 
 }
 
 impl<'a> ServiceTab<'a> {
-    pub fn new(event_sender: Sender<WidgetEvent>) -> Self {
+    pub fn new() -> Self {
         let service_form_widget = std::rc::Rc::new(std::cell::RefCell::new(
-            ServiceFormWidget::new(event_sender)
+            ServiceFormWidget::new()
         ));
         Self {
-            service_form_widget: service_form_widget,
+            service_form_widget,
             scroll_state: RefCell::new(ScrollViewState::default()),
-            effect_stage: EffectStage::default(),
+            // effect_stage: EffectStage::default(),
             last_service_form_area: RefCell::new(None)
         }
     }

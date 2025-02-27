@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind}, layout::Rect, prelude::Backend, style::Color, Frame};
+use ratatui::{crossterm::event::{KeyEvent, MouseEvent}, layout::Rect, prelude::Backend, style::Color, Frame};
 use ratatui::symbols::border::Set;
 use button::State;
 
@@ -38,44 +38,13 @@ pub trait HandleWidget<'a>{
     fn handle_key_event(&mut self, _key_event: KeyEvent) -> bool { true }
 }
 
-pub trait HandleMouse: for<'a> ButtonType<'a> {
-    fn handle_mouse_event(&mut self, mouse_event: &MouseEvent) {
-        // If we haven’t assigned an area yet, do nothing
-        let Some(area) = self.get_area() else { return; };
-
-        let c = mouse_event.column;
-        let r = mouse_event.row;
-        match mouse_event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Check if the mouse click is within area
-                if c >= area.x && c < area.x + area.width &&
-                   r >= area.y && r < area.y + area.height {
-                    self.set_state(State::Active);
-                    self.click(); // calls our on_click callback
-                } else {
-                    // self.set_state(State::Normal);
-                }
-            }
-            MouseEventKind::Moved => {
-                // If you want hover behavior, do it here
-                if c >= area.x && c < area.x + area.width &&
-                   r >= area.y && r < area.y + area.height {
-                    self.set_state(State::Selected);
-                } else {
-                    self.set_state(State::Normal);
-                }
-            }
-            _ => {}
-        }
-    }
-}
 
 pub trait ButtonType <'a> {
     // fn on_click(&self, f: impl FnMut(&mut T) + 'a);
     fn click(&self);
     fn set_state(&self, state: State);
     // #[allow(unused)]
-    fn get_area(&self) -> Option<Rect>;
+    fn _get_area(&self) -> Option<Rect>;
     fn is_active(&self) -> bool;
     fn set_area(&self, area: Rect);
     fn handle_mouse_event(&self, mouse_event: &MouseEvent);
