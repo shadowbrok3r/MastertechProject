@@ -112,17 +112,12 @@ async fn main() -> eframe::Result<()> {
         use winapi::um::processthreadsapi::GetCurrentProcess;
         use winapi::um::processthreadsapi::SetPriorityClass;
         use winapi::um::winbase::ABOVE_NORMAL_PRIORITY_CLASS;
-
         unsafe {
             SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
         }
     }
 
-    // console_subscriber::init();
-    // Init the logger
-    // Configure log level and log file
-    // displays::tabs::logger::logging::builder().init().unwrap();
-
+    // console_subscriber::init(); // for tokio console
     let matches = clap::Command::new("Mastertech 4")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Shadowbroker")
@@ -137,23 +132,10 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
-        let log_level = log::LevelFilter::Trace;
-        let log_file = std::fs::File::create("GOTFLAG.log").unwrap();
-        simplelog::WriteLogger::init(
-            log_level,
-            simplelog::Config::default(),
-            log_file
-        ).unwrap();
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else {
-        let log_level = log::LevelFilter::Info;
-        let log_file = std::fs::File::create("output.log").unwrap();
-        simplelog::WriteLogger::init(
-            log_level,
-            simplelog::Config::default(),
-            log_file
-        ).unwrap();
+        displays::tabs::logger::logging::builder().init().unwrap();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {

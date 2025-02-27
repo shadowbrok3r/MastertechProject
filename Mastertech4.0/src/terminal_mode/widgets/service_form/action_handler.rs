@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use crate::{
-    tabs::tur_sheet::get_ticket::{request_seb_info, SendRequest}, 
+    tabs::tur_sheet::get_ticket::SendRequest, 
     terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent, WidgetId}
 };
 
 use database::schema::{
-    utilities::PhoneNumberFormatter, GetKeysResponse, LocalSebData
+    utilities::PhoneNumberFormatter, GetKeysResponse
 };
 use reqwest::header::CONTENT_TYPE;
 

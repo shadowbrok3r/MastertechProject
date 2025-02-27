@@ -62,6 +62,7 @@ unicode-width = "=0.2.0"
 bit-set = "0.8.0"
 tui-logger = "0.14"
 arboard = "3"
+tui-popup = "0.6.0"
 
 database = { workspace=true }
 surrealdb = { workspace=true }
