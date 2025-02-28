@@ -1,4 +1,6 @@
+use crate::terminal_mode::tabs::action_handler::WindowsUpdateEvent;
 use crossbeam::channel::Sender;
+use windows_core::*;
 use windows::{
     core::{
         implement, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
@@ -21,6 +23,10 @@ use windows::{
     }
 };
 
+pub mod antivirus;
+pub mod disable_notifications;
+pub mod installed_programs;
+
 /*
  * we can also output some better diagnostic info about updates / upgrades by downloading 
  * SetupDiag:
@@ -33,10 +39,6 @@ use windows::{
 const CLSID_UPDATE_SESSION: GUID = GUID::from_u128(0x4CB43D7F_7EEE_4906_8698_60DA1C38F2FE);
 const CLSID_UPDATE_SERVICE_MANAGER: GUID = GUID::from_u128(0xf8d253d9_89a4_4daa_87b6_1168369f0b21);
 const MICROSOFT_UPDATE_SERVICE_ID: &str = "7971f918-a847-4430-9279-4a52d1efe18d";
-
-use windows_core::*;
-
-use crate::terminal_mode::tabs::action_handler::WindowsUpdateEvent;
 
 /// Our custom struct to hold basic update info
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]

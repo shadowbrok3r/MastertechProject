@@ -65,9 +65,9 @@ impl <'a> ScriptsTab <'a> {
             self.windows_updates.updates.len() > 0
         );
     
-        // self.update_checklist("Prechecks", "Is Windows Activated?", 
-        //     check_windows_activation()
-        // );
+        self.update_checklist("Prechecks", "Is Windows Activated?", 
+            check_windows_activation()
+        );
     
         // self.update_checklist("Prechecks", "Is Sleep enabled?", 
         //     check_sleep_mode()
@@ -101,19 +101,15 @@ fn get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
     }
 }
 
-
-fn check_program_installed(program_name: &str) -> String {
-    format!(
-        r#"
-        $programs = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object {{ $_.DisplayName -like "*{}*" }}
-        if ($programs) {{ "Installed" }} else {{ "Not Installed" }}
-        "#,
-        program_name
-    )
+fn _install_pc_health_check() -> String {
+    format!("winget install Microsoft.WindowsPCHealthCheck -h --accept-package-agreements --force")
 }
 
+fn _install_windbg() -> String {
+    format!("winget install Microsoft.WinDbg -h --accept-package-agreements --force")
+}
 
-fn check_program_running(process_name: &str) -> String {
+fn _check_program_running(process_name: &str) -> String {
     format!(
         r#"
         $process = Get-Process -Name "{}" -ErrorAction SilentlyContinue
@@ -123,32 +119,26 @@ fn check_program_running(process_name: &str) -> String {
     )
 }
 
+pub fn check_windows_activation() -> bool {
+    let script = r#"
+        $status = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform").LicStatusArray
+        if ($status -eq 1) { "Activated" } else { "Not Activated" }
+    "#;
 
-fn check_scheduled_task(task_name: &str) -> String {
-    format!(
-        r#"
-        $task = Get-ScheduledTask | Where-Object {{ $_.TaskName -like "*{}*" }}
-        if ($task) {{ "Scheduled" }} else {{ "Not Found" }}
-        "#,
-        task_name
-    )
+    let ps = PsScriptBuilder::new()
+        .no_profile(true)
+        .non_interactive(true)
+        .hidden(false)
+        .print_commands(false)
+        .build();
+
+    match ps.run(script) {
+        Ok(output) => output.stdout().unwrap_or_default().trim() == "Activated",
+        Err(_) => false,  // Assume not activated if an error occurs
+    }
 }
 
-fn check_windows_updates() -> &'static str {
-    r#"
-    $updates = Get-WindowsUpdate -IsInstalled 0
-    if ($updates) { "Updates Available" } else { "Up to date" }
-    "#
-}
-
-fn check_windows_activation() -> &'static str {
-    r#"
-    $license = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform").LicenseStatus
-    if ($license -eq 1) { "Activated" } else { "Not Activated" }
-    "#
-}
-
-fn check_sleep_mode() -> &'static str {
+fn _check_sleep_mode() -> &'static str {
     r#"
     $powercfg = powercfg -query | Select-String "HIBERNATE"
     if ($powercfg) { "Enabled" } else { "Disabled" }

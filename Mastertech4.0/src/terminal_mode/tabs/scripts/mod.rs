@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType}}, utilities::windows::WindowsUpdates};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK}, widgets::{button::Button, ButtonType}}, utilities::windows::WindowsUpdates};
 use std::{cell::RefCell, collections::HashMap};
 use checklist::{Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
@@ -169,13 +169,12 @@ impl<'a> ScriptsTab<'a> {
 
         
         let tab_buttons = vec![
-            (WidgetId("Main".to_owned()), Button::new("Main", WidgetId("Main".to_owned())).theme(CATPPUCCINTHEME)),
+            (WidgetId("Main".to_owned()), Button::new("Main", WidgetId("Main".to_owned())).theme(DEEPPINK)),
             (WidgetId("Antivirus".to_owned()), Button::new("Antivirus", WidgetId("Antivirus".to_owned())).theme(CATPPUCCINTHEME)),
             (WidgetId("StartupItems".to_owned()), Button::new("Startup Items", WidgetId("StartupItems".to_owned())).theme(CATPPUCCINTHEME)),
             (WidgetId("InstalledPrograms".to_owned()), Button::new("Installed Programs", WidgetId("InstalledPrograms".to_owned())).theme(CATPPUCCINTHEME)),
             (WidgetId("ScheduledTasks".to_owned()), Button::new("Scheduled Tasks", WidgetId("ScheduledTasks".to_owned())).theme(CATPPUCCINTHEME)),
             (WidgetId("TaskbarItems".to_owned()), Button::new("Taskbar Items", WidgetId("TaskbarItems".to_owned())).theme(CATPPUCCINTHEME)),
-            (WidgetId("Report".to_owned()), Button::new("Report", WidgetId("Report".to_owned())).theme(CATPPUCCINTHEME)),
         ];
 
         Self {
@@ -258,7 +257,7 @@ impl<'a> ScriptsTab<'a> {
         }
     }
 
-    fn mark_task_complete(&mut self, checklist_name: &str, task_name: &str) {
+    fn _mark_task_complete(&mut self, checklist_name: &str, task_name: &str) {
         if let Some(list) = self.checklists.get_mut(checklist_name) {
             if let Some(task) = list.items.iter_mut().find(|t| t.text == task_name) {
                 task.status = Status::Completed;

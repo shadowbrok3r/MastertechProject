@@ -79,17 +79,17 @@ impl Default for TerminalApp <'_>{
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     // Set max_log_level to Trace
-    tui_logger::init_logger(log::LevelFilter::Info).unwrap();
-    // Set default level for unknown targets to Trace
-    tui_logger::set_default_level(log::LevelFilter::Info);
+    // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
+    // // Set default level for unknown targets to Trace
+    // tui_logger::set_default_level(log::LevelFilter::Info);
 
-    // let log_level = log::LevelFilter::Trace;
-    // let log_file = std::fs::File::create("output.log").unwrap();
-    // simplelog::WriteLogger::init(
-    //     log_level,
-    //     simplelog::Config::default(),
-    //     log_file
-    // ).unwrap();
+    let log_level = log::LevelFilter::Info;
+    let log_file = std::fs::File::create("output.log").unwrap();
+    simplelog::WriteLogger::init(
+        log_level,
+        simplelog::Config::default(),
+        log_file
+    ).unwrap();
 
     log::info!("STARTING TERM MODE");
     enable_raw_mode()?;
