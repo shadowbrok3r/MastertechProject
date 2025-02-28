@@ -26,6 +26,7 @@ use windows::{
 pub mod antivirus;
 pub mod disable_notifications;
 pub mod installed_programs;
+pub mod net_adapter;
 
 /*
  * we can also output some better diagnostic info about updates / upgrades by downloading 

@@ -1,5 +1,5 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{is_push_notifications_disabled, is_tips_and_suggestions_disabled, is_windows_experience_disabled}, install_windows_updates, installed_programs::get_installed_program_names, WindowsUpdates}};
-use super::{Reporter, ScriptsTab};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status}, WindowsUpdates}};
+use super::{script_checks::get_data_transfer_candidates, Reporter, ScriptsTab};
 
 #[derive(Debug)]
 pub enum WindowsUpdateEvent {
@@ -108,10 +108,18 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         // self.run_prechecks();
                         let check_antivirus = check_antivirus();
                         let get_installed_program_names = get_installed_program_names();
-                        let is_push_notifications_disabled = is_push_notifications_disabled();
-                        let is_windows_experience_disabled = is_windows_experience_disabled();
-                        let is_tips_and_suggestions_disabled = is_tips_and_suggestions_disabled();
-
+                        let check_network_adapters = check_network_adapters();
+                        let get_wlan_status = get_wlan_status();
+                        // connect_to_wifi("PCLaptops2.4", Some("bestburger"), None)?;
+                        // let paths = get_data_transfer_candidates();
+                        // match paths {
+                        //     Ok(paths) => {
+                        //         for (path, size) in paths.iter() {
+                        //             self.log_message(&format!("Potential Data Transfer Candidate: {path} Size: {size}"));
+                        //         }
+                        //     }
+                        //     Err(e) => log::info!("Error getting paths: {e:?}"),
+                        // }
                         match check_antivirus {
                             Ok(_) => self.log_message(&format!("check_antivirus OK")),
                             Err(e) => self.log_message(&format!("ERR(check_antivirus) => {e:?}")),
@@ -120,18 +128,40 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                             Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
                             Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
                         }
-                        match is_push_notifications_disabled {
-                            Ok(x) => self.log_message(&format!("is_push_notifications_disabled: {x:?}")),
-                            Err(e) => self.log_message(&format!("ERR(is_push_notifications_disabled) => {e:?}")),
+                    
+                        // Check PushNotifications registry key
+                        match check_push_notifications() {
+                            Ok(status) => self.log_message(&format!("check_push_notifications => {status}")),
+                            Err(e) => self.log_message(&format!("check_push_notifications => {e:?}")),
                         }
-                        match is_windows_experience_disabled {
-                            Ok(x) => self.log_message(&format!("is_windows_experience_disabled: {x:?}")),
-                            Err(e) => self.log_message(&format!("ERR(is_windows_experience_disabled) => {e:?}")),
+                    
+                        // Check ContentDeliveryManager registry key
+                        match check_content_delivery_manager() {
+                            Ok(statuses) => {
+                                for status in statuses.iter() {
+                                    self.log_message(&format!("check_content_delivery_manager => {status}"))
+                                }
+                            },
+                            Err(e) => self.log_message(&format!("check_content_delivery_manager => {e:?}")),
                         }
-                        match is_tips_and_suggestions_disabled {
-                            Ok(x) => self.log_message(&format!("is_tips_and_suggestions_disabled: {x:?}")),
-                            Err(e) => self.log_message(&format!("ERR(is_tips_and_suggestions_disabled) => {e:?}")),
+                    
+                        // Check Explorer Advanced registry key
+                        match check_explorer_advanced() {
+                            Ok(status) => self.log_message(&format!("check_explorer_advanced => {status}")),
+                            Err(e) => self.log_message(&format!("check_explorer_advanced => {e:?}")),
                         }
+                        // match is_push_notifications_disabled {
+                        //     Ok(x) => self.log_message(&format!("is_push_notifications_disabled: {x:?}")),
+                        //     Err(e) => self.log_message(&format!("ERR(is_push_notifications_disabled) => {e:?}")),
+                        // }
+                        // match is_windows_experience_disabled {
+                        //     Ok(x) => self.log_message(&format!("is_windows_experience_disabled: {x:?}")),
+                        //     Err(e) => self.log_message(&format!("ERR(is_windows_experience_disabled) => {e:?}")),
+                        // }
+                        // match is_tips_and_suggestions_disabled {
+                        //     Ok(x) => self.log_message(&format!("is_tips_and_suggestions_disabled: {x:?}")),
+                        //     Err(e) => self.log_message(&format!("ERR(is_tips_and_suggestions_disabled) => {e:?}")),
+                        // }
                     }
                     _ => {
                         // self.current_reporter.replace(Reporter::Unknown);
