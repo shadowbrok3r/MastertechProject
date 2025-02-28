@@ -124,7 +124,13 @@ windows = {version = "0.60", features = [
     "Win32_System_Variant",
     "Win32_System_SecurityCenter",
     "Win32_System_Registry",
+    "Storage",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock", 
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_WiFi"
 ]}
+windows-registry = "0.5"
 windows-core = "0.60"
 windows_x86_64_msvc = "0.53"
 winapi = { version = "0.3", features = ["processthreadsapi"] }
