@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{install_windows_updates, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{is_push_notifications_disabled, is_tips_and_suggestions_disabled, is_windows_experience_disabled}, install_windows_updates, installed_programs::get_installed_program_names, WindowsUpdates}};
 use super::{Reporter, ScriptsTab};
 
 #[derive(Debug)]
@@ -105,8 +105,33 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "RunPrechecks" => {
                         self.current_reporter.replace(Reporter::RunPrechecks);
                         self.log_message("Running system prechecks...");
-                        self.run_prechecks();
-                        self.log_message("Prechecks completed.");
+                        // self.run_prechecks();
+                        let check_antivirus = check_antivirus();
+                        let get_installed_program_names = get_installed_program_names();
+                        let is_push_notifications_disabled = is_push_notifications_disabled();
+                        let is_windows_experience_disabled = is_windows_experience_disabled();
+                        let is_tips_and_suggestions_disabled = is_tips_and_suggestions_disabled();
+
+                        match check_antivirus {
+                            Ok(_) => self.log_message(&format!("check_antivirus OK")),
+                            Err(e) => self.log_message(&format!("ERR(check_antivirus) => {e:?}")),
+                        }
+                        match get_installed_program_names {
+                            Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
+                            Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
+                        }
+                        match is_push_notifications_disabled {
+                            Ok(x) => self.log_message(&format!("is_push_notifications_disabled: {x:?}")),
+                            Err(e) => self.log_message(&format!("ERR(is_push_notifications_disabled) => {e:?}")),
+                        }
+                        match is_windows_experience_disabled {
+                            Ok(x) => self.log_message(&format!("is_windows_experience_disabled: {x:?}")),
+                            Err(e) => self.log_message(&format!("ERR(is_windows_experience_disabled) => {e:?}")),
+                        }
+                        match is_tips_and_suggestions_disabled {
+                            Ok(x) => self.log_message(&format!("is_tips_and_suggestions_disabled: {x:?}")),
+                            Err(e) => self.log_message(&format!("ERR(is_tips_and_suggestions_disabled) => {e:?}")),
+                        }
                     }
                     _ => {
                         // self.current_reporter.replace(Reporter::Unknown);

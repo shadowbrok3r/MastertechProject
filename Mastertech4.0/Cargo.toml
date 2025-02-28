@@ -122,6 +122,8 @@ windows = {version = "0.60", features = [
     "Win32_Security",
     "Win32_System_Ole",
     "Win32_System_Variant",
+    "Win32_System_SecurityCenter",
+    "Win32_System_Registry",
 ]}
 windows-core = "0.60"
 windows_x86_64_msvc = "0.53"
