@@ -107,29 +107,29 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         self.log_message("Running system prechecks...");
                         // self.run_prechecks();
                         let check_antivirus = check_antivirus();
-                        let get_installed_program_names = get_installed_program_names();
+                        // let get_installed_program_names = get_installed_program_names();
                         let check_network_adapters = check_network_adapters();
                         let get_wlan_status = get_wlan_status();
-                        let scan_for_wifi = scan_wifi_networks();
-                        self.log_message(&format!("wifi scan: {scan_for_wifi:?}"));
+                        // let scan_for_wifi = scan_wifi_networks();
+                        // self.log_message(&format!("wifi scan: {scan_for_wifi:?}"));
                         // connect_to_wifi("PCLaptops2.4", Some("bestburger"), None)?;
-                        // let paths = get_data_transfer_candidates();
-                        // match paths {
-                        //     Ok(paths) => {
-                        //         for (path, size) in paths.iter() {
-                        //             self.log_message(&format!("Potential Data Transfer Candidate: {path} Size: {size}"));
-                        //         }
-                        //     }
-                        //     Err(e) => log::info!("Error getting paths: {e:?}"),
-                        // }
+
+                        let tx = self.path_size_tx.clone();
+                        std::thread::spawn(move || {
+                            let paths = get_data_transfer_candidates();
+                            match paths {
+                                Ok(paths) => { let _ = tx.try_send(paths); },
+                                Err(e) => log::info!("Error getting paths: {e:?}"),
+                            };
+                        });
                         match check_antivirus {
                             Ok(_) => self.log_message(&format!("check_antivirus OK")),
                             Err(e) => self.log_message(&format!("ERR(check_antivirus) => {e:?}")),
                         }
-                        match get_installed_program_names {
-                            Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
-                            Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
-                        }
+                        // match get_installed_program_names {
+                        //     Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
+                        //     Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
+                        // }
                     
                         // Check PushNotifications registry key
                         match check_push_notifications() {
