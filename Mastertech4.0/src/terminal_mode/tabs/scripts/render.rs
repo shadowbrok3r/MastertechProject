@@ -197,7 +197,7 @@ impl<'a> ScriptsTab<'a> {
 
 impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        self.handle_log_events();
+        self.receive();
         self.update_selected_tab();
     
         // Define layout sections

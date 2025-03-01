@@ -82,6 +82,8 @@ pub struct ScriptsTab<'a> {
     current_reporter: RefCell<Reporter>,
     update_log_tx: Sender<WindowsUpdateEvent>,
     update_log_rx: Receiver<WindowsUpdateEvent>,
+    path_size_tx: Sender<Vec<(String, String)>>,
+    path_size_rx: Receiver<Vec<(String, String)>>,
     current_tab: RefCell<ScriptsTabView>,
     tab_buttons: Vec<(WidgetId, Button<'a>)>,
 
@@ -113,6 +115,7 @@ pub struct ScriptsTab<'a> {
 impl<'a> ScriptsTab<'a> {
     pub fn new() -> Self {
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
+        let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
 
         let mut checklists = HashMap::new();
         
@@ -167,7 +170,6 @@ impl<'a> ScriptsTab<'a> {
             },
         );
 
-        
         let tab_buttons = vec![
             (WidgetId("Main".to_owned()), Button::new("Main", WidgetId("Main".to_owned())).theme(DEEPPINK)),
             (WidgetId("Antivirus".to_owned()), Button::new("Antivirus", WidgetId("Antivirus".to_owned())).theme(CATPPUCCINTHEME)),
@@ -202,6 +204,8 @@ impl<'a> ScriptsTab<'a> {
             current_reporter: RefCell::new(Reporter::Unknown),
             update_log_tx, 
             update_log_rx,
+            path_size_tx, 
+            path_size_rx,
             current_tab: RefCell::new(ScriptsTabView::default()),
 
             checklists,
@@ -227,8 +231,15 @@ impl<'a> ScriptsTab<'a> {
         self.reports.borrow_mut().push(log_entry); // ✅ Store log
     }
 
-    pub fn handle_log_events(&mut self) {
-        // Spawn a thread to listen for Windows Update logs & results
+    pub fn receive(&mut self) {
+
+        if let Ok(path_info) = self.path_size_rx.try_recv() {
+            for (path, size) in path_info {
+                self.log_message(&format!("Path {path:<10} Size: {size:>10}"));
+            }
+        }
+
+        // listen for Windows Update logs & results
         while let Ok(event) = self.update_log_rx.try_recv() {
             match event {
                 WindowsUpdateEvent::UpdateLogs(log) => self.log_message(&log),
