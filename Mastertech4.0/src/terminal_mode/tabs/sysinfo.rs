@@ -128,7 +128,11 @@ impl SysinfoTab {
         // Determine current value (or fallback to 0.0).
         let current_cpu = cpu_points.last().map(|p| p.1).unwrap_or(0.0);
         let cpu_canvas = Canvas::default()
-            .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
+            .block(
+                Block::default().borders(Borders::ALL)
+                    .border_type(ratatui::widgets::BorderType::Rounded)
+                    .title("CPU Usage")
+            )
             .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
             .paint(move |ctx| {
@@ -165,6 +169,7 @@ impl SysinfoTab {
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Memory Usage")
+                    .border_type(ratatui::widgets::BorderType::Rounded)
                     .style(Style::default().fg(CATPPUCCIN.rosewater)),
             )
             .x_bounds([lower_bound, current_time])
@@ -203,6 +208,7 @@ impl SysinfoTab {
                 Block::default()
                     .borders(Borders::ALL)
                     .title("GPU Usage")
+                    .border_type(ratatui::widgets::BorderType::Rounded)
                     .style(Style::default().fg(CATPPUCCIN.mauve)),
             )
             .x_bounds([lower_bound, current_time])
@@ -288,6 +294,7 @@ impl SysinfoTab {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(ratatui::widgets::BorderType::Rounded)
                     .title("Component Temps"),
             )
             // Use the actual time window for x.
@@ -357,6 +364,7 @@ impl SysinfoTab {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .title("Processes")
                 .style(Style::default().fg(CATPPUCCIN.red)),
         )
@@ -449,7 +457,11 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             .split(overall_chunks[1]);
 
         // Left column: System Details Panel.
-        let details_block = Block::default().borders(Borders::ALL).title("System Details");
+        let details_block = Block::default()
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .borders(Borders::ALL)
+            .title("System Details");
+
         f.render_widget_ref(details_block, bottom_chunks[0]);
         f.render_widget_ref(self.draw_sysinfo_summary(), inner_rect(bottom_chunks[0], 1));
 

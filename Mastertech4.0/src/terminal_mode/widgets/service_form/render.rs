@@ -1,5 +1,5 @@
 use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
-use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::State, input_field::InputFieldId, ButtonType, ShrinkArea, SHORTCUT_SET}};
+use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 
 use super::ServiceFormWidget;
@@ -37,8 +37,8 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
         if shift_pressed {
             if let KeyCode::Tab = key_event.code {
                 log::info!("SHIFT Tab");
-                let Some(active_field) = *self.active_field.borrow() else { return false; };
-                let input_idx = Self::get_input_idx(active_field);
+                let Some(ref active_field) = *self.active_field.borrow() else { return false; };
+                let input_idx = Self::get_input_idx(&active_field);
                 if input_idx > 0 {
                     self.set_input_idx(input_idx - 1);
                 }
@@ -49,13 +49,13 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
         } else {
             match key_event.code {
                 KeyCode::Tab => {
-                    let Some(active_field) = *self.active_field.borrow() else { return false; };
-                    let input_idx = Self::get_input_idx(active_field);
+                    let Some(ref active_field) = *self.active_field.borrow() else { return false; };
+                    let input_idx = Self::get_input_idx(&active_field);
                     // let current_field = Self::get_field_id_from_idx(input_idx);
-                    self.set_input_state_from_input_idx(input_idx, State::Normal);
+                    self.set_input_state_from_input_idx(input_idx, ButtonState::Normal);
                     log::info!("active field: {active_field:?} / input_idx: {input_idx:?}");
                     self.set_input_idx(input_idx + 1);
-                    self.set_input_state_from_input_idx(input_idx + 1, State::Active);
+                    self.set_input_state_from_input_idx(input_idx + 1, ButtonState::Active);
                     true
                 }
                 KeyCode::Enter if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -66,15 +66,15 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
                 }
                 _ => {
                             // Dispatch key events to the active input field.
-                    if let Some(active) = *self.active_field.borrow() {
-                        match active {
-                            InputFieldId::CustomerName => self.customer_name.input.borrow_mut().input(key_event),
-                            InputFieldId::CustomerPhone => self.customer_phone.input.borrow_mut().input(key_event),
-                            InputFieldId::SalesmanName => self.salesman_name.input.borrow_mut().input(key_event),
-                            InputFieldId::TechnicianName => self.technician_name.input.borrow_mut().input(key_event),
-                            InputFieldId::CheckInNotes => self.checkin_notes.input.borrow_mut().input(key_event),
-                            InputFieldId::Recommendations => self.recommendations.input.borrow_mut().input(key_event),
-                            InputFieldId::ServiceNumber => {
+                    if let Some(ref active) = *self.active_field.borrow() {
+                        match active.0.as_str() {
+                            "CustomerName" => self.customer_name.input.borrow_mut().input(key_event),
+                            "CustomerPhone" => self.customer_phone.input.borrow_mut().input(key_event),
+                            "SalesmanName" => self.salesman_name.input.borrow_mut().input(key_event),
+                            "TechnicianName" => self.technician_name.input.borrow_mut().input(key_event),
+                            "CheckInNotes" => self.checkin_notes.input.borrow_mut().input(key_event),
+                            "Recommendations" => self.recommendations.input.borrow_mut().input(key_event),
+                            "ServiceNumber" => {
                                 let order_num_field = &mut self.order_number;
                                 let mut text_area_input = order_num_field.input.borrow_mut();
                                 let input = text_area_input.input(key_event);
@@ -100,6 +100,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
                                     }
                                 } else { false }
                             },
+                            _ => {false}
                         }
                     } else { false }
 

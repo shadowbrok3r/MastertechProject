@@ -17,8 +17,6 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
 use surrealdb::{sql::Uuid, RecordId};
-// use egui_ratatui::RataguiBackend;
-use anyhow::Error;
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
 use serde_json::Value;
@@ -160,8 +158,6 @@ pub struct MastertechContext {
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
 
-    pub db_rx: Receiver<anyhow::Result<Database, Error>>,
-    pub db_tx: Sender<anyhow::Result<Database, Error>>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
     pub cps_keys_rx: Receiver<GetKeysResponse>,
 
@@ -196,7 +192,6 @@ impl MasterTechApp {
             crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
-        let (db_tx, db_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
@@ -300,8 +295,6 @@ impl MasterTechApp {
             app_state_rx,
             bytes_tx,
             bytes_rx,
-            db_tx,
-            db_rx,
             cps_keys_tx,
             cps_keys_rx,
             copied_items_tx,

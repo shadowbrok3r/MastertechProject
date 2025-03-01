@@ -1,6 +1,7 @@
+use context::TerminalContext;
 use fx::{effect::{ outline_selected_cells, UniqueEffectId}, EffectStage};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
-use tabs::{logger::Logger, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
+use tabs::{logger::Logger, login::LoginTab, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
 use styling::CATPPUCCIN;
 use tachyonfx::CellFilter;
 use widgets::HandleWidget;
@@ -23,6 +24,7 @@ pub mod events;
 pub mod styling;
 pub mod fx;
 pub mod data;
+pub mod context;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
     image_data: include_bytes!("../assets/masterlogoV2.png"),
@@ -46,10 +48,12 @@ pub struct TerminalApp<'a> { // logs: Vec<String>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: ServiceTab<'a>,
     sysinfo_tab: SysinfoTab,
+    login_tab: LoginTab <'a>,
     effect_stage: EffectStage<UniqueEffectId>,
     first_run: bool,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
+    ctx: TerminalContext
 }
 
 impl Default for TerminalApp <'_>{
@@ -62,17 +66,19 @@ impl Default for TerminalApp <'_>{
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.service_form_widget.clone());
         event_manager.register_handler(scripts_tab.clone());
-
+        
         Self {
             logger: Logger::new(),
             menu_bar: MenuBar::new(),
             scripts_tab,
             service_tab,
             sysinfo_tab: SysinfoTab::new(),
+            login_tab: LoginTab::new(),
             effect_stage: EffectStage::default(),
             event_handler: EventHandler::new(),
             first_run: true,
-            event_manager
+            event_manager,
+            ctx: TerminalContext::default()
         }
     }
 }
@@ -107,6 +113,11 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
         app.sysinfo_tab.set_sysinfo(sysinfo);
     }
     log::info!("Running app");
+
+    let first_run = app.first_run();
+
+    log::info!("First Run Results: {first_run:?}");
+
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;
@@ -151,15 +162,17 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                                 Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Scripts),
                                 Tab::Scripts => app.menu_bar.set_active_tab(Tab::SystemInfo),
                                 Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Logs),
-                                Tab::Logs => app.menu_bar.set_active_tab(Tab::TurSheet),
+                                Tab::Logs => app.menu_bar.set_active_tab(Tab::Login),
+                                Tab::Login => app.menu_bar.set_active_tab(Tab::TurSheet),
                             };
                         }
                         KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
                              match current_tab {
-                                Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Logs),
+                                Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Login),
                                 Tab::Scripts => app.menu_bar.set_active_tab(Tab::TurSheet),
                                 Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Scripts),
                                 Tab::Logs => app.menu_bar.set_active_tab(Tab::SystemInfo),
+                                Tab::Login => app.menu_bar.set_active_tab(Tab::Logs),
                             };
                         }
                         _ => {
@@ -168,7 +181,8 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                                 Tab::TurSheet => app.service_tab.handle_key_event(key_event),
                                 Tab::Scripts => app.scripts_tab.borrow_mut().handle_key_event(key_event),
                                 Tab::SystemInfo => app.service_tab.handle_key_event(key_event),
-                                Tab::Logs => app.logger.handle_key_event(key_event)
+                                Tab::Logs => app.logger.handle_key_event(key_event),
+                                Tab::Login => app.login_tab.handle_key_event(key_event),
                             };
 
                             if consumed {}
@@ -181,7 +195,8 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                         Tab::TurSheet => app.service_tab.handle_mouse_event(&mouse_event),
                         Tab::Scripts => app.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::SystemInfo => app.service_tab.handle_mouse_event(&mouse_event),
-                        Tab::Logs => {} //app.logs_tab,
+                        Tab::Logs => {}
+                        Tab::Login => app.login_tab.handle_mouse_event(&mouse_event),
                     };
                 },
                 events::Event::Error => log::info!("Error in event loop"),
@@ -205,6 +220,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
             } else {
                 
                 app.event_manager.process_events();
+                app.ctx.receive();
                 // top-level layout has a row for tabs, then main content
                 // let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
                 // f.render_widget(bg, f.area());
@@ -275,6 +291,21 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
 
                 app.menu_bar.draw::<B>(f, tab_area);
 
+                // match app.ctx.state {
+                //     AppState::Authenticated(page) => {},
+                //     AppState::NoAuth(reason) => {
+                //         if reason.to_string().contains("Already connected") && app.ctx.current_user.is_some() {
+                //             log::info!("Already connected");
+                //             let _ = app.ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                //         } else {
+                //             let _ = app.ctx.app_state_tx.try_send(AppState::Login);
+                //         }
+                //     },
+                //     AppState::Login => {
+                //         // app.menu_bar.current_tab.replace(Tab::)
+                //     },
+                //     _ => {}
+                // }
                 let buf = &mut Buffer::empty(Rect::ZERO);
 
                 // (2) Render Main content area depends on which tab is selected
@@ -282,6 +313,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                     Tab::TurSheet => app.service_tab.draw::<B>(f, main_content_area),
                     Tab::Scripts => app.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area),
+                    Tab::Login => app.login_tab.draw::<B>(f, main_content_area),
                     Tab::Logs => {
                         buf.merge(f.buffer_mut());
                         // logger.render(main_content_area, buf);

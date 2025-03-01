@@ -5,12 +5,13 @@ pub use service_order::*;
 pub use scripts::*;
 pub use sysinfo::*;
 
-use super::{events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK}};
+use super::{events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
 
 pub mod scripts;
 pub mod service_order;
 pub mod sysinfo;
 pub mod logger;
+pub mod login;
 
 ////////////////////////////////////
 /// TABS FOR MENU BAR
@@ -21,6 +22,7 @@ pub enum Tab {
     TurSheet,
     Scripts,
     SystemInfo,
+    Login,
     Logs
 }
 
@@ -35,6 +37,7 @@ pub struct MenuBar<'a> {
     scripts_tab: Button<'a>,
     system_tab: Button<'a>,
     logs_tab: Button<'a>,
+    login_tab: Button<'a>,
 }
 
 impl<'a> MenuBar<'a> {
@@ -47,6 +50,7 @@ impl<'a> MenuBar<'a> {
             scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN),
             system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK),
             logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DARKORANGE),
+            login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(SPRINGGREEN),
         };
         menu_bar
     }
@@ -57,6 +61,7 @@ impl<'a> MenuBar<'a> {
         let system_tab_active = self.system_tab.is_active();
         let scripts_tab_active = self.scripts_tab.is_active();
         let logs_tab_active = self.logs_tab.is_active();
+        let login_tab_active = self.login_tab.is_active();
 
         let new_tab = if ticket_tab_active {
             Tab::TurSheet
@@ -66,6 +71,8 @@ impl<'a> MenuBar<'a> {
             Tab::Scripts
         } else if logs_tab_active {
             Tab::Logs
+        } else if login_tab_active {
+            Tab::Login
         } else {
             return;
         };
@@ -88,13 +95,15 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let row = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Ratio(1, 4),
+                Constraint::Ratio(1, 5),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 4),
+                Constraint::Ratio(1, 5),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 4),
+                Constraint::Ratio(1, 5),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 4),
+                Constraint::Ratio(1, 5),
+                Constraint::Length(1),
+                Constraint::Ratio(1, 5),
             ])
             .split(area);
 
@@ -113,6 +122,9 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let log_tab_area = row[6].shrink(1, 1);
         self.logs_tab.render_ref(log_tab_area, f.buffer_mut());
 
+        let login_tab_area = row[8].shrink(1, 1);
+        self.login_tab.render_ref(login_tab_area, f.buffer_mut());
+
         // ----- Process TachyonFX Effects -----
         // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
         // Process all effects added to our effect_stage. They will update and render onto f's buffer.
@@ -128,6 +140,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         self.scripts_tab.handle_mouse_event(&mouse_event);
         self.system_tab.handle_mouse_event(&mouse_event);
         self.logs_tab.handle_mouse_event(&mouse_event);
+        self.login_tab.handle_mouse_event(&mouse_event);
     }
 }
 

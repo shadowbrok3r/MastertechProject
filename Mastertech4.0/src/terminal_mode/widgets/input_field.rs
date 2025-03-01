@@ -1,7 +1,8 @@
+use crossbeam::channel::Sender;
 use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
-use crate::terminal_mode::{fx::{effect::{selected_category, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, fx::{effect::{selected_category, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use super::{button::{State, Theme}, ButtonType};
+use super::{button::{ButtonState, Theme}, ButtonType};
 use tui_textarea::TextArea;
 use std::cell::RefCell;
 
@@ -9,6 +10,7 @@ use std::cell::RefCell;
 // InputField: A wrapper around tui_input::Input for our form fields.
 #[derive(Clone, Debug)]
 pub struct InputField <'a> {
+    id: WidgetId,
     /// The underlying tui‑input state.
     pub input: RefCell<TextArea<'a>>,
     /// Title shown as the field’s label.
@@ -16,48 +18,40 @@ pub struct InputField <'a> {
     /// Store the last drawn area.
     area: RefCell<Option<Rect>>,
     /// state of input field
-    state: RefCell<State>,
+    state: RefCell<ButtonState>,
     /// duh
     theme: Theme,
     effect_stage: RefCell<EffectStage<UniqueEffectId>>,
     init: RefCell<bool>,
     block: RefCell<Option<Block<'a>>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputFieldId {
-    CustomerName,
-    CustomerPhone,
-    SalesmanName,
-    TechnicianName,
-    CheckInNotes,
-    Recommendations,
-    ServiceNumber,
+    event_sender: Sender<WidgetEvent>,
 }
 
 impl <'a> InputField <'a>{
-    pub fn new(title: &'static str) -> Self {
+    pub fn new(title: &'static str, id: WidgetId) -> Self {
         let mut text_area = TextArea::default();
         text_area.set_style(Style::default().fg(CATPPUCCIN.text));
 
         let input = RefCell::new(text_area);
 
         Self {
+            id,
             input,
             title,
             block: RefCell::new(None),
             area: RefCell::new(None),
-            state: RefCell::new(State::Normal),
+            state: RefCell::new(ButtonState::Normal),
             theme: CATPPUCCINTHEME,
             effect_stage: RefCell::new(EffectStage::default()),
             init: RefCell::new(true),
+            event_sender: get_event_sender()
         }
     }
 
     fn set_cursor(&self) {
         let mut input = self.input.borrow_mut();
         match *self.state.borrow() {
-            State::Active => input.set_cursor_style(Style::default().fg(Color::Cyan)),
+            ButtonState::Active => input.set_cursor_style(Style::default().fg(Color::Cyan)),
             _ => input.set_cursor_style(Style::default().hidden())
         }
     }
@@ -79,13 +73,13 @@ impl <'a> WidgetRef for InputField <'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (_background, text_color, _shadow, highlight) = self.colors();
         
-        self.add_effect(area);
+        self.add_effect(*buf.area());
         
         // ----- Process TachyonFX Effects -----
         // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-        let fx_duration = tachyonfx::Duration::from_millis(16);
+        // let fx_duration = tachyonfx::Duration::from_millis(16);
         // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-        self.effect_stage.borrow_mut().process_effects(fx_duration, buf, *buf.area());
+        // self.effect_stage.borrow_mut().process_effects(fx_duration, buf, *buf.area());
 
         // buf.set_style(area, Style::default().bg(background).fg(text_color));
         // Save the area for later use.
@@ -114,10 +108,10 @@ impl <'a> WidgetRef for InputField <'a> {
 
 impl<'a> ButtonType<'a> for InputField <'a> {
     fn click(&self) {
-        self.set_state(State::Active);
+        self.set_state(ButtonState::Active);
     }
 
-    fn set_state(&self, state: State) {
+    fn set_state(&self, state: ButtonState) {
         // log::info!("set_state => Setting {:?} to {state:?}", self.title);
         self.state.replace(state);
         self.set_cursor();
@@ -132,7 +126,7 @@ impl<'a> ButtonType<'a> for InputField <'a> {
     }
     
     fn is_active(&self) -> bool {
-        if let State::Active = *self.state.borrow() {
+        if let ButtonState::Active = *self.state.borrow() {
             true
         } else {
             false
@@ -143,10 +137,10 @@ impl<'a> ButtonType<'a> for InputField <'a> {
     fn colors(&self) -> (Color, Color, Color, Color) {
         let t = self.theme;
         match *self.state.borrow() {
-            State::Normal => (CATPPUCCIN.lavender, t.text, t.shadow, t.highlight),
-            State::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),
-            State::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
-            State::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
+            ButtonState::Normal => (CATPPUCCIN.lavender, t.text, t.shadow, t.highlight),
+            ButtonState::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),
+            ButtonState::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
+            ButtonState::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
         }
     }
 
@@ -167,21 +161,22 @@ impl<'a> ButtonType<'a> for InputField <'a> {
                 if inside {
                     // Toggle: if already active, set to Normal; otherwise, set to Active.
                     if self.is_active() {
-                        self.set_state(State::Normal);
+                        self.set_state(ButtonState::Normal);
                     } else {
-                        self.set_state(State::Active);
+                        self.set_state(ButtonState::Active);
+                        let _ = self.event_sender.try_send(WidgetEvent::Active { widget_id: self.id.clone() });
                     }
                 } else {
-                    self.set_state(State::Normal);
+                    self.set_state(ButtonState::Normal);
                 }
             }
             MouseEventKind::Moved => {
                 // Only change state on hover if we're not already active.
                 if !self.is_active(){
                     if inside {
-                        self.set_state(State::Hovered);
+                        self.set_state(ButtonState::Hovered);
                     } else {
-                        self.set_state(State::Normal);
+                        self.set_state(ButtonState::Normal);
                     }
                 }
             }

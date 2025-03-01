@@ -7,7 +7,7 @@ use log::info;
 impl MasterTechApp {
     pub fn receive_database(&mut self, ctx: &Context) { // , frame: &mut eframe::Frame
         // Retrieve our database connection, and 2. Requesting some task data
-        if let Ok(db) = self.context.db_rx.try_recv() {
+        if let Ok(db) = self.context.shared_ctx.db_rx.try_recv() {
             match db {
                 Ok(db) => {
                     info!("3");

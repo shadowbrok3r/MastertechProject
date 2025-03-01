@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent}
+    terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent, WidgetId}
 };
 
 use database::schema::{
@@ -146,6 +146,34 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
                     },
                 }
             },
+            WidgetEvent::Active { widget_id } => {
+                match widget_id.0.as_str() {
+                    "ServiceNumber" => {
+                        self.set_active_field(WidgetId("ServiceNumber".to_string()));
+                    }
+                    "CustomerName" => {
+                        self.set_active_field(WidgetId("CustomerName".to_string()));
+                    }
+                    "CustomerPhone" => {
+                        self.set_active_field(WidgetId("CustomerPhone".to_string()));
+                    }
+                    "SalesmanName" => {
+                        self.set_active_field(WidgetId("SalesmanName".to_string()));
+                    }
+                    "TechnicianName" => {
+                        self.set_active_field(WidgetId("TechnicianName".to_string()));
+                    }
+                    "CheckInNotes" => {
+                        self.set_active_field(WidgetId("CheckInNotes".to_string()));
+                    }
+                    "Recommendations" => {
+                        self.set_active_field(WidgetId("Recommendations".to_string()));
+                    }
+                    _ => {
+                        self.active_field.replace(None);
+                    }
+                }
+            }
         }
     }
 }

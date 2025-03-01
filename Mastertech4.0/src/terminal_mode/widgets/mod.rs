@@ -1,6 +1,6 @@
 use ratatui::{crossterm::event::{KeyEvent, MouseEvent}, layout::Rect, prelude::Backend, style::Color, Frame};
 use ratatui::symbols::border::Set;
-use button::State;
+use button::ButtonState;
 
 pub mod json_viewer;
 pub mod button;
@@ -42,7 +42,7 @@ pub trait HandleWidget<'a>{
 pub trait ButtonType <'a> {
     // fn on_click(&self, f: impl FnMut(&mut T) + 'a);
     fn click(&self);
-    fn set_state(&self, state: State);
+    fn set_state(&self, state: ButtonState);
     // #[allow(unused)]
     fn _get_area(&self) -> Option<Rect>;
     fn is_active(&self) -> bool;

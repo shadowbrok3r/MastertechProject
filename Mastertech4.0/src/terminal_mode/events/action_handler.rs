@@ -26,6 +26,7 @@ pub enum ApiEvent {
 /// A common event enum that all widgets use.
 pub enum WidgetEvent {
     ButtonClick { widget_id: WidgetId},
+    Active { widget_id: WidgetId },
     // UpdateText { widget_id: WidgetId, text: String },
     Api(ApiEvent)
 }
