@@ -93,7 +93,7 @@ pub fn connect_to_wifi(ssid: &str, password: Option<&str>, bssid: Option<[u8; 6]
 }
 
 /// Creates a Wi-Fi profile for the SSID with the given password
-fn create_wifi_profile(client_handle: HANDLE, interface_guid: &windows_core::GUID, ssid: &str, password: &str) -> anyhow::Result<()> {
+pub fn create_wifi_profile(client_handle: HANDLE, interface_guid: &windows_core::GUID, ssid: &str, password: &str) -> anyhow::Result<()> {
     log::info!("Creating a Wi-Fi profile for SSID: {}", ssid);
 
     // Generate an XML profile for the Wi-Fi network

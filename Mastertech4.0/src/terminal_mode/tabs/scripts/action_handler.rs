@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status}, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
 use super::{script_checks::get_data_transfer_candidates, Reporter, ScriptsTab};
 
 #[derive(Debug)]
@@ -110,6 +110,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         let get_installed_program_names = get_installed_program_names();
                         let check_network_adapters = check_network_adapters();
                         let get_wlan_status = get_wlan_status();
+                        let scan_for_wifi = scan_wifi_networks();
+                        self.log_message(&format!("wifi scan: {scan_for_wifi:?}"));
                         // connect_to_wifi("PCLaptops2.4", Some("bestburger"), None)?;
                         // let paths = get_data_transfer_candidates();
                         // match paths {
