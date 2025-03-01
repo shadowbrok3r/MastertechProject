@@ -265,3 +265,23 @@ pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<Pa
 
     result
 }
+
+
+
+pub fn activate_seb(activation_code: &str) -> anyhow::Result<(), anyhow::Error> {
+    let install_cmd = format!(r#"
+        msiexec /i SuperEasyBackup.msi /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}
+    "#, activation_code);
+    Ok(())
+}
+
+pub fn install_libre_office() -> anyhow::Result<(), anyhow::Error> {
+
+    Ok(())
+}
+
+pub fn find_activation_keys() -> anyhow::Result<(), anyhow::Error> {
+
+    Ok(())
+}
+
