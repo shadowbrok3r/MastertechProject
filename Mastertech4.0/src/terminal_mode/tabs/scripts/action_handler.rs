@@ -171,7 +171,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     }
                 }
             }
-            &WidgetEvent::Api(_) => {}
+            WidgetEvent::Api(_) => {},
+            WidgetEvent::Active { widget_id } => {}
         }
     }
 }

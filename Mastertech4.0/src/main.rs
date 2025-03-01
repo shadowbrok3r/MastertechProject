@@ -97,7 +97,7 @@ impl eframe::App for MasterTechApp {
             },
             app_state::AppState::Login => self.login_page(
                 ctx,
-                self.context.db_tx.clone(),
+                self.context.shared_ctx.db_tx.clone(),
                 self.context.app_state_tx.clone(),
             ),
             _ => {}

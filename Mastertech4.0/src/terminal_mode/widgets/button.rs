@@ -25,7 +25,7 @@ pub struct Button<'a> {
     title: String,
     label: Line<'a>,
     theme: Theme,
-    state: RefCell<State>,
+    state: RefCell<ButtonState>,
     on_click: Arc<RefCell<Option<Box<dyn FnMut() + 'a>>>>,
     // on_click: Arc<RefCell<Option<F>>>,
     area: RefCell<Option<Rect>>,
@@ -35,7 +35,7 @@ pub struct Button<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum State {
+pub enum ButtonState {
     #[default]
     Normal,
     Hovered,
@@ -58,7 +58,7 @@ impl<'a> Button<'a> {
             title: label.to_string(),
             label: Line::raw(label),
             theme: TURQUOISE,
-            state: RefCell::new(State::Normal),
+            state: RefCell::new(ButtonState::Normal),
             area: RefCell::new(None),
             on_click: Arc::new(RefCell::new(None)),
             effect_stage: RefCell::new(EffectStage::default()),
@@ -104,7 +104,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
         }
     }
     
-    fn set_state(&self, state: State) {
+    fn set_state(&self, state: ButtonState) {
         self.state.replace(state);
     }
 
@@ -117,7 +117,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
     }
     
     fn is_active(&self) -> bool {
-        if let State::Active = *self.state.borrow() {
+        if let ButtonState::Active = *self.state.borrow() {
             true
         } else {
             false
@@ -128,10 +128,10 @@ impl <'a> ButtonType<'a> for Button<'a> {
     fn colors(&self) -> (Color, Color, Color, Color) {
         let t = self.theme;
         match *self.state.borrow() {
-            State::Normal => (t.background, t.text, t.shadow, t.highlight),
-            State::Selected => (t.background, t.text, Color::White, Color::White),
-            State::Active => (t.background, t.text, t.highlight, t.shadow),
-            State::Hovered => (t.background, t.text, t.highlight, t.shadow),
+            ButtonState::Normal => (t.background, t.text, t.shadow, t.highlight),
+            ButtonState::Selected => (t.background, t.text, Color::White, Color::White),
+            ButtonState::Active => (t.background, t.text, t.highlight, t.shadow),
+            ButtonState::Hovered => (t.background, t.text, t.highlight, t.shadow),
         }
     }
 
@@ -148,11 +148,11 @@ impl <'a> ButtonType<'a> for Button<'a> {
                 // Check if the mouse click is within area
                 if c >= area.x && c < area.x + area.width &&
                    r >= area.y && r < area.y + area.height {
-                    self.set_state(State::Active);
+                    self.set_state(ButtonState::Active);
                     let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone() });
                     self.click(); // calls our on_click callback
                 } else {
-                    self.set_state(State::Normal);
+                    self.set_state(ButtonState::Normal);
                 }
             }
             MouseEventKind::Moved => {
@@ -160,9 +160,9 @@ impl <'a> ButtonType<'a> for Button<'a> {
                 if c >= area.x && c < area.x + area.width &&
                    r >= area.y && r < area.y + area.height {
                     // self.event_sender.try_send(WidgetEvent::Hover { widget_id: self.id });
-                    self.set_state(State::Selected);
+                    self.set_state(ButtonState::Selected);
                 } else {
-                    self.set_state(State::Normal);
+                    self.set_state(ButtonState::Normal);
                 }
             }
             _ => {}
@@ -301,7 +301,7 @@ impl <'a> WidgetRef for Button<'a> {
 //     }
 // }
 
-// impl ratatui::widgets::StatefulWidgetRef for Button {type State;}
+// impl ratatui::widgets::StatefulWidgetRef for Button {type ButtonState;}
 impl <'a> Widget for Button<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();
@@ -349,9 +349,9 @@ impl Button<'_> {
     const fn colors(&self) -> (Color, Color, Color, Color) {
         let theme = self.theme;
         match self.state {
-            State::Normal => (theme.background, theme.text, theme.shadow, theme.highlight),
-            State::Selected => (theme.highlight, theme.text, theme.shadow, theme.highlight),
-            State::Active => (theme.background, theme.text, theme.highlight, theme.shadow),
+            ButtonState::Normal => (theme.background, theme.text, theme.shadow, theme.highlight),
+            ButtonState::Selected => (theme.highlight, theme.text, theme.shadow, theme.highlight),
+            ButtonState::Active => (theme.background, theme.text, theme.highlight, theme.shadow),
         }
     }
 }

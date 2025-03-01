@@ -101,7 +101,6 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
             ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.scroll_state.borrow_mut().scroll_left(),
             ratatui::crossterm::event::MouseEventKind::ScrollRight => self.scroll_state.borrow_mut().scroll_right(),
             _ => {
-                self.service_form_widget.borrow().check_active_field();
                 // let service_num_is_active = self.order_number_field.is_active();
 
                 // Now, forward the event to the ServiceFormWidget.
@@ -138,7 +137,7 @@ impl <'a> HandleWidget <'_> for ServiceTab <'_> {
                         // self.service_form_widget.update_focus_from_mouse(&local_mouse_event);
                         self.service_form_widget.borrow_mut().handle_mouse_event(&local_mouse_event);
                     } else {
-                        let is_active = *self.service_form_widget.borrow().active_field.borrow();
+                        let is_active = self.service_form_widget.borrow().active_field.borrow().clone();
                         if is_active.is_some() {
                             // self.service_form_widget.reset_all_states();
                         }

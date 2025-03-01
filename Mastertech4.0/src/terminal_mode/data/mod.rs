@@ -8,6 +8,8 @@ use surrealdb::RecordId;
 
 use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
 
+pub mod first_run;
+
 
 #[derive(Debug)]
 pub struct ServiceData {
