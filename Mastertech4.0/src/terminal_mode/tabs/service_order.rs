@@ -7,7 +7,7 @@ use ratatui::prelude::*;
 use std::cell::RefCell;
 
 // Define a virtual height for the service form content.
-const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 50; // adjust as needed
+pub const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 50; // adjust as needed
 
 ////////////////////////////////
 // TUR SHEET TAB with SERVICE NUM INPUT

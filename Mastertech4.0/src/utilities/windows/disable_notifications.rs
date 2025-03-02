@@ -243,7 +243,10 @@ pub fn check_push_notifications() -> Result<String> {
     let key = CURRENT_USER.open(PUSH_NOTIFICATIONS_KEY)?;
     let value = key.get_u32("ToastEnabled")?;
     if value == 1 {
-        return Ok("Push Notifications are ENABLED.".to_string());
+        match CURRENT_USER.set_u32("ToastEnabled", 0x000) {
+            Ok(_) => return Ok("DISABLED Push Notifications".to_string()),
+            Err(e) => return Ok(format!("Push Notifications are ENABLED, but there was an error disabling: {e:?}")),
+        }
     } else {
         return Ok("Push Notifications are DISABLED.".to_string());
     }

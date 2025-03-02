@@ -1,6 +1,6 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap}, Frame};
-use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, CYAN, DARKORANGE}, widgets::{ButtonType, HandleWidget, ShrinkArea}};
-
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap}, Frame};
+use tui_scrollview::{ScrollView, ScrollbarVisibility};
+use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, CYAN, DARKORANGE}, tabs::SERVICE_FORM_VIRTUAL_HEIGHT, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab, ScriptsTabView};
 
 #[derive(Clone, Debug)]
@@ -144,7 +144,7 @@ impl<'a> ScriptsTab<'a> {
         f.render_widget(paragraph, layout[1]);
     }
 
-    fn draw_log_section<B: Backend>(&self, f: &mut Frame, area: Rect) {
+    fn draw_log_section<B: Backend>(&self, f: &mut ScrollView, area: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -189,9 +189,7 @@ impl<'a> ScriptsTab<'a> {
             .wrap(Wrap { trim: false });
     
         f.render_widget(log_widget, layout[1]);
-    }
-    
-    
+    }  
 }
 
 
@@ -211,7 +209,23 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     
         let tab_row = main_layout[0]; // Tab buttons
         let content_area = main_layout[1]; // Dynamic content based on selected tab
-    
+
+        // Create a scroll view with a fixed virtual content size.
+        // This ensures that even if `service_form_area` (the visible area) is small,
+        // the service form widget is rendered into a larger virtual buffer.
+        let virtual_size = Size {
+            width: content_area.width,
+            height: SERVICE_FORM_VIRTUAL_HEIGHT,
+        };
+
+        let mut scroll_view = ScrollView::new(virtual_size)
+            .vertical_scrollbar_visibility(
+                ScrollbarVisibility::Automatic
+            )
+            .horizontal_scrollbar_visibility(
+                ScrollbarVisibility::Automatic
+            );
+        let rect = scroll_view.area();
         // Layout for tab buttons
         let tab_layout = Layout::default()
             .direction(Direction::Horizontal)
@@ -233,7 +247,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         Constraint::Percentage(30), // Left: Buttons
                         Constraint::Percentage(70), // Right: Logs
                     ])
-                    .split(content_area);
+                    .split(rect);
     
                 let left_half = main_chunks[0];
                 let right_half = main_chunks[1];
@@ -260,7 +274,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 f.render_widget(&self.updates_btn, button_row2[0].shrink(5, 1));
                 f.render_widget(&self.prechecks_btn, button_row2[1].shrink(5, 1));
                 // Render log section
-                self.draw_log_section::<B>(f, right_half);
+                self.draw_log_section::<B>(&mut scroll_view, right_half);
+                scroll_view.render(content_area, f.buffer_mut(), &mut self.scroll_state.borrow_mut());
             }
             ScriptsTabView::Antivirus => self.draw_antivirus::<B>(f, content_area),
             ScriptsTabView::StartupItems => self.draw_startup_items::<B>(f, content_area),
@@ -268,6 +283,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             ScriptsTabView::ScheduledTasks => self.draw_scheduled_tasks::<B>(f, content_area),
             ScriptsTabView::TaskbarItems => self.draw_taskbar_items::<B>(f, content_area),
         }
+
+        
     }
     
 

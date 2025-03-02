@@ -316,7 +316,7 @@ pub fn get_wlan_status() -> anyhow::Result<(), anyhow::Error> {
                     // Query connection status
                     let mut data_size: u32 = 0;
                     let mut data_ptr: *mut std::ffi::c_void = null_mut();
-                    if WlanQueryInterface(
+                    let wlan_interface_query = WlanQueryInterface(
                         client_handle,
                         &interface_info.InterfaceGuid,
                         WLAN_INTF_OPCODE(0),
@@ -324,7 +324,9 @@ pub fn get_wlan_status() -> anyhow::Result<(), anyhow::Error> {
                         &mut data_size,
                         &mut data_ptr,
                         None,
-                    ) == 0
+                    );
+
+                    if wlan_interface_query == 0
                     {
                         let connection_attributes = &*(data_ptr as *mut WLAN_CONNECTION_ATTRIBUTES);
                         let status = if connection_attributes.isState == wlan_interface_state_connected {
@@ -340,7 +342,7 @@ pub fn get_wlan_status() -> anyhow::Result<(), anyhow::Error> {
                             interface_info.InterfaceGuid
                         );
                     } else {
-                        log::error!("Failed to query WLAN interface status for {}", interface_name);
+                        log::error!("Failed to query WLAN interface status for {} => {}", interface_name, wlan_interface_query);
                     }
                 }
             } else {
