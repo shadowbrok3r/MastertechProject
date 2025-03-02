@@ -222,8 +222,9 @@ pub fn scan_wifi_networks() -> anyhow::Result<Vec<(String, Vec<[u8; 6]>)>> {
 }
 
 
-pub fn check_network_adapters() -> anyhow::Result<(), anyhow::Error> {
+pub fn check_network_adapters() -> anyhow::Result<Vec<String>, anyhow::Error> {
     log::info!("Starting network adapter check...");
+    let mut network_adapters = Vec::new();
 
     unsafe {
         let mut out_buf_len = 0;
@@ -268,14 +269,15 @@ pub fn check_network_adapters() -> anyhow::Result<(), anyhow::Error> {
                         _ => "Other",
                     };
 
-                    log::info!(
-                        "Adapter: {} | Status: {} | Type: {} | IfType: {}",
-                        name_string,
-                        status,
-                        adapter_type,
-                        adapter_ref.IfType
-                    );
-
+                    if adapter_type.eq("WLAN") || adapter_type.eq("Ethernet") {
+                        network_adapters.push(format!(
+                            "Adapter: {} | Status: {} | Type: {} | IfType: {}",
+                            name_string,
+                            status,
+                            adapter_type,
+                            adapter_ref.IfType
+                        ));
+                    }
                     adapter = adapter_ref.Next;
                 }
             } else {
@@ -286,7 +288,7 @@ pub fn check_network_adapters() -> anyhow::Result<(), anyhow::Error> {
         }
     }
     log::info!("Network adapter check completed.");
-    Ok(())
+    Ok(network_adapters)
 }
 
 pub fn get_wlan_status() -> anyhow::Result<(), anyhow::Error> {

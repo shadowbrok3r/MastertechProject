@@ -144,7 +144,7 @@ impl<'a> ScriptsTab<'a> {
         f.render_widget(paragraph, layout[1]);
     }
 
-    fn draw_log_section<B: Backend>(&self, f: &mut ScrollView, area: Rect) {
+    fn draw_log_section<B: Backend>(&self, f: &mut Frame, area: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -179,16 +179,59 @@ impl<'a> ScriptsTab<'a> {
         // 📝 Render logs
         let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
             let color = BASE_COLORS[index % BASE_COLORS.len()];
+        
+            // Extract message and split at " => "
+            let (left_text, right_text) = match r.msg.split_once(" => ") {
+                Some((left, right)) => (left.trim(), right.trim()), // Trim spaces
+                None => (r.msg.as_str(), ""), // If no " => ", treat it as left_text
+            };
+        
+            // Get the available width
+            let available_width = layout[1].width as usize;
+        
+            // Get the length of the reporter field to subtract from available width
+            let reporter_text = format!("{:?} =>", r.reporter);
+            let reporter_length = reporter_text.len();
+        
+            // Calculate remaining width for right-aligned text
+            let width = available_width.saturating_sub(left_text.len() + reporter_length ); // +2 for extra spacing
+        
+            // Ensure formatted message stays within available width
+            let formatted_msg = format!("{:<} {:>width$}", left_text, right_text, width = width);
+        
             Line::from(vec![
-                Span::styled(format!("{:?} => {}", r.reporter, r.msg), Style::default().fg(color))
+                Span::styled(format!("{} {}", reporter_text, formatted_msg), Style::default().fg(color))
             ])
         }).collect();
+        
+        
+        
     
+        // Create a scroll view with a fixed virtual content size.
+        // This ensures that even if `service_form_area` (the visible area) is small,
+        // the service form widget is rendered into a larger virtual buffer.
+        let virtual_size = Size {
+            width: layout[1].width,
+            height: layout[1].height,
+        };
+
+        let mut scroll_view = ScrollView::new(virtual_size)
+            .vertical_scrollbar_visibility(
+                ScrollbarVisibility::Automatic
+            )
+            .horizontal_scrollbar_visibility(
+                ScrollbarVisibility::Automatic
+            );
+            
+        let rect = scroll_view.area();
+
         let log_widget = Paragraph::new(log_text)
             .block(Block::default().borders(Borders::ALL).title("Run Report").border_type(BorderType::Rounded))
             .wrap(Wrap { trim: false });
     
-        f.render_widget(log_widget, layout[1]);
+        scroll_view.render_widget(log_widget, rect);
+
+        scroll_view.render(layout[1], f.buffer_mut(), &mut self.scroll_state.borrow_mut());
     }  
 }
 
@@ -210,22 +253,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let tab_row = main_layout[0]; // Tab buttons
         let content_area = main_layout[1]; // Dynamic content based on selected tab
 
-        // Create a scroll view with a fixed virtual content size.
-        // This ensures that even if `service_form_area` (the visible area) is small,
-        // the service form widget is rendered into a larger virtual buffer.
-        let virtual_size = Size {
-            width: content_area.width,
-            height: SERVICE_FORM_VIRTUAL_HEIGHT,
-        };
-
-        let mut scroll_view = ScrollView::new(virtual_size)
-            .vertical_scrollbar_visibility(
-                ScrollbarVisibility::Automatic
-            )
-            .horizontal_scrollbar_visibility(
-                ScrollbarVisibility::Automatic
-            );
-        let rect = scroll_view.area();
         // Layout for tab buttons
         let tab_layout = Layout::default()
             .direction(Direction::Horizontal)
@@ -247,11 +274,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         Constraint::Percentage(30), // Left: Buttons
                         Constraint::Percentage(70), // Right: Logs
                     ])
-                    .split(rect);
+                    .split(content_area);
     
                 let left_half = main_chunks[0];
                 let right_half = main_chunks[1];
-    
+
                 // Create grid layout for buttons
                 let button_grid = Layout::default()
                     .direction(Direction::Vertical)
@@ -274,8 +301,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 f.render_widget(&self.updates_btn, button_row2[0].shrink(5, 1));
                 f.render_widget(&self.prechecks_btn, button_row2[1].shrink(5, 1));
                 // Render log section
-                self.draw_log_section::<B>(&mut scroll_view, right_half);
-                scroll_view.render(content_area, f.buffer_mut(), &mut self.scroll_state.borrow_mut());
+                self.draw_log_section::<B>(f, right_half);
             }
             ScriptsTabView::Antivirus => self.draw_antivirus::<B>(f, content_area),
             ScriptsTabView::StartupItems => self.draw_startup_items::<B>(f, content_area),
@@ -287,67 +313,32 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         
     }
     
-
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-        self.tuneup_btn.handle_mouse_event(&mouse_event);
-        self.qc_btn.handle_mouse_event(&mouse_event);
-        self.prechecks_btn.handle_mouse_event(&mouse_event);
-        self.updates_btn.handle_mouse_event(&mouse_event);
-        self.get_antivirus_btn.handle_mouse_event(&mouse_event);
-        self.get_installed_programs_btn.handle_mouse_event(&mouse_event);
-        self.get_startup_items_btn.handle_mouse_event(&mouse_event);
-        self.get_scheduled_tasks_btn.handle_mouse_event(&mouse_event);
-        self.get_taskbar_items_btn.handle_mouse_event(&mouse_event);
-        for (_id, button) in self.tab_buttons.iter() {
-            button.handle_mouse_event(&mouse_event);
+        match mouse_event.kind {
+            ratatui::crossterm::event::MouseEventKind::ScrollDown => {
+                self.scroll_state.borrow_mut().scroll_down();
+                self.scroll_state.borrow_mut().scroll_down();
+            },
+            ratatui::crossterm::event::MouseEventKind::ScrollUp => {
+                self.scroll_state.borrow_mut().scroll_up();
+                self.scroll_state.borrow_mut().scroll_up();
+            },
+            ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.scroll_state.borrow_mut().scroll_left(),
+            ratatui::crossterm::event::MouseEventKind::ScrollRight => self.scroll_state.borrow_mut().scroll_right(),
+            _ => {
+                self.tuneup_btn.handle_mouse_event(&mouse_event);
+                self.qc_btn.handle_mouse_event(&mouse_event);
+                self.prechecks_btn.handle_mouse_event(&mouse_event);
+                self.updates_btn.handle_mouse_event(&mouse_event);
+                self.get_antivirus_btn.handle_mouse_event(&mouse_event);
+                self.get_installed_programs_btn.handle_mouse_event(&mouse_event);
+                self.get_startup_items_btn.handle_mouse_event(&mouse_event);
+                self.get_scheduled_tasks_btn.handle_mouse_event(&mouse_event);
+                self.get_taskbar_items_btn.handle_mouse_event(&mouse_event);
+                for (_id, button) in self.tab_buttons.iter() {
+                    button.handle_mouse_event(&mouse_event);
+                }
+            }
         }
     }
 }
-
-
-// impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
-//     /// Draw the ScriptsTab with buttons on the left and a log area on the right
-//     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-//         self.handle_log_events();
-        
-//         // Split the total area into two halves: left (buttons) and right (logs)
-//         let main_chunks = Layout::default()
-//             .direction(Direction::Horizontal)
-//             .constraints([
-//                 Constraint::Percentage(50), // Left: Buttons
-//                 Constraint::Percentage(50), // Right: Logs
-//             ])
-//             .split(area);
-
-//         let left_half = main_chunks[0]; // Area for buttons
-//         let right_half = main_chunks[1]; // Area for log output
-
-
-
-//             // Collect logs into a formatted paragraph
-//         let log_text: Vec<Line> = self.reports.borrow().iter().map(|r| {
-//             let color = match r.reporter {
-//                 Reporter::Tuneup => CATPPUCCIN.teal,
-//                 Reporter::Qc => DEEPPINK.text,
-//                 Reporter::WindowsUpdates => DARKORANGE.text,
-//                 Reporter::Unknown => CATPPUCCIN.red,
-//             };
-//             Line::from(vec![Span::styled(format!("{:?} => {}", r.reporter, r.msg), Style::default().fg(color))])
-//         }).collect();
-
-//         let log_widget = Paragraph::new(log_text)
-//             .block(Block::default()
-//                 .borders(Borders::ALL)
-//                 .border_set(SHORTCUT_SET)
-//                 .title("Run Report"))
-//             .style(Style::default().fg(CATPPUCCIN.peach))
-//             .wrap(Wrap { trim: false });
-
-//         f.render_widget(log_widget, right_half);
-//     }
-
-//     /// Handle a mouse event, see if it hits our buttons
-//     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-
-//     }
-// }
