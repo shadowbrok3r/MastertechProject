@@ -5,6 +5,7 @@ use crossbeam::channel::{Receiver, Sender};
 use action_handler::WindowsUpdateEvent;
 use ratatui::widgets::ListState;
 use render::{Report, Reporter};
+use tui_scrollview::ScrollViewState;
 
 pub mod action_handler;
 pub mod render;
@@ -110,6 +111,7 @@ pub struct ScriptsTab<'a> {
     // scheduled_tasks_scroll: ScrollViewState,
     // taskbar_items_scroll: ScrollViewState,
     // report_scroll: ScrollViewState,
+    scroll_state: RefCell<ScrollViewState>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -210,6 +212,7 @@ impl<'a> ScriptsTab<'a> {
 
             checklists,
             windows_updates: WindowsUpdates::default(),
+            scroll_state: RefCell::new(ScrollViewState::new()),
 
             // Initialize scroll states
             // antivirus_scroll: ScrollViewState::default(),
