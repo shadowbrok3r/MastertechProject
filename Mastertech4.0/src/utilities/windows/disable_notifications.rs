@@ -263,11 +263,11 @@ pub fn check_content_delivery_manager() -> Result<Vec<String>> {
             log::info!("check_content_delivery_manager => \nval_name: {val_name:?}\nval_data: {val_data:?}");
             let value = key.get_u32(val_name.clone())?;
             if value == 0 {
-                log::info!("CONTENT_DELIVERY_MANAGER_KEY for {} is DISABLED.", &val_name);
-                x.push(format!("CONTENT_DELIVERY_MANAGER_KEY for {} is DISABLED.", &val_name));
+                log::info!("Key {} is DISABLED.", &val_name);
+                x.push(format!("Key {} is DISABLED.", &val_name));
             } else {
-                log::info!("CONTENT_DELIVERY_MANAGER_KEY for {} is ENABLED.", &val_name);
-                x.push(format!("CONTENT_DELIVERY_MANAGER_KEY for {} is ENABLED.", &val_name));
+                log::info!("Key {} is ENABLED.", &val_name);
+                x.push(format!("Key {} is ENABLED.", &val_name));
             }
         } 
     }
@@ -278,22 +278,21 @@ pub fn check_content_delivery_manager() -> Result<Vec<String>> {
 // Function to check the value of the Explorer Advanced registry key
 pub fn check_explorer_advanced() -> Result<String> {
     let key = CURRENT_USER.open(EXPLORER_ADVANCED_KEY)?;
+    let mut return_key = String::new();
     // Iterate through all the values in the registry key
     for (val_name, val_data) in key.values()? {
-        
-        
         // Check if the value name contains "SubscribedContent" and ends with "Enabled"
         if val_name.eq("TaskbarAl") {
             log::info!("val_name: {val_name:?}\nval_data: {val_data:?}");
             // Extract the data and check if it's a u32
             if val_data == [1,0,0,0].into() {
-                log::info!("TASKBAR IS CENTERED");
-                return Ok("TASKBAR IS CENTERED".to_string());
+                return_key = "TaskBar is Centered".to_string();
             } else if val_data == [0,0,0,0].into() {
-                log::info!("TASKBAR IS LEFT ALIGNED");
-                return Ok("TASKBAR IS LEFT ALIGNED".to_string());
+                return_key = "TaskBar is Left Aligned".to_string();
             }
+        } else {
+            return_key = "Could not find 'TaskbarAl' key".to_string();
         }
     }
-    Ok("Explorer Balloon Tips are enabled.".to_string())
+    Ok(return_key)
 }

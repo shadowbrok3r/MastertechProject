@@ -107,12 +107,16 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         self.log_message("Running system prechecks...");
                         // self.run_prechecks();
                         let check_antivirus = check_antivirus();
-                        // let get_installed_program_names = get_installed_program_names();
+                        let get_installed_program_names = get_installed_program_names();
                         let check_network_adapters = check_network_adapters();
                         let get_wlan_status = get_wlan_status();
                         // let scan_for_wifi = scan_wifi_networks();
-                        // self.log_message(&format!("wifi scan: {scan_for_wifi:?}"));
                         // connect_to_wifi("PCLaptops2.4", Some("bestburger"), None)?;
+                        self.log_message(&format!("Wlan Status: {get_wlan_status:?}"));
+                        match check_network_adapters {
+                            Ok(adapters) => self.log_message(&format!("Network Adapters => {adapters:?}")),
+                            Err(e) => self.log_message(&format!("Error getting Network Adapter list => {e:?}")),
+                        }
 
                         let tx = self.path_size_tx.clone();
                         std::thread::spawn(move || {
@@ -123,34 +127,35 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                             };
                         });
                         match check_antivirus {
-                            Ok(_) => self.log_message(&format!("check_antivirus OK")),
-                            Err(e) => self.log_message(&format!("ERR(check_antivirus) => {e:?}")),
+                            Ok(products) => self.log_message(&format!("Antivirus: {products:?}")),
+                            Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
                         }
-                        // match get_installed_program_names {
-                        //     Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
-                        //     Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
-                        // }
                     
                         // Check PushNotifications registry key
                         match check_push_notifications() {
-                            Ok(status) => self.log_message(&format!("check_push_notifications => {status}")),
-                            Err(e) => self.log_message(&format!("check_push_notifications => {e:?}")),
+                            Ok(status) => self.log_message(&format!("Push Notifications => {status}")),
+                            Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
                         }
                     
                         // Check ContentDeliveryManager registry key
                         match check_content_delivery_manager() {
                             Ok(statuses) => {
                                 for status in statuses.iter() {
-                                    self.log_message(&format!("check_content_delivery_manager => {status}"))
+                                    self.log_message(&format!("ContentDelivery => {status}"))
                                 }
                             },
-                            Err(e) => self.log_message(&format!("check_content_delivery_manager => {e:?}")),
+                            Err(e) => self.log_message(&format!("ContentDelivery => {e:?}")),
                         }
                     
                         // Check Explorer Advanced registry key
                         match check_explorer_advanced() {
-                            Ok(status) => self.log_message(&format!("check_explorer_advanced => {status}")),
-                            Err(e) => self.log_message(&format!("check_explorer_advanced => {e:?}")),
+                            Ok(status) => self.log_message(&format!("TaskBarAlignment => {status}")),
+                            Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
+                        }
+
+                        match get_installed_program_names {
+                            Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
+                            Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
                         }
                         // match is_push_notifications_disabled {
                         //     Ok(x) => self.log_message(&format!("is_push_notifications_disabled: {x:?}")),

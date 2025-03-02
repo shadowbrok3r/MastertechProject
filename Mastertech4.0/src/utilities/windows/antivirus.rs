@@ -22,11 +22,12 @@ const WSC_SECURITY_PRODUCT_STATE_ON: i32 = 0x0;
 
 
 /// Checks for installed antivirus products and prints their status.
-pub fn check_antivirus() -> anyhow::Result<(), anyhow::Error> {
+pub fn check_antivirus() -> anyhow::Result<Vec<String>, anyhow::Error> {
+    let mut active_antivirus = Vec::new();
     unsafe {
         // Initialize COM for multithreaded usage.
         let x = CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED).map(|| {});
-        log::info!("X: {x:?}");
+        log::info!("CoInit: {x:?}");
         // Create an instance of the product list.
         let product_list: IWSCProductList = CoCreateInstance(
             &CLSID_WSC_PRODUCT_LIST,
@@ -39,13 +40,13 @@ pub fn check_antivirus() -> anyhow::Result<(), anyhow::Error> {
 
         let count = product_list.Count()?;
         if count == 0 {
-            log::info!("No antivirus products found on the system.");
+            active_antivirus.push("No antivirus products found on the system.".to_string());
         } else {
             for i in 0..count {
                 let product = product_list.get_Item(i as u32)?;
-                log::info!("{product:?}");
                 let name = product.ProductName()?;
                 let state = product.ProductState()?;
+                active_antivirus.push(format!("Product: {name} State: {state:?}"));
                 let is_active = state == WSC_SECURITY_PRODUCT_STATE(WSC_SECURITY_PRODUCT_STATE_ON);
                 log::info!(
                     "Found antivirus: {} is {}",
@@ -57,5 +58,5 @@ pub fn check_antivirus() -> anyhow::Result<(), anyhow::Error> {
 
         CoUninitialize();
     }
-    Ok(())
+    Ok(active_antivirus)
 }

@@ -43,6 +43,9 @@ impl <'a> ScriptsTab <'a> {
                 .map(|av| av.display_name.clone())
                 .collect();
             
+            for av in av_products {
+                self.log_message(&format!("AV: {av:#?}"));
+            }
             self.update_checklist("Prechecks", "If Webroot/SAS not installed, what AV is active?", 
                 !active_avs.is_empty()
             );
@@ -194,7 +197,7 @@ pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, a
                 let dir_size = get_directory_size(path.as_path());
                 let formatted_size = format_size(dir_size);
         
-                log::info!("Directory: {:?} | Size: {}", path, formatted_size);
+                log::info!("Directory: {:>10} | Size: {}", path.display(), formatted_size);
                 paths_with_sizes.push((path.to_string_lossy().to_string(), formatted_size));
             }
         }
