@@ -41,10 +41,14 @@ pub trait HandleWidget<'a>{
 
 pub trait ButtonType <'a> {
     // fn on_click(&self, f: impl FnMut(&mut T) + 'a);
-    fn click(&self);
+    /// For when something (mouse, keyboard) triggers a "click" on this Button.
+    fn click(&self) {
+        self.set_state(ButtonState::Active);
+    }
+
     fn set_state(&self, state: ButtonState);
     // #[allow(unused)]
-    fn _get_area(&self) -> Option<Rect>;
+    fn get_area(&self) -> Option<Rect>;
     fn is_active(&self) -> bool;
     fn set_area(&self, area: Rect);
     fn handle_mouse_event(&self, mouse_event: &MouseEvent);

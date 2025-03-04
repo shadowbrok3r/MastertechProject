@@ -1,7 +1,6 @@
-use color_eyre::owo_colors::OwoColorize;
 use ratatui::{crossterm::event::{KeyCode, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap}, Frame};
 use tui_scrollview::{ScrollView, ScrollbarVisibility};
-use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, CYAN, DARKORANGE}, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, CYAN, DARKORANGE}, tabs::checklist::TodoItem, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab, ScriptsTabView};
 // use tui_popup::Popup;
 
@@ -150,8 +149,8 @@ impl<'a> ScriptsTab<'a> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(25),  // Checklist 
-                Constraint::Percentage(75),  // Log Messages
+                Constraint::Percentage(35),  // Checklist 
+                Constraint::Percentage(65),  // Log Messages
             ])
             .split(area);
 
@@ -179,13 +178,32 @@ impl<'a> ScriptsTab<'a> {
                     .borders(Borders::ALL)
                     .title("Checklist")
                     .border_type(BorderType::Rounded)
-                    .border_type(BorderType::Rounded)
+                    .border_style(Style::new().fg(CATPPUCCIN.lavender))
             )
-            .highlight_symbol("=>")
+            .highlight_symbol("=> ")
             .highlight_style(Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.teal));
     
         f.render_stateful_widget(checklist, layout[0], &mut self.list_state.borrow_mut());
     
+        // // Calculate virtual dimensions
+        // let checklist_item_lines = checklist_items.len() as u16; // Number of lines for vertical scrolling
+        // let visible_height = layout[0].height.saturating_sub(2); // Subtract borders
+        // let virtual_height = checklist_item_lines.max(visible_height); // Dynamic height based on content
+        // let checklist_virtual_size = Size {
+        //     width: layout[0].width,
+        //     height: virtual_height,
+        // };   
+        // let mut checklist_scroll_view = ScrollView::new(checklist_virtual_size)
+        //     .vertical_scrollbar_visibility(
+        //         ScrollbarVisibility::Automatic
+        //     )
+        //     .horizontal_scrollbar_visibility(
+        //         ScrollbarVisibility::Automatic
+        //     );
+        // let checklist_rect = scroll_view.area();
+        // checklist_scroll_view.render_widget(checklist, checklist_rect);
+        // checklist_scroll_view.render(layout[0], f.buffer_mut(), &mut self.checklist_scroll_state.borrow_mut());
+
         // 📝 Render logs
         let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
             let color = BASE_COLORS[index % BASE_COLORS.len()];
@@ -243,12 +261,12 @@ impl<'a> ScriptsTab<'a> {
         let rect = scroll_view.area();
 
         let log_widget = Paragraph::new(log_text)
-            .block(Block::default().borders(Borders::ALL).title("Run Report").border_type(BorderType::Rounded));
+            .block(Block::default().borders(Borders::ALL).style(Style::new().fg(CATPPUCCIN.blue)).title("Run Report").border_type(BorderType::Rounded));
             // .wrap(Wrap { trim: false });
     
         scroll_view.render_widget(log_widget, rect);
 
-        scroll_view.render(layout[1], f.buffer_mut(), &mut self.scroll_state.borrow_mut());
+        scroll_view.render(layout[1], f.buffer_mut(), &mut self.report_scroll_state.borrow_mut());
     }  
 }
 
@@ -334,15 +352,15 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
         match mouse_event.kind {
             ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                self.scroll_state.borrow_mut().scroll_down();
-                self.scroll_state.borrow_mut().scroll_down();
+                self.report_scroll_state.borrow_mut().scroll_down();
+                self.report_scroll_state.borrow_mut().scroll_down();
             },
             ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                self.scroll_state.borrow_mut().scroll_up();
-                self.scroll_state.borrow_mut().scroll_up();
+                self.report_scroll_state.borrow_mut().scroll_up();
+                self.report_scroll_state.borrow_mut().scroll_up();
             },
-            ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.scroll_state.borrow_mut().scroll_left(),
-            ratatui::crossterm::event::MouseEventKind::ScrollRight => self.scroll_state.borrow_mut().scroll_right(),
+            ratatui::crossterm::event::MouseEventKind::ScrollLeft => self.report_scroll_state.borrow_mut().scroll_left(),
+            ratatui::crossterm::event::MouseEventKind::ScrollRight => self.report_scroll_state.borrow_mut().scroll_right(),
             _ => {
                 self.tuneup_btn.handle_mouse_event(&mouse_event);
                 self.qc_btn.handle_mouse_event(&mouse_event);
@@ -365,13 +383,13 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         match key_event.code {
             KeyCode::Right => {
                 log::info!("RIGHT");
-                self.scroll_state.borrow_mut().scroll_right();
-                self.scroll_state.borrow_mut().scroll_right();
+                self.report_scroll_state.borrow_mut().scroll_right();
+                self.report_scroll_state.borrow_mut().scroll_right();
                 true
             },
             KeyCode::Left => {
-                self.scroll_state.borrow_mut().scroll_left();
-                self.scroll_state.borrow_mut().scroll_left();
+                self.report_scroll_state.borrow_mut().scroll_left();
+                self.report_scroll_state.borrow_mut().scroll_left();
                 true
             },
             KeyCode::Up => {
@@ -385,11 +403,57 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             },
             KeyCode::Down => {
-                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                    log::info!("CTRL DOWN");
-                }
                 log::info!("DOWN");
                 let mut list_state = self.list_state.borrow_mut();
+                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.log_message("CTRL DOWN: {key_event:?}");
+                    let selected = list_state.selected();
+                    if let Some(i) = selected {
+                        let full_list = self
+                            .checklists
+                            .iter()
+                            .flat_map(|(_, list)| 
+                                list.items.iter().cloned()
+                            )
+                            .collect::<Vec<TodoItem>>();
+
+                        for (name, list) in self.checklists.iter_mut() {
+                            let todo_item = full_list.get(i).is_some();
+                            let next_item = full_list.get(i+1).is_some();
+                            let previous_item = full_list.get(i-1).is_some();
+                            for (x, y) in list.items.iter().zip(&full_list) {
+                                if x == y {
+                                    /*
+                                        Now, we have to get the index of x and y within their categories, and their
+                                        category names
+                                     */
+                                    log::info!("Found {x:?} in list items, {y:?} in full_list: {:?} // {:?}", i, name);
+                                }
+                            }
+                            log::info!("{full_list:?}\ntodo_item: {todo_item:?}, next_item: {next_item:?}, previous_item: {previous_item:?}");
+                            if todo_item && next_item {
+                                list.items.swap(i, i+1);
+                            } else if todo_item && previous_item {
+                                list.items.swap(i, i-1);
+                            }
+                        }
+
+
+
+
+                        
+                        // if let Some(todo_item) =  {
+                        //     if let Some(next_item) =  {
+                        //         // full_list.swap(i, i+1);
+                        //         // self.log_message(&format!("todo_item: {todo_item:?} next_item: {next_item:?}"));
+                        //     } else if let Some(previous_item) =  {
+                        //         // full_list.swap(i, i-1);
+                        //         // self.log_message(&format!("todo_item: {todo_item:?} previous_item: {previous_item:?}"));
+                        //     }
+                        // }
+                    }
+                }
+                
                 log::info!("Selected: {:?}", list_state.selected());
                 if list_state.selected().is_none() {
                     list_state.select_first();

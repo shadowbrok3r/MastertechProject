@@ -7,7 +7,7 @@ use super::ScriptsTab;
 
 
 impl <'a> ScriptsTab <'a> {
-    pub fn run_prechecks(&mut self) {
+    pub fn _run_prechecks(&mut self) {
         self.log_message("Running system prechecks...");
     
         // Check Installed Programs
@@ -282,19 +282,19 @@ pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<Pa
 
 
 
-pub fn activate_seb(activation_code: &str) -> anyhow::Result<(), anyhow::Error> {
-    let install_cmd = format!(r#"
+pub fn _activate_seb(activation_code: &str) -> anyhow::Result<(), anyhow::Error> {
+    let _install_cmd = format!(r#"
         msiexec /i SuperEasyBackup.msi /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}
     "#, activation_code);
     Ok(())
 }
 
-pub fn install_libre_office() -> anyhow::Result<(), anyhow::Error> {
+pub fn _install_libre_office() -> anyhow::Result<(), anyhow::Error> {
 
     Ok(())
 }
 
-pub fn find_activation_keys() -> anyhow::Result<(), anyhow::Error> {
+pub fn _find_activation_keys() -> anyhow::Result<(), anyhow::Error> {
 
     Ok(())
 }
