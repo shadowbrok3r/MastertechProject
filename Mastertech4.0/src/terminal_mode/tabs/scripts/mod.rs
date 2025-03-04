@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
 use action_handler::WindowsUpdateEvent;
-use ratatui::widgets::ListState;
+use ratatui::{layout::Rect, widgets::ListState};
 use render::{Report, Reporter};
 use tui_scrollview::ScrollViewState;
 
@@ -124,8 +124,10 @@ pub struct ScriptsTab<'a> {
     // scheduled_tasks_scroll: ScrollViewState,
     // taskbar_items_scroll: ScrollViewState,
     // report_scroll: ScrollViewState,
-    // checklist_
+    checklist_area: RefCell<Option<Rect>>,
+    report_area: RefCell<Option<Rect>>,
     report_scroll_state: RefCell<ScrollViewState>,
+    list_scroll_state: RefCell<ScrollViewState>,
     // script_page_state: RefCell<ChecklistPageState>,
     list_state: RefCell<ListState>,
 }
@@ -138,52 +140,79 @@ impl<'a> ScriptsTab<'a> {
         let mut checklists = HashMap::new();
         
         checklists.insert(
-            "Prechecks".to_string(),
+            "Informational".to_string(),
             TodoList {
-                name: "Prechecks".to_string(),
+                name: "Informational".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem::new("Is SuperEasyBackup installed?"),
-                    TodoItem::new("Is it Active?"),
-                    TodoItem::new("Is Webroot installed?"),
-                    TodoItem::new("Is it Active?"),
-                    TodoItem::new("Is SuperAntiSpyware installed?"),
-                    TodoItem::new("Is it Active?"),
-                    TodoItem::new("Are there scheduled tasks for it?"),
-                    TodoItem::new("If Webroot/SAS not installed, what AV is active?"),
-                    TodoItem::new("Are there any pending Windows updates?"),
-                    TodoItem::new("Is Windows Activated?"),
-                    TodoItem::new("Is Sleep enabled?"),
-                    TodoItem::new("Is Hibernation enabled?"),
+                    TodoItem::new("Is SuperEasyBackup installed?").set_pass_criteria("Installed and active").set_warning_criteria("Not installed OR its not active").set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Is Webroot installed?").set_pass_criteria("Installed and active").set_warning_criteria("Not installed OR its not active").set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Is SuperAntiSpyware installed?").set_pass_criteria("Installed and active").set_warning_criteria("Not installed OR its not active").set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Are there scheduled tasks for it?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("If Webroot/SAS not installed, what AV is active?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("Are there any pending Windows updates?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("Is Windows Activated?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("Is Sleep enabled?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("Is Hibernation enabled?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("Have there been any Blue Screens in the past 30 days?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("When Was The Last Service Date?").set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
+                    TodoItem::new("Windows Version").set_pass_criteria("Windows 11").set_warning_criteria("Windows 10").set_error_criteria("Script Failed To Run").set_fail_criteria(""), 
                 ],
             },
         );
 
         checklists.insert(
-            "QC Only Checks".to_string(),
+            "Tuneup".to_string(),
             TodoList {
-                name: "QC Only Checks".to_string(),
-                state: ListState::default(),
-                items: vec![
-                    TodoItem::new("Do we need to do a data transfer?"),
-                    TodoItem::new("Do we need to install LibreOffice?"),
-                ],
-            },
-        );
-
-        checklists.insert(
-            "Actionable".to_string(),
-            TodoList {
-                name: "Actionable".to_string(),
+                name: "Tuneup".to_string(),
                 state: ListState::default(),
                 items: vec![
                     TodoItem::new("Disable Sleep / Hibernation"),
-                    TodoItem::new("Disable proxy settings"),
-                    TodoItem::new("Disable Notifications"),
-                    TodoItem::new("Change SuperAntiSpyware settings"),
-                    TodoItem::new("Disable Startup Apps"),
-                    TodoItem::new("Unpin Copilot"),
-                    TodoItem::new("Align Taskbar to left"),
+                    TodoItem::new("Run Windows Updates"),
+                    TodoItem::new("Activate CPS"),
+                    TodoItem::new("Activate SEB"),
+                    TodoItem::new("Run Tron"),
+                    TodoItem::new("Run SuperAntiSpyware Scan"),
+                    TodoItem::new("Run Junkware Category"),
+                ],
+            },
+        );
+
+        checklists.insert(
+            "Junkware Removal".to_string(),
+            TodoList {
+                name: "Junkware Removal".to_string(),
+                state: ListState::default(),
+                items: vec![
+                    TodoItem::new("OneLaunch"),
+                    TodoItem::new("WebNavigatorBrowser"),
+                    TodoItem::new("ESET Security"),
+                    TodoItem::new("Wavesor"),
+                    TodoItem::new("ClearBrowser"),
+                    TodoItem::new("ShiftBrowser"),
+                    TodoItem::new("AvastBrowser"),
+                    TodoItem::new("McaffeeSafe"),
+                    TodoItem::new("DriverSupport"),
+                    TodoItem::new("Winzip"),
+                ],
+            },
+        );
+
+        checklists.insert(
+            "QC".to_string(),
+            TodoList {
+                name: "QC".to_string(),
+                state: ListState::default(),
+                items: vec![
+                    TodoItem::new("Data Transfer"),
+                    TodoItem::new("Install LibreOffice"),
+                    TodoItem::new("Disable Sleep / Hibernation").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Disable proxy settings").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Disable Notifications").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Change SuperAntiSpyware settings").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Disable Startup Apps").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Unpin Copilot").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Align Taskbar to left").set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
                 ],
             },
         );
@@ -230,6 +259,9 @@ impl<'a> ScriptsTab<'a> {
             windows_updates: WindowsUpdates::default(),
             report_scroll_state: RefCell::new(ScrollViewState::new()),
             list_state: RefCell::new(ListState::default()),
+            list_scroll_state: RefCell::new(ScrollViewState::default()), // Renamed
+            checklist_area: RefCell::new(None),
+            report_area: RefCell::new(None),
             // Initialize scroll states
             // antivirus_scroll: ScrollViewState::default(),
             // installed_programs_scroll: ScrollViewState::default(),

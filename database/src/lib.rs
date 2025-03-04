@@ -52,6 +52,12 @@ pub enum DatabaseSelection {
     Beta,
 }
 
+#[derive(Clone, Debug)]
+pub struct Session {
+    pub jwt: Jwt,
+    pub user: User,
+}
+
 lazy_static! {
     pub static ref DB_SELECTION: RwLock<DatabaseSelection> = RwLock::new(DatabaseSelection::Beta);
 }
@@ -82,6 +88,60 @@ pub fn get_db_url() -> String {
     }
 }
 
+pub async fn initialize_db() -> anyhow::Result<()> {
+    DATABASE.connect::<Wss>(DB_URL_LOCAL).await?;
+    DATABASE.use_ns(NS).use_db(DB).await?;
+    Ok(())
+}
+
+pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
+    let jwt = DATABASE
+        .signin(SurrealRec {
+            namespace: NS,
+            database: DB,
+            access: USER_SCOPE,
+            params: Auth { email, password },
+        })
+        .await?;
+
+    let user: User = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take::<Option<User>>(0)?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+    Ok(Session { jwt, user })
+}
+
+pub async fn signup<T: Serialize>(signup_data: T, email: &str) -> anyhow::Result<Session> {
+    let jwt = DATABASE
+        .signup(SurrealRec {
+            namespace: NS,
+            database: DB,
+            access: USER_SCOPE,
+            params: signup_data,
+        })
+        .await?;
+
+    let user: User = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take::<Option<User>>(0)?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+    Ok(Session { jwt, user })
+}
+
+pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {
+    DATABASE.authenticate(jwt).await?;
+    let user: User = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take::<Option<User>>(0)?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+    Ok(Session { jwt: jwt.into(), user })
+}
 
 impl Database {
     pub async fn new(

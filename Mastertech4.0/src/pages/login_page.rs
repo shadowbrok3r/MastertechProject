@@ -26,7 +26,7 @@ impl Default for Login{
 
 impl Login{
     pub async fn login(login: Login, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) -> anyhow::Result<(), anyhow::Error>{
-        let _ = save_encrypted_user_data(&login, HASH);
+        save_encrypted_user_data(&login, HASH)?;
 
         let database = Database::new(login.username, login.password, None).await;
 

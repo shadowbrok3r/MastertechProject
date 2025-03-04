@@ -1,13 +1,12 @@
 use ratatui::{layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-
 use super::LoginTab;
 
 /// Implement the HandleWidget trait for ServiceFormWidget.
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
-    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {   
+    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(CATPPUCCIN.maroon)
@@ -45,15 +44,6 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
             ])
             .split(rows[1]);
 
-        // let area = frame.area();
-        // let background = background(area);
-        // let popup = Popup::new("Press any key to exit")
-        //     .title("tui-popup demo")
-        //     .style(Style::new().white().on_blue());
-
-        // frame.render_widget(background, area);
-        // frame.render_widget(&popup, area);
-
         self.username_field.render_ref(row1[1], f.buffer_mut());
         self.password_field.render_ref(row1[2], f.buffer_mut());
         self.login_btn.render_ref(
@@ -82,15 +72,14 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
                 true
             }
             _ => {
-                        // Dispatch key events to the active input field.
+                // Dispatch key events to the active input field.
                 if let Some(ref active) = *self.active_field.borrow() {
                     match active.0.as_str() {
-                        "CustomerName" => self.username_field.input.borrow_mut().input(key_event),
-                        "CustomerPhone" => self.password_field.input.borrow_mut().input(key_event),
+                        "Username" => self.username_field.input.borrow_mut().input(key_event),
+                        "Password" => self.password_field.input.borrow_mut().input(key_event),
                         _ => {false}
                     }
                 } else { false }
-
             }
         }
     }

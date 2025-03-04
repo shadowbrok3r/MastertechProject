@@ -7,7 +7,7 @@ use tachyonfx::CellFilter;
 use widgets::HandleWidget;
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui::prelude::*;
-use std::{cell::RefCell, io, rc::Rc};
+use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
 use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
@@ -53,7 +53,7 @@ pub struct TerminalApp<'a> { // logs: Vec<String>,
     first_run: bool,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
-    ctx: TerminalContext
+    ctx: Arc<Mutex<TerminalContext>>
 }
 
 impl Default for TerminalApp <'_>{
@@ -66,19 +66,20 @@ impl Default for TerminalApp <'_>{
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.service_form_widget.clone());
         event_manager.register_handler(scripts_tab.clone());
-        
+        let ctx = Arc::new(Mutex::new(TerminalContext::default()));
+
         Self {
             logger: Logger::new(),
             menu_bar: MenuBar::new(),
             scripts_tab,
             service_tab,
             sysinfo_tab: SysinfoTab::new(),
-            login_tab: LoginTab::new(),
+            login_tab: LoginTab::new(ctx.clone()),
             effect_stage: EffectStage::default(),
             event_handler: EventHandler::new(),
             first_run: true,
             event_manager,
-            ctx: TerminalContext::default()
+            ctx
         }
     }
 }
@@ -149,33 +150,39 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
             let current_tab = app.menu_bar.current_tab.borrow().clone();
             match events {
                 events::Event::Key(key_event) => {
-                    
+                    let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     match key_event.code {
                         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                             log::info!("Quitting");
                             break;
                         }
-                        // We'll let left/right arrow change tabs
-                        KeyCode::Right => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                            log::info!("Current tab: {current_tab:?}");
-                             match current_tab {
-                                Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Scripts),
-                                Tab::Scripts => app.menu_bar.set_active_tab(Tab::SystemInfo),
-                                Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Logs),
-                                Tab::Logs => app.menu_bar.set_active_tab(Tab::Login),
-                                Tab::Login => app.menu_bar.set_active_tab(Tab::TurSheet),
-                            };
-                        }
-                        KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                             match current_tab {
-                                Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Login),
-                                Tab::Scripts => app.menu_bar.set_active_tab(Tab::TurSheet),
-                                Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Scripts),
-                                Tab::Logs => app.menu_bar.set_active_tab(Tab::SystemInfo),
-                                Tab::Login => app.menu_bar.set_active_tab(Tab::Logs),
-                            };
-                        }
                         _ => {
+                            if ctrl_key {
+                                match key_event.code {
+                                    // We'll let left/right arrow change tabs
+                                    KeyCode::Right => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                        log::info!("Current tab: {current_tab:?}");
+                                        match current_tab {
+                                            Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Scripts),
+                                            Tab::Scripts => app.menu_bar.set_active_tab(Tab::SystemInfo),
+                                            Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Logs),
+                                            Tab::Logs => app.menu_bar.set_active_tab(Tab::Login),
+                                            Tab::Login => app.menu_bar.set_active_tab(Tab::TurSheet),
+                                        };
+                                    }
+                                    KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                        match current_tab {
+                                            Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Login),
+                                            Tab::Scripts => app.menu_bar.set_active_tab(Tab::TurSheet),
+                                            Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Scripts),
+                                            Tab::Logs => app.menu_bar.set_active_tab(Tab::SystemInfo),
+                                            Tab::Login => app.menu_bar.set_active_tab(Tab::Logs),
+                                        };
+                                    }
+                                    _ => {}
+                                }
+                            }
+
                             // Now dispatch key event to the active widget, and only one widget:
                             let consumed = match current_tab {
                                 Tab::TurSheet => app.service_tab.handle_key_event(key_event),
@@ -220,7 +227,9 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
             } else {
                 
                 app.event_manager.process_events();
-                app.ctx.receive();
+                if let Ok(mut lock) = app.ctx.lock() {
+                    lock.receive();
+                }
                 // top-level layout has a row for tabs, then main content
                 // let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
                 // f.render_widget(bg, f.area());
@@ -239,9 +248,9 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 let tab_layout = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
-                        Constraint::Ratio(1,3),
-                        Constraint::Ratio(1,3),
-                        Constraint::Ratio(1,3),
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(60),
+                        Constraint::Percentage(20),
                     ]).split(outer_chunks[0]);
 
                 let tab_area = center_horizontal(tab_layout[1], tab_layout[1].width);
