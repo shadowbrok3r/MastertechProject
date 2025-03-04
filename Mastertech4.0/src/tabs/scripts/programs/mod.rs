@@ -122,7 +122,7 @@ impl InstalledProgram {
         if let (Some(command), Some(display_name)) = (&self.uninstall_string, &self.display_name) {
 
             // try this for inno setups
-            let script = format!(r#"& {command} /verysilent /suppressmsgboxes /norestart"#);
+            let script = format!(r#"& {command} /silent /verysilent /suppressmsgboxes /norestart"#);
             log::info!("Uninstalling program: {display_name}\nUninstall String: {command}\n{script}");
             let ps = powershell_script::PsScriptBuilder::new()
                 .no_profile(true)

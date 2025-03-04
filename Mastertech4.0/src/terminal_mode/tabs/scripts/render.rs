@@ -1,7 +1,9 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap}, Frame};
+use color_eyre::owo_colors::OwoColorize;
+use ratatui::{crossterm::event::{KeyCode, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap}, Frame};
 use tui_scrollview::{ScrollView, ScrollbarVisibility};
-use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, CYAN, DARKORANGE}, tabs::SERVICE_FORM_VIRTUAL_HEIGHT, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, CYAN, DARKORANGE}, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab, ScriptsTabView};
+// use tui_popup::Popup;
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -172,9 +174,17 @@ impl<'a> ScriptsTab<'a> {
         }).collect();
     
         let checklist = List::new(checklist_items)
-            .block(Block::default().borders(Borders::ALL).title("Checklist").border_type(BorderType::Rounded).border_type(BorderType::Rounded));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Checklist")
+                    .border_type(BorderType::Rounded)
+                    .border_type(BorderType::Rounded)
+            )
+            .highlight_symbol("=>")
+            .highlight_style(Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.teal));
     
-        f.render_widget(checklist, layout[0]);
+        f.render_stateful_widget(checklist, layout[0], &mut self.list_state.borrow_mut());
     
         // 📝 Render logs
         let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
@@ -204,16 +214,23 @@ impl<'a> ScriptsTab<'a> {
             ])
         }).collect();
         
-        
-        
-    
-        // Create a scroll view with a fixed virtual content size.
-        // This ensures that even if `service_form_area` (the visible area) is small,
-        // the service form widget is rendered into a larger virtual buffer.
+        // Calculate virtual dimensions
+        let log_lines = log_text.len() as u16; // Number of lines for vertical scrolling
+        let visible_height = layout[1].height.saturating_sub(2); // Subtract borders
+        let virtual_height = log_lines.max(visible_height); // Dynamic height based on content
+
+        // Calculate the maximum line width for horizontal scrolling
+        let max_line_width = log_text.iter()
+            .map(|line| line.width() as u16) // Width of each line in characters
+            .max()
+            .unwrap_or(layout[1].width); // Default to visible width if no lines
+        let visible_width = layout[1].width.saturating_sub(2); // Subtract borders
+        let virtual_width = max_line_width.max(visible_width); // Dynamic width based on longest line
+
         let virtual_size = Size {
-            width: layout[1].width,
-            height: layout[1].height,
-        };
+            width: virtual_width,
+            height: virtual_height,
+        };   
 
         let mut scroll_view = ScrollView::new(virtual_size)
             .vertical_scrollbar_visibility(
@@ -226,8 +243,8 @@ impl<'a> ScriptsTab<'a> {
         let rect = scroll_view.area();
 
         let log_widget = Paragraph::new(log_text)
-            .block(Block::default().borders(Borders::ALL).title("Run Report").border_type(BorderType::Rounded))
-            .wrap(Wrap { trim: false });
+            .block(Block::default().borders(Borders::ALL).title("Run Report").border_type(BorderType::Rounded));
+            // .wrap(Wrap { trim: false });
     
         scroll_view.render_widget(log_widget, rect);
 
@@ -264,6 +281,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             f.render_widget(button, tab_layout[i]);
         }
     
+
         // Display content based on selected tab
         match *self.current_tab.borrow() {
             ScriptsTabView::Main => {
@@ -271,8 +289,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 let main_chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
-                        Constraint::Percentage(30), // Left: Buttons
-                        Constraint::Percentage(70), // Right: Logs
+                        Constraint::Percentage(20), // Left: Buttons
+                        Constraint::Percentage(80), // Right: Logs
                     ])
                     .split(content_area);
     
@@ -285,21 +303,21 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     .constraints(vec![Constraint::Ratio(1, 8); 8])
                     .split(left_half);
     
-                let button_row1 = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(button_grid[0]);
+                // let button_row1 = Layout::default()
+                //     .direction(Direction::Horizontal)
+                //     .constraints([Constraint::Percentage(60)])
+                //     .split(button_grid[0]);
     
-                let button_row2 = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(button_grid[1]);
+                // let button_row2 = Layout::default()
+                //     .direction(Direction::Horizontal)
+                //     .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                //     .split(button_grid[1]);
     
                 // Render main buttons
-                f.render_widget(&self.tuneup_btn, button_row1[0].shrink(5, 1));
-                f.render_widget(&self.qc_btn, button_row1[1].shrink(5, 1));
-                f.render_widget(&self.updates_btn, button_row2[0].shrink(5, 1));
-                f.render_widget(&self.prechecks_btn, button_row2[1].shrink(5, 1));
+                f.render_widget(&self.tuneup_btn, button_grid[0].shrink(5, 1));
+                f.render_widget(&self.qc_btn, button_grid[1].shrink(5, 1));
+                f.render_widget(&self.updates_btn, button_grid[2].shrink(5, 1));
+                f.render_widget(&self.prechecks_btn, button_grid[3].shrink(5, 1));
                 // Render log section
                 self.draw_log_section::<B>(f, right_half);
             }
@@ -339,6 +357,48 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     button.handle_mouse_event(&mouse_event);
                 }
             }
+        }
+    }
+
+    fn handle_key_event(&mut self, key_event: ratatui::crossterm::event::KeyEvent) -> bool {
+        log::info!("KEY EVENT: {key_event:?}");
+        match key_event.code {
+            KeyCode::Right => {
+                log::info!("RIGHT");
+                self.scroll_state.borrow_mut().scroll_right();
+                self.scroll_state.borrow_mut().scroll_right();
+                true
+            },
+            KeyCode::Left => {
+                self.scroll_state.borrow_mut().scroll_left();
+                self.scroll_state.borrow_mut().scroll_left();
+                true
+            },
+            KeyCode::Up => {
+                log::info!("UP");
+                let mut list_state = self.list_state.borrow_mut();
+                if list_state.selected().is_none() {
+                    list_state.select_first();
+                } else {
+                    list_state.select_previous();
+                }
+                true
+            },
+            KeyCode::Down => {
+                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                    log::info!("CTRL DOWN");
+                }
+                log::info!("DOWN");
+                let mut list_state = self.list_state.borrow_mut();
+                log::info!("Selected: {:?}", list_state.selected());
+                if list_state.selected().is_none() {
+                    list_state.select_first();
+                } else {
+                    list_state.select_next();
+                }
+                true
+            },
+            _ => false
         }
     }
 }

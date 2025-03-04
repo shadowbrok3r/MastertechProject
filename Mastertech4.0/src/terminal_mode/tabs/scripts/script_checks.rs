@@ -11,17 +11,28 @@ impl <'a> ScriptsTab <'a> {
         self.log_message("Running system prechecks...");
     
         // Check Installed Programs
-        if let Ok(programs) = InstalledProgram::get_installed_programs() {
+        if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
+            for program in &mut *programs {
+                if let Some(name) = &program.publisher {
+                    match name.as_str() {
+                        "OneLaunch" => match program.uninstall() {
+                            Ok(_) => self.log_message("Uninstalled OneLaunch"),
+                            Err(e) => self.log_message(&format!("Error uninstalling OneLaunch: {e:?}")),
+                        }
+                        "WebNavigatorBrowser" => {
+
+                        }
+                        "ESET Security" => {
+
+                        }
+                        "SuperAntiSpyware" => self.update_checklist("Prechecks", "Is SuperAntiSpyware installed?", true),
+                        "Webroot" => self.update_checklist("Prechecks", "Is Webroot installed?", true),
+                        _ => {}
+                    }
+                }
+            }
             self.update_checklist("Prechecks", "Is SuperEasyBackup installed?", 
                 programs.iter().any(|p| p.display_name.as_deref() == Some("SuperEasyBackup"))
-            );
-    
-            self.update_checklist("Prechecks", "Is Webroot installed?", 
-                programs.iter().any(|p| p.display_name.as_deref() == Some("Webroot"))
-            );
-    
-            self.update_checklist("Prechecks", "Is SuperAntiSpyware installed?", 
-                programs.iter().any(|p| p.display_name.as_deref() == Some("SuperAntiSpyware"))
             );
         }
     
