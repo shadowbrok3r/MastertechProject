@@ -51,8 +51,8 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
         //     .title("tui-popup demo")
         //     .style(Style::new().white().on_blue());
 
-        frame.render_widget(background, area);
-        frame.render_widget(&popup, area);
+        // frame.render_widget(background, area);
+        // frame.render_widget(&popup, area);
 
         self.username_field.render_ref(row1[1], f.buffer_mut());
         self.password_field.render_ref(row1[2], f.buffer_mut());

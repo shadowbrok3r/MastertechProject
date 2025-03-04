@@ -105,18 +105,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "RunPrechecks" => {
                         self.current_reporter.replace(Reporter::RunPrechecks);
                         self.log_message("Running system prechecks...");
+
                         // self.run_prechecks();
-                        let check_antivirus = check_antivirus();
-                        let get_installed_program_names = get_installed_program_names();
-                        let check_network_adapters = check_network_adapters();
-                        let get_wlan_status = get_wlan_status();
-                        // let scan_for_wifi = scan_wifi_networks();
-                        // connect_to_wifi("PCLaptops2.4", Some("bestburger"), None)?;
-                        self.log_message(&format!("Wlan Status: {get_wlan_status:?}"));
-                        match check_network_adapters {
-                            Ok(adapters) => self.log_message(&format!("Network Adapters => {adapters:?}")),
-                            Err(e) => self.log_message(&format!("Error getting Network Adapter list => {e:?}")),
-                        }
 
                         let tx = self.path_size_tx.clone();
                         std::thread::spawn(move || {
@@ -126,7 +116,19 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                                 Err(e) => log::info!("Error getting paths: {e:?}"),
                             };
                         });
-                        match check_antivirus {
+
+                        // connect_to_wifi("PCLaptops2.4", Some("bestburger"), None)?;
+
+                        match get_wlan_status() {
+                            Ok(_) => self.log_message(&format!("Wlan Status OK")),
+                            Err(e) => self.log_message(&format!("Wlan Status: {e:?}")),
+                        }
+                        match check_network_adapters() {
+                            Ok(adapters) => self.log_message(&format!("Network Adapters => {adapters:?}")),
+                            Err(e) => self.log_message(&format!("Error getting Network Adapter list => {e:?}")),
+                        }
+
+                        match check_antivirus() {
                             Ok(products) => self.log_message(&format!("Antivirus: {products:?}")),
                             Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
                         }
@@ -153,10 +155,16 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                             Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
                         }
 
-                        match get_installed_program_names {
+                        match get_installed_program_names() {
                             Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
                             Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
                         }
+
+                        match scan_wifi_networks() {
+                            Ok(networks) => self.log_message(&format!("Wifi Networks: {networks:?}")),
+                            Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
+                        }
+                        
                         // match is_push_notifications_disabled {
                         //     Ok(x) => self.log_message(&format!("is_push_notifications_disabled: {x:?}")),
                         //     Err(e) => self.log_message(&format!("ERR(is_push_notifications_disabled) => {e:?}")),
@@ -177,7 +185,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 }
             }
             WidgetEvent::Api(_) => {},
-            WidgetEvent::Active { widget_id } => {}
+            WidgetEvent::Active { widget_id } => {self.log_message(&format!("{widget_id:?}"));}
         }
     }
 }

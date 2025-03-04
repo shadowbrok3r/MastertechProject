@@ -45,6 +45,8 @@ pub mod script_checks;
     - Align Taskbar to left 
     - 
 
+    - Uninstall onelaunch / driver updater / etc
+    - if i exec the uninstall string for onelaunch, it works using the /silent flag
     Plans for UI
     - 
 */
@@ -112,6 +114,7 @@ pub struct ScriptsTab<'a> {
     // taskbar_items_scroll: ScrollViewState,
     // report_scroll: ScrollViewState,
     scroll_state: RefCell<ScrollViewState>,
+    list_state: RefCell<ListState>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -213,7 +216,7 @@ impl<'a> ScriptsTab<'a> {
             checklists,
             windows_updates: WindowsUpdates::default(),
             scroll_state: RefCell::new(ScrollViewState::new()),
-
+            list_state: RefCell::new(ListState::default()),
             // Initialize scroll states
             // antivirus_scroll: ScrollViewState::default(),
             // installed_programs_scroll: ScrollViewState::default(),

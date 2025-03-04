@@ -187,7 +187,8 @@ pub fn scan_wifi_networks() -> anyhow::Result<Vec<(String, Vec<[u8; 6]>)>> {
         let mut networks = Vec::new();
 
         for i in 0..interface_list.dwNumberOfItems {
-            let interface_info = &interface_list.InterfaceInfo[i as usize];
+            // SAFETY: InterfaceInfo is a flexible array in C, access via pointer arithmetic
+            let interface_info = &*interface_list.InterfaceInfo.as_ptr().add(i as usize);
             let interface_guid = interface_info.InterfaceGuid;
             let interface_name = PCWSTR(interface_info.strInterfaceDescription.as_ptr()).to_string()?;
 
@@ -203,14 +204,13 @@ pub fn scan_wifi_networks() -> anyhow::Result<Vec<(String, Vec<[u8; 6]>)>> {
             log::info!("Found {} available networks.", network_list.dwNumberOfItems);
 
             for j in 0..network_list.dwNumberOfItems {
-                let network = &network_list.Network[j as usize];
+                // SAFETY: Network is a flexible array in C, access via pointer arithmetic
+                let network = &*network_list.Network.as_ptr().add(j as usize);
 
                 let ssid_bytes = &network.dot11Ssid.ucSSID[..network.dot11Ssid.uSSIDLength as usize];
                 let ssid = String::from_utf8_lossy(ssid_bytes).to_string();
 
-                let bssid_list = Vec::new();
-                // BSSID extraction is not directly available here; requires extra API calls.
-
+                let bssid_list = Vec::new(); // Still needs BSSID implementation
                 log::info!("SSID: {}", ssid);
                 networks.push((ssid, bssid_list));
             }
@@ -220,7 +220,6 @@ pub fn scan_wifi_networks() -> anyhow::Result<Vec<(String, Vec<[u8; 6]>)>> {
         Ok(networks)
     }
 }
-
 
 pub fn check_network_adapters() -> anyhow::Result<Vec<String>, anyhow::Error> {
     log::info!("Starting network adapter check...");
