@@ -42,7 +42,6 @@ pub struct MenuBar<'a> {
 
 impl<'a> MenuBar<'a> {
     pub fn new() -> Self {
-
         let menu_bar = Self {
             current_tab: RefCell::new(Tab::TurSheet),
             effect_stage: EffectStage::default(),
@@ -113,7 +112,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let ticket_tab_btn_area = row[0].shrink(1, 1);
         self.ticket_tab.render_ref(ticket_tab_btn_area, f.buffer_mut());
 
-        let scripts_tab_area = row[2].shrink(1, 1);
+        let scripts_tab_area = row[2].shrink(0, 1);
         self.scripts_tab.render_ref(scripts_tab_area, f.buffer_mut());
 
         let system_tab_area = row[4].shrink(1, 1);

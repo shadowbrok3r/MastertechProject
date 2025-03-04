@@ -19,30 +19,34 @@ impl <'a> ScriptsTab <'a> {
                             Ok(_) => self.log_message("Uninstalled OneLaunch"),
                             Err(e) => self.log_message(&format!("Error uninstalling OneLaunch: {e:?}")),
                         }
-                        "WebNavigatorBrowser" => {
-
-                        }
-                        "ESET Security" => {
-
-                        }
-                        "SuperAntiSpyware" => self.update_checklist("Prechecks", "Is SuperAntiSpyware installed?", true),
-                        "Webroot" => self.update_checklist("Prechecks", "Is Webroot installed?", true),
+                        "WebNavigatorBrowser" => {}
+                        "ESET Security" => {}
+                        //ccleaner browser, SAS browser extension
+                        "Wavesor" => {}
+                        "Clear Browser" => {}
+                        "Shift Browser" => {}
+                        "Avast Browser" => {}
+                        "Mcaffee Safe Search" => {}
+                        "Driver Support" => {}
+                        "Winzip" => {}
+                        "SuperAntiSpyware" => self.update_checklist("Informational", "Is SuperAntiSpyware installed?", true),
+                        "Webroot" => self.update_checklist("Informational", "Is Webroot installed?", true),
                         _ => {}
                     }
                 }
             }
-            self.update_checklist("Prechecks", "Is SuperEasyBackup installed?", 
+            self.update_checklist("Informational", "Is SuperEasyBackup installed?", 
                 programs.iter().any(|p| p.display_name.as_deref() == Some("SuperEasyBackup"))
             );
         }
     
         // Check Running Processes for Webroot and SAS
         if let Ok(processes) = get_running_processes() {
-            self.update_checklist("Prechecks", "Is Webroot Active?", 
+            self.update_checklist("Informational", "Is Webroot Active?", 
                 processes.contains("WRSA.exe")
             );
     
-            self.update_checklist("Prechecks", "Is SuperAntiSpyware Active?", 
+            self.update_checklist("Informational", "Is SuperAntiSpyware Active?", 
                 processes.contains("SUPERANTISPYWARE.exe")
             );
         }
@@ -57,14 +61,14 @@ impl <'a> ScriptsTab <'a> {
             for av in av_products {
                 self.log_message(&format!("AV: {av:#?}"));
             }
-            self.update_checklist("Prechecks", "If Webroot/SAS not installed, what AV is active?", 
+            self.update_checklist("Informational", "If Webroot/SAS not installed, what AV is active?", 
                 !active_avs.is_empty()
             );
         }
     
         // Check Scheduled Tasks
         if let Ok(tasks) = ScheduledTask::list_tasks() {
-            self.update_checklist("Prechecks", "Are there scheduled tasks for SuperAntiSpyware?", 
+            self.update_checklist("Informational", "Are there scheduled tasks for SuperAntiSpyware?", 
                 tasks.iter().any(|t| t.task_name.as_deref() == Some("SuperAntiSpyware"))
             );
         }
@@ -77,19 +81,19 @@ impl <'a> ScriptsTab <'a> {
         }
     
         // Check System Settings
-        self.update_checklist("Prechecks", "Are there any pending Windows updates?", 
+        self.update_checklist("Informational", "Are there any pending Windows updates?", 
             self.windows_updates.updates.len() > 0
         );
     
-        self.update_checklist("Prechecks", "Is Windows Activated?", 
+        self.update_checklist("Informational", "Is Windows Activated?", 
             check_windows_activation()
         );
     
-        // self.update_checklist("Prechecks", "Is Sleep enabled?", 
+        // self.update_checklist("Informational", "Is Sleep enabled?", 
         //     check_sleep_mode()
         // );
     
-        self.update_checklist("Prechecks", "Is Hibernation enabled?", 
+        self.update_checklist("Informational", "Is Hibernation enabled?", 
             check_hibernation_mode().unwrap_or(false)
         );
     

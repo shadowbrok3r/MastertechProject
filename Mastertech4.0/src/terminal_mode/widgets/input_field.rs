@@ -73,7 +73,7 @@ impl <'a> WidgetRef for InputField <'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (_background, text_color, _shadow, highlight) = self.colors();
         
-        self.add_effect(*buf.area());
+        // self.add_effect(*buf.area());
         
         // ----- Process TachyonFX Effects -----
         // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
