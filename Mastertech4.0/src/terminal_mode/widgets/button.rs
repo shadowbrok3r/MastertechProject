@@ -96,19 +96,19 @@ impl<'a> Button<'a> {
 }
 
 impl <'a> ButtonType<'a> for Button<'a> {
-    /// For when something (mouse, keyboard) triggers a "click" on this Button.
-    fn click(&self) {
-        if let Some(callback) = self.on_click.borrow_mut().as_mut() {
-            log::info!("click callback fired");
-            callback(); // Error here because i dont pass an arg to callback(*)
-        }
-    }
+    
+    // fn click(&self) {
+        // if let Some(callback) = self.on_click.borrow_mut().as_mut() {
+        //     log::info!("click callback fired");
+        //     callback(); // Error here because i dont pass an arg to callback(*)
+        // }
+    // }
     
     fn set_state(&self, state: ButtonState) {
         self.state.replace(state);
     }
 
-    fn _get_area(&self) -> Option<Rect> {
+    fn get_area(&self) -> Option<Rect> {
         *self.area.borrow()
     }
     
@@ -137,7 +137,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
         // If we haven’t assigned an area yet, do nothing
-        let Some(area) = *self.area.borrow() else { return; };
+        let Some(area) = self.get_area() else { return; };
 
         
         let c = mouse_event.column;

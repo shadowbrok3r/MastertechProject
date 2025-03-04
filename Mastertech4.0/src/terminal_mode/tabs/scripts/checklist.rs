@@ -10,10 +10,20 @@ pub struct TodoList {
     pub state: ListState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TodoItem {
     pub text: String,
     pub status: Status,
+}
+
+impl TodoItem {
+    pub fn new(text: &str) -> Self {
+        
+        Self {
+            text: text.to_owned(),
+            status: Status::Todo,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

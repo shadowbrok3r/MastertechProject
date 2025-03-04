@@ -1,5 +1,5 @@
 use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK}, widgets::{button::Button, ButtonType}}, utilities::windows::WindowsUpdates};
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
 use action_handler::WindowsUpdateEvent;
@@ -11,6 +11,12 @@ pub mod action_handler;
 pub mod render;
 pub mod checklist;
 pub mod script_checks;
+
+// macro_rules! log_message {
+//     ($self:expr, $msg:literal, $($args:expr),*) => {
+//         $self.log_message(format!($msg, $($args),*))
+//     };
+// }
 
 /*
     A Reporting System for each of these things
@@ -63,6 +69,11 @@ pub enum ScriptsTabView {
     TaskbarItems,
 }
 
+// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+// pub enum ChecklistPageState {
+//     #[default]
+
+// }
 
 ////////////////////////////////
 // SCRIPTS TAB with Buttons
@@ -113,7 +124,9 @@ pub struct ScriptsTab<'a> {
     // scheduled_tasks_scroll: ScrollViewState,
     // taskbar_items_scroll: ScrollViewState,
     // report_scroll: ScrollViewState,
-    scroll_state: RefCell<ScrollViewState>,
+    // checklist_
+    report_scroll_state: RefCell<ScrollViewState>,
+    // script_page_state: RefCell<ChecklistPageState>,
     list_state: RefCell<ListState>,
 }
 
@@ -130,18 +143,18 @@ impl<'a> ScriptsTab<'a> {
                 name: "Prechecks".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem { text: "Is SuperEasyBackup installed?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is it Active?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is Webroot installed?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is it Active?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is SuperAntiSpyware installed?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is it Active?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Are there scheduled tasks for it?".to_string(), status: Status::Todo },
-                    TodoItem { text: "If Webroot/SAS not installed, what AV is active?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Are there any pending Windows updates?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is Windows Activated?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is Sleep enabled?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Is Hibernation enabled?".to_string(), status: Status::Todo },
+                    TodoItem::new("Is SuperEasyBackup installed?"),
+                    TodoItem::new("Is it Active?"),
+                    TodoItem::new("Is Webroot installed?"),
+                    TodoItem::new("Is it Active?"),
+                    TodoItem::new("Is SuperAntiSpyware installed?"),
+                    TodoItem::new("Is it Active?"),
+                    TodoItem::new("Are there scheduled tasks for it?"),
+                    TodoItem::new("If Webroot/SAS not installed, what AV is active?"),
+                    TodoItem::new("Are there any pending Windows updates?"),
+                    TodoItem::new("Is Windows Activated?"),
+                    TodoItem::new("Is Sleep enabled?"),
+                    TodoItem::new("Is Hibernation enabled?"),
                 ],
             },
         );
@@ -152,8 +165,8 @@ impl<'a> ScriptsTab<'a> {
                 name: "QC Only Checks".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem { text: "Do we need to do a data transfer?".to_string(), status: Status::Todo },
-                    TodoItem { text: "Do we need to install LibreOffice?".to_string(), status: Status::Todo },
+                    TodoItem::new("Do we need to do a data transfer?"),
+                    TodoItem::new("Do we need to install LibreOffice?"),
                 ],
             },
         );
@@ -164,13 +177,13 @@ impl<'a> ScriptsTab<'a> {
                 name: "Actionable".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem { text: "Disable Sleep / Hibernation".to_string(), status: Status::Todo },
-                    TodoItem { text: "Disable proxy settings".to_string(), status: Status::Todo },
-                    TodoItem { text: "Disable Notifications".to_string(), status: Status::Todo },
-                    TodoItem { text: "Change SuperAntiSpyware settings".to_string(), status: Status::Todo },
-                    TodoItem { text: "Disable Startup Apps".to_string(), status: Status::Todo },
-                    TodoItem { text: "Unpin Copilot".to_string(), status: Status::Todo },
-                    TodoItem { text: "Align Taskbar to left".to_string(), status: Status::Todo },
+                    TodoItem::new("Disable Sleep / Hibernation"),
+                    TodoItem::new("Disable proxy settings"),
+                    TodoItem::new("Disable Notifications"),
+                    TodoItem::new("Change SuperAntiSpyware settings"),
+                    TodoItem::new("Disable Startup Apps"),
+                    TodoItem::new("Unpin Copilot"),
+                    TodoItem::new("Align Taskbar to left"),
                 ],
             },
         );
@@ -215,7 +228,7 @@ impl<'a> ScriptsTab<'a> {
 
             checklists,
             windows_updates: WindowsUpdates::default(),
-            scroll_state: RefCell::new(ScrollViewState::new()),
+            report_scroll_state: RefCell::new(ScrollViewState::new()),
             list_state: RefCell::new(ListState::default()),
             // Initialize scroll states
             // antivirus_scroll: ScrollViewState::default(),
@@ -228,7 +241,7 @@ impl<'a> ScriptsTab<'a> {
     }
 
     /// Logs a message under the current `Reporter`
-    pub fn log_message(&self, msg: &str) {
+    pub fn log_message(&self, msg: impl Display) {
         let reporter = self.current_reporter.borrow().clone();
         let log_entry = Report {
             reporter,

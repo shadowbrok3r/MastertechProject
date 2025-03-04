@@ -106,18 +106,14 @@ impl <'a> WidgetRef for InputField <'a> {
     }
 }
 
-impl<'a> ButtonType<'a> for InputField <'a> {
-    fn click(&self) {
-        self.set_state(ButtonState::Active);
-    }
-
+impl <'a> ButtonType <'a> for InputField <'a> {
     fn set_state(&self, state: ButtonState) {
         // log::info!("set_state => Setting {:?} to {state:?}", self.title);
         self.state.replace(state);
         self.set_cursor();
     }
 
-    fn _get_area(&self) -> Option<Rect> {
+    fn get_area(&self) -> Option<Rect> {
         *self.area.borrow()
     }
     
