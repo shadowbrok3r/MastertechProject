@@ -54,6 +54,9 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
                     self.set_input_state_from_input_idx(input_idx, ButtonState::Normal);
                     log::info!("active field: {active_field:?} / input_idx: {input_idx:?}");
                     self.set_input_idx(input_idx + 1);
+                    // let idx = *self.input_idx.borrow();
+                    let widget_id = Self::get_field_id_from_idx(input_idx + 1);
+                    self.active_field.replace(Some(widget_id));
                     self.set_input_state_from_input_idx(input_idx + 1, ButtonState::Active);
                     true
                 }

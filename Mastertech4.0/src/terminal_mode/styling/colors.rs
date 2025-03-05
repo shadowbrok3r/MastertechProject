@@ -1,7 +1,25 @@
 use crate::terminal_mode::widgets::button::Theme;
 use ratatui::style::Color;
+use super::{Catppuccin, CATPPUCCIN};
+const COLORS: Catppuccin = Catppuccin::new();
 
-use super::CATPPUCCIN;
+pub static BASE_COLORS: [Color; 14] = [
+    COLORS.rosewater,
+    COLORS.flamingo,
+    COLORS.pink,
+    COLORS.mauve,
+    COLORS.red,
+    COLORS.maroon,
+    COLORS.peach,
+    COLORS.yellow,
+    COLORS.green,
+    COLORS.teal,
+    COLORS.sky,
+    COLORS.sapphire,
+    COLORS.blue,
+    COLORS.lavender,
+];
+
 pub const TURQUOISE: Theme = Theme {
     // Using an 80% brightness version of the highlight color.
     text: Color::Rgb(58, 167, 163), // derived from 80% of (72, 209, 204)

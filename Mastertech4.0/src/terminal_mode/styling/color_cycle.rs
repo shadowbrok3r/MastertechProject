@@ -38,7 +38,7 @@ impl IndexResolver<Color> for RepeatingCycle {
     }
 }
 
-pub type PingPongColorCycle = ColorCycle<PingPongCycle>;
+// pub type PingPongColorCycle = ColorCycle<PingPongCycle>;
 pub type RepeatingColorCycle = ColorCycle<RepeatingCycle>;
 
 impl<T> ColorCycle<T> where T: IndexResolver<Color> {

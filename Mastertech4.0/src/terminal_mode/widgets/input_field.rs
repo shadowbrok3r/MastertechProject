@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, fx::{effect::{selected_category, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use tui_textarea::TextArea;
@@ -21,8 +21,6 @@ pub struct InputField <'a> {
     state: RefCell<ButtonState>,
     /// duh
     theme: Theme,
-    effect_stage: RefCell<EffectStage<UniqueEffectId>>,
-    init: RefCell<bool>,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
 }
@@ -42,8 +40,6 @@ impl <'a> InputField <'a>{
             area: RefCell::new(None),
             state: RefCell::new(ButtonState::Normal),
             theme: CATPPUCCINTHEME,
-            effect_stage: RefCell::new(EffectStage::default()),
-            init: RefCell::new(true),
             event_sender: get_event_sender()
         }
     }
@@ -53,14 +49,6 @@ impl <'a> InputField <'a>{
         match *self.state.borrow() {
             ButtonState::Active => input.set_cursor_style(Style::default().fg(Color::Cyan)),
             _ => input.set_cursor_style(Style::default().hidden())
-        }
-    }
-
-    fn add_effect(&self, area: Rect) {
-        if *self.init.borrow() {
-            *self.init.borrow_mut() = false;
-            let effect1 = selected_category(Color::LightRed, area);
-            self.effect_stage.borrow_mut().add_effect(effect1);
         }
     }
 

@@ -1,4 +1,4 @@
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::Sender;
 use database::{Database, DATABASE};
 
 use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
@@ -44,7 +44,8 @@ impl <'a> LoginTab <'a> {
     fn set_input_idx(&self, idx: i32) {
         self.input_idx.replace(idx);
         let idx = *self.input_idx.borrow();
-        self.active_field.replace(Some(Self::get_field_id_from_idx(idx)));
+        let widget_id = Self::get_field_id_from_idx(idx);
+        self.active_field.replace(Some(widget_id));
     }
 
     fn set_input_state_from_input_idx(&self, idx: i32, state: ButtonState) {

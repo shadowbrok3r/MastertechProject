@@ -95,14 +95,6 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
                     _ => {}
                 }
             }
-            // WidgetEvent::UpdateText { widget_id, text } => {
-                // match widget_id 
-                // log::info!("ServiceFormWidget received an UpdateText event: {}", text);
-                // let mut input = self.order_number.input.borrow_mut();
-                // input.select_all();
-                // input.cut();
-                // input.insert_str(text);
-            
             WidgetEvent::Api(api_event) => {
                 match api_event {
                     ApiEvent::GetTicketResponse(presta_data) => {
@@ -149,25 +141,25 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
             WidgetEvent::Active { widget_id } => {
                 match widget_id.0.as_str() {
                     "ServiceNumber" => {
-                        self.set_active_field(WidgetId("ServiceNumber".to_string()));
+                        self.active_field.replace(Some(WidgetId("ServiceNumber".to_string())));
                     }
                     "CustomerName" => {
-                        self.set_active_field(WidgetId("CustomerName".to_string()));
+                        self.active_field.replace(Some(WidgetId("CustomerName".to_string())));
                     }
                     "CustomerPhone" => {
-                        self.set_active_field(WidgetId("CustomerPhone".to_string()));
+                        self.active_field.replace(Some(WidgetId("CustomerPhone".to_string())));
                     }
                     "SalesmanName" => {
-                        self.set_active_field(WidgetId("SalesmanName".to_string()));
+                        self.active_field.replace(Some(WidgetId("SalesmanName".to_string())));
                     }
                     "TechnicianName" => {
-                        self.set_active_field(WidgetId("TechnicianName".to_string()));
+                        self.active_field.replace(Some(WidgetId("TechnicianName".to_string())));
                     }
                     "CheckInNotes" => {
-                        self.set_active_field(WidgetId("CheckInNotes".to_string()));
+                        self.active_field.replace(Some(WidgetId("CheckInNotes".to_string())));
                     }
                     "Recommendations" => {
-                        self.set_active_field(WidgetId("Recommendations".to_string()));
+                        self.active_field.replace(Some(WidgetId("Recommendations".to_string())));
                     }
                     _ => {
                         self.active_field.replace(None);
