@@ -14,7 +14,7 @@ impl <'a> ActionHandler for LoginTab <'a> {
                         self.set_active_field(WidgetId("Username".to_string()));
                     }
                     "Password" => self.set_active_field(WidgetId("Password".to_string())),
-                    _ => { let _ = self.active_field.replace(None); },
+                    _ => {},
                 }
             }
             WidgetEvent::ButtonClick { widget_id } => {

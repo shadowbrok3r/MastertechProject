@@ -1,5 +1,5 @@
 use windows::{
-    core::{Result, GUID},
+    core::GUID,
     Win32::System::{
         Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED

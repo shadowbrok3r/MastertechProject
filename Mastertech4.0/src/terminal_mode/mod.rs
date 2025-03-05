@@ -48,7 +48,7 @@ pub struct TerminalApp<'a> { // logs: Vec<String>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: ServiceTab<'a>,
     sysinfo_tab: SysinfoTab,
-    login_tab: LoginTab <'a>,
+    login_tab: Rc<RefCell<LoginTab<'a>>>,
     effect_stage: EffectStage<UniqueEffectId>,
     first_run: bool,
     event_handler: EventHandler,
@@ -58,15 +58,18 @@ pub struct TerminalApp<'a> { // logs: Vec<String>,
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
+        let ctx = Arc::new(Mutex::new(TerminalContext::default()));
         // Create a global event channel.
         let mut event_manager = EventManager::new(get_event_receiver());
         let service_tab = ServiceTab::new();
         let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new()));
+        let login_tab = Rc::new(RefCell::new(LoginTab::new(ctx.clone())));
         // Register the ServiceFormWidget with the event manager.
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.service_form_widget.clone());
         event_manager.register_handler(scripts_tab.clone());
-        let ctx = Arc::new(Mutex::new(TerminalContext::default()));
+        event_manager.register_handler(login_tab.clone());
+        
 
         Self {
             logger: Logger::new(),
@@ -74,7 +77,7 @@ impl Default for TerminalApp <'_>{
             scripts_tab,
             service_tab,
             sysinfo_tab: SysinfoTab::new(),
-            login_tab: LoginTab::new(ctx.clone()),
+            login_tab,
             effect_stage: EffectStage::default(),
             event_handler: EventHandler::new(),
             first_run: true,
@@ -189,7 +192,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                                 Tab::Scripts => app.scripts_tab.borrow_mut().handle_key_event(key_event),
                                 Tab::SystemInfo => app.service_tab.handle_key_event(key_event),
                                 Tab::Logs => app.logger.handle_key_event(key_event),
-                                Tab::Login => app.login_tab.handle_key_event(key_event),
+                                Tab::Login => app.login_tab.borrow_mut().handle_key_event(key_event),
                             };
 
                             if consumed {}
@@ -203,7 +206,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                         Tab::Scripts => app.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::SystemInfo => app.service_tab.handle_mouse_event(&mouse_event),
                         Tab::Logs => {}
-                        Tab::Login => app.login_tab.handle_mouse_event(&mouse_event),
+                        Tab::Login => app.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                     };
                 },
                 events::Event::Error => log::info!("Error in event loop"),
@@ -322,7 +325,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                     Tab::TurSheet => app.service_tab.draw::<B>(f, main_content_area),
                     Tab::Scripts => app.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area),
-                    Tab::Login => app.login_tab.draw::<B>(f, main_content_area),
+                    Tab::Login => app.login_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::Logs => {
                         buf.merge(f.buffer_mut());
                         // logger.render(main_content_area, buf);

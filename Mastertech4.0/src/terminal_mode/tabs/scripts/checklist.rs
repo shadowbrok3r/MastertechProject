@@ -31,8 +31,8 @@ pub struct TodoItem {
 }
 
 impl TodoItem {
-    pub fn new(text: &str, tag: TodoItemTag) -> Self {
-        
+    pub fn new(text: &str, tag: Option<TodoItemTag>) -> Self {
+        let tag = if let Some(tag) = tag { tag } else { TodoItemTag::default() };
         Self {
             text: text.to_owned(),
             status: Status::Todo,

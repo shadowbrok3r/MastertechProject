@@ -1,9 +1,8 @@
-use crate::terminal_mode::styling::{ColorCycle, IndexResolver, PingPongColorCycle, RepeatingColorCycle, RepeatingCycle, ExabindTheme, Theme, CATPPUCCIN};
-use tachyonfx::{fx::{self, parallel, sequence, sweep_in}, CellFilter, Duration, Effect, EffectTimer, HslConvertable, Interpolation};
-use ratatui::{buffer::Buffer, layout::{Margin, Position, Rect, Size}};
+use crate::terminal_mode::styling::{ColorCycle, IndexResolver, RepeatingColorCycle, RepeatingCycle, CATPPUCCIN};
+use tachyonfx::{fx::{self, parallel, sequence, sweep_in}, CellFilter, Duration, Effect, HslConvertable, Interpolation};
+use ratatui::{buffer::Buffer, layout::{Position, Rect, Size}};
 
 use ratatui::style::Color;
-use tachyonfx::Motion::UpToDown;
 use ratatui::buffer::Cell;
 use std::time::Instant;
 use std::fmt::Debug;
@@ -78,28 +77,28 @@ pub fn selected_category(
 /// - Background slide-in effect
 /// - Content sweep-in animation
 /// - Border coalescing effect
-pub fn open_category(
-    bg_color: Color,
-    area: Rect,
-) -> Effect {
-    use tachyonfx::{fx::*, Interpolation::*};
+// pub fn open_category(
+//     bg_color: Color,
+//     area: Rect,
+// ) -> Effect {
+//     use tachyonfx::{fx::*, Interpolation::*};
 
-    let h = area.height as u32;
-    let timer: EffectTimer = (200 + h * 10, Linear).into();
-    let timer_c: EffectTimer = (200 + h * 10, ExpoOut).into();
+//     let h = area.height as u32;
+//     let timer: EffectTimer = (200 + h * 10, Linear).into();
+//     let timer_c: EffectTimer = (200 + h * 10, ExpoOut).into();
 
-    let border_cells = CellFilter::Outer(Margin::new(1, 1));
-    let content_cells = CellFilter::Inner(Margin::new(1, 1));
+//     let border_cells = CellFilter::Outer(Margin::new(1, 1));
+//     let content_cells = CellFilter::Inner(Margin::new(1, 1));
 
-    parallel(&[
-        prolong_start(timer, sweep_in(UpToDown, area.height, 0, bg_color, timer))
-            .with_cell_selection(content_cells.clone()),
-        prolong_start(timer, coalesce(timer_c))
-            .with_cell_selection(border_cells),
-        // plays out first, but must come last to not be overridden by the above effects
-        slide_in(UpToDown, area.height * 2, 0, Color::Rgb(0, 204, 204), timer),
-    ]).with_area(area)
-}
+//     parallel(&[
+//         prolong_start(timer, sweep_in(UpToDown, area.height, 0, bg_color, timer))
+//             .with_cell_selection(content_cells.clone()),
+//         prolong_start(timer, coalesce(timer_c))
+//             .with_cell_selection(border_cells),
+//         // plays out first, but must come last to not be overridden by the above effects
+//         slide_in(UpToDown, area.height * 2, 0, Color::Rgb(0, 204, 204), timer),
+//     ]).with_area(area)
+// }
 
 /// Creates a color cycling effect for cell foregrounds.
 ///
@@ -154,19 +153,19 @@ pub fn color_cycle_fg<I, P>(
 ///
 /// # Returns
 /// A persistent Effect that animates the keyboard border lights.
-pub fn _led_kbd_border() -> Effect {
-    let [color_1, color_2, color_3] = Theme.kbd_led_colors();
+// pub fn _led_kbd_border() -> Effect {
+//     let [color_1, color_2, color_3] = Theme.kbd_led_colors();
 
-    let color_cycle = PingPongColorCycle::new(color_1, &[
-        (40, color_2),
-        (20, color_3),
-    ]);
+//     let color_cycle = PingPongColorCycle::new(color_1, &[
+//         (40, color_2),
+//         (20, color_3),
+//     ]);
 
-    color_cycle_fg(color_cycle, 100, |cell| {
-        let symbol = cell.symbol();
-        symbol != " " && !symbol.chars().next().map(_is_box_drawing).unwrap_or(false)
-    })
-}
+//     color_cycle_fg(color_cycle, 100, |cell| {
+//         let symbol = cell.symbol();
+//         symbol != " " && !symbol.chars().next().map(_is_box_drawing).unwrap_or(false)
+//     })
+// }
 
 
 

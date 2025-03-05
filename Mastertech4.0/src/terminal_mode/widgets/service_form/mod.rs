@@ -104,16 +104,13 @@ impl<'a> ServiceFormWidget<'a> {
         }
     }
 
-    fn set_active_field(&self, input_field: WidgetId) {
-        let idx = Self::get_input_idx(&input_field);
-        self.active_field.replace(Some(input_field));
-        self.set_input_idx(idx);
-    }
 
     fn set_input_idx(&self, idx: i32) {
         self.input_idx.replace(idx);
-        let idx = *self.input_idx.borrow();
-        self.active_field.replace(Some(Self::get_field_id_from_idx(idx)));
+        // let idx = *self.input_idx.borrow();
+        // let widget_id = Self::get_field_id_from_idx(idx);
+        // log::info!("Widget ID: {widget_id:?}");
+        // self.active_field.replace(Some(widget_id));
     }
 
     fn set_input_state_from_input_idx(&self, idx: i32, state: ButtonState) {

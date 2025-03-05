@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
 use super::{script_checks::get_data_transfer_candidates, Reporter, ScriptsTab};
 
 #[derive(Debug)]
@@ -164,24 +164,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                             Ok(networks) => self.log_message(&format!("Wifi Networks: {networks:?}")),
                             Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
                         }
-                        
-                        // match is_push_notifications_disabled {
-                        //     Ok(x) => self.log_message(&format!("is_push_notifications_disabled: {x:?}")),
-                        //     Err(e) => self.log_message(&format!("ERR(is_push_notifications_disabled) => {e:?}")),
-                        // }
-                        // match is_windows_experience_disabled {
-                        //     Ok(x) => self.log_message(&format!("is_windows_experience_disabled: {x:?}")),
-                        //     Err(e) => self.log_message(&format!("ERR(is_windows_experience_disabled) => {e:?}")),
-                        // }
-                        // match is_tips_and_suggestions_disabled {
-                        //     Ok(x) => self.log_message(&format!("is_tips_and_suggestions_disabled: {x:?}")),
-                        //     Err(e) => self.log_message(&format!("ERR(is_tips_and_suggestions_disabled) => {e:?}")),
-                        // }
                     }
-                    _ => {
-                        // self.current_reporter.replace(Reporter::Unknown);
-                        // self.log_message("Unknown task triggered.");
-                    }
+                    _ => {}
                 }
             }
             WidgetEvent::Api(_) => {},

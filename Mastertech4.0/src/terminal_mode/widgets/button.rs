@@ -4,7 +4,7 @@ use ratatui::{
 };
 use tachyonfx::{CellFilter, Effect};
 use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE};
-use std::{cell::RefCell, fmt::Debug, sync::Arc};
+use std::{cell::RefCell, fmt::Debug};
 use super::{ButtonType, SHORTCUT_SET};
 
 
@@ -26,7 +26,7 @@ pub struct Button<'a> {
     label: Line<'a>,
     theme: Theme,
     state: RefCell<ButtonState>,
-    on_click: Arc<RefCell<Option<Box<dyn FnMut() + 'a>>>>,
+    // on_click: Arc<RefCell<Option<Box<dyn FnMut() + 'a>>>>,
     // on_click: Arc<RefCell<Option<F>>>,
     area: RefCell<Option<Rect>>,
     effect_stage: RefCell<EffectStage<UniqueEffectId>>,
@@ -60,7 +60,7 @@ impl<'a> Button<'a> {
             theme: TURQUOISE,
             state: RefCell::new(ButtonState::Normal),
             area: RefCell::new(None),
-            on_click: Arc::new(RefCell::new(None)),
+            // on_click: Arc::new(RefCell::new(None)),
             effect_stage: RefCell::new(EffectStage::default()),
             init: RefCell::new(true),
             event_sender: get_event_sender()
@@ -89,10 +89,10 @@ impl<'a> Button<'a> {
         &self.title
     }
 
-    pub fn _on_click(self, f: impl FnMut() + 'a) -> Self {
-        self.on_click.replace(Some(Box::new(f)));
-        self
-    }
+    // pub fn _on_click(self, f: impl FnMut() + 'a) -> Self {
+    //     self.on_click.replace(Some(Box::new(f)));
+    //     self
+    // }
 }
 
 impl <'a> ButtonType<'a> for Button<'a> {
