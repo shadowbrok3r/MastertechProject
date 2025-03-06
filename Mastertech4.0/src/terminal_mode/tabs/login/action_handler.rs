@@ -54,12 +54,12 @@ impl <'a> ActionHandler for LoginTab <'a> {
                                 let query_results: Vec<TaskPayload> = DATABASE
                                     .query(query)
                                     .bind(("store", "RIV"))
-                                    .await?
-                                    .take(0)?;
+                                    .await.unwrap()
+                                    .take(0).unwrap();
 
                                 log::info!("Query results: {query_results:?}");
 
-                                Ok::<(), anyhow::Error>(())
+                                // Ok::<(), anyhow::Error>(())
                             });
                         }
                     }
