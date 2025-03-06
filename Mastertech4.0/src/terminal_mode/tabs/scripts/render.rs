@@ -181,17 +181,45 @@ impl<'a> ScriptsTab<'a> {
     
     fn render_popup(&self, f: &mut Frame) {
         if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
+            let highlighted_idx = *self.popup_highlighted_idx.borrow();
             let submenu_items = match widget_id.0.as_str() {
-                "Tuneup" => vec![Span::raw("Run Tuneup").style(Style::new().bg(CATPPUCCIN.mauve)), Span::raw("View Logs").style(Style::new().bg(CATPPUCCIN.mauve))],
-                "Qc" => vec![Span::raw("Run QC"), Span::raw("Check Status")],
-                "WindowsUpdates" => vec![Span::raw("Check Updates"), Span::raw("Install Now")],
-                "RunPrechecks" => vec![Span::raw("Run Prechecks"), Span::raw("View Results")],
-                "GetTaskbarItems" => vec![Span::raw("Fetch Items"), Span::raw("Export List")],
-                "GetScheduledTasks" => vec![Span::raw("List Tasks"), Span::raw("Disable Selected")],
-                "GetAntivirus" => vec![Span::raw("Scan Antivirus"), Span::raw("Update Definitions")],
-                "GetInstalledPrograms" => vec![Span::raw("List Programs"), Span::raw("Uninstall")],
-                "GetStartupItems" => vec![Span::raw("Fetch Startups"), Span::raw("Disable All")],
-                _ => vec![Span::raw("No Options")],
+                "Tuneup" => vec![
+                    Span::raw("Run Tuneup").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("View Logs").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "Qc" => vec![
+                    Span::raw("Run QC").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Check Status").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "WindowsUpdates" => vec![
+                    Span::raw("Check Updates").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Install Now").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "RunPrechecks" => vec![
+                    Span::raw("Run Prechecks").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("View Results").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "GetTaskbarItems" => vec![
+                    Span::raw("Fetch Items").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Export List").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "GetScheduledTasks" => vec![
+                    Span::raw("List Tasks").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Disable Selected").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "GetAntivirus" => vec![
+                    Span::raw("Scan Antivirus").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Update Definitions").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "GetInstalledPrograms" => vec![
+                    Span::raw("List Programs").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Uninstall").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                "GetStartupItems" => vec![
+                    Span::raw("Fetch Startups").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                    Span::raw("Disable All").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
+                ],
+                _ => vec![Span::raw("No Options").style(Style::default())],
             };
             
             let lines: Text = submenu_items.into_iter().collect();
@@ -200,13 +228,12 @@ impl<'a> ScriptsTab<'a> {
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .title(format!("{} Menu", widget_id.0))
-                    .border_style(Style::new().fg(CATPPUCCIN.peach))
+                    // .border_style(Style::new().fg(CATPPUCCIN.peach))
                     .style(Style::new().fg(CATPPUCCIN.sky))
                 );
             // f.buffer_mut().reset();
             // Clear the area first to overwrite existing content
             f.render_widget(Clear, *popup_area);
-            log::info!("Rendering Popup at: {:?}", popup_area);
             f.render_widget(popup, *popup_area);
         }
     }
@@ -509,9 +536,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     }
                 }
 
-                // if let Some((widget_id, rect)) = *self.active_popup.borrow() { }
-
-                
                 let buttons = [
                     &self.tuneup_btn,
                     &self.qc_btn,
@@ -536,7 +560,66 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                                 break;
                             } else {
                                 self.active_popup.replace(None);
+                                self.popup_highlighted_idx.replace(None);
                                 break;
+                            }
+                        }
+                    }
+                }
+
+                if let MouseEventKind::Moved = mouse_event.kind {
+                    if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
+                        if c >= popup_area.x && c < popup_area.x + popup_area.width &&
+                           r >= popup_area.y && r < popup_area.y + popup_area.height {
+                            let relative_row = (r - (popup_area.y + 1)) as usize; // Adjust for top border
+                            let span_count = match widget_id.0.as_str() {
+                                "Tuneup" | "Qc" | "WindowsUpdates" | "RunPrechecks" |
+                                "GetTaskbarItems" | "GetScheduledTasks" | "GetAntivirus" |
+                                "GetInstalledPrograms" | "GetStartupItems" => 2,
+                                _ => 1,
+                            };
+                            if relative_row < span_count {
+                                log::info!("Hovering over Span {} at row {}", relative_row, r);
+                                self.popup_highlighted_idx.replace(Some(relative_row));
+                            } else {
+                                self.popup_highlighted_idx.replace(None);
+                            }
+                        } else {
+                            self.popup_highlighted_idx.replace(None);
+                        }
+                    }
+                }
+
+                if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                    // Handle clicks within popup
+                    if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
+                        if c >= popup_area.x && c < popup_area.x + popup_area.width &&
+                           r >= popup_area.y && r < popup_area.y + popup_area.height {
+                            // Calculate which Span was clicked (each Span is one line)
+                            let relative_row = (r - popup_area.y) as usize;
+                            let span_count = match widget_id.0.as_str() {
+                                "Tuneup" | "Qc" | "WindowsUpdates" | "RunPrechecks" |
+                                "GetTaskbarItems" | "GetScheduledTasks" | "GetAntivirus" |
+                                "GetInstalledPrograms" | "GetStartupItems" => 2,
+                                _ => 1,
+                            };
+                            if relative_row < span_count {
+                                log::info!("Clicked Span {} in popup", relative_row);
+                                // Example action: Log or open submenu
+                                match widget_id.0.as_str() {
+                                    "Tuneup" => match relative_row {
+                                        0 => self.log_message("Run Tuneup clicked"),
+                                        1 => self.log_message("View Logs clicked"),
+                                        _ => {},
+                                    },
+                                    "Qc" => match relative_row {
+                                        0 => self.log_message("Run QC clicked"),
+                                        1 => self.log_message("Check Status clicked"),
+                                        _ => {},
+                                    },
+                                    // Add more cases as needed
+                                    _ => {},
+                                }
                             }
                         }
                     }

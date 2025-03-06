@@ -5,7 +5,7 @@ members = [ "database" , "displays", "Mastertech4.0" ] #  , "websocket_server2" 
 [workspace.dependencies]
 database = { path = "database" }
 eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false }
-egui_extras = { version = "0.31", features = ["datepicker", "syntect", "serde", "image" ]}
+egui_extras = { version = "0.31.1", features = ["datepicker", "syntect", "serde", "image" ]}
 egui_plot = "0.31"
 image = { version = "0.25.5", features = ["jpeg", "png"] }
 surrealdb = { version = "2.2", features = ["protocol-ws"] } 

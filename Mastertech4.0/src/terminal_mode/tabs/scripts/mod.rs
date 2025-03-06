@@ -33,8 +33,6 @@ pub struct ScriptsTab<'a> {
     qc_btn: Button<'a>,
     updates_btn: Button<'a>,
     prechecks_btn: Button<'a>,
-
-    // Buttons for retrieving tab-specific data
     get_antivirus_btn: Button<'a>,
     get_installed_programs_btn: Button<'a>,
     get_startup_items_btn: Button<'a>,
@@ -47,10 +45,7 @@ pub struct ScriptsTab<'a> {
     update_log_rx: Receiver<WindowsUpdateEvent>,
     path_size_tx: Sender<Vec<(String, String)>>,
     path_size_rx: Receiver<Vec<(String, String)>>,
-    // current_tab: RefCell<ScriptsTabView>,
-    // tab_buttons: Vec<(WidgetId, Button<'a>)>,
 
-    // Data for each tab
     /// Antivirus tab
     antivirus_products: Vec<AntiVirusProduct>,
     /// Installed Programs tab
@@ -61,18 +56,11 @@ pub struct ScriptsTab<'a> {
     scheduled_tasks: Vec<ScheduledTask>,
     /// Taskbar Items tab
     taskbar_items: Vec<TaskbarItem>,
-
     /// Multipurpose checklist
     checklists: HashMap<String, TodoList>,
     /// Stores the latest retrieved Windows Updates info
     windows_updates: WindowsUpdates,
-    // Scroll states for each tab
-    // antivirus_scroll: ScrollViewState,
-    // installed_programs_scroll: ScrollViewState,
-    // startup_items_scroll: ScrollViewState,
-    // scheduled_tasks_scroll: ScrollViewState,
-    // taskbar_items_scroll: ScrollViewState,
-    // report_scroll: ScrollViewState,
+
     checklist_area: RefCell<Option<Rect>>,
     report_area: RefCell<Option<Rect>>,
     report_scroll_state: RefCell<ScrollViewState>,
@@ -84,7 +72,8 @@ pub struct ScriptsTab<'a> {
     scroll_area: RefCell<Option<Rect>>, // For the scrollbar area
     // New fields for popup
     active_popup: RefCell<Option<(WidgetId, Rect)>>, // (button ID, popup position)
-    frame_area: RefCell<Option<Rect>>
+    frame_area: RefCell<Option<Rect>>,
+    popup_highlighted_idx: RefCell<Option<usize>>, // Tracks highlighted Span index
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -177,8 +166,6 @@ impl<'a> ScriptsTab<'a> {
             qc_btn: Button::new("Quality Check", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
             updates_btn: Button::new("Windows Updates", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),
             prechecks_btn: Button::new("Run Prechecks", WidgetId("RunPrechecks".to_owned())).theme(CATPPUCCINTHEME),
-
-            // Initialize buttons for retrieving data
             get_antivirus_btn: Button::new("Get AV Info", WidgetId("GetAntivirus".to_owned())).theme(CATPPUCCINTHEME),
             get_installed_programs_btn: Button::new("Get Installed Programs", WidgetId("GetInstalledPrograms".to_owned())).theme(CATPPUCCINTHEME),
             get_startup_items_btn: Button::new("Get Startup Items", WidgetId("GetStartupItems".to_owned())).theme(CATPPUCCINTHEME),
@@ -197,7 +184,6 @@ impl<'a> ScriptsTab<'a> {
             update_log_rx,
             path_size_tx, 
             path_size_rx,
-            // current_tab: RefCell::new(ScriptsTabView::default()),
 
             checklists,
             windows_updates: WindowsUpdates::default(),
@@ -211,6 +197,7 @@ impl<'a> ScriptsTab<'a> {
             scroll_area: RefCell::new(None),
             active_popup: RefCell::new(None),
             frame_area: RefCell::new(None),
+            popup_highlighted_idx: RefCell::new(None),
         }
     }
 
