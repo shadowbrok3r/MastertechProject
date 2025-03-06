@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent, WidgetId}
+    terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, ApiEvent, WidgetEvent}}
 };
 
 use database::schema::{
@@ -13,7 +13,7 @@ use reqwest::header::CONTENT_TYPE;
 use super::ServiceFormWidget;
 
 impl <'a> ActionHandler for ServiceFormWidget <'a> {
-    fn handle_event(&mut self, event: &WidgetEvent) {
+    fn handle_event(&mut self, event: &WidgetEvent, _ctx: Arc<Mutex<TerminalContext>>) {
         match event {
             WidgetEvent::ButtonClick { widget_id } => {
                 match widget_id.0.as_str() {
@@ -139,32 +139,7 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
                 }
             },
             WidgetEvent::Active { widget_id } => {
-                match widget_id.0.as_str() {
-                    "ServiceNumber" => {
-                        self.active_field.replace(Some(WidgetId("ServiceNumber".to_string())));
-                    }
-                    "CustomerName" => {
-                        self.active_field.replace(Some(WidgetId("CustomerName".to_string())));
-                    }
-                    "CustomerPhone" => {
-                        self.active_field.replace(Some(WidgetId("CustomerPhone".to_string())));
-                    }
-                    "SalesmanName" => {
-                        self.active_field.replace(Some(WidgetId("SalesmanName".to_string())));
-                    }
-                    "TechnicianName" => {
-                        self.active_field.replace(Some(WidgetId("TechnicianName".to_string())));
-                    }
-                    "CheckInNotes" => {
-                        self.active_field.replace(Some(WidgetId("CheckInNotes".to_string())));
-                    }
-                    "Recommendations" => {
-                        self.active_field.replace(Some(WidgetId("Recommendations".to_string())));
-                    }
-                    _ => {
-                        self.active_field.replace(None);
-                    }
-                }
+                self.set_active_field(widget_id.clone());
             }
         }
     }

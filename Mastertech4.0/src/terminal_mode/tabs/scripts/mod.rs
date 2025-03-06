@@ -82,6 +82,9 @@ pub struct ScriptsTab<'a> {
     visible_height: RefCell<usize>,
     total_items: RefCell<usize>,
     scroll_area: RefCell<Option<Rect>>, // For the scrollbar area
+    // New fields for popup
+    active_popup: RefCell<Option<(WidgetId, Rect)>>, // (button ID, popup position)
+    frame_area: RefCell<Option<Rect>>
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -206,13 +209,8 @@ impl<'a> ScriptsTab<'a> {
             visible_height: RefCell::new(0),
             total_items: RefCell::new(0),
             scroll_area: RefCell::new(None),
-            // Initialize scroll states
-            // antivirus_scroll: ScrollViewState::default(),
-            // installed_programs_scroll: ScrollViewState::default(),
-            // startup_items_scroll: ScrollViewState::default(),
-            // scheduled_tasks_scroll: ScrollViewState::default(),
-            // taskbar_items_scroll: ScrollViewState::default(),
-            // report_scroll: ScrollViewState::default(),
+            active_popup: RefCell::new(None),
+            frame_area: RefCell::new(None),
         }
     }
 

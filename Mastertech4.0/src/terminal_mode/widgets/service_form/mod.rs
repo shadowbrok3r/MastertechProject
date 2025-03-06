@@ -1,10 +1,8 @@
-
 use crate::terminal_mode::{data::ServiceData, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}};
 use super::{button::{Button, ButtonState}, input_field::InputField, ButtonType};
 use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
 use database::schema::GetKeysResponse;
 use reqwest::Client;
-
 pub mod action_handler;
 pub mod render;
 
@@ -104,13 +102,19 @@ impl<'a> ServiceFormWidget<'a> {
         }
     }
 
+    fn set_active_field(&self, input_field: WidgetId) {
+        let idx = Self::get_input_idx(&input_field);
+        self.active_field.replace(Some(input_field));
+        self.input_idx.replace(idx);
+    }
 
     fn set_input_idx(&self, idx: i32) {
-        self.input_idx.replace(idx);
-        // let idx = *self.input_idx.borrow();
-        // let widget_id = Self::get_field_id_from_idx(idx);
-        // log::info!("Widget ID: {widget_id:?}");
-        // self.active_field.replace(Some(widget_id));
+        let widget_id = Self::get_field_id_from_idx(idx);
+        let new_idx = Self::get_input_idx(&widget_id);
+        self.input_idx.replace(new_idx);
+        let final_widget_id = Self::get_field_id_from_idx(new_idx); // Recalculate if reset
+        log::info!("Widget ID: {final_widget_id:?}");
+        self.active_field.replace(Some(final_widget_id));
     }
 
     fn set_input_state_from_input_idx(&self, idx: i32, state: ButtonState) {
@@ -122,7 +126,7 @@ impl<'a> ServiceFormWidget<'a> {
             "TechnicianName" => self.technician_name.set_state(state),
             "CheckInNotes" => self.checkin_notes.set_state(state),
             "Recommendations" => self.recommendations.set_state(state),
-            _ => {}
+            _ => self.order_number.set_state(state)
         }
     }
 
@@ -152,12 +156,11 @@ impl<'a> ServiceFormWidget<'a> {
         }
     }
 
-    /// The parent can call this after `render_ref()` to retrieve the local
-    /// cursor position, then do `frame.set_cursor_position(...)`.
-    pub fn _cursor_position(&self) -> Option<(u16, u16)> {
-        *self.cached_cursor_position.borrow()
-    }
-
+    // /// The parent can call this after `render_ref()` to retrieve the local
+    // /// cursor position, then do `frame.set_cursor_position(...)`.
+    // pub fn _cursor_position(&self) -> Option<(u16, u16)> {
+    //     *self.cached_cursor_position.borrow()
+    // }
 }
 
 

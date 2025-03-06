@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Direction, Layout, Margin, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Direction, Layout, Margin, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Style, Stylize}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use tui_scrollview::ScrollView;
@@ -96,7 +96,10 @@ impl<'a> ScriptsTab<'a> {
     } 
 
     fn draw_checklist<B: Backend>(&self, f: &mut Frame, area: Rect) {
-        let list_scroll_layout = Layout::horizontal([Constraint::Percentage(3), Constraint::Percentage(97)])
+        let list_scroll_layout = Layout::horizontal([
+            Constraint::Percentage(5), 
+            Constraint::Percentage(95)
+            ])
             .split(area);
 
         let list_area = list_scroll_layout[1];
@@ -174,6 +177,38 @@ impl<'a> ScriptsTab<'a> {
             ), 
             &mut scroll_state
         );
+    }
+    
+    fn render_popup(&self, f: &mut Frame) {
+        if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
+            let submenu_items = match widget_id.0.as_str() {
+                "Tuneup" => vec![Span::raw("Run Tuneup").style(Style::new().bg(CATPPUCCIN.mauve)), Span::raw("View Logs").style(Style::new().bg(CATPPUCCIN.mauve))],
+                "Qc" => vec![Span::raw("Run QC"), Span::raw("Check Status")],
+                "WindowsUpdates" => vec![Span::raw("Check Updates"), Span::raw("Install Now")],
+                "RunPrechecks" => vec![Span::raw("Run Prechecks"), Span::raw("View Results")],
+                "GetTaskbarItems" => vec![Span::raw("Fetch Items"), Span::raw("Export List")],
+                "GetScheduledTasks" => vec![Span::raw("List Tasks"), Span::raw("Disable Selected")],
+                "GetAntivirus" => vec![Span::raw("Scan Antivirus"), Span::raw("Update Definitions")],
+                "GetInstalledPrograms" => vec![Span::raw("List Programs"), Span::raw("Uninstall")],
+                "GetStartupItems" => vec![Span::raw("Fetch Startups"), Span::raw("Disable All")],
+                _ => vec![Span::raw("No Options")],
+            };
+            
+            let lines: Text = submenu_items.into_iter().collect();
+            let popup = Paragraph::new(lines)
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(format!("{} Menu", widget_id.0))
+                    .border_style(Style::new().fg(CATPPUCCIN.peach))
+                    .style(Style::new().fg(CATPPUCCIN.sky))
+                );
+            // f.buffer_mut().reset();
+            // Clear the area first to overwrite existing content
+            f.render_widget(Clear, *popup_area);
+            log::info!("Rendering Popup at: {:?}", popup_area);
+            f.render_widget(popup, *popup_area);
+        }
     }
     
     /// Move an item up or down, potentially across categories
@@ -333,10 +368,14 @@ impl<'a> ScriptsTab<'a> {
     }
 }
 
-
 impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         self.receive();
+
+        let mut frame_area = self.frame_area.borrow_mut();
+        if frame_area.is_none() {
+            *frame_area = Some(f.area());
+        }
 
         // Split area into buttons (left) and logs (right)
         let main_chunks = Layout::default()
@@ -359,9 +398,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         .split(left_half);
 
         let para = Paragraph::new("Scripts Library")
-            .block(
-                Block::default().bg(CATPPUCCIN.base)
-            )
+            .block(Block::default().bg(CATPPUCCIN.base))
             .centered();
 
         para.render_ref(left_side_chunks[0], f.buffer_mut());
@@ -381,21 +418,24 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             .split(right_half);
 
         // Render main buttons
-        f.render_widget(&self.tuneup_btn, button_grid[0].shrink(5, 1));
-        f.render_widget(&self.qc_btn, button_grid[1].shrink(5, 1));
-        f.render_widget(&self.updates_btn, button_grid[2].shrink(5, 1));
-        f.render_widget(&self.prechecks_btn, button_grid[3].shrink(5, 1));
-        f.render_widget(&self.get_taskbar_items_btn, button_grid[4].shrink(5, 1));
-        f.render_widget(&self.get_scheduled_tasks_btn, button_grid[5].shrink(5, 1));
-        f.render_widget(&self.get_antivirus_btn, button_grid[6].shrink(5, 1));
-        f.render_widget(&self.get_installed_programs_btn, button_grid[7].shrink(5, 1));
-        f.render_widget(&self.get_startup_items_btn, button_grid[8].shrink(5, 1));
+        f.render_widget(&self.tuneup_btn, button_grid[0].shrink(4, 1));
+        f.render_widget(&self.qc_btn, button_grid[1].shrink(4, 1));
+        f.render_widget(&self.updates_btn, button_grid[2].shrink(4, 1));
+        f.render_widget(&self.prechecks_btn, button_grid[3].shrink(4, 1));
+        f.render_widget(&self.get_taskbar_items_btn, button_grid[4].shrink(4, 1));
+        f.render_widget(&self.get_scheduled_tasks_btn, button_grid[5].shrink(4, 1));
+        f.render_widget(&self.get_antivirus_btn, button_grid[6].shrink(4, 1));
+        f.render_widget(&self.get_installed_programs_btn, button_grid[7].shrink(4, 1));
+        f.render_widget(&self.get_startup_items_btn, button_grid[8].shrink(4, 1));
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);
 
         // Render Checklist
         self.draw_checklist::<B>(f, layout[0]);
+
+        // Render popup if active
+        self.render_popup(f);
     }
     
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
@@ -453,7 +493,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     if c >= scroll_area.x && c < scroll_area.x + scroll_area.width &&
                         r >= scroll_area.y && r < scroll_area.y + scroll_area.height 
                     {
-                        if let MouseEventKind::Drag(MouseButton::Left) = mouse_event.kind { // | MouseEventKind::Down(MouseButton::Left)
+                        if let MouseEventKind::Drag(MouseButton::Left) = mouse_event.kind {
                             let click_row = (r - scroll_area.y) as usize;
                             let scroll_area_height = scroll_area.height as usize;
                             let total_items = *self.total_items.borrow();
@@ -469,6 +509,39 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     }
                 }
 
+                // if let Some((widget_id, rect)) = *self.active_popup.borrow() { }
+
+                
+                let buttons = [
+                    &self.tuneup_btn,
+                    &self.qc_btn,
+                    &self.updates_btn,
+                    &self.prechecks_btn,
+                    &self.get_taskbar_items_btn,
+                    &self.get_scheduled_tasks_btn,
+                    &self.get_antivirus_btn,
+                    &self.get_installed_programs_btn,
+                    &self.get_startup_items_btn,
+                ];
+
+                for button in buttons.iter() {
+                    if let Some(area) = button.get_area() {
+                        let in_area = c >= area.x 
+                            && c < area.x + area.width 
+                            && r >= area.y 
+                            && r < area.y + area.height;
+                            
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                            if in_area {    
+                                break;
+                            } else {
+                                self.active_popup.replace(None);
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 self.tuneup_btn.handle_mouse_event(&mouse_event);
                 self.qc_btn.handle_mouse_event(&mouse_event);
                 self.prechecks_btn.handle_mouse_event(&mouse_event);
@@ -478,9 +551,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 self.get_startup_items_btn.handle_mouse_event(&mouse_event);
                 self.get_scheduled_tasks_btn.handle_mouse_event(&mouse_event);
                 self.get_taskbar_items_btn.handle_mouse_event(&mouse_event);
-                // for (_id, button) in self.tab_buttons.iter() {
-                //     button.handle_mouse_event(&mouse_event);
-                // }
+                // for (_id, button) in self.tab_buttons.iter() { button.handle_mouse_event(&mouse_event); }
             }
         }
     }

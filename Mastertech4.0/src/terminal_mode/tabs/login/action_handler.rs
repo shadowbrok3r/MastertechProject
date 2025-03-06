@@ -1,11 +1,13 @@
+use std::sync::{Arc, Mutex};
+
 use database::{schema::TaskPayload, DATABASE};
 
-use crate::{pages::login_page::Login, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId}};
+use crate::{pages::login_page::Login, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, WidgetEvent, WidgetId}}};
 
 use super::LoginTab;
 
 impl <'a> ActionHandler for LoginTab <'a> {
-    fn handle_event(&mut self, event: &WidgetEvent) {
+    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>) {
         match event {
             WidgetEvent::Active { widget_id } => {
                 match widget_id.0.as_str() {
@@ -19,15 +21,15 @@ impl <'a> ActionHandler for LoginTab <'a> {
             }
             WidgetEvent::ButtonClick { widget_id } => {
                 match widget_id.0.as_str() {
-                    "Submit" => {
+                    "Login" => {
                         let username_input = self.username_field.input.borrow();
                         let username = &username_input.lines()[0];
                         let password_input = self.username_field.input.borrow();
                         let password = &password_input.lines()[0];
 
                         log::info!("Logging in");
-                        if let Ok(lock) = self.ctx.lock() {
-                            let tx = lock.app_state_tx.clone();
+                        if let Ok(context) = ctx.lock() {
+                            let tx = context.app_state_tx.clone();
                             let login_result = self.login(Login {
                                 username: username.to_string(),
                                 password: password.to_string(),
