@@ -49,14 +49,11 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
         } else {
             match key_event.code {
                 KeyCode::Tab => {
-                    let Some(ref active_field) = *self.active_field.borrow() else { return false; };
-                    let input_idx = Self::get_input_idx(&active_field);
+                    // Get current index directly from input_idx instead of active_field
+                    let input_idx = *self.input_idx.borrow();
                     self.set_input_state_from_input_idx(input_idx, ButtonState::Normal);
-                    log::info!("active field: {active_field:?} / input_idx: {input_idx:?}");
+                    log::info!("active field: {:?} / input_idx: {}", self.active_field.borrow(), input_idx);
                     self.set_input_idx(input_idx + 1);
-                    // let idx = *self.input_idx.borrow();
-                    let widget_id = Self::get_field_id_from_idx(input_idx + 1);
-                    self.active_field.replace(Some(widget_id));
                     self.set_input_state_from_input_idx(input_idx + 1, ButtonState::Active);
                     true
                 }

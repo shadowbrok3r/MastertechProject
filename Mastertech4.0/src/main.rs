@@ -129,6 +129,13 @@ async fn main() -> eframe::Result<()> {
                 .help("Run MasterTech in Terminal Mode")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            clap::Arg::new("continue")
+                .short('c')
+                .long("continue")
+                .help("Continue running scripts based on where we left off")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
 
     if matches.get_flag("term") {

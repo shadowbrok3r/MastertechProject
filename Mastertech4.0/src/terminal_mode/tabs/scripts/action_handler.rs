@@ -1,4 +1,8 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use std::sync::{Arc, Mutex};
+
+use ratatui::layout::Rect;
+
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, WidgetEvent}, widgets::ButtonType}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
 use super::{script_checks::get_data_transfer_candidates, Reporter, ScriptsTab};
 
 #[derive(Debug)]
@@ -9,9 +13,50 @@ pub enum WindowsUpdateEvent {
 
 
 impl<'a> ActionHandler for ScriptsTab<'a> {
-    fn handle_event(&mut self, event: &WidgetEvent) {
+    fn handle_event(&mut self, event: &WidgetEvent, _ctx: Arc<Mutex<TerminalContext>>) {
         match event {
             WidgetEvent::ButtonClick { widget_id } => {
+                // Show popup to the right of the clicked button
+                let button = match widget_id.0.as_str() {
+                    "Tuneup" => &self.tuneup_btn,
+                    "Qc" => &self.qc_btn,
+                    "WindowsUpdates" => &self.updates_btn,
+                    "RunPrechecks" => &self.prechecks_btn,
+                    "GetTaskbarItems" => &self.get_taskbar_items_btn,
+                    "GetScheduledTasks" => &self.get_scheduled_tasks_btn,
+                    "GetAntivirus" => &self.get_antivirus_btn,
+                    "GetInstalledPrograms" => &self.get_installed_programs_btn,
+                    "GetStartupItems" => &self.get_startup_items_btn,
+                    _ => return,
+                };
+
+                if let (
+                    Some(button_area), 
+                    Some(frame_area)
+                ) = (
+                    button.get_area(), 
+                    *self.frame_area.borrow()
+                ) {
+                    let popup_width = 20;
+                    let popup_height = 4;
+                    let popup_x = button_area.x + button_area.width; // Right of button
+                    let popup_y = button_area.y; // Top of button
+                    let adjusted_x = popup_x.min(frame_area.width.saturating_sub(popup_width));
+                    let adjusted_y = popup_y.min(frame_area.height.saturating_sub(popup_height));
+                    let popup_area = Rect::new(adjusted_x, adjusted_y, popup_width, popup_height);
+                    log::info!("Button Area: {:?}", button_area);
+                    log::info!("Popup Area: {:?}", popup_area);
+                    log::info!("Frame Area: {:?}", frame_area);
+                    self.active_popup.replace(Some((widget_id.clone(), popup_area)));
+                }
+
+                // if let Some(area) = button.get_area() {
+                //     let popup_x = area.x + area.width; // Position to the right
+                //     let popup_y = area.y - area.height;
+                //     let popup_area = Rect::new(popup_x, popup_y, 20, 4); // Fixed size
+                //     self.active_popup.replace(Some((widget_id.clone(), popup_area)));
+                // }
+                
                 match widget_id.0.as_str() {
                     "Tuneup" => {
                         self.current_reporter.replace(Reporter::Tuneup);
@@ -165,7 +210,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                             Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
                         }
                     }
-                    _ => {}
+                    // Clear popup if click is outside any button
+                    _ => {self.active_popup.replace(None);}
                 }
             }
             WidgetEvent::Api(_) => {},

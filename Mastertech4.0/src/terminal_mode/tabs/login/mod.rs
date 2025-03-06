@@ -1,8 +1,7 @@
-use crossbeam::channel::Sender;
+use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use std::cell::RefCell;
 use database::{Database, DATABASE};
-
-use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
-use std::{cell::RefCell, sync::{Arc, Mutex}};
+use crossbeam::channel::Sender;
 pub mod action_handler;
 pub mod render;
 
@@ -14,13 +13,13 @@ pub struct LoginTab <'a> {
 
     /// Tracks which input field is currently focused.
     pub active_field: RefCell<Option<WidgetId>>,
-    pub input_idx: RefCell<i32>,
-    ctx: Arc<Mutex<TerminalContext>>
+    pub input_idx: RefCell<i32>
 }
 
 impl <'a> LoginTab <'a> {
-    pub fn new(ctx: Arc<Mutex<TerminalContext>>) -> Self {
-
+    pub fn new() -> Self {
+        let password_field = InputField::new("Password", WidgetId("Password".to_string()));
+        password_field.input.borrow_mut().set_mask_char('*');
         Self {
             login_btn: Button::new(
                 "Login",
@@ -28,10 +27,9 @@ impl <'a> LoginTab <'a> {
             ).theme(CATPPUCCINTHEME),
             // Row 2: Sales/Tech Names
             username_field: InputField::new("Username", WidgetId("Username".to_string())),
-            password_field: InputField::new("Password", WidgetId("Password".to_string())),
+            password_field,
             active_field: RefCell::new(None),
-            input_idx: RefCell::new(0),
-            ctx
+            input_idx: RefCell::new(0)
         }
     }
 
@@ -66,9 +64,9 @@ impl <'a> LoginTab <'a> {
 
     fn get_field_id_from_idx(input_idx: i32) -> WidgetId {
         match input_idx {
-            0 => WidgetId("ServiceNumber".to_string()),
-            1 => WidgetId("CustomerName".to_string()),
-            _ => WidgetId("ServiceNumber".to_string())
+            0 => WidgetId("Username".to_string()),
+            1 => WidgetId("Password".to_string()),
+            _ => WidgetId("Username".to_string())
         }
     }
 

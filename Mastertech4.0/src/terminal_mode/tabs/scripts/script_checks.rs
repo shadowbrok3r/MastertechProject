@@ -41,7 +41,7 @@ impl <'a> ScriptsTab <'a> {
         }
     
         // Check Running Processes for Webroot and SAS
-        if let Ok(processes) = get_running_processes() {
+        if let Ok(processes) = _get_running_processes() {
             self.update_checklist("Informational", "Is Webroot Active?", 
                 processes.contains("WRSA.exe")
             );
@@ -86,7 +86,7 @@ impl <'a> ScriptsTab <'a> {
         );
     
         self.update_checklist("Informational", "Is Windows Activated?", 
-            check_windows_activation()
+            _check_windows_activation()
         );
     
         // self.update_checklist("Informational", "Is Sleep enabled?", 
@@ -94,14 +94,14 @@ impl <'a> ScriptsTab <'a> {
         // );
     
         self.update_checklist("Informational", "Is Hibernation enabled?", 
-            check_hibernation_mode().unwrap_or(false)
+            _check_hibernation_mode().unwrap_or(false)
         );
     
         self.log_message("Prechecks completed.");
     }
 }
 
-fn get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
+fn _get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
     let ps_script = r#"Get-Process | Select-Object -ExpandProperty ProcessName | ConvertTo-Json"#;
 
     let ps = PsScriptBuilder::new()
@@ -139,7 +139,7 @@ fn _check_program_running(process_name: &str) -> String {
     )
 }
 
-pub fn check_windows_activation() -> bool {
+pub fn _check_windows_activation() -> bool {
     let script = r#"
         $status = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform").LicStatusArray
         if ($status -eq 1) { "Activated" } else { "Not Activated" }
@@ -166,7 +166,7 @@ fn _check_sleep_mode() -> &'static str {
 }
 
 
-fn check_hibernation_mode() -> anyhow::Result<bool, anyhow::Error> {
+fn _check_hibernation_mode() -> anyhow::Result<bool, anyhow::Error> {
     let ps_script = r#"powercfg -query | Select-String "HIBERNATE""#;
 
     let ps = PsScriptBuilder::new()
@@ -303,3 +303,22 @@ pub fn _find_activation_keys() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
+pub fn _prompt_for_user_pw() -> anyhow::Result<(), anyhow::Error> {
+
+    Ok(())
+}
+
+pub fn _checkdisk() -> anyhow::Result<(), anyhow::Error> {
+
+    Ok(())
+}
+
+pub fn _dism_scan() -> anyhow::Result<(), anyhow::Error> {
+
+    Ok(())
+}
+
+pub fn _sfc_scan() -> anyhow::Result<(), anyhow::Error> {
+
+    Ok(())
+}

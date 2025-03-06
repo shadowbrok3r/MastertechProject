@@ -1,13 +1,13 @@
-use context::TerminalContext;
-use fx::{effect::{ outline_selected_cells, UniqueEffectId}, EffectStage};
-use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use tabs::{logger::Logger, login::LoginTab, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
-use styling::CATPPUCCIN;
+use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
+use fx::{effect::{ outline_selected_cells, UniqueEffectId}, EffectStage};
+use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
+use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use tachyonfx::CellFilter;
 use widgets::HandleWidget;
-use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui::prelude::*;
-use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
+use styling::CATPPUCCIN;
+use context::TerminalContext;
 use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
@@ -40,9 +40,7 @@ static SPLASH_CONFIG2: SplashConfig = SplashConfig {
     use_colors: true,
 };
 
-// impl <'a> TerminalApp <'a> { fn log_message(&mut self, message: &str) { self.logs.push(message.to_string()); } }
-
-pub struct TerminalApp<'a> { // logs: Vec<String>,
+pub struct TerminalApp<'a> {
     logger: Logger,
     menu_bar: MenuBar<'a>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
@@ -63,7 +61,7 @@ impl Default for TerminalApp <'_>{
         let mut event_manager = EventManager::new(get_event_receiver());
         let service_tab = ServiceTab::new();
         let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new()));
-        let login_tab = Rc::new(RefCell::new(LoginTab::new(ctx.clone())));
+        let login_tab = Rc::new(RefCell::new(LoginTab::new()));
         // Register the ServiceFormWidget with the event manager.
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.service_form_widget.clone());
@@ -229,13 +227,11 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 std::thread::sleep(std::time::Duration::from_millis(50));
             } else {
                 
-                app.event_manager.process_events();
+                app.event_manager.process_events(app.ctx.clone());
                 if let Ok(mut lock) = app.ctx.lock() {
                     lock.receive();
                 }
-                // top-level layout has a row for tabs, then main content
-                // let bg = Block::default().style(Style::default().bg(Color::Rgb(8, 8, 12)));
-                // f.render_widget(bg, f.area());
+
                 let area = f.area();
                 f.buffer_mut().set_style(area, Style::default().bg(Color::Rgb(8, 8, 12)));
 
@@ -261,29 +257,6 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 
                 if app.first_run {
                     app.first_run = false;
-                    // let effect = selected_category(CATPPUCCIN.flamingo, tab_area);
-                    // let effect2 = open_category(CATPPUCCIN.peach, tab_area);
-                    // let effect2 = outline_selected_cells(
-                    //     &mut app.menu_bar.effect_stage, 
-                    //     tab_area.as_size(),
-                    //     CATPPUCCIN.blue,
-                    //     CellFilter::All
-                    // );
-
-                    // let effect4 = outline_selected_cells(
-                    //     &mut app.menu_bar.effect_stage, 
-                    //     main_content_area.as_size(),
-                    //     CATPPUCCIN.lavender,
-                    //     CellFilter::FgColor(CATPPUCCIN.lavender)
-                    // );
-
-                    // let effect5 = outline_selected_cells(
-                    //     &mut app.menu_bar.effect_stage, 
-                    //     main_content_area.as_size(),
-                    //     CATPPUCCIN.teal,
-                    //     CellFilter::FgColor(CATPPUCCIN.teal)
-                    // );
-
                     let effect1 = outline_selected_cells(
                         &mut app.menu_bar.effect_stage, 
                         main_content_area.as_size(),
@@ -291,33 +264,11 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                         CellFilter::FgColor(CATPPUCCIN.maroon)
                     );
 
-                    // app.menu_bar.effect_stage.add_effect(effect2);
-                    // app.service_tab.effect_stage.add_effect(effect3);
                     app.effect_stage.add_effect(effect1);
-                    // app.sysinfo_tab.effect_stage.add_effect(effect3);
-                    // app.sysinfo_tab.effect_stage.add_effect(effect4);
-                    // app.sysinfo_tab.effect_stage.add_effect(effect5);
-                    // app.sysinfo_tab.effect_stage.add_effect(effect3);
-                    // app.service_tab.effect_stage.add_effect(effect5);
                 }
 
                 app.menu_bar.draw::<B>(f, tab_area);
 
-                // match app.ctx.state {
-                //     AppState::Authenticated(page) => {},
-                //     AppState::NoAuth(reason) => {
-                //         if reason.to_string().contains("Already connected") && app.ctx.current_user.is_some() {
-                //             log::info!("Already connected");
-                //             let _ = app.ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
-                //         } else {
-                //             let _ = app.ctx.app_state_tx.try_send(AppState::Login);
-                //         }
-                //     },
-                //     AppState::Login => {
-                //         // app.menu_bar.current_tab.replace(Tab::)
-                //     },
-                //     _ => {}
-                // }
                 let buf = &mut Buffer::empty(Rect::ZERO);
 
                 // (2) Render Main content area depends on which tab is selected
@@ -328,22 +279,9 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                     Tab::Login => app.login_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::Logs => {
                         buf.merge(f.buffer_mut());
-                        // logger.render(main_content_area, buf);
                         app.logger.draw::<B>(f, main_content_area);
                     },
                 }
-
-                // app.service_tab.service_form_widget.receive();
-
-                // ----- Process TachyonFX Effects -----
-                // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-                // let fx_duration = tachyonfx::Duration::from_millis(16);
-                // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-                // app.menu_bar.effect_stage.process_effects(fx_duration, f.buffer_mut(), tab_area);
-                // app.service_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
-                // app.sysinfo_tab.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
-                // let area = f.area();
-                // app.effect_stage.process_effects(fx_duration, f.buffer_mut(), main_content_area);
             }
         })?;
     }
