@@ -15,7 +15,8 @@ use super::ServiceFormWidget;
 impl <'a> ActionHandler for ServiceFormWidget <'a> {
     fn handle_event(&mut self, event: &WidgetEvent, _ctx: Arc<Mutex<TerminalContext>>) {
         match event {
-            WidgetEvent::ButtonClick { widget_id } => {
+            WidgetEvent::ButtonClick { widget_id, button } => {
+                log::info!("Button: {button:?}");
                 match widget_id.0.as_str() {
                     "SubmitTur" => if let Ok(svc_data) = &mut self.service_data.lock() {
                         svc_data.submit_tur_mastertech();

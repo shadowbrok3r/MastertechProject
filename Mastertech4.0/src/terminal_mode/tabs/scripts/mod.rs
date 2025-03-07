@@ -1,9 +1,8 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button}, utilities::windows::WindowsUpdates};
-use ratatui::{layout::Rect, widgets::{ListItem, ListState, ScrollbarState}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK}, widgets::button::Button}, utilities::windows::{WindowsUpdateEvent, WindowsUpdates}};
+use ratatui::{layout::Rect, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
-use checklist::{Status, TodoItem, TodoList};
+use checklist::{Category, Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
-use action_handler::WindowsUpdateEvent;
 use tui_scrollview::ScrollViewState;
 use render::{Report, Reporter};
 
@@ -12,17 +11,7 @@ pub mod render;
 pub mod checklist;
 pub mod script_checks;
 
-/*
-    A Reporting System for each of these things
-    like the AHS tuneup 
-
-*/
-
-// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-// pub enum ChecklistPageState {
-//     #[default]
-
-// }
+/* A Reporting System for each of these things like the AHS tuneup */
 
 ////////////////////////////////
 // SCRIPTS TAB with Buttons
@@ -33,11 +22,8 @@ pub struct ScriptsTab<'a> {
     qc_btn: Button<'a>,
     updates_btn: Button<'a>,
     prechecks_btn: Button<'a>,
-    get_antivirus_btn: Button<'a>,
-    get_installed_programs_btn: Button<'a>,
-    get_startup_items_btn: Button<'a>,
-    get_scheduled_tasks_btn: Button<'a>,
-    get_taskbar_items_btn: Button<'a>,
+    informational_btn: Button<'a>,
+    run_btn: Button<'a>,
 
     reports: RefCell<Vec<Report>>, 
     current_reporter: RefCell<Reporter>,
@@ -65,16 +51,18 @@ pub struct ScriptsTab<'a> {
     report_area: RefCell<Option<Rect>>,
     report_scroll_state: RefCell<ScrollViewState>,
     list_scroll_state: RefCell<ScrollbarState>,
-    // script_page_state: RefCell<ChecklistPageState>,
     list_state: RefCell<ListState>,
     visible_height: RefCell<usize>,
     total_items: RefCell<usize>,
-    scroll_area: RefCell<Option<Rect>>, // For the scrollbar area
-    // New fields for popup
-    active_popup: RefCell<Option<(WidgetId, Rect)>>, // (button ID, popup position)
+    /// For the scrollbar area
+    scroll_area: RefCell<Option<Rect>>,
+    /// (button ID, popup position)
+    active_popup: RefCell<Option<(WidgetId, Rect)>>,
     frame_area: RefCell<Option<Rect>>,
-    popup_list_state: RefCell<ListState>, // Tracks popup selection
-    popup_items: HashMap<String, Vec<ListItem<'a>>>, // Predefined popup items per button
+    /// Tracks popup selection
+    popup_list_state: RefCell<ListState>,
+    popup_items: RefCell<HashMap<String, Vec<TodoItem>>>,
+    current_script: RefCell<Option<(Category, String)>>, // (category, text) of the running script
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -84,24 +72,37 @@ impl<'a> ScriptsTab<'a> {
 
         let mut checklists = HashMap::new();
         
+        // Define checklists with categories
         checklists.insert(
             "Informational".to_string(),
             TodoList {
                 name: "Informational".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem::new("Is SuperEasyBackup installed?", None).set_pass_criteria("Installed and active").set_warning_criteria("Not installed OR its not active").set_error_criteria("Script Failed To Run"),
-                    TodoItem::new("Is Webroot installed?", None).set_pass_criteria("Installed and active").set_warning_criteria("Not installed OR its not active").set_error_criteria("Script Failed To Run"),
-                    TodoItem::new("Is SuperAntiSpyware installed?", None).set_pass_criteria("Installed and active").set_warning_criteria("Not installed OR its not active").set_error_criteria("Script Failed To Run"),
-                    TodoItem::new("Are there scheduled tasks for it?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("If Webroot/SAS not installed, what AV is active?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("Are there any pending Windows updates?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("Is Windows Activated?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("Is Sleep enabled?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("Is Hibernation enabled?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("Have there been any Blue Screens in the past 30 days?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("When Was The Last Service Date?", None).set_pass_criteria("").set_warning_criteria("").set_fail_criteria(""),
-                    TodoItem::new("Windows Version", None).set_pass_criteria("Windows 11").set_warning_criteria("Windows 10").set_error_criteria("Script Failed To Run").set_fail_criteria(""), 
+                    TodoItem::new("Is SuperEasyBackup installed?", Category::Informational)
+                        .set_pass_criteria("Installed and active")
+                        .set_warning_criteria("Not installed OR its not active")
+                        .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Is Webroot installed?", Category::Informational)
+                        .set_pass_criteria("Installed and active")
+                        .set_warning_criteria("Not installed OR its not active")
+                        .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Is SuperAntiSpyware installed?", Category::Informational)
+                        .set_pass_criteria("Installed and active")
+                        .set_warning_criteria("Not installed OR its not active")
+                        .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Are there scheduled tasks for it?", Category::Informational),
+                    TodoItem::new("If Webroot/SAS not installed, what AV is active?", Category::Informational),
+                    TodoItem::new("Are there any pending Windows updates?", Category::Informational),
+                    TodoItem::new("Is Windows Activated?", Category::Informational),
+                    TodoItem::new("Is Sleep enabled?", Category::Informational),
+                    TodoItem::new("Is Hibernation enabled?", Category::Informational),
+                    TodoItem::new("Have there been any Blue Screens in the past 30 days?", Category::Informational),
+                    TodoItem::new("When Was The Last Service Date?", Category::Informational),
+                    TodoItem::new("Windows Version", Category::Informational)
+                        .set_pass_criteria("Windows 11")
+                        .set_warning_criteria("Windows 10")
+                        .set_error_criteria("Script Failed To Run"),
                 ],
             },
         );
@@ -112,13 +113,13 @@ impl<'a> ScriptsTab<'a> {
                 name: "Tuneup".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem::new("Disable Sleep / Hibernation", None),
-                    TodoItem::new("Run Windows Updates", None),
-                    TodoItem::new("Activate CPS", None),
-                    TodoItem::new("Activate SEB", None),
-                    TodoItem::new("Run Tron", None),
-                    TodoItem::new("Run SuperAntiSpyware Scan", None),
-                    TodoItem::new("Run Junkware Category", None),
+                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup),
+                    TodoItem::new("Run Windows Updates", Category::Tuneup),
+                    TodoItem::new("Activate CPS", Category::Tuneup),
+                    TodoItem::new("Activate SEB", Category::Tuneup),
+                    TodoItem::new("Run Tron", Category::Tuneup),
+                    TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
+                    TodoItem::new("Run Junkware Category", Category::Tuneup),
                 ],
             },
         );
@@ -129,16 +130,16 @@ impl<'a> ScriptsTab<'a> {
                 name: "Junkware Removal".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem::new("OneLaunch", None),
-                    TodoItem::new("WebNavigatorBrowser", None),
-                    TodoItem::new("ESET Security", None),
-                    TodoItem::new("Wavesor", None),
-                    TodoItem::new("ClearBrowser", None),
-                    TodoItem::new("ShiftBrowser", None),
-                    TodoItem::new("AvastBrowser", None),
-                    TodoItem::new("McaffeeSafe", None),
-                    TodoItem::new("DriverSupport", None),
-                    TodoItem::new("Winzip", None),
+                    TodoItem::new("OneLaunch", Category::JunkwareRemoval),
+                    TodoItem::new("WebNavigatorBrowser", Category::JunkwareRemoval),
+                    TodoItem::new("ESET Security", Category::JunkwareRemoval),
+                    TodoItem::new("Wavesor", Category::JunkwareRemoval),
+                    TodoItem::new("ClearBrowser", Category::JunkwareRemoval),
+                    TodoItem::new("ShiftBrowser", Category::JunkwareRemoval),
+                    TodoItem::new("AvastBrowser", Category::JunkwareRemoval),
+                    TodoItem::new("McaffeeSafe", Category::JunkwareRemoval),
+                    TodoItem::new("DriverSupport", Category::JunkwareRemoval),
+                    TodoItem::new("Winzip", Category::JunkwareRemoval),
                 ],
             },
         );
@@ -149,96 +150,55 @@ impl<'a> ScriptsTab<'a> {
                 name: "QC".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem::new("Data Transfer", None),
-                    TodoItem::new("Install LibreOffice", None),
-                    TodoItem::new("Disable Sleep / Hibernation", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
-                    TodoItem::new("Disable proxy settings", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
-                    TodoItem::new("Disable Notifications", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
-                    TodoItem::new("Change SuperAntiSpyware settings", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
-                    TodoItem::new("Disable Startup Apps", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
-                    TodoItem::new("Unpin Copilot", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
-                    TodoItem::new("Align Taskbar to left", None).set_pass_criteria("".to_string()).set_warning_criteria("".to_string()).set_fail_criteria("".to_string()),
+                    TodoItem::new("Data Transfer", Category::Qc),
+                    TodoItem::new("Install LibreOffice", Category::Qc),
+                    TodoItem::new("Disable Sleep / Hibernation", Category::Qc),
+                    TodoItem::new("Disable proxy settings", Category::Qc),
+                    TodoItem::new("Disable Notifications", Category::Qc),
+                    TodoItem::new("Change SuperAntiSpyware settings", Category::Qc),
+                    TodoItem::new("Disable Startup Apps", Category::Qc),
+                    TodoItem::new("Unpin Copilot", Category::Qc),
+                    TodoItem::new("Align Taskbar to left", Category::Qc),
                 ],
             },
         );
 
-        // Define popup items statically
+        // Sync popup_items with checklists
         let mut popup_items = HashMap::new();
         popup_items.insert(
             "Tuneup".to_string(),
-            vec![
-                ListItem::new("Run Tuneup"),
-                ListItem::new("View Logs"),
-            ],
+            checklists.get("Tuneup").unwrap().items.clone(),
         );
         popup_items.insert(
             "Qc".to_string(),
-            vec![
-                ListItem::new("Run QC"),
-                ListItem::new("Check Status"),
-            ],
+            checklists.get("QC").unwrap().items.clone(),
         );
         popup_items.insert(
             "WindowsUpdates".to_string(),
             vec![
-                ListItem::new("Check Updates"),
-                ListItem::new("Install Now"),
+                TodoItem::new("Check Updates", Category::WindowsUpdates),
+                TodoItem::new("Install Now", Category::WindowsUpdates),
             ],
         );
         popup_items.insert(
             "RunPrechecks".to_string(),
             vec![
-                ListItem::new("Run Prechecks"),
-                ListItem::new("View Results"),
+                TodoItem::new("Run Prechecks", Category::RunPrechecks),
             ],
         );
         popup_items.insert(
-            "GetAntivirus".to_string(),
-            vec![
-                ListItem::new("Scan Antivirus"),
-                ListItem::new("Update Definitions"),
-            ],
-        );
-        popup_items.insert(
-            "GetInstalledPrograms".to_string(),
-            vec![
-                ListItem::new("List Programs"),
-                ListItem::new("Uninstall"),
-            ],
-        );
-        popup_items.insert(
-            "GetStartupItems".to_string(),
-            vec![
-                ListItem::new("Fetch Startups"),
-                ListItem::new("Disable All"),
-            ],
-        );
-        popup_items.insert(
-            "GetScheduledTasks".to_string(),
-            vec![
-                ListItem::new("List Tasks"),
-                ListItem::new("Disable Selected"),
-            ],
-        );
-        popup_items.insert(
-            "GetTaskbarItems".to_string(),
-            vec![
-                ListItem::new("Fetch Items"),
-                ListItem::new("Export List"),
-            ],
+            "Informational".to_string(),
+            checklists.get("Informational").unwrap().items.clone(),
         );
 
         Self {
-            tuneup_btn: Button::new("Tuneup", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
-            qc_btn: Button::new("Quality Check", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
-            updates_btn: Button::new("Windows Updates", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),
-            prechecks_btn: Button::new("Run Prechecks", WidgetId("RunPrechecks".to_owned())).theme(CATPPUCCINTHEME),
-            get_antivirus_btn: Button::new("Get AV Info", WidgetId("GetAntivirus".to_owned())).theme(CATPPUCCINTHEME),
-            get_installed_programs_btn: Button::new("Get Installed Programs", WidgetId("GetInstalledPrograms".to_owned())).theme(CATPPUCCINTHEME),
-            get_startup_items_btn: Button::new("Get Startup Items", WidgetId("GetStartupItems".to_owned())).theme(CATPPUCCINTHEME),
-            get_scheduled_tasks_btn: Button::new("Get Scheduled Tasks", WidgetId("GetScheduledTasks".to_owned())).theme(CATPPUCCINTHEME),
-            get_taskbar_items_btn: Button::new("Get Taskbar Items", WidgetId("GetTaskbarItems".to_owned())).theme(CATPPUCCINTHEME),
-            
+            tuneup_btn: Button::new("Tuneup =>", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
+            qc_btn: Button::new("Quality Check =>", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
+            updates_btn: Button::new("Windows Updates =>", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),
+            prechecks_btn: Button::new("Run Prechecks =>", WidgetId("RunPrechecks".to_owned())).theme(CATPPUCCINTHEME),
+            informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
+            run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(DEEPPINK),
+
             antivirus_products: Vec::new(),
             installed_programs: Vec::new(),
             startup_programs: Vec::new(),
@@ -256,7 +216,7 @@ impl<'a> ScriptsTab<'a> {
             windows_updates: WindowsUpdates::default(),
             report_scroll_state: RefCell::new(ScrollViewState::new()),
             list_state: RefCell::new(ListState::default()),
-            list_scroll_state: RefCell::new(ScrollbarState::default()), // Renamed
+            list_scroll_state: RefCell::new(ScrollbarState::default()),
             checklist_area: RefCell::new(None),
             report_area: RefCell::new(None),
             visible_height: RefCell::new(0),
@@ -265,7 +225,8 @@ impl<'a> ScriptsTab<'a> {
             active_popup: RefCell::new(None),
             frame_area: RefCell::new(None),
             popup_list_state: RefCell::new(ListState::default()),
-            popup_items,
+            popup_items: RefCell::new(popup_items),
+            current_script: RefCell::new(None),
             
         }
     }
@@ -300,29 +261,23 @@ impl<'a> ScriptsTab<'a> {
         }
     }
 
-    // /// Sets the currently active tab based on button state
-    // pub fn update_selected_tab(&self) {
-    //     for (widget_id, button) in self.tab_buttons.iter() {
-    //         if button.is_active() {
-    //             match widget_id.0.as_str() {
-    //                 "Antivirus" => self.current_tab.replace(ScriptsTabView::Antivirus),
-    //                 "StartupItems" => self.current_tab.replace(ScriptsTabView::StartupItems),
-    //                 "InstalledPrograms" => self.current_tab.replace(ScriptsTabView::InstalledPrograms),
-    //                 "ScheduledTasks" => self.current_tab.replace(ScriptsTabView::ScheduledTasks),
-    //                 "TaskbarItems" => self.current_tab.replace(ScriptsTabView::TaskbarItems),
-    //                 "Main" => self.current_tab.replace(ScriptsTabView::Main),
-    //                 _ => self.current_tab.replace(ScriptsTabView::default())
-    //             };
-    //         }
-    //     }
-    // }
-
-    fn _mark_task_complete(&mut self, checklist_name: &str, task_name: &str) {
-        if let Some(list) = self.checklists.get_mut(checklist_name) {
-            if let Some(task) = list.items.iter_mut().find(|t| t.text == task_name) {
-                task.status = Status::Completed;
-            }
-        }
+    fn get_selected_scripts(&self) -> Vec<TodoItem> {
+        let popup_items = self.popup_items.borrow();
+        popup_items
+            .values()
+            .flat_map(|items| {
+                items.iter().filter(|item| item.status == Status::Completed).cloned()
+            })
+            .collect()
     }
-    
+
+    // fn run_selected_scripts(&self) {
+    //     let selected = self.get_selected_scripts();
+    //     for item in selected {
+    //         log::info!("Running script: {}", item.text);
+    //         // TODO: Implement actual script execution logic here
+    //         // After execution, update corresponding checklist item:
+    //         // if let Some(checklist) = self.checklists.get_mut(/* category map */), then checklist.items[...]
+    //     }
+    // }  
 }

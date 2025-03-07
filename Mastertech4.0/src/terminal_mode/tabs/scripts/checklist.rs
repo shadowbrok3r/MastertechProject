@@ -27,12 +27,13 @@ pub struct TodoItem {
     warn: String,
     fail: String,
     error: String,
-    tag: TodoItemTag
+    tag: TodoItemTag,
+    category: Category, // Changed from tag to category
 }
 
 impl TodoItem {
-    pub fn new(text: &str, tag: Option<TodoItemTag>) -> Self {
-        let tag = if let Some(tag) = tag { tag } else { TodoItemTag::default() };
+    pub fn new(text: &str,category: Category) -> Self {
+        // let tag = if let Some(tag) = tag { tag } else { TodoItemTag::default() };
         Self {
             text: text.to_owned(),
             status: Status::Todo,
@@ -40,8 +41,14 @@ impl TodoItem {
             warn: String::new(),
             fail: String::new(),
             error: String::new(),
-            tag
+            tag: TodoItemTag::default(),
+            category
         }
+    }
+
+    pub fn set_status(mut self, status: Status) -> Self {
+        self.status = status;
+        self
     }
 
     pub fn set_pass_criteria(mut self, pass: impl Display) -> Self {
@@ -79,6 +86,10 @@ impl TodoItem {
     pub fn get_fail_criteria(&self) -> String {
         self.fail.clone()
     }
+
+    pub fn category(&self) -> Category {
+        self.category.clone()
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -88,31 +99,45 @@ pub enum Status {
     Completed,
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub enum Category {
+    #[default]
+    Tuneup,
+    Qc,
+    Informational,
+    JunkwareRemoval, // For "Junkware Removal" checklist
+    WindowsUpdates,
+    RunPrechecks,
+    Custom(String), // For flexibility
+}
+
 impl<'a> ScriptsTab<'a> {
-    pub fn update_checklist(&mut self, category: &str, item: &str, status: bool) {
-        if let Some(todo_list) = self.checklists.get_mut(category) {
+    pub fn update_checklist(&mut self, category: Category, item: &str, status: bool) {
+        let category_str = match category {
+            Category::Tuneup => "Tuneup",
+            Category::Qc => "QC",
+            Category::Informational => "Informational",
+            Category::JunkwareRemoval => "Junkware Removal",
+            Category::WindowsUpdates => "WindowsUpdates",
+            Category::RunPrechecks => "RunPrechecks",
+            Category::Custom(ref name) => name,
+        };
+
+        if let Some(todo_list) = self.checklists.get_mut(category_str) {
             if let Some(todo_item) = todo_list.items.iter_mut().find(|i| i.text == item) {
                 todo_item.status = if status { Status::Completed } else { Status::Todo };
             } else {
-                // If the item doesn't exist, add it
-                todo_list.items.push(TodoItem {
-                    text: item.to_string(),
-                    status: if status { Status::Completed } else { Status::Todo },
-                    ..Default::default()
-                });
+                todo_list.items.push(TodoItem::new(item, category.clone())
+                    .set_status(if status { Status::Completed } else { Status::Todo }));
             }
         } else {
-            // If the category doesn't exist, create a new checklist
             let new_list = TodoList {
-                name: category.to_string(),
-                items: vec![TodoItem {
-                    text: item.to_string(),
-                    status: if status { Status::Completed } else { Status::Todo },
-                    ..Default::default()
-                }],
+                name: category_str.to_string(),
+                items: vec![TodoItem::new(item, category.clone())
+                    .set_status(if status { Status::Completed } else { Status::Todo })],
                 state: ListState::default(),
             };
-            self.checklists.insert(category.to_string(), new_list);
+            self.checklists.insert(category_str.to_string(), new_list);
         }
     }
 }

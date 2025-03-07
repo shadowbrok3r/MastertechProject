@@ -1,9 +1,9 @@
 use crossbeam::channel::Sender;
 use ratatui::{
-    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::Rect, style::{Color, Style}, text::Line, widgets:: WidgetRef
+    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Style}, text::Line, widgets:: WidgetRef
 };
 use tachyonfx::{CellFilter, Effect};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE};
 use std::{cell::RefCell, fmt::Debug};
 use super::{ButtonType, SHORTCUT_SET};
 
@@ -40,7 +40,8 @@ pub enum ButtonState {
     Normal,
     Hovered,
     Selected,
-    Active
+    Active,
+    AltClicked
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -132,33 +133,39 @@ impl <'a> ButtonType<'a> for Button<'a> {
             ButtonState::Selected => (t.background, t.text, Color::White, Color::White),
             ButtonState::Active => (t.background, t.text, t.highlight, t.shadow),
             ButtonState::Hovered => (t.background, t.text, t.highlight, t.shadow),
+            ButtonState::AltClicked => (t.background, t.text, Color::White, Color::White),
         }
     }
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
         // If we haven’t assigned an area yet, do nothing
         let Some(area) = self.get_area() else { return; };
-
-        
         let c = mouse_event.column;
         let r = mouse_event.row;
+        let mouse_position = Position::new(c, r);
+
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // log::info!("Handling Button press in rect: {area:?}\nMouse event column/row: {c}/{r}");
                 // Check if the mouse click is within area
-                if c >= area.x && c < area.x + area.width &&
-                   r >= area.y && r < area.y + area.height {
+                if area.contains(mouse_position) {
                     self.set_state(ButtonState::Active);
-                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone() });
+                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Left });
                     self.click(); // calls our on_click callback
+                } else {
+                    self.set_state(ButtonState::Normal);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                if area.contains(mouse_position) {
+                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Right });
+                    self.set_state(ButtonState::AltClicked);
                 } else {
                     self.set_state(ButtonState::Normal);
                 }
             }
             MouseEventKind::Moved => {
                 // If you want hover behavior, do it here
-                if c >= area.x && c < area.x + area.width &&
-                   r >= area.y && r < area.y + area.height {
+                if area.contains(mouse_position) {
                     // self.event_sender.try_send(WidgetEvent::Hover { widget_id: self.id });
                     self.set_state(ButtonState::Selected);
                 } else {

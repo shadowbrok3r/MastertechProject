@@ -1,4 +1,3 @@
-use crate::terminal_mode::tabs::action_handler::WindowsUpdateEvent;
 use crossbeam::channel::Sender;
 use windows_core::*;
 use windows::{
@@ -64,6 +63,11 @@ pub struct DummyProgressCallback {}
 #[implement(windows::Win32::System::UpdateAgent::IDownloadCompletedCallback)]
 pub struct DummyCompletedCallback {}
 
+#[derive(Debug)]
+pub enum WindowsUpdateEvent {
+    UpdateLogs(String),
+    ReturnedUpdates(WindowsUpdates),
+}
 
 pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdown: bool) -> Result<()> {
     let mut installed_updates = WindowsUpdates::default();

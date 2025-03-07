@@ -27,9 +27,15 @@ pub enum ApiEvent {
     GetTicketResponse(PrestashopPayload)
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum WidgetButton {
+    Left,
+    Right
+}
+
 /// A common event enum that all widgets use.
 pub enum WidgetEvent {
-    ButtonClick { widget_id: WidgetId},
+    ButtonClick { widget_id: WidgetId, button: WidgetButton},
     Active { widget_id: WidgetId },
     // UpdateText { widget_id: WidgetId, text: String },
     Api(ApiEvent)

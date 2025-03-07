@@ -19,12 +19,13 @@ impl <'a> ActionHandler for LoginTab <'a> {
                     _ => {},
                 }
             }
-            WidgetEvent::ButtonClick { widget_id } => {
+            WidgetEvent::ButtonClick { widget_id, button} => {
+                log::info!("Button: {button:?}");
                 match widget_id.0.as_str() {
                     "Login" => {
                         let username_input = self.username_field.input.borrow();
                         let username = &username_input.lines()[0];
-                        let password_input = self.username_field.input.borrow();
+                        let password_input = self.password_field.input.borrow();
                         let password = &password_input.lines()[0];
 
                         log::info!("Logging in");
@@ -62,6 +63,12 @@ impl <'a> ActionHandler for LoginTab <'a> {
                                 // Ok::<(), anyhow::Error>(())
                             });
                         }
+                        let mut username_input = self.username_field.input.borrow_mut();
+                        username_input.select_all();
+                        username_input.cut();
+                        let mut password_input = self.password_field.input.borrow_mut();
+                        password_input.select_all();
+                        password_input.cut();
                     }
                     _ => {}
                 }

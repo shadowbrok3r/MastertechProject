@@ -125,6 +125,7 @@ impl <'a> ButtonType <'a> for InputField <'a> {
             ButtonState::Selected => (CATPPUCCIN.blue, CATPPUCCIN.text, CATPPUCCIN.sapphire, CATPPUCCIN.red),
             ButtonState::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
             ButtonState::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
+            ButtonState::AltClicked => (CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon),
         }
     }
 
