@@ -1,5 +1,5 @@
 use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button}, utilities::windows::WindowsUpdates};
-use ratatui::{layout::Rect, widgets::{ListState, ScrollbarState}};
+use ratatui::{layout::Rect, widgets::{ListItem, ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
@@ -73,7 +73,8 @@ pub struct ScriptsTab<'a> {
     // New fields for popup
     active_popup: RefCell<Option<(WidgetId, Rect)>>, // (button ID, popup position)
     frame_area: RefCell<Option<Rect>>,
-    popup_highlighted_idx: RefCell<Option<usize>>, // Tracks highlighted Span index
+    popup_list_state: RefCell<ListState>, // Tracks popup selection
+    popup_items: HashMap<String, Vec<ListItem<'a>>>, // Predefined popup items per button
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -161,6 +162,72 @@ impl<'a> ScriptsTab<'a> {
             },
         );
 
+        // Define popup items statically
+        let mut popup_items = HashMap::new();
+        popup_items.insert(
+            "Tuneup".to_string(),
+            vec![
+                ListItem::new("Run Tuneup"),
+                ListItem::new("View Logs"),
+            ],
+        );
+        popup_items.insert(
+            "Qc".to_string(),
+            vec![
+                ListItem::new("Run QC"),
+                ListItem::new("Check Status"),
+            ],
+        );
+        popup_items.insert(
+            "WindowsUpdates".to_string(),
+            vec![
+                ListItem::new("Check Updates"),
+                ListItem::new("Install Now"),
+            ],
+        );
+        popup_items.insert(
+            "RunPrechecks".to_string(),
+            vec![
+                ListItem::new("Run Prechecks"),
+                ListItem::new("View Results"),
+            ],
+        );
+        popup_items.insert(
+            "GetAntivirus".to_string(),
+            vec![
+                ListItem::new("Scan Antivirus"),
+                ListItem::new("Update Definitions"),
+            ],
+        );
+        popup_items.insert(
+            "GetInstalledPrograms".to_string(),
+            vec![
+                ListItem::new("List Programs"),
+                ListItem::new("Uninstall"),
+            ],
+        );
+        popup_items.insert(
+            "GetStartupItems".to_string(),
+            vec![
+                ListItem::new("Fetch Startups"),
+                ListItem::new("Disable All"),
+            ],
+        );
+        popup_items.insert(
+            "GetScheduledTasks".to_string(),
+            vec![
+                ListItem::new("List Tasks"),
+                ListItem::new("Disable Selected"),
+            ],
+        );
+        popup_items.insert(
+            "GetTaskbarItems".to_string(),
+            vec![
+                ListItem::new("Fetch Items"),
+                ListItem::new("Export List"),
+            ],
+        );
+
         Self {
             tuneup_btn: Button::new("Tuneup", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
             qc_btn: Button::new("Quality Check", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
@@ -197,7 +264,9 @@ impl<'a> ScriptsTab<'a> {
             scroll_area: RefCell::new(None),
             active_popup: RefCell::new(None),
             frame_area: RefCell::new(None),
-            popup_highlighted_idx: RefCell::new(None),
+            popup_list_state: RefCell::new(ListState::default()),
+            popup_items,
+            
         }
     }
 
