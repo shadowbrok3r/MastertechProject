@@ -48,6 +48,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     log::info!("Popup Area: {:?}", popup_area);
                     log::info!("Frame Area: {:?}", frame_area);
                     self.active_popup.replace(Some((widget_id.clone(), popup_area)));
+                    self.list_state.borrow_mut().select(None);
+                    self.popup_list_state.borrow_mut().select(None);
                 }
 
                 // if let Some(area) = button.get_area() {

@@ -1,5 +1,7 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Direction, Layout, Margin, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Style, Stylize}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef}, Frame};
-use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use std::{cell::Cell, sync::Arc};
+
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef}, Frame};
+use crate::terminal_mode::{styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use tui_scrollview::ScrollView;
 
@@ -118,7 +120,7 @@ impl<'a> ScriptsTab<'a> {
             )));
             for item in &list.items {
                 let symbol = match item.status {
-                    Status::Completed => "✓",
+                    Status::Completed => "🗹", // ☒
                     Status::Todo => "☐",
                 };
                 let style = match item.status {
@@ -181,60 +183,22 @@ impl<'a> ScriptsTab<'a> {
     
     fn render_popup(&self, f: &mut Frame) {
         if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
-            let highlighted_idx = *self.popup_highlighted_idx.borrow();
-            let submenu_items = match widget_id.0.as_str() {
-                "Tuneup" => vec![
-                    Span::raw("Run Tuneup").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("View Logs").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "Qc" => vec![
-                    Span::raw("Run QC").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Check Status").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "WindowsUpdates" => vec![
-                    Span::raw("Check Updates").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Install Now").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "RunPrechecks" => vec![
-                    Span::raw("Run Prechecks").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("View Results").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "GetTaskbarItems" => vec![
-                    Span::raw("Fetch Items").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Export List").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "GetScheduledTasks" => vec![
-                    Span::raw("List Tasks").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Disable Selected").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "GetAntivirus" => vec![
-                    Span::raw("Scan Antivirus").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Update Definitions").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "GetInstalledPrograms" => vec![
-                    Span::raw("List Programs").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Uninstall").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                "GetStartupItems" => vec![
-                    Span::raw("Fetch Startups").style(if highlighted_idx == Some(0) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                    Span::raw("Disable All").style(if highlighted_idx == Some(1) { Style::new().bg(CATPPUCCIN.mauve) } else { Style::default() }),
-                ],
-                _ => vec![Span::raw("No Options").style(Style::default())],
-            };
-            
-            let lines: Text = submenu_items.into_iter().collect();
-            let popup = Paragraph::new(lines)
+            let items = self.popup_items.get(&widget_id.0).cloned().unwrap_or(vec![ListItem::new("No Options")]);
+            let popup = List::new(items)
                 .block(Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .title(format!("{} Menu", widget_id.0))
-                    // .border_style(Style::new().fg(CATPPUCCIN.peach))
-                    .style(Style::new().fg(CATPPUCCIN.sky))
-                );
-            // f.buffer_mut().reset();
-            // Clear the area first to overwrite existing content
+                    .border_style(Style::new().fg(DEEPPINK.text))
+                    .style(Style::new().bg(Color::Rgb(8,8,12)).fg(CATPPUCCIN.sky))
+                )
+                .highlight_style(Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.text))
+                .highlight_symbol("=> ");
+
+            // log::info!("Rendering Popup at: {:?}", popup_area);
             f.render_widget(Clear, *popup_area);
-            f.render_widget(popup, *popup_area);
+            let mut popup_state = self.popup_list_state.borrow_mut();
+            f.render_stateful_widget(popup, *popup_area, &mut popup_state);
         }
     }
     
@@ -536,6 +500,43 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     }
                 }
 
+                struct Transform {
+                    pos: (i32, i32, i32),
+                    scale: i32,
+                    rotation: (i32, i32, i32, i32)
+                };
+
+                let mut x = &mut vec![
+                    (
+                        (0, 1), 
+                        Transform {
+                            pos: (0, 1, 2),
+                            scale: 0,
+                            rotation: (0, 0, 0, 0)
+                        }
+                    ),
+                    (
+                        (2, 3), 
+                        Transform {
+                            pos: (0, 1, 2),
+                            scale: 0,
+                            rotation: (0, 0, 0, 0)
+                        }
+                    ),
+                ];
+
+                fn updates(mut x: Vec<(&mut (i32, i32), &mut Transform)>) {
+                    let z = Cell::new(x);
+
+                    for (v, transform) in x.iter_mut(). {
+                        for (other_v, other_t) in z {
+    
+                        }
+                    }
+                }
+
+
+
                 let buttons = [
                     &self.tuneup_btn,
                     &self.qc_btn,
@@ -559,8 +560,16 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             if in_area {    
                                 break;
                             } else {
-                                self.active_popup.replace(None);
-                                self.popup_highlighted_idx.replace(None);
+                                let popup = self.active_popup.borrow();
+                                
+                                if popup.is_some() {
+                                    self.active_popup.replace(None);
+                                }
+
+                                // let x = std::mem::replace(dest, src)
+                                let mut popup_state = self.popup_list_state.borrow_mut();
+                                popup_state.select(None);
+                                // CHANGED: Removed premature checklist clear to persist until new selection
                                 break;
                             }
                         }
@@ -568,63 +577,129 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 }
 
                 if let MouseEventKind::Moved = mouse_event.kind {
+                    let mut popup_handled = false;
+    
+                    // Popup hover handling - Check first and take priority
                     if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
+
                         if c >= popup_area.x && c < popup_area.x + popup_area.width &&
-                           r >= popup_area.y && r < popup_area.y + popup_area.height {
-                            let relative_row = (r - (popup_area.y + 1)) as usize; // Adjust for top border
-                            let span_count = match widget_id.0.as_str() {
-                                "Tuneup" | "Qc" | "WindowsUpdates" | "RunPrechecks" |
-                                "GetTaskbarItems" | "GetScheduledTasks" | "GetAntivirus" |
-                                "GetInstalledPrograms" | "GetStartupItems" => 2,
-                                _ => 1,
-                            };
-                            if relative_row < span_count {
-                                log::info!("Hovering over Span {} at row {}", relative_row, r);
-                                self.popup_highlighted_idx.replace(Some(relative_row));
+                           r >= popup_area.y && r < popup_area.y + popup_area.height 
+                        {
+                            let content_start_y = popup_area.y + 1; // Top border
+                            let mut popup_state = self.popup_list_state.borrow_mut();
+                            let mut list_state = self.list_state.borrow_mut();
+                            if r >= content_start_y { // Prevent overflow
+                                let relative_row = (r - content_start_y) as usize;
+                                let span_count = self.popup_items.get(&widget_id.0).map_or(1, |items| items.len());
+                                if relative_row < span_count {
+                                    popup_state.select(Some(relative_row));
+                                    list_state.select(None); // Deselect checklist
+                                    popup_handled = true;
+                                } else {
+                                    popup_state.select(None);
+                                }
                             } else {
-                                self.popup_highlighted_idx.replace(None);
+                                popup_state.select(None);
                             }
                         } else {
-                            self.popup_highlighted_idx.replace(None);
+                            let mut popup_state = self.popup_list_state.borrow_mut();
+                            popup_state.select(None);
+                        }
+                    }
+    
+                    // Checklist hover handling - Only if popup isn’t handling it
+                    if !popup_handled {
+                        if let Some(checklist_area) = *self.checklist_area.borrow() {
+                            if c >= checklist_area.x 
+                                && c < checklist_area.x + checklist_area.width 
+                                && r >= checklist_area.y 
+                                && r < checklist_area.y + checklist_area.height 
+                            {
+                                let content_start_y = checklist_area.y + 1; // Top border
+                                let mut list_state = self.list_state.borrow_mut();
+                                let mut popup_state = self.popup_list_state.borrow_mut();
+                                if r >= content_start_y {
+                                    let relative_row = (r - content_start_y) as usize;
+                                    let total_items = *self.total_items.borrow();
+                                    if relative_row < total_items {
+                                        // log::info!("Hovering over checklist item {} at row {}", relative_row, r);
+                                        list_state.select(Some(relative_row));
+                                        popup_state.select(None); // Deselect popup
+                                    } else {
+                                        list_state.select(None);
+                                    }
+                                } else {
+                                    list_state.select(None);
+                                }
+                            } else {
+                                let mut list_state = self.list_state.borrow_mut();
+                                let mut popup_state = self.popup_list_state.borrow_mut();
+                                list_state.select(None);
+                                popup_state.select(None); // Ensure popup stays deselected
+                            }
                         }
                     }
                 }
-
                 if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                     // Handle clicks within popup
                     if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
+                        let mouse_rect = Position::new(c, r);
+                        let rest_intersect = popup_area.contains(mouse_rect);
+                        log::info!("Popup Area Contains Mouse Position: {rest_intersect:?}\nMouse Position: {mouse_rect:?}");
+                        log::info!("Hovering at row {} col {}", r, c);
+
                         if c >= popup_area.x && c < popup_area.x + popup_area.width &&
                            r >= popup_area.y && r < popup_area.y + popup_area.height {
-                            // Calculate which Span was clicked (each Span is one line)
-                            let relative_row = (r - popup_area.y) as usize;
-                            let span_count = match widget_id.0.as_str() {
-                                "Tuneup" | "Qc" | "WindowsUpdates" | "RunPrechecks" |
-                                "GetTaskbarItems" | "GetScheduledTasks" | "GetAntivirus" |
-                                "GetInstalledPrograms" | "GetStartupItems" => 2,
-                                _ => 1,
-                            };
-                            if relative_row < span_count {
-                                log::info!("Clicked Span {} in popup", relative_row);
-                                // Example action: Log or open submenu
-                                match widget_id.0.as_str() {
-                                    "Tuneup" => match relative_row {
-                                        0 => self.log_message("Run Tuneup clicked"),
-                                        1 => self.log_message("View Logs clicked"),
+                            let content_start_y = popup_area.y + 1; // Top border
+                            if r >= content_start_y { // Prevent overflow
+                                let relative_row = (r - content_start_y) as usize;
+                                let span_count = self.popup_items.get(&widget_id.0).map_or(1, |items| items.len());
+                                if relative_row < span_count {
+                                    // log::info!("Clicked item {} in popup at row {}", relative_row, r);
+                                    let mut popup_state = self.popup_list_state.borrow_mut();
+                                    let mut list_state = self.list_state.borrow_mut();
+                                    popup_state.select(Some(relative_row));
+                                    list_state.select(None); // Deselect checklist
+                                    match widget_id.0.as_str() {
+                                        "Tuneup" => match relative_row {
+                                            0 => self.log_message("Run Tuneup clicked"),
+                                            1 => self.log_message("View Logs clicked"),
+                                            _ => {},
+                                        },
+                                        "Qc" => match relative_row {
+                                            0 => self.log_message("Run QC clicked"),
+                                            1 => self.log_message("Check Status clicked"),
+                                            _ => {},
+                                        },
                                         _ => {},
-                                    },
-                                    "Qc" => match relative_row {
-                                        0 => self.log_message("Run QC clicked"),
-                                        1 => self.log_message("Check Status clicked"),
-                                        _ => {},
-                                    },
-                                    // Add more cases as needed
-                                    _ => {},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                
+                    // Checklist click handling
+                    if let Some(checklist_area) = *self.checklist_area.borrow() {
+                        if c >= checklist_area.x 
+                            && c < checklist_area.x + checklist_area.width 
+                            && r >= checklist_area.y 
+                            && r < checklist_area.y + checklist_area.height 
+                        {
+                            let content_start_y = checklist_area.y + 1; // Top border
+                            if r >= content_start_y {
+                                let relative_row = (r - content_start_y) as usize;
+                                let total_items = *self.total_items.borrow();
+                                if relative_row < total_items {
+                                    log::info!("Clicked checklist item {} at row {}", relative_row, r);
+                                    let mut list_state = self.list_state.borrow_mut();
+                                    let mut popup_state = self.popup_list_state.borrow_mut();
+                                    list_state.select(Some(relative_row));
+                                    popup_state.select(None); // Deselect popup
                                 }
                             }
                         }
                     }
                 }
-
                 self.tuneup_btn.handle_mouse_event(&mouse_event);
                 self.qc_btn.handle_mouse_event(&mouse_event);
                 self.prechecks_btn.handle_mouse_event(&mouse_event);
