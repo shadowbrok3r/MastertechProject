@@ -74,72 +74,18 @@ impl<'a> ScriptsTab<'a> {
         
         // Define checklists with categories
         checklists.insert(
-            "Informational".to_string(),
-            TodoList {
-                name: "Informational".to_string(),
-                state: ListState::default(),
-                items: vec![
-                    TodoItem::new("Is SuperEasyBackup installed?", Category::Informational)
-                        .set_pass_criteria("Installed and active")
-                        .set_warning_criteria("Not installed OR its not active")
-                        .set_error_criteria("Script Failed To Run"),
-                    TodoItem::new("Is Webroot installed?", Category::Informational)
-                        .set_pass_criteria("Installed and active")
-                        .set_warning_criteria("Not installed OR its not active")
-                        .set_error_criteria("Script Failed To Run"),
-                    TodoItem::new("Is SuperAntiSpyware installed?", Category::Informational)
-                        .set_pass_criteria("Installed and active")
-                        .set_warning_criteria("Not installed OR its not active")
-                        .set_error_criteria("Script Failed To Run"),
-                    TodoItem::new("Are there scheduled tasks for it?", Category::Informational),
-                    TodoItem::new("If Webroot/SAS not installed, what AV is active?", Category::Informational),
-                    TodoItem::new("Are there any pending Windows updates?", Category::Informational),
-                    TodoItem::new("Is Windows Activated?", Category::Informational),
-                    TodoItem::new("Is Sleep enabled?", Category::Informational),
-                    TodoItem::new("Is Hibernation enabled?", Category::Informational),
-                    TodoItem::new("Have there been any Blue Screens in the past 30 days?", Category::Informational),
-                    TodoItem::new("When Was The Last Service Date?", Category::Informational),
-                    TodoItem::new("Windows Version", Category::Informational)
-                        .set_pass_criteria("Windows 11")
-                        .set_warning_criteria("Windows 10")
-                        .set_error_criteria("Script Failed To Run"),
-                ],
-            },
-        );
-
-        checklists.insert(
             "Tuneup".to_string(),
             TodoList {
                 name: "Tuneup".to_string(),
                 state: ListState::default(),
                 items: vec![
                     TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup),
-                    TodoItem::new("Run Windows Updates", Category::Tuneup),
+                    TodoItem::new("Install Windows Updates", Category::Tuneup),
                     TodoItem::new("Activate CPS", Category::Tuneup),
                     TodoItem::new("Activate SEB", Category::Tuneup),
                     TodoItem::new("Run Tron", Category::Tuneup),
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
                     TodoItem::new("Run Junkware Category", Category::JunkwareRemoval),
-                ],
-            },
-        );
-
-        checklists.insert(
-            "Junkware Removal".to_string(),
-            TodoList {
-                name: "Junkware Removal".to_string(),
-                state: ListState::default(),
-                items: vec![
-                    TodoItem::new("One Launch", Category::JunkwareRemoval),
-                    TodoItem::new("WebNavigator Browser", Category::JunkwareRemoval),
-                    TodoItem::new("ESET Security", Category::JunkwareRemoval),
-                    TodoItem::new("Wavesor", Category::JunkwareRemoval),
-                    TodoItem::new("Clear Browser", Category::JunkwareRemoval),
-                    TodoItem::new("Shift Browser", Category::JunkwareRemoval),
-                    TodoItem::new("Avast Browser", Category::JunkwareRemoval),
-                    TodoItem::new("Mcaffee Safe", Category::JunkwareRemoval),
-                    TodoItem::new("Driver Support", Category::JunkwareRemoval),
-                    TodoItem::new("Winzip", Category::JunkwareRemoval),
                 ],
             },
         );
@@ -163,6 +109,59 @@ impl<'a> ScriptsTab<'a> {
             },
         );
 
+        checklists.insert(
+            "Junkware Removal".to_string(),
+            TodoList {
+                name: "Junkware Removal".to_string(),
+                state: ListState::default(),
+                items: vec![
+                    TodoItem::new("OneLaunch", Category::JunkwareRemoval),
+                    TodoItem::new("WebNavigator Browser", Category::JunkwareRemoval),
+                    // TodoItem::new("ESET Security", Category::JunkwareRemoval),
+                    TodoItem::new("Wavesor", Category::JunkwareRemoval),
+                    TodoItem::new("Clear Browser", Category::JunkwareRemoval),
+                    TodoItem::new("Shift Browser", Category::JunkwareRemoval),
+                    TodoItem::new("Avast Browser", Category::JunkwareRemoval),
+                    TodoItem::new("Mcaffee Safe", Category::JunkwareRemoval),
+                    TodoItem::new("Driver Support", Category::JunkwareRemoval),
+                    TodoItem::new("Winzip", Category::JunkwareRemoval),
+                ],
+            },
+        );
+        
+        checklists.insert(
+            "Informational".to_string(),
+            TodoList {
+                name: "Informational".to_string(),
+                state: ListState::default(),
+                items: vec![
+                    TodoItem::new("Is SuperEasyBackup installed?", Category::Informational)
+                        .set_pass_criteria("Installed and active")
+                        .set_warning_criteria("Not installed OR its not active")
+                        .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Is Webroot installed?", Category::Informational)
+                        .set_pass_criteria("Installed and active")
+                        .set_warning_criteria("Not installed OR its not active")
+                        .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Is SuperAntiSpyware installed?", Category::Informational)
+                        .set_pass_criteria("Installed and active")
+                        .set_warning_criteria("Not installed OR its not active")
+                        .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Are there scheduled tasks for it?", Category::Informational),
+                    TodoItem::new("If Webroot/SAS not installed, what AV is active?", Category::Informational),
+                    TodoItem::new("Are there any pending Windows updates?", Category::Informational),
+                    TodoItem::new("Is Windows Activated?", Category::Informational),
+                    TodoItem::new("Is Hibernation/Sleep enabled?", Category::Informational),
+                    TodoItem::new("Have there been any Blue Screens in the past 30 days?", Category::Informational),
+                    TodoItem::new("When Was The Last Service Date?", Category::Informational),
+                    TodoItem::new("Check Windows Updates", Category::Informational),
+                    TodoItem::new("Windows Version", Category::Informational)
+                        .set_pass_criteria("Windows 11")
+                        .set_warning_criteria("Windows 10")
+                        .set_error_criteria("Script Failed To Run"),
+                ],
+            },
+        );
         // Sync popup_items with checklists
         let mut popup_items = HashMap::new();
         popup_items.insert(
@@ -177,7 +176,7 @@ impl<'a> ScriptsTab<'a> {
             "WindowsUpdates".to_string(),
             vec![
                 TodoItem::new("Check Updates", Category::WindowsUpdates),
-                TodoItem::new("Install Now", Category::WindowsUpdates),
+                TodoItem::new("Install Windows Updates", Category::WindowsUpdates),
             ],
         );
         popup_items.insert(

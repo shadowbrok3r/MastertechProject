@@ -1,7 +1,7 @@
 use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AntiVirusProduct {
     #[serde(rename = "displayName")]
     pub display_name: String,

@@ -1,39 +1,12 @@
 use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
 use powershell_script::PsScriptBuilder;
+use serde::Deserialize;
 use sysinfo::Disks;
 use walkdir::WalkDir;
 use std::{collections::HashSet, path::{Path, PathBuf}};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
 
 impl <'a> ScriptsTab <'a> {
-    pub fn _run_prechecks(&mut self) {
-        self.log_message("Running system prechecks...");
-
-        // Check Startup Apps
-        // if let Ok(startup_apps) = StartupProgram::get_startup_programs() {
-        //     self.update_checklist("Actionable", "Disabling Startup Apps", 
-        //         !startup_apps.is_empty()
-        //     );
-        // }
-    
-        // // Check System Settings
-        // self.update_checklist("Informational", "Are there any pending Windows updates?", 
-        //     self.windows_updates.updates.len() > 0
-        // );
-    
-        // self.update_checklist("Informational", "Is Windows Activated?", 
-        //     _check_windows_activation()
-        // );
-    
-        // self.update_checklist("Informational", "Is Sleep enabled?", 
-        //     check_sleep_mode()
-        // );
-    
-
-    
-        self.log_message("Prechecks completed.");
-    }
-
     pub fn run_selected_scripts(&mut self) {
         let selected = self.get_selected_scripts();
         if selected.is_empty() {
@@ -42,364 +15,33 @@ impl <'a> ScriptsTab <'a> {
         }
 
         for item in selected {
-            let category = item.category().clone(); // Clone to own the value
+            let category = item.category().clone();
             self.current_script.replace(Some((category.clone(), item.text.clone())));
-            match item.category() {
-                Category::Tuneup => {
-                    self.current_reporter.replace(Reporter::Tuneup);
-                    self.log_message(&format!("Starting Tuneup script: {}", item.text));
-                    match item.text.as_str() {
-                        "Disable Sleep / Hibernation" => {
-                            // Add logic to disable sleep/hibernation
-                            self.log_message(
-                                format!("Disabling Sleep / Hibernation: {:?}", disable_hibernation_and_sleep())
-                            );
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Run Windows Updates" => {
-                            self.log_message("Running Windows Updates...");
-                            let tx = self.update_log_tx.clone();
-                            std::thread::spawn(move || {
-                                let _ = install_windows_updates(tx, false);
-                            });
-                            self.log_message("Windows Updates initiated.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Activate CPS" => {
-                            // Add CPS activation logic
-                            self.log_message("CPS activated.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Activate SEB" => {
-                            // Add SEB activation logic
-                            self.log_message("SEB activated.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Run Tron" => {
-                            // Add Tron execution logic
-                            self.log_message("Tron script completed.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Run SuperAntiSpyware Scan" => {
-                            // Add SAS scan logic
-                            self.log_message("SuperAntiSpyware scan completed.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Run Junkware Category" => {
-                            self.remove_junkware(Some(item.text.as_str()));
-                            self.log_message("Junkware category cleanup completed.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        _ => self.log_message(&format!("Unknown Tuneup script: {}", item.text)),
-                    }
-                }
-                Category::Qc => {
-                    self.current_reporter.replace(Reporter::Qc);
-                    self.log_message(&format!("Running QC check: {}", item.text));
-                    match item.text.as_str() {
-                        "Data Transfer" => {
-                            // Add data transfer logic
-                            self.log_message("Data transfer completed.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Install LibreOffice" => {
-                            // Add LibreOffice install logic
-                            self.log_message("LibreOffice installed.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Disable Sleep / Hibernation" => {
-                            // Add logic to disable sleep/hibernation
-                            self.log_message("Disabled Sleep / Hibernation for QC.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Disable proxy settings" => {
-                            // Add proxy disable logic
-                            self.log_message("Proxy settings disabled.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Disable Notifications" => {
-                            // Add notification disable logic
-                            self.log_message("Notifications disabled.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Change SuperAntiSpyware settings" => {
-                            // Add SAS settings logic
-                            self.log_message("SuperAntiSpyware settings updated.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Disable Startup Apps" => {
-                            // Add startup disable logic
-                            self.log_message("Startup apps disabled.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Unpin Copilot" => {
-                            // Add Copilot unpin logic
-                            self.log_message("Copilot unpinned.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        "Align Taskbar to left" => {
-                            // Add taskbar alignment logic
-                            self.log_message("Taskbar aligned to left.");
-                            self.update_checklist(category, &item.text, true);
-                        }
-                        _ => self.log_message(&format!("Unknown QC script: {}", item.text)),
-                    }
-                }
-                Category::WindowsUpdates => {
-                    self.current_reporter.replace(Reporter::WindowsUpdates);
-                    self.log_message(&format!("Running Windows Updates script: {}", item.text));
-                    match item.text.as_str() {
-                        "Check Updates" => {
-                            self.log_message("Checking for Windows updates...");
-                            let tx = self.update_log_tx.clone();
-                            std::thread::spawn(move || {
-                                let _ = install_windows_updates(tx, false);
-                            });
-                            self.update_checklist(category, &item.text, true);
-                            self.log_message("Windows update check finished.");
-                        }
-                        "Install Now" => {
-                            self.log_message("Installing Windows updates...");
-                            let tx = self.update_log_tx.clone();
-                            std::thread::spawn(move || {
-                                let _ = install_windows_updates(tx, true); // Assuming true installs
-                            });
-                            self.update_checklist(category, &item.text, true);
-                            self.log_message("Windows update installation initiated.");
-                        }
-                        _ => self.log_message(&format!("Unknown Windows Updates script: {}", item.text)),
-                    }
-                }
-                Category::RunPrechecks => {
-                    self.current_reporter.replace(Reporter::RunPrechecks);
-                    self.log_message(&format!("Running precheck: {}", item.text));
-                    match item.text.as_str() {
-                        "Run Prechecks" => {
-                            self.log_message("Running system prechecks...");
-                            let tx = self.path_size_tx.clone();
-                            std::thread::spawn(move || {
-                                let paths = get_data_transfer_candidates();
-                                match paths {
-                                    Ok(paths) => { let _ = tx.try_send(paths); },
-                                    Err(e) => log::info!("Error getting paths: {e:?}"),
-                                };
-                            });
+            log::info!("Set current script: {:?}", *self.current_script.borrow());
 
-                            match get_wlan_status() {
-                                Ok(_) => self.log_message("Wlan Status OK"),
-                                Err(e) => {
-                                    self.log_message(&format!("Wlan Status: {e:?}"));
-                                    self.update_checklist(category, &item.text, true);
-                                },
-                            }
-                            match check_network_adapters() {
-                                Ok(adapters) => self.log_message(&format!("Network Adapters => {adapters:?}")),
-                                Err(e) => self.log_message(&format!("Error getting Network Adapter list => {e:?}")),
-                            }
-                            match check_antivirus() {
-                                Ok(products) => self.log_message(&format!("Antivirus: {products:?}")),
-                                Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
-                            }
-                            match check_push_notifications() {
-                                Ok(status) => self.log_message(&format!("Push Notifications => {status}")),
-                                Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
-                            }
-                            match check_content_delivery_manager() {
-                                Ok(statuses) => {
-                                    for status in statuses.iter() {
-                                        self.log_message(&format!("ContentDelivery => {status}"))
-                                    }
-                                }
-                                Err(e) => self.log_message(&format!("ContentDelivery => {e:?}")),
-                            }
-                            match check_explorer_advanced() {
-                                Ok(status) => self.log_message(&format!("TaskBarAlignment => {status}")),
-                                Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
-                            }
-                            match get_installed_program_names() {
-                                Ok(x) => self.log_message(&format!("get_installed_program_names: {x:?}")),
-                                Err(e) => self.log_message(&format!("ERR(get_installed_program_names) => {e:?}")),
-                            }
-                            match scan_wifi_networks() {
-                                Ok(networks) => self.log_message(&format!("Wifi Networks: {networks:?}")),
-                                Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
-                            }
-                        }
-                        _ => self.log_message(&format!("Unknown Precheck script: {}", item.text)),
-                    }
-                }
-                Category::Informational => {
-                    self.current_reporter.replace(Reporter::Informational); // Assuming Reporter::Informational exists
-                    self.log_message(&format!("Fetching info: {}", item.text));
-                    
-                    /*  
-                        //  check for screenconnect
-                        get_running_processes()
-                        if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
-                            for program in &mut *programs {
-                                if let Some(name) = &program.publisher {
-                                    match name.as_str() {
-                                        "OneLaunch" => match program.uninstall() {
-                                            Ok(_) => self.log_message("Uninstalled OneLaunch"),
-                                            Err(e) => self.log_message(&format!("Error uninstalling OneLaunch: {e:?}")),
-                                        }
-                                        "WebNavigatorBrowser" => {}
-                                        "ESET Security" => {}
-                                        //ccleaner browser, SAS browser extension
-                                        "Wavesor" => {}
-                                        "Clear Browser" => {}
-                                        "Shift Browser" => {}
-                                        "Avast Browser" => {}
-                                        "Mcaffee Safe Search" => {}
-                                        "Driver Support" => {}
-                                        "Winzip" => {}
-                                        "SuperAntiSpyware" => self.update_checklist("Informational", "Is SuperAntiSpyware installed?", true),
-                                        "Webroot" => self.update_checklist("Informational", "Is Webroot installed?", true),
-                                        _ => {}
-                                    }
-                                }
-                            }
-                            self.update_checklist("Informational", "Is SuperEasyBackup installed?", 
-                                programs.iter().any(|p| p.display_name.as_deref() == Some("SuperEasyBackup"))
-                            );
-                        }
-                        // Check Antivirus Products
-                        if let Ok(av_products) = AntiVirusProduct::query_installed() {
-                            let active_avs: Vec<String> = av_products.iter()
-                                .filter(|av| av.decode_product_state().0)  // Check if AV is enabled
-                                .map(|av| av.display_name.clone())
-                                .collect();
-                            
-                            for av in av_products {
-                                self.log_message(&format!("AV: {av:#?}"));
-                            }
-                            self.update_checklist("Informational", "If Webroot/SAS not installed, what AV is active?", 
-                                !active_avs.is_empty()
-                            );
-                        }
-
-                        // Check Scheduled Tasks
-                        if let Ok(tasks) = ScheduledTask::list_tasks() {
-                            self.update_checklist("Informational", "Are there scheduled tasks for SuperAntiSpyware?", 
-                                tasks.iter().any(|t| t.task_name.as_deref() == Some("SuperAntiSpyware"))
-                            );
-                        }
-                    */
-                    match item.text.as_str() {
-                        "Is SuperEasyBackup installed?" => {
-                            match InstalledProgram::get_installed_programs() {
-                                Ok(programs) => {
-                                    let installed = programs.iter().any(|p| p.display_name.clone().unwrap_or_default().contains("SuperEasyBackup"));
-                                    self.log_message(&format!("SuperEasyBackup installed: {}", installed));
-                                }
-                                Err(err) => self.log_message(&format!("Failed to fetch installed programs: {}", err)),
-                            }
-                        }
-                        "Is Webroot installed?" => {
-                            match AntiVirusProduct::query_installed() {
-                                Ok(products) => {
-                                    self.antivirus_products = products;
-                                    let installed = self.antivirus_products.iter().any(|p| p.display_name.contains("Webroot"));
-                                    self.log_message(&format!("Webroot installed: {}", installed));
-                                }
-                                Err(err) => self.log_message(&format!("Failed to fetch antivirus products: {}", err)),
-                            }
-                        }
-                        "Is SuperAntiSpyware installed?" => {
-                            match InstalledProgram::get_installed_programs() {
-                                Ok(programs) => {
-                                    let installed = programs.iter().any(|p| p.display_name.clone().unwrap_or_default().contains("SuperAntiSpyware"));
-                                    self.log_message(&format!("SuperAntiSpyware installed: {}", installed));
-                                }
-                                Err(err) => self.log_message(&format!("Failed to fetch installed programs: {}", err)),
-                            }
-                        }
-                        "Are there scheduled tasks for it?" => {
-                            match ScheduledTask::list_tasks() {
-                                Ok(tasks) => {
-                                    self.scheduled_tasks = tasks;
-                                    self.log_message("Scheduled tasks retrieved successfully.");
-                                }
-                                Err(err) => self.log_message(&format!("Failed to fetch scheduled tasks: {}", err)),
-                            }
-                        }
-                        "If Webroot/SAS not installed, what AV is active?" => {
-                            match AntiVirusProduct::query_installed() {
-                                Ok(products) => {
-                                    self.antivirus_products = products;
-                                    self.log_message(&format!("Active AV: {:?}", self.antivirus_products));
-                                }
-                                Err(err) => self.log_message(&format!("Failed to fetch antivirus products: {}", err)),
-                            }
-                        }
-                        "Are there any pending Windows updates?" => {
-                            self.log_message("Checking for Windows updates...");
-                            let tx = self.update_log_tx.clone();
-                            std::thread::spawn(move || {
-                                let _ = install_windows_updates(tx, false);
-                            });
-                            self.log_message("Windows update check finished.");
-                        }
-                        "Is Windows Activated?" => {
-                            // Add Windows activation check logic
-                            self.log_message("Windows activation check not implemented.");
-                        }
-                        "Is Hibernation/Sleep enabled?" => {
-                            match check_power_options() {
-                                Ok(_) => {
-                                    self.update_checklist(
-                                        Category::Tuneup, 
-                                        &item.text, 
-                                        true
-                                    );
-                                    self.log_message("Hibernation is disabled");
-                                },
-                                Err(e) => self.log_message(e.to_string()),
-                            }
-                        }
-                        "Have there been any Blue Screens in the past 30 days?" => {
-                            // Add BSOD check logic
-                            self.log_message("BSOD check not implemented.");
-                        }
-                        "When Was The Last Service Date?" => {
-                            // Add service date logic
-                            self.log_message("Service date check not implemented.");
-                        }
-                        "Windows Version" => {
-                            // Add Windows version check logic
-                            self.log_message("Windows version check not implemented.");
-                        }
-                        _ => self.log_message(&format!("Unknown Informational script: {}", item.text)),
-                    }
-                }
-                Category::JunkwareRemoval => {
-                    self.current_reporter.replace(Reporter::JunkwareRemoval); // Assuming this exists
-                    match item.text.as_str() {
-                            "OneLaunch" 
-                            | "WebNavigator Browser" 
-                            | "Wavesor" 
-                            | "Clear Browser" 
-                            | "Shift Browser" 
-                            | "Avast Browser" 
-                            | "Mcaffee Safe" 
-                            | "Driver Support" 
-                            | "Winzip" => 
-                        {
-                            self.remove_junkware(Some(item.text.as_str()));
-                            self.log_message(&format!("Found junkware: {}", item.text));
-                        }
-                        _ => self.log_message(&format!("Unknown Junkware script: {}", item.text)),
-                    }
-                }
-                Category::Custom(name) => {
-                    self.log_message(&format!("Running custom script '{}': {}", name, item.text));
-                }
+            match category {
+                Category::Tuneup => self.handle_tuneup(item.text.as_str(), &category),
+                Category::Qc => self.handle_qc(item.text.as_str(), &category),
+                Category::WindowsUpdates => self.handle_windows_updates(item.text.as_str(), &category),
+                Category::RunPrechecks => self.handle_run_prechecks(item.text.as_str(), &category),
+                Category::Informational => self.handle_informational(item.text.as_str(), &category),
+                Category::JunkwareRemoval => self.handle_junkware_removal(item.text.as_str(), &category),
+                Category::Custom(ref name) => self.handle_custom(&name, item.text.as_str(), &category),
             }
-        }
 
-        // Clear the current script after running
-        self.current_script.replace(None);
-        
+            self.current_reporter.replace(match category {
+                Category::Tuneup => Reporter::Tuneup,
+                Category::Qc => Reporter::Qc,
+                Category::WindowsUpdates => Reporter::WindowsUpdates,
+                Category::RunPrechecks => Reporter::RunPrechecks,
+                Category::Informational => Reporter::Informational,
+                Category::JunkwareRemoval => Reporter::JunkwareRemoval,
+                Category::Custom(_) => Reporter::Unknown,
+            });
+
+            self.current_script.replace(None);
+            log::info!("Cleared current script");
+        }
         self.log_message("All selected scripts completed.");
     }
 
@@ -509,6 +151,426 @@ impl <'a> ScriptsTab <'a> {
             }
         }
     }
+
+    // Category-specific handlers
+    fn handle_tuneup(&mut self, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::Tuneup);
+        self.log_message(&format!("Starting Tuneup script: {}", item_text));
+        match item_text {
+            "Disable Sleep / Hibernation" => self.disable_sleep_hibernation(item_text, category),
+            "Install Windows Updates" => self.install_windows_updates(item_text, category),
+            "Activate CPS" => self.activate_cps(item_text, category),
+            "Activate SEB" => self.activate_seb(item_text, category),
+            "Run Tron" => self.run_tron(item_text, category),
+            "Run SuperAntiSpyware Scan" => self.run_superantispyware_scan(item_text, category),
+            "Run Junkware Category" => self.run_junkware_category(item_text, category),
+            _ => {
+                self.log_message(&format!("Unknown Tuneup script: {}", item_text));
+            }
+        }
+    }
+
+    fn handle_qc(&mut self, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::Qc);
+        self.log_message(&format!("Running QC check: {}", item_text));
+        match item_text {
+            "Data Transfer" => self.data_transfer(item_text, category),
+            "Install LibreOffice" => self.install_libreoffice(item_text, category),
+            "Disable Sleep / Hibernation" => self.disable_sleep_hibernation(item_text, category),
+            "Disable proxy settings" => self.disable_proxy_settings(item_text, category),
+            "Disable Notifications" => self.disable_notifications(item_text, category),
+            "Change SuperAntiSpyware settings" => self.change_superantispyware_settings(item_text, category),
+            "Disable Startup Apps" => self.disable_startup_apps(item_text, category),
+            "Unpin Copilot" => self.unpin_copilot(item_text, category),
+            "Align Taskbar to left" => self.align_taskbar_left(item_text, category),
+            _ => {
+                self.log_message(&format!("Unknown QC script: {}", item_text));
+            }
+        }
+    }
+
+    fn handle_windows_updates(&mut self, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::WindowsUpdates);
+        self.log_message(&format!("Running Windows Updates script: {}", item_text));
+        match item_text {
+            "Check Updates" => self.check_updates(item_text, category),
+            "Install Windows Updates" => self.install_windows_updates(item_text, category),
+            _ => {
+                self.log_message(&format!("Unknown Windows Updates script: {}", item_text));
+            }
+        }
+    }
+
+    fn handle_run_prechecks(&mut self, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::RunPrechecks);
+        self.log_message(&format!("Running precheck: {}", item_text));
+
+        match check_push_notifications() {
+            Ok(status) => self.log_message(&format!("Push Notifications => {status}")),
+            Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
+        }
+        match check_content_delivery_manager() {
+            Ok(statuses) => {
+                for status in statuses.iter() {
+                    self.log_message(&format!("ContentDelivery => {status}"))
+                }
+            }
+            Err(e) => self.log_message(&format!("ContentDelivery => {e:?}")),
+        }
+        match check_explorer_advanced() {
+            Ok(status) => self.log_message(&format!("TaskBarAlignment => {status}")),
+            Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
+        }
+        match get_wlan_status() {
+            Ok(_) => self.log_message("Wlan Status OK"),
+            Err(e) => {
+                self.log_message(&format!("Wlan Status: {e:?}"));
+                self.update_checklist(category.clone(), item_text, true);
+            },
+        }
+        match check_network_adapters() {
+            Ok(adapters) => self.log_message(&format!("Network Adapters => {adapters:?}")),
+            Err(e) => self.log_message(&format!("Error getting Network Adapter list => {e:?}")),
+        }
+        match scan_wifi_networks() {
+            Ok(networks) => self.log_message(&format!("Wifi Networks: {networks:?}")),
+            Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
+        }
+    }
+
+    fn handle_informational(&mut self, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::Informational);
+        self.log_message(&format!("Fetching info: {}", item_text));
+        match item_text {
+            "Is SuperEasyBackup installed?" => self.is_supereasybackup_installed(item_text, category),
+            "Is Webroot installed?" => self.is_webroot_installed(item_text, category),
+            "Is SuperAntiSpyware installed?" => self.is_superantispyware_installed(item_text, category),
+            "Are there scheduled tasks for it?" => self.are_scheduled_tasks_for_sas(item_text, category),
+            "If Webroot/SAS not installed, what AV is active?" => self.active_av_if_no_webroot_sas(item_text, category),
+            "Are there any pending Windows updates?" => self.are_pending_windows_updates(item_text, category),
+            "Is Windows Activated?" => self.is_windows_activated(item_text, category),
+            "Is Hibernation/Sleep enabled?" => self.is_hibernation_sleep_enabled(item_text, category),
+            "Have there been any Blue Screens in the past 30 days?" => self.recent_blue_screens(item_text, category),
+            "When Was The Last Service Date?" => self.last_service_date(item_text, category),
+            "Windows Version" => self.windows_version(item_text, category),
+            "Check Windows Updates" => self.check_updates(item_text, category),
+            _ => {
+                self.log_message(&format!("Unknown Informational script: {}", item_text));
+            }
+        }
+    }
+
+    fn handle_junkware_removal(&mut self, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::JunkwareRemoval);
+        self.log_message(&format!("Removing junkware: {}", item_text));
+        match item_text {
+            "OneLaunch" => self.remove_onelaunch(),
+            "WebNavigator Browser" => self.remove_webnavigator(),
+            "Wavesor" => self.remove_wavesor(),
+            "Clear Browser" => self.remove_clearbrowser(),
+            "Shift Browser" => self.remove_shiftbrowser(),
+            "Avast Browser" => self.remove_avastbrowser(),
+            "Mcaffee Safe" => self.remove_mcaffeesafe(),
+            "Driver Support" => self.remove_driversupport(),
+            "Winzip" => self.remove_winzip(),
+            _ => {
+                self.log_message(&format!("Unknown Junkware script: {}: {:?}", item_text, category));
+            }
+        }
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn handle_custom(&mut self, name: &str, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::Unknown);
+        self.log_message(&format!("Running custom script '{}': {} category: {:?}", name, item_text, category));
+    }
+
+    // Tuneup Items
+    fn disable_sleep_hibernation(&mut self, item_text: &str, category: &Category) {
+        match disable_hibernation_and_sleep() {
+            Ok(disabled) => {
+                if disabled {
+                    self.log_message(format!("Disabled Sleep / Hibernation"));
+                    self.update_checklist(category.clone(), item_text, disabled);
+                } else {
+                    self.log_message(format!("Sleep / Hibernation already disabled"));
+                }
+            }
+            Err(e) => self.log_message(format!("Sleep / Hibernation already disabled? {e:?}")),
+        }
+    }
+
+    fn install_windows_updates(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Running Windows Updates...");
+        let tx = self.update_log_tx.clone();
+        std::thread::spawn(move || {
+            let _ = install_windows_updates(tx, false, true);
+        });
+        self.log_message("Windows Updates initiated.");
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn activate_cps(&mut self, item_text: &str, category: &Category) {
+        self.log_message("CPS activation not implemented (requires SO number).");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn activate_seb(&mut self, item_text: &str, category: &Category) {
+        self.log_message("SEB activation not implemented (requires SO number or email).");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    fn run_tron(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Tron script not implemented yet.");
+        self.update_checklist(category.clone(), item_text, false);
+        
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn run_superantispyware_scan(&mut self, item_text: &str, category: &Category) {
+        self.log_message("SuperAntiSpyware scan not implemented.");  
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    fn run_junkware_category(&mut self, item_text: &str, category: &Category) {
+        self.remove_junkware(Some(item_text));
+        self.log_message("Junkware category cleanup completed.");
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    // Qc Items
+    fn data_transfer(&mut self, item_text: &str, category: &Category) {
+        match get_data_transfer_candidates() {
+            Ok(candidates) => {
+                self.log_message(format!("Data transfer candidates: {candidates:?}"));
+            },
+            Err(e) => self.log_message(format!("Failed to get data transfer candidates: {e:?}")),
+        }
+        // self.log_message("Data transfer completed.");
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    fn install_libreoffice(&mut self, item_text: &str, category: &Category) {
+        self.log_message("LibreOffice installation not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    fn disable_proxy_settings(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Proxy settings disable not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    fn disable_notifications(&mut self, item_text: &str, category: &Category) {
+        match check_push_notifications() {
+            Ok(status) => self.log_message(&format!("Push Notifications => {status}")),
+            Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
+        }
+        match check_content_delivery_manager() {
+            Ok(statuses) => {
+                for status in statuses.iter() {
+                    self.log_message(&format!("ContentDelivery => {status}"))
+                }
+            }
+            Err(e) => self.log_message(&format!("ContentDelivery => {e:?}")),
+        }
+        match check_explorer_advanced() {
+            Ok(status) => self.log_message(&format!("TaskBarAlignment => {status}")),
+            Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
+        }
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn change_superantispyware_settings(&mut self, item_text: &str, category: &Category) {
+        self.log_message("SuperAntiSpyware settings change not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn disable_startup_apps(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Startup apps disable not implemented."); 
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn unpin_copilot(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Copilot unpin not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn align_taskbar_left(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Taskbar alignment to left not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    // WindowsUpdates Items
+    fn check_updates(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Checking for Windows updates...");
+        let tx = self.update_log_tx.clone();
+        std::thread::spawn(move || {
+            let _ = install_windows_updates(tx, false, false); // Check only
+        });
+        self.log_message("Windows update check finished.");
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    // Informational Items
+    fn is_supereasybackup_installed(&mut self, item_text: &str, category: &Category) {
+        match InstalledProgram::get_installed_programs() {
+            Ok(programs) => {
+                let installed = programs.iter().any(|p| p.display_name.clone().unwrap_or_default().contains("SuperEasyBackup"));
+                self.log_message(&format!("SuperEasyBackup installed: {}", installed));
+            }
+            Err(err) => self.log_message(&format!("Failed to fetch installed programs: {}", err)),
+        }
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    fn is_webroot_installed(&mut self, item_text: &str, category: &Category) {
+        match AntiVirusProduct::query_installed() {
+            Ok(products) => {
+                log::info!("Products: {products:?}");
+                let mut wrsa = AntiVirusProduct::default();
+                let mut installed = false;
+                for product in products.iter() {
+                    if product.display_name.contains("Webroot") {
+                        wrsa = product.clone();
+                        installed = true;
+                    }
+                }
+                self.antivirus_products = products;
+
+                if !installed {
+                    self.log_message(&format!("Couldnt determine WRSA install, checking program list"));
+                } else {
+                    self.log_message(&format!("Webroot installed: {wrsa:?}"));
+                }
+                self.update_checklist(category.clone(), item_text, true);
+            }
+            Err(err) => self.log_message(&format!("Failed to fetch antivirus products: {}", err)),
+        }
+    }
+
+    fn is_superantispyware_installed(&mut self, item_text: &str, category: &Category) {
+        match InstalledProgram::get_installed_programs() {
+            Ok(programs) => {
+                log::info!("SuperAnti: {programs:?}");
+                let installed = programs.iter().any(|p| 
+                    p.display_name.clone().unwrap_or_default().contains("SUPERAntiSpyware")
+                    || p.publisher.clone().unwrap_or_default().contains("SUPERAntiSpyware")
+                );
+                self.update_checklist(category.clone(), item_text, true);
+                self.log_message(&format!("SuperAntiSpyware installed: {}", installed));
+            }
+            Err(err) => self.log_message(&format!("Failed to fetch installed programs: {}", err)),
+        }
+    }
+
+    fn are_scheduled_tasks_for_sas(&mut self, item_text: &str, category: &Category) {
+        match ScheduledTask::list_tasks() {
+            Ok(tasks) => {
+                let mut sas_task = ScheduledTask::default();
+                let mut active_task = false;
+                for task in tasks.iter() {
+                    active_task = task.task_name.clone().unwrap_or_default().contains("SUPERAntiSpyware");
+                    if active_task {
+                        sas_task = task.clone();
+                    }
+                }
+                self.scheduled_tasks = tasks;
+                self.update_checklist(category.clone(), item_text, active_task);
+                self.log_message(format!("Scheduled tasks for SAS: {sas_task:?}"));
+            }
+            Err(err) => self.log_message(&format!("Failed to fetch scheduled tasks: {}", err)),
+        }
+    }
+
+    fn active_av_if_no_webroot_sas(&mut self, item_text: &str, category: &Category) {
+        match AntiVirusProduct::query_installed() {
+            Ok(products) => {
+                self.antivirus_products = products;
+                self.update_checklist(category.clone(), item_text, true);
+                self.log_message(&format!("Active AV: {:?}", self.antivirus_products));
+            }
+            Err(err) => self.log_message(&format!("Failed to fetch antivirus products: {}", err)),
+        }
+        match check_antivirus() {
+            Ok(products) => self.log_message(&format!("Antivirus: {products:?}")),
+            Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
+        }
+    }
+
+    fn are_pending_windows_updates(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Checking for Windows updates...");
+        let tx = self.update_log_tx.clone();
+        std::thread::spawn(move || {
+            let _ = install_windows_updates(tx, false, false);
+        });
+        self.log_message("Windows update check finished.");
+        self.update_checklist(category.clone(), item_text, true);
+    }
+
+    fn is_windows_activated(&mut self, item_text: &str, category: &Category) {
+        let activation_result  = check_windows_activation();
+        match activation_result {
+            Ok(license_status) => {
+                if license_status.license_status == 1 {
+                    self.log_message(format!("Windows is active: {license_status:?}"));
+                } else {
+                    self.log_message(format!("Windows is not active: {license_status:?}"));
+                }
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(format!("Error running activation check: {e:?}")),
+        }
+    }
+
+    fn is_hibernation_sleep_enabled(&mut self, item_text: &str, category: &Category) {
+        match check_power_options() {
+            Ok(_) => {
+                self.update_checklist(
+                    category.clone(), 
+                    item_text, 
+                    true
+                );
+                self.log_message("Hibernation is disabled");
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(e.to_string()),
+        }
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn recent_blue_screens(&mut self, item_text: &str, category: &Category) {
+        self.log_message("BSOD check not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn last_service_date(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Service date check not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    /// TODO: NOT YET IMPLEMENTED
+    fn windows_version(&mut self, item_text: &str, category: &Category) {
+        self.log_message("Windows version check not implemented.");
+        self.update_checklist(category.clone(), item_text, false);
+    }
+
+    // JunkwareRemoval Items (assuming remove_junkware handles these)
+    fn remove_onelaunch(&mut self) { self.remove_junkware(Some("OneLaunch")); }
+    fn remove_webnavigator(&mut self) { self.remove_junkware(Some("WebNavigatorBrowser")); }
+    fn remove_wavesor(&mut self) { self.remove_junkware(Some("Wavesor")); }
+    fn remove_clearbrowser(&mut self) { self.remove_junkware(Some("ClearBrowser")); }
+    fn remove_shiftbrowser(&mut self) { self.remove_junkware(Some("ShiftBrowser")); }
+    fn remove_avastbrowser(&mut self) { self.remove_junkware(Some("AvastBrowser")); }
+    fn remove_mcaffeesafe(&mut self) { self.remove_junkware(Some("McaffeeSafe")); }
+    fn remove_driversupport(&mut self) { self.remove_junkware(Some("DriverSupport")); }
+    fn remove_winzip(&mut self) { self.remove_junkware(Some("Winzip")); }
 }
 
 fn get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
@@ -549,25 +611,32 @@ fn _check_program_running(process_name: &str) -> String {
     )
 }
 
-pub fn _check_windows_activation() -> bool {
+#[derive(Debug, Clone, Deserialize)]
+pub struct LicenseStatus {
+    #[serde(rename = "Description")]
+    pub description: String,
+    #[serde(rename = "LicenseStatus")]
+    pub license_status: i32
+}
+
+pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error> {
     let script = r#"
-        $status = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform").LicStatusArray
-        if ($status -eq 1) { "Activated" } else { "Not Activated" }
+        Get-CimInstance SoftwareLicensingProduct -Filter "Name like 'Windows%'" | 
+        where { $_.PartialProductKey } | select Description, LicenseStatus | ConvertTo-Json
     "#;
 
-    let ps = PsScriptBuilder::new()
+    let output = PsScriptBuilder::new()
         .no_profile(true)
         .non_interactive(true)
         .hidden(false)
         .print_commands(false)
-        .build();
+        .build()
+        .run(script)?;
 
-    match ps.run(script) {
-        Ok(output) => output.stdout().unwrap_or_default().trim() == "Activated",
-        Err(_) => false,  // Assume not activated if an error occurs
-    }
+    let result: LicenseStatus = serde_json::from_str(&output.stdout().unwrap_or_default())?;
+
+    Ok(result)
 }
-
 
 fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
     let ps_script = r#"
@@ -647,17 +716,19 @@ fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
         }
     "#;
 
-    let ps = PsScriptBuilder::new()
+    let output = PsScriptBuilder::new()
         .no_profile(true)
         .non_interactive(true)
         .hidden(true)
         .print_commands(false)
-        .build();
+        .build()
+        .run(ps_script)?;
 
-    let output = ps.run(ps_script)?;
-    Ok(!output.stdout().unwrap_or_default().trim().is_empty())
+    let stdout = output.stdout();
+    log::info!("disable_hibernation_and_sleep -> stdout: {stdout:?}");
+
+    Ok(!stdout.unwrap_or_default().trim().is_empty())
 }
-
 
 use windows::Storage::{UserDataPaths, SystemDataPaths};
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, anyhow::Error> {

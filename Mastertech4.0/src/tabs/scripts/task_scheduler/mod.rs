@@ -1,4 +1,4 @@
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct ScheduledTask {
     #[serde(rename = "CimClass")]
     pub cim_class: CimClass,
@@ -40,7 +40,7 @@ pub struct ScheduledTask {
     pub ps_computer_name: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct CimClass {
     #[serde(rename = "CimSuperClassName")]
     pub cim_super_class_name: Option<String>,
@@ -56,7 +56,7 @@ pub struct CimClass {
     pub cim_system_properties: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct CimSystemProperties {
     #[serde(rename = "Namespace")]
     pub namespace: Option<String>,
@@ -68,7 +68,7 @@ pub struct CimSystemProperties {
     pub path: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct Principal {
     #[serde(rename = "CimClass")]
     pub cim_class: Option<String>,
@@ -78,7 +78,7 @@ pub struct Principal {
     pub cim_system_properties: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct Settings {
     #[serde(rename = "CimClass")]
     pub cim_class: Option<String>,

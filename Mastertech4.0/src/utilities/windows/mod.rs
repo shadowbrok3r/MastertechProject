@@ -69,7 +69,7 @@ pub enum WindowsUpdateEvent {
     ReturnedUpdates(WindowsUpdates),
 }
 
-pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdown: bool) -> Result<()> {
+pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdown: bool, install: bool) -> Result<()> {
     let mut installed_updates = WindowsUpdates::default();
     
     unsafe {
@@ -119,11 +119,13 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdow
             "All updates found: {:#?}", installed_updates
         ))).ok();
 
-        let res = process_updates(&update_session, &updates_wu);
-        let res1 = process_updates(&update_session, &updates_mu);
-
-        event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Windows Updates Result: {res:?}"))).ok();
-        event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Microsoft Updates Result: {res1:?}"))).ok();
+        if install {
+            let res = process_updates(&update_session, &updates_wu);
+            let res1 = process_updates(&update_session, &updates_mu);
+    
+            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Windows Updates Result: {res:?}"))).ok();
+            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Microsoft Updates Result: {res1:?}"))).ok();
+        }
 
         drop(update_searcher);
         drop(update_session);
@@ -135,7 +137,6 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdow
 
     Ok(())
 }
-
 
 /*
 
