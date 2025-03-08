@@ -14,11 +14,6 @@ pub enum Reporter {
     Tuneup,
     Qc,
     WindowsUpdates,
-    GetAntivirus,
-    GetInstalledPrograms,
-    GetStartupItems,
-    GetScheduledTasks,
-    GetTaskbarItems,
     RunPrechecks,
     Informational,
     JunkwareRemoval,
@@ -114,10 +109,15 @@ impl<'a> ScriptsTab<'a> {
         let mut flat_index = 0;
 
         for list in self.checklists.values() {
-            checklist_items.push(ListItem::new(Line::styled(
-                format!("📌 {}", list.name),
-                Style::default().fg(CATPPUCCIN.sapphire).bold(),
-            )));
+            checklist_items.push(
+                ListItem::new(
+                Line::styled(
+                    format!("📌 {}", list.name),
+                    Style::default().fg(CATPPUCCIN.sapphire).bold(),
+                    )
+                )
+            );
+
             for item in &list.items {
                 let symbol = match item.status {
                     Status::Completed => "🗹", // ☒

@@ -9,8 +9,6 @@ impl <'a> ScriptsTab <'a> {
     pub fn _run_prechecks(&mut self) {
         self.log_message("Running system prechecks...");
 
-
-    
         // Check Startup Apps
         // if let Ok(startup_apps) = StartupProgram::get_startup_programs() {
         //     self.update_checklist("Actionable", "Disabling Startup Apps", 
@@ -53,7 +51,9 @@ impl <'a> ScriptsTab <'a> {
                     match item.text.as_str() {
                         "Disable Sleep / Hibernation" => {
                             // Add logic to disable sleep/hibernation
-                            self.log_message("Disabled Sleep / Hibernation.");
+                            self.log_message(
+                                format!("Disabling Sleep / Hibernation: {:?}", disable_hibernation_and_sleep())
+                            );
                             self.update_checklist(category, &item.text, true);
                         }
                         "Run Windows Updates" => {
@@ -86,7 +86,7 @@ impl <'a> ScriptsTab <'a> {
                             self.update_checklist(category, &item.text, true);
                         }
                         "Run Junkware Category" => {
-                            // Add junkware removal logic
+                            self.remove_junkware(Some(item.text.as_str()));
                             self.log_message("Junkware category cleanup completed.");
                             self.update_checklist(category, &item.text, true);
                         }
@@ -344,17 +344,18 @@ impl <'a> ScriptsTab <'a> {
                             // Add Windows activation check logic
                             self.log_message("Windows activation check not implemented.");
                         }
-                        "Is Sleep enabled?" => {
-                            // Add sleep check logic
-                            self.log_message("Sleep check not implemented.");
-                        }
-                        "Is Hibernation enabled?" => {
-                            self.update_checklist(
-                                Category::Tuneup, 
-                                &item.text, 
-                                check_hibernation_mode().unwrap_or(false)
-                            );
-                            self.log_message("Hibernation check not implemented.");
+                        "Is Hibernation/Sleep enabled?" => {
+                            match check_power_options() {
+                                Ok(_) => {
+                                    self.update_checklist(
+                                        Category::Tuneup, 
+                                        &item.text, 
+                                        true
+                                    );
+                                    self.log_message("Hibernation is disabled");
+                                },
+                                Err(e) => self.log_message(e.to_string()),
+                            }
                         }
                         "Have there been any Blue Screens in the past 30 days?" => {
                             // Add BSOD check logic
@@ -373,13 +374,19 @@ impl <'a> ScriptsTab <'a> {
                 }
                 Category::JunkwareRemoval => {
                     self.current_reporter.replace(Reporter::JunkwareRemoval); // Assuming this exists
-                    self.log_message(&format!("Removing junkware: {}", item.text));
                     match item.text.as_str() {
-                        "OneLaunch" | "WebNavigatorBrowser" | "ESET Security" | "Wavesor" |
-                        "ClearBrowser" | "ShiftBrowser" | "AvastBrowser" | "McaffeeSafe" |
-                        "DriverSupport" | "Winzip" => {
-                            // Add junkware removal logic
-                            self.log_message(&format!("Removed junkware: {}", item.text));
+                            "OneLaunch" 
+                            | "WebNavigator Browser" 
+                            | "Wavesor" 
+                            | "Clear Browser" 
+                            | "Shift Browser" 
+                            | "Avast Browser" 
+                            | "Mcaffee Safe" 
+                            | "Driver Support" 
+                            | "Winzip" => 
+                        {
+                            self.remove_junkware(Some(item.text.as_str()));
+                            self.log_message(&format!("Found junkware: {}", item.text));
                         }
                         _ => self.log_message(&format!("Unknown Junkware script: {}", item.text)),
                     }
@@ -394,6 +401,113 @@ impl <'a> ScriptsTab <'a> {
         self.current_script.replace(None);
         
         self.log_message("All selected scripts completed.");
+    }
+
+    fn remove_junkware(&mut self, item_text: Option<&str>) {
+        if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
+            for program in &mut *programs {
+                if let Some(publisher) = &program.publisher {
+                    if let Some(txt) = item_text {
+                        match txt {
+                            "OneLaunch" if publisher == "OneLaunch" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled OneLaunch"),
+                                Err(e) => self.log_message(&format!("Error uninstalling OneLaunch: {e:?}")),
+                            }
+                            "WebNavigator Browser" if publisher == "WebNavigator Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Web Navigator Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Web Navigator Browser: {e:?}")),
+                            }
+                            "ESET Security" if publisher == "ESET Security" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled ESET"),
+                                Err(e) => self.log_message(&format!("Error uninstalling ESET: {e:?}")),
+                            }
+                            "Wavesor" if publisher == "Wavesor" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Wave Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Wave Browser: {e:?}")),
+                            }
+                            "Clear Browser" if publisher == "Clear Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Clear Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Clear Browser: {e:?}")),
+                            }
+                            "Shift Browser" if publisher == "Shift Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Shift Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Shift Browser: {e:?}")),
+                            }
+                            "Avast Browser" if publisher == "Avast Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Avast Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Avast Browser: {e:?}")),
+                            }
+                            "Mcaffee Safe Search" if publisher == "Mcaffee Safe" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Mcaffee Safe Search"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Mcaffee Safe Search: {e:?}")),
+                            }
+                            "Driver Support" if publisher == "Driver Support" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Driver Support"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Driver Support: {e:?}")),
+                            }
+                            "Winzip" if publisher == "Winzip" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Winzip"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Winzip: {e:?}")),
+                            }
+                            "SuperAntiSpyware" => {
+                                self.update_checklist(Category::Informational, "Is SuperAntiSpyware installed?", true);
+                            }
+                            "Webroot" => {
+                                self.update_checklist(Category::Informational, "Is Webroot installed?", true);
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        //ccleaner browser, SAS browser extension
+                        match publisher.as_str() {
+                            "OneLaunch" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled OneLaunch"),
+                                Err(e) => self.log_message(&format!("Error uninstalling OneLaunch: {e:?}")),
+                            }
+                            "WebNavigator Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Web Navigator Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Web Navigator Browser: {e:?}")),
+                            }
+                            "ESET Security" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled ESET"),
+                                Err(e) => self.log_message(&format!("Error uninstalling ESET: {e:?}")),
+                            }
+                            "Wavesor" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Wave Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Wave Browser: {e:?}")),
+                            }
+                            "Clear Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Clear Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Clear Browser: {e:?}")),
+                            }
+                            "Shift Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Shift Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Shift Browser: {e:?}")),
+                            }
+                            "Avast Browser" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Avast Browser"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Avast Browser: {e:?}")),
+                            }
+                            "Mcaffee Safe Search" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Mcaffee Safe Search"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Mcaffee Safe Search: {e:?}")),
+                            }
+                            "Driver Support" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Driver Support"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Driver Support: {e:?}")),
+                            }
+                            "Winzip" => match program.uninstall() {
+                                Ok(_) => self.log_message("Uninstalled Winzip"),
+                                Err(e) => self.log_message(&format!("Error uninstalling Winzip: {e:?}")),
+                            }
+                            "SuperAntiSpyware" =>  self.update_checklist(Category::Tuneup, "Is SuperAntiSpyware installed?", true),
+                            "Webroot" => self.update_checklist(Category::Tuneup, "Is Webroot installed?", true),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -455,8 +569,83 @@ pub fn _check_windows_activation() -> bool {
 }
 
 
-fn check_hibernation_mode() -> anyhow::Result<bool, anyhow::Error> {
-    let ps_script = r#"powercfg -query | Select-String "HIBERNATE""#;
+fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
+    let ps_script = r#"
+        # Define GUIDs and aliases for power settings
+        $settings = @(
+            @{
+                Name = "Turn off display after"
+                SubgroupGUID = "7516b95f-f776-4464-8c53-06167f40cc99"  # SUB_VIDEO
+                SettingGUID = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e"   # VIDEOIDLE
+                Units = "Seconds"
+            },
+            @{
+                Name = "Sleep after"
+                SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+                SettingGUID = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"   # STANDBYIDLE
+                Units = "Seconds"
+            },
+            @{
+                Name = "Allow hybrid sleep"
+                SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+                SettingGUID = "94ac6d29-73ce-41a6-809f-6363ba21b47e"   # HYBRIDSLEEP
+                Units = "On/Off"
+            },
+            @{
+                Name = "Hibernate after"
+                SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+                SettingGUID = "9d7815a6-7ee4-497e-8888-515a05f02364"   # HIBERNATEIDLE
+                Units = "Seconds"
+            }
+        )
+
+        # Function to convert hex value to decimal (for seconds) or interpret as On/Off
+        function Convert-PowerSettingValue {
+            param (
+                [string]$HexValue,
+                [string]$Units
+            )
+            if ($Units -eq "Seconds") {
+                [uint32]("0x" + $HexValue)
+            } elseif ($Units -eq "On/Off") {
+                if ($HexValue -eq "0x00000000") { "Off" } else { "On" }
+            }
+        }
+
+        # Function to check if any setting is enabled
+        function Check-PowerSettingsEnabled {
+            $anyEnabled = $false
+            foreach ($setting in $settings) {
+                # Query current AC and DC settings
+                $acResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current AC Power Setting Index: (0x[0-9a-fA-F]+)"
+                $dcResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current DC Power Setting Index: (0x[0-9a-fA-F]+)"
+                
+                $acValue = if ($acResult) { $acResult.Matches.Groups[1].Value } else { "0x00000000" }
+                $dcValue = if ($dcResult) { $dcResult.Matches.Groups[1].Value } else { "0x00000000" }
+                
+                $acConverted = Convert-PowerSettingValue -HexValue $acValue -Units $setting.Units
+                $dcConverted = Convert-PowerSettingValue -HexValue $dcValue -Units $setting.Units
+
+                Write-Host "$($setting.Name): AC = $acConverted, DC = $dcConverted"
+
+                # Check if enabled (non-zero for Seconds, "On" for On/Off)
+                if (($setting.Units -eq "Seconds" -and ($acConverted -gt 0 -or $dcConverted -gt 0)) -or 
+                    ($setting.Units -eq "On/Off" -and ($acConverted -eq "On" -or $dcConverted -eq "On"))) {
+                    $anyEnabled = $true
+                }
+            }
+            return $anyEnabled
+        }
+
+
+        # Main logic
+        Write-Host "Checking power settings..."
+        $enabled = Check-PowerSettingsEnabled
+
+        if ($enabled) {
+            Write-Host "One or more power settings are enabled. Disabling all..."
+        }
+    "#;
 
     let ps = PsScriptBuilder::new()
         .no_profile(true)
@@ -608,3 +797,90 @@ pub fn _sfc_scan() -> anyhow::Result<(), anyhow::Error> {
 
     Ok(())
 }
+
+pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {
+
+    let ps = PsScriptBuilder::new()
+        .no_profile(true)
+        .non_interactive(true)
+        .hidden(true)
+        .print_commands(false)
+        .build();
+
+    let output = ps.run(CHECK_POWER_OPTIONS)?;
+    log::info!("output.stdout(): {:?}", output.stdout());
+    Ok(())
+}
+
+pub const CHECK_POWER_OPTIONS: &str = r#"
+# Define GUIDs and aliases for power settings
+$settings = @(
+    @{
+        Name = "Turn off display after"
+        SubgroupGUID = "7516b95f-f776-4464-8c53-06167f40cc99"  # SUB_VIDEO
+        SettingGUID = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e"   # VIDEOIDLE
+        Units = "Seconds"
+    },
+    @{
+        Name = "Sleep after"
+        SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+        SettingGUID = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"   # STANDBYIDLE
+        Units = "Seconds"
+    },
+    @{
+        Name = "Allow hybrid sleep"
+        SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+        SettingGUID = "94ac6d29-73ce-41a6-809f-6363ba21b47e"   # HYBRIDSLEEP
+        Units = "On/Off"
+    },
+    @{
+        Name = "Hibernate after"
+        SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+        SettingGUID = "9d7815a6-7ee4-497e-8888-515a05f02364"   # HIBERNATEIDLE
+        Units = "Seconds"
+    }
+)
+
+# Function to convert hex value to decimal (for seconds) or interpret as On/Off
+function Convert-PowerSettingValue {
+    param (
+        [string]$HexValue,
+        [string]$Units
+    )
+    if ($Units -eq "Seconds") {
+        [uint32]("0x" + $HexValue)
+    } elseif ($Units -eq "On/Off") {
+        if ($HexValue -eq "0x00000000") { "Off" } else { "On" }
+    }
+}
+
+# Function to check if any setting is enabled
+function Check-PowerSettingsEnabled {
+    $anyEnabled = $false
+    foreach ($setting in $settings) {
+        # Query current AC and DC settings
+        $acResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current AC Power Setting Index: (0x[0-9a-fA-F]+)"
+        $dcResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current DC Power Setting Index: (0x[0-9a-fA-F]+)"
+        
+        $acValue = if ($acResult) { $acResult.Matches.Groups[1].Value } else { "0x00000000" }
+        $dcValue = if ($dcResult) { $dcResult.Matches.Groups[1].Value } else { "0x00000000" }
+        
+        $acConverted = Convert-PowerSettingValue -HexValue $acValue -Units $setting.Units
+        $dcConverted = Convert-PowerSettingValue -HexValue $dcValue -Units $setting.Units
+
+        Write-Host "$($setting.Name): AC = $acConverted, DC = $dcConverted"
+
+        # Check if enabled (non-zero for Seconds, "On" for On/Off)
+        if (($setting.Units -eq "Seconds" -and ($acConverted -gt 0 -or $dcConverted -gt 0)) -or 
+            ($setting.Units -eq "On/Off" -and ($acConverted -eq "On" -or $dcConverted -eq "On"))) {
+            $anyEnabled = $true
+        }
+    }
+    return $anyEnabled
+}
+
+
+# Main logic
+Write-Host "Checking power settings..."
+Write-output Check-PowerSettingsEnabled
+"#;

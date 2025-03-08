@@ -120,7 +120,10 @@ impl InstalledProgram {
 
     pub fn uninstall(&self) -> anyhow::Result<(), anyhow::Error> {
         if let (Some(command), Some(display_name)) = (&self.uninstall_string, &self.display_name) {
+            if command.contains("MsiExec /I") {
 
+            }
+            
             // try this for inno setups
             let script = format!(r#"& {command} /silent /verysilent /suppressmsgboxes /norestart"#);
             log::info!("Uninstalling program: {display_name}\nUninstall String: {command}\n{script}");
