@@ -48,14 +48,16 @@ pub fn selected_category(
         });
 
         let cell_idx_offset = area.width as usize;
-        (area.y + 1..area.bottom() - 1).enumerate().for_each(|(i, y)| {
-            update_cell((area.right() - 1, y), idx + i + cell_idx_offset);
-        });
-
-        let cell_idx_offset = cell_idx_offset + area.height.saturating_sub(2) as usize;
-        (area.x..area.right()).rev().enumerate().for_each(|(i, x)| {
-            update_cell((x, area.bottom() - 1), idx + i + cell_idx_offset);
-        });
+        if area.bottom() > 0 && area.right() > 0 {
+            (area.y + 1..area.bottom() - 1).enumerate().for_each(|(i, y)| {
+                update_cell((area.right() - 1, y), idx + i + cell_idx_offset);
+            });
+        
+            let cell_idx_offset = cell_idx_offset + area.height.saturating_sub(2) as usize;
+            (area.x..area.right()).rev().enumerate().for_each(|(i, x)| {
+                update_cell((x, area.bottom() - 1), idx + i + cell_idx_offset);
+            });
+        }
 
         let cell_idx_offset = cell_idx_offset + area.width as usize;
         (area.y + 1..area.bottom()).rev().enumerate().for_each(|(i, y)| {

@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask /*StartupProgram, TaskbarItem*/}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
 use powershell_script::PsScriptBuilder;
 use serde::Deserialize;
 use sysinfo::Disks;
@@ -342,12 +342,15 @@ impl <'a> ScriptsTab <'a> {
 
     // Qc Items
     fn data_transfer(&mut self, item_text: &str, category: &Category) {
-        match get_data_transfer_candidates() {
-            Ok(candidates) => {
-                self.log_message(format!("Data transfer candidates: {candidates:?}"));
-            },
-            Err(e) => self.log_message(format!("Failed to get data transfer candidates: {e:?}")),
-        }
+        log::info!("Finding Data transfer candidates");
+        let tx = self.path_size_tx.clone();
+        std::thread::spawn(move || {
+            let paths = get_data_transfer_candidates();
+            match paths {
+                Ok(paths) => { let _ = tx.try_send(paths); },
+                Err(e) => log::info!("Error getting paths: {e:?}"),
+            };
+        });
         // self.log_message("Data transfer completed.");
         self.update_checklist(category.clone(), item_text, true);
     }
