@@ -1,4 +1,5 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
+use tui_popup::{Popup, SizedWrapper};
 use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use tui_scrollview::ScrollView;
@@ -189,6 +190,69 @@ impl<'a> ScriptsTab<'a> {
         );
     }
     
+    fn draw_data_path_buttons<B: Backend>(&self, f: &mut Frame, area: Rect) {
+        let popup_title = "Data Transfer Options";
+        let popup_text = "Please choose a destination for the data transfer, and right click on a path to exclude it from the data transfer";
+
+        // Calculate button grid dimensions
+        let button_count = self.data_path_buttons.len();
+        let rows = (button_count + 1) / 2; // 2 columns
+        let popup_width = 60; // Fixed width, adjust as needed
+        let popup_height = rows as u16 + 4; // Rows + title + text + padding
+
+        // Center the popup in the provided area
+        let popup_area = Rect::new(
+            (area.width.saturating_sub(popup_width)) / 2 + area.x,
+            (area.height.saturating_sub(popup_height)) / 2 + area.y,
+            popup_width.min(area.width),
+            popup_height.min(area.height),
+        );
+
+        // Create a centered block as the container
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(popup_title)
+            .title_alignment(Alignment::Center)
+            .style(Style::default().fg(CATPPUCCIN.peach).bg(CATPPUCCIN.base));
+        f.render_widget(block, popup_area);
+
+        // Define inner area for content
+        let inner_area = popup_area.inner(Margin { horizontal: 1, vertical: 1 });
+
+        // Split inner area: text at top, buttons below
+        let content_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Text (no title here since block handles it)
+                Constraint::Min(1),   // Buttons
+            ])
+            .split(inner_area);
+
+        // Render the instructional text
+        let text_block = Paragraph::new(popup_text)
+            .wrap(Wrap { trim: false })
+            .alignment(Alignment::Center);
+        f.render_widget(text_block, content_chunks[0]);
+
+        // Button grid within the lower chunk
+        let button_area = content_chunks[1];
+        let button_grid = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Length(3); rows])
+            .split(button_area);
+
+        for (i, button) in self.data_path_buttons.iter().enumerate() {
+            let row = i / 2;
+            let col = i % 2;
+            let col_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(button_grid[row]);
+            f.render_widget(button, col_chunks[col].shrink(2, 1));
+        }
+    }
+
     fn render_popup(&self, f: &mut Frame) {
         if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
             let items = self.popup_items.borrow();
@@ -446,6 +510,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         // Render popup if active
         self.render_popup(f);
+
+        // Check if data_path_buttons has items and draw popup
+        if !self.data_path_buttons.is_empty() {
+            self.draw_data_path_buttons::<B>(f, area);
+        }
     }
     
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {

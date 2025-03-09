@@ -31,7 +31,8 @@ pub struct ScriptsTab<'a> {
     update_log_rx: Receiver<WindowsUpdateEvent>,
     path_size_tx: Sender<Vec<(String, String)>>,
     path_size_rx: Receiver<Vec<(String, String)>>,
-
+    data_path_buttons: Vec<Button<'a>>,
+    
     /// Antivirus tab
     antivirus_products: Vec<AntiVirusProduct>,
     /// Installed Programs tab
@@ -226,6 +227,7 @@ impl<'a> ScriptsTab<'a> {
             popup_list_state: RefCell::new(ListState::default()),
             popup_items: RefCell::new(popup_items),
             current_script: RefCell::new(None),
+            data_path_buttons: Vec::new(),
             
         }
     }
@@ -241,10 +243,15 @@ impl<'a> ScriptsTab<'a> {
     }
 
     pub fn receive(&mut self) {
-
         if let Ok(path_info) = self.path_size_rx.try_recv() {
             for (path, size) in path_info {
-                self.log_message(&format!("Path {path:<10} Size: {size:>10}"));
+                self.log_message(&format!("Path {:<10} Size: {:>10}", path.clone(), size.clone()));
+                self.data_path_buttons.push(
+                    Button::new(
+                        format!("{} / {}", path.clone(), size.clone()), 
+                        WidgetId(path)
+                    )
+                );
             }
         }
 

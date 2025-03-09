@@ -4,7 +4,7 @@ use ratatui::{
 };
 use tachyonfx::{CellFilter, Effect};
 use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE};
-use std::{cell::RefCell, fmt::Debug};
+use std::{cell::RefCell, fmt::{Debug, Display}};
 use super::{ButtonType, SHORTCUT_SET};
 
 
@@ -53,24 +53,19 @@ pub struct Theme {
 }
 
 impl<'a> Button<'a> {
-    pub fn new(label: &'a str, id: WidgetId) -> Self {
+    pub fn new(label: impl Display, id: WidgetId) -> Self {
         Button {
             id,
             title: label.to_string(),
-            label: Line::raw(label),
+            label: Line::raw(label.to_string()),
             theme: TURQUOISE,
             state: RefCell::new(ButtonState::Normal),
             area: RefCell::new(None),
-            // on_click: Arc::new(RefCell::new(None)),
             effect_stage: RefCell::new(EffectStage::default()),
             init: RefCell::new(true),
-            event_sender: get_event_sender()
+            event_sender: get_event_sender() // on_click: Arc::new(RefCell::new(None)),
         }
     }
-
-    // pub fn id(&self) -> &WidgetId {
-    //     &self.id
-    // }
 
     pub const fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
