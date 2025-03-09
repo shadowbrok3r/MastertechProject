@@ -67,6 +67,10 @@ impl<'a> Button<'a> {
         }
     }
 
+    pub fn get_widget_id(&self) -> WidgetId {
+        self.id.clone()
+    }
+
     pub const fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self

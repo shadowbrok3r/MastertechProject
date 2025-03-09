@@ -53,18 +53,43 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         self.popup_list_state.borrow_mut().select(None);
                     }
                 }
-                
-                match widget_id.0.as_str() {
-                    "Run" => {
-                        self.run_selected_scripts();
-                    }
+                let id = widget_id.0.as_str();
+                match id {
+                    "Run" => self.run_selected_scripts(),
                     "Tuneup" => {}
                     "Qc" => {}
                     "WindowsUpdates" => {}
                     "RunPrechecks" => {}
                     "Informational" => {}
                     // Clear popup if click is outside any button
-                    _ => {self.active_popup.replace(None);}
+                    _ => {
+                        let mut is_open = self.is_popup_open.borrow_mut();
+                        for btn in self.data_path_buttons.iter() {
+                            let btn_widget_id = btn.get_widget_id().clone();
+                            let btn_id = btn_widget_id.0.as_str();
+                            if btn_id.eq(id) {
+                                let destination = self
+                                    .source_directories
+                                    .iter()
+                                    .filter(|(path, _size)| path.eq(btn_id))
+                                    .collect::<Vec<&(String, String)>>();
+
+                                self.log_message(format!("destination dir: {destination:?}"));
+
+                                let sources = self
+                                    .source_directories
+                                    .iter()
+                                    .filter(|(path, _size)| !path.eq(btn_id))
+                                    .collect::<Vec<&(String, String)>>();
+
+                                self.log_message(format!("sources: {sources:?}"));
+
+                                *is_open = false;
+                            }
+                        }
+
+                        self.active_popup.replace(None);
+                    }
                 }
             }
             WidgetEvent::Api(_) => {},
