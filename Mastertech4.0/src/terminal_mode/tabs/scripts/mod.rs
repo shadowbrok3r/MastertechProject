@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK}, widgets::button::Button}, utilities::windows::{WindowsUpdateEvent, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::button::Button}, utilities::windows::{WindowsUpdateEvent, WindowsUpdates}};
 use ratatui::{layout::Rect, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Category, Status, TodoItem, TodoList};
@@ -63,14 +63,17 @@ pub struct ScriptsTab<'a> {
     /// Tracks popup selection
     popup_list_state: RefCell<ListState>,
     popup_items: RefCell<HashMap<String, Vec<TodoItem>>>,
-    current_script: RefCell<Option<(Category, String)>>, // (category, text) of the running script
+    /// (category, text) of the running script
+    current_script: RefCell<Option<(Category, String)>>, 
+    is_popup_open: RefCell<bool>,
+    destination_directory: String,
+    source_directories: Vec<(String, String)>
 }
 
 impl<'a> ScriptsTab<'a> {
     pub fn new() -> Self {
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
-
         let mut checklists = HashMap::new();
         
         // Define checklists with categories
@@ -228,6 +231,9 @@ impl<'a> ScriptsTab<'a> {
             popup_items: RefCell::new(popup_items),
             current_script: RefCell::new(None),
             data_path_buttons: Vec::new(),
+            is_popup_open: RefCell::new(false),
+            destination_directory: String::new(),
+            source_directories: Vec::new(),
             
         }
     }
@@ -244,6 +250,8 @@ impl<'a> ScriptsTab<'a> {
 
     pub fn receive(&mut self) {
         if let Ok(path_info) = self.path_size_rx.try_recv() {
+            self.source_directories = path_info.clone();
+            self.data_path_buttons.clear();
             for (path, size) in path_info {
                 self.log_message(&format!("Path {:<10} Size: {:>10}", path.clone(), size.clone()));
                 self.data_path_buttons.push(
@@ -251,8 +259,10 @@ impl<'a> ScriptsTab<'a> {
                         format!("{} / {}", path.clone(), size.clone()), 
                         WidgetId(path)
                     )
+                    .theme(CYAN)
                 );
             }
+            self.is_popup_open.replace(true);
         }
 
         // listen for Windows Update logs & results
@@ -276,14 +286,4 @@ impl<'a> ScriptsTab<'a> {
             })
             .collect()
     }
-
-    // fn run_selected_scripts(&self) {
-    //     let selected = self.get_selected_scripts();
-    //     for item in selected {
-    //         log::info!("Running script: {}", item.text);
-    //         // TODO: Implement actual script execution logic here
-    //         // After execution, update corresponding checklist item:
-    //         // if let Some(checklist) = self.checklists.get_mut(/* category map */), then checklist.items[...]
-    //     }
-    // }  
 }
