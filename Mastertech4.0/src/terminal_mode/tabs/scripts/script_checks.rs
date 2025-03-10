@@ -1,10 +1,10 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask /*StartupProgram, TaskbarItem*/}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use super::{checklist::Category, render::Reporter, ScriptsTab};
+use std::{collections::HashSet, path::{Path, PathBuf}};
 use powershell_script::PsScriptBuilder;
 use serde::Deserialize;
-use sysinfo::Disks;
 use walkdir::WalkDir;
-use std::{collections::HashSet, path::{Path, PathBuf}};
-use super::{checklist::Category, render::Reporter, ScriptsTab};
+use sysinfo::Disks;
 
 impl <'a> ScriptsTab <'a> {
     pub fn run_selected_scripts(&mut self) {
@@ -393,7 +393,12 @@ impl <'a> ScriptsTab <'a> {
 
     /// TODO: NOT YET IMPLEMENTED
     fn disable_startup_apps(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Startup apps disable not implemented."); 
+        if let Ok(programs) = StartupProgram::get_startup_programs() {
+            for program in programs {
+                // let p = program.
+                self.log_message(format!("startup program -> {program:?}")); 
+            }
+        }
         self.update_checklist(category.clone(), item_text, false);
     }
 

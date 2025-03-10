@@ -1,4 +1,5 @@
 use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::button::Button}, utilities::windows::{WindowsUpdateEvent, WindowsUpdates}};
+use egui::output;
 use ratatui::{layout::Rect, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Category, Status, TodoItem, TodoList};
@@ -67,13 +68,17 @@ pub struct ScriptsTab<'a> {
     current_script: RefCell<Option<(Category, String)>>, 
     is_popup_open: RefCell<bool>,
     destination_directory: String,
-    source_directories: Vec<(String, String)>
+    data_transfer_progress_tx: Sender<Vec<u8>>,
+    data_transfer_progress_rx: Receiver<Vec<u8>>,
+    source_directories: Vec<(String, String)>,
+    progress: RefCell<Option<(f64, f64)>>
 }
 
 impl<'a> ScriptsTab<'a> {
     pub fn new() -> Self {
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
+        let (data_transfer_progress_tx, data_transfer_progress_rx) = crossbeam::channel::unbounded();
         let mut checklists = HashMap::new();
         
         // Define checklists with categories
@@ -214,6 +219,8 @@ impl<'a> ScriptsTab<'a> {
             update_log_rx,
             path_size_tx, 
             path_size_rx,
+            data_transfer_progress_tx, 
+            data_transfer_progress_rx,
 
             checklists,
             windows_updates: WindowsUpdates::default(),
@@ -234,6 +241,7 @@ impl<'a> ScriptsTab<'a> {
             is_popup_open: RefCell::new(false),
             destination_directory: String::new(),
             source_directories: Vec::new(),
+            progress: RefCell::new(None),
             
         }
     }
@@ -263,6 +271,15 @@ impl<'a> ScriptsTab<'a> {
                 );
             }
             self.is_popup_open.replace(true);
+        }
+
+        if let Ok(data_transfer_progress) = self.data_transfer_progress_rx.try_recv() {
+            let out = String::from_utf8(data_transfer_progress);
+            log::info!("Robocopy Output: {out:?}");
+            match out {
+                Ok(output) => self.log_message(output),
+                Err(e) => self.log_message(format!("FromUTF8 Err: {e:?}")),
+            }
         }
 
         // listen for Windows Update logs & results

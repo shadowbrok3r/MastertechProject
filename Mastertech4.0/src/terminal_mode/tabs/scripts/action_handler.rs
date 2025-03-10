@@ -1,8 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{path::PathBuf, sync::{Arc, Mutex}};
 
 use ratatui::layout::Rect;
 
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, WidgetEvent}, widgets::ButtonType};
+use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, WidgetButton, WidgetEvent}, widgets::ButtonType}};
 use super::ScriptsTab;
 
 impl<'a> ActionHandler for ScriptsTab<'a> {
@@ -11,7 +11,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
             WidgetEvent::ButtonClick { widget_id , button} => {
                 log::info!("Button: {button:?}\nwidget: {widget_id:?}");
                 // Show popup to the right of the clicked button
-                let button = match widget_id.0.as_str() {
+                let widget_button = match widget_id.0.as_str() {
                     "Tuneup" => Some(&self.tuneup_btn),
                     "Qc" => Some(&self.qc_btn),
                     "WindowsUpdates" => Some(&self.updates_btn),
@@ -20,7 +20,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     _ => None,
                 };
 
-                if let Some(btn) = button {
+                if let Some(btn) = widget_button {
                     if let (Some(button_area), Some(frame_area)) = (btn.get_area(), *self.frame_area.borrow()) {
                         let popup_items = self.popup_items.borrow();
                         let items = popup_items.get(&widget_id.0);
@@ -61,34 +61,62 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "WindowsUpdates" => {}
                     "RunPrechecks" => {}
                     "Informational" => {}
-                    // Clear popup if click is outside any button
                     _ => {
-                        let mut is_open = self.is_popup_open.borrow_mut();
-                        for btn in self.data_path_buttons.iter() {
-                            let btn_widget_id = btn.get_widget_id().clone();
-                            let btn_id = btn_widget_id.0.as_str();
-                            if btn_id.eq(id) {
-                                let destination = self
-                                    .source_directories
-                                    .iter()
-                                    .filter(|(path, _size)| path.eq(btn_id))
-                                    .collect::<Vec<&(String, String)>>();
+                        if WidgetButton::Right == *button {
+                            for btn in self.data_path_buttons.iter() {
+                                let btn_widget_id = btn.get_widget_id().clone();
+                                let btn_id = btn_widget_id.0.as_str();
+                                if btn_id.eq(id) {
+                                    let pre_source = self.source_directories.clone();
+                                    self.source_directories.retain(|(path, _size)| !path.eq(btn_id));
+                                    self.log_message(format!("sources before: {:?}\nAfter: {:?}", pre_source, self.source_directories));
+                                }
+                            } 
+                        } else {
+                            let mut is_open = self.is_popup_open.borrow_mut();
+                            for btn in self.data_path_buttons.iter() {
+                                let btn_widget_id = btn.get_widget_id().clone();
+                                let btn_id = btn_widget_id.0.as_str();
+                                if btn_id.eq(id) {
+                                    let destination = self
+                                        .source_directories
+                                        .iter()
+                                        .cloned()
+                                        .filter(|(path, _size)| path.eq(btn_id))
+                                        .collect::<Vec<(String, String)>>();
+    
+                                    self.log_message(format!("destination dir: {destination:?}"));
+    
+                                    let sources = self
+                                        .source_directories
+                                        .iter()
+                                        .filter(|(path, _size)| !path.eq(btn_id))
+                                        .collect::<Vec<&(String, String)>>();
+    
+                                    self.log_message(format!("sources: {sources:?}"));
+    
+                                    *is_open = false;
+                                    let data_transfer_progress_tx = self.data_transfer_progress_tx.clone();
+                                    let source_clone = self.source_directories.clone();
+                                    let destination_clone = destination.clone();
 
-                                self.log_message(format!("destination dir: {destination:?}"));
-
-                                let sources = self
-                                    .source_directories
-                                    .iter()
-                                    .filter(|(path, _size)| !path.eq(btn_id))
-                                    .collect::<Vec<&(String, String)>>();
-
-                                self.log_message(format!("sources: {sources:?}"));
-
-                                *is_open = false;
+                                    tokio::spawn(async move {
+                                        for (src, _size) in  source_clone.iter() {
+                                            for (dest, _dest_size) in destination_clone.iter() {
+                                                log::info!("Source: {:?}\nDestination: {:?}", src, dest);
+                                                let result = run_robocopy(
+                                                    &PathBuf::from(src),
+                                                    &PathBuf::from(dest),
+                                                    data_transfer_progress_tx.clone()
+                                                ).await;
+                                                log::info!("Robocopy Run Result: {result:?}");
+                                            }
+                                        }
+                                    });
+                                }
                             }
+                            self.active_popup.replace(None);
                         }
-
-                        self.active_popup.replace(None);
                     }
                 }
             }

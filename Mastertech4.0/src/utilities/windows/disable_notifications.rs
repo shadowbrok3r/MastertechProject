@@ -64,6 +64,7 @@ pub fn check_push_notifications() -> Result<String> {
 // SubscribedContent-88000326Enabled // SubscribedContent-310093Enabled // SubscribedContent-338389Enabled
 pub fn check_content_delivery_manager() -> Result<Vec<String>> {
     let key = CURRENT_USER.open(CONTENT_DELIVERY_MANAGER_KEY)?;
+    
     let mut x = Vec::new();
     // Iterate through all the values in the registry key
     for (val_name, val_data) in key.values()? {
@@ -75,6 +76,10 @@ pub fn check_content_delivery_manager() -> Result<Vec<String>> {
                 log::info!("Key {} is DISABLED.", &val_name);
                 x.push(format!("Key {} is DISABLED.", &val_name));
             } else {
+                match CURRENT_USER.set_u32("SubscribedContent", 0x000) {
+                    Ok(_) => x.push(format!("DISABLED SubscribedContent")),
+                    Err(e) => x.push(format!("Push Notifications are ENABLED, but there was an error disabling: {e:?}")),
+                }
                 log::info!("Key {} is ENABLED.", &val_name);
                 x.push(format!("Key {} is ENABLED.", &val_name));
             }
