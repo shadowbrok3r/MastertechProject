@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use tui_scrollview::ScrollView;
@@ -229,6 +229,7 @@ impl<'a> ScriptsTab<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2), // Text (no title here since block handles it)
+                Constraint::Length(2), // Padding
                 Constraint::Min(rows as u16 * 4 ), // Buttons: ensure enough space
             ])
             .split(inner_area);
@@ -241,7 +242,7 @@ impl<'a> ScriptsTab<'a> {
         f.render_widget(text_block, content_chunks[0]);
 
         // Button grid within the lower chunk
-        let button_area = content_chunks[1];
+        let button_area = content_chunks[2];
         let button_constraints: Vec<Constraint> = vec![Constraint::Length(3); rows];
         let button_grid = Layout::default()
             .direction(Direction::Vertical)
@@ -261,7 +262,7 @@ impl<'a> ScriptsTab<'a> {
         }
     }
 
-    fn render_popup(&self, f: &mut Frame) {
+    fn render_context_menu(&self, f: &mut Frame) {
         if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
             let items = self.popup_items.borrow();
             let items = items.get(&widget_id.0);
@@ -508,6 +509,20 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         f.render_widget(&self.updates_btn, button_grid[2].shrink(4, 1));
         f.render_widget(&self.prechecks_btn, button_grid[3].shrink(4, 1));
         f.render_widget(&self.informational_btn, button_grid[4].shrink(4, 1));
+        
+        let mut progress_mut = self.progress.borrow_mut();
+        if let Some(progress) = *progress_mut {
+            let gauge = Gauge::default()
+                .block(Block::bordered().title("Progress"))
+                .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
+                .ratio(progress.0 / progress.1);
+
+            f.render_widget(&gauge, button_grid[7].shrink(2, 1));
+
+            if progress.0 == progress.1 {
+                *progress_mut = None;
+            }
+        }
         f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
 
         // Render log section
@@ -517,7 +532,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         self.draw_checklist::<B>(f, layout[0]);
 
         // Render popup if active
-        self.render_popup(f);
+        self.render_context_menu(f);
 
         // Check if data_path_buttons has items and draw popup
         let is_open = *self.is_popup_open.borrow();

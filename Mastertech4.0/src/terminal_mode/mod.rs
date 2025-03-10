@@ -25,6 +25,7 @@ pub mod styling;
 pub mod fx;
 pub mod data;
 pub mod context;
+pub mod ncdu;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
     image_data: include_bytes!("../assets/masterlogoV2.png"),

@@ -2,7 +2,7 @@ use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct StartupProgram {
     #[serde(rename = "Path")]
     pub path: String,
@@ -22,9 +22,10 @@ pub struct StartupProgram {
 
 
 /// Represents the state of a startup item.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StartupState {
+    #[default]
     Enabled,
     Disabled,
     DisabledByUser,

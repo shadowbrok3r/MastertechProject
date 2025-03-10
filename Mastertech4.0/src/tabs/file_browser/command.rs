@@ -1,9 +1,9 @@
-use std::{env, fs::create_dir, path::PathBuf};
-
+use std::{env, fs::create_dir, path::PathBuf, process::Stdio};
+use tokio::{fs, io::{AsyncBufReadExt, BufReader}};
 use crossbeam::channel::Sender;
 use fs_extra::dir::get_size;
 use log::{debug, error};
-use tokio::fs;
+use sysinfo::System;
 use tracing::info;
 
 use crate::tabs::file_browser::{io::MetaData, read_folder};
@@ -185,47 +185,71 @@ impl FileBrowser{
 
 }
 
-// async fn run_robocopy(source: &PathBuf, destination: &PathBuf, log_output: Arc<Mutex<String>>) {
-//     let mut command = Command::new("robocopy")
-//         .arg(source)
-//         .arg(destination)
-//         .arg("*.*")
-//         .arg("/S")
-//         .arg("/E")
-//         .arg("/COPY:DAT")
-//         .arg("/DCOPY:DAT")
-//         .arg("/R:0")
-//         .arg("/W:30")
-//         .arg("/ZB")
-//         .arg(format!("/MT:{}", System::new().physical_core_count().unwrap()))
-//         .stdout(Stdio::piped())
-//         .stderr(Stdio::piped())
-//         .spawn()
-//         .expect("Failed to execute robocopy command");
+pub async fn run_robocopy(
+    source: &PathBuf, 
+    destination: &PathBuf,
+    tx: Sender<Vec<u8>>
+) -> anyhow::Result<(), anyhow::Error> {
+    if !source.exists() && !destination.exists() {
+        return Err(
+            anyhow::anyhow!(
+                "Either the source or the destination do not exist: Source: {:?} Dest: {:?}",
+                !source.exists(), 
+                !destination.exists()
+            )
+        );
+    }
 
-//     let stdout = command.stdout.take().expect("Failed to open stdout");
-//     let stderr = command.stderr.take().expect("Failed to open stderr");
+    let mut process = tokio::process::Command::new("robocopy")
+        .arg(source)
+        .arg(destination)
+        .arg("*.*")
+        .arg("/S")
+        .arg("/E")
+        .arg("/COPY:DAT")
+        .arg("/DCOPY:DAT")
+        .arg("/R:0")
+        .arg("/W:30")
+        .arg("/ZB")
+        .arg("/bytes")
+        .arg("/np")
+        .arg(format!("/MT:{}", System::new().physical_core_count().unwrap()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-//     let log_output_clone = Arc::clone(&log_output);
-//     let stdout_task = tokio::spawn(async move {
-//         let mut reader = BufReader::new(stdout).lines();
-//         while let Some(line) = reader.next_line().await.unwrap_or(None) {
-//             let mut log_output = log_output_clone.lock().await;
-//             log_output.push_str(&line);
-//             log_output.push('\n');
-//         }
-//     });
+    // Create a Tokio stream for stdout
+    let stdout = process.stdout.take().expect("Failed to get stdout");
+    // Create a Tokio stream for stderr
+    let stderr = process.stderr.take().expect("Failed to get stderr");
 
-//     let log_output_clone = Arc::clone(&log_output);
-//     let stderr_task = tokio::spawn(async move {
-//         let mut reader = BufReader::new(stderr).lines();
-//         while let Some(line) = reader.next_line().await.unwrap_or(None) {
-//             let mut log_output = log_output_clone.lock().await;
-//             log_output.push_str(&line);
-//             log_output.push('\n');
-//         }
-//     });
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+    
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        while let Some(line) = stderr_reader.next_line().await? {
+            tx_clone.try_send(line.into_bytes()).ok();
+        }
+        Ok::<(), anyhow::Error>(())
+    });
 
-//     stdout_task.await.unwrap();
-//     stderr_task.await.unwrap();
-// }
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        while let Some(line) = stdout_reader.next_line().await? {
+            tx_clone.try_send(line.into_bytes()).ok();
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
+    let output = process.wait_with_output().await?;
+    info!("robocopy -> output: {:?}", output);
+
+    let tx_clone = tx.clone();
+    if !output.status.success() {
+        info!("robocopy -> output status not successful");
+        tx_clone.try_send(output.stderr).ok();
+    }
+
+    Ok(())
+}
