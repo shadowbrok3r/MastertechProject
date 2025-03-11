@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{align_taskbar_left, disable_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::{install_windows_updates, WindowsUpdates}}};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
 use std::{collections::HashSet, path::{Path, PathBuf}};
 use powershell_script::PsScriptBuilder;
@@ -297,7 +297,7 @@ impl <'a> ScriptsTab <'a> {
         self.log_message("Running Windows Updates...");
         let tx = self.update_log_tx.clone();
         std::thread::spawn(move || {
-            let _ = install_windows_updates(tx, false, true);
+            let _ = install_windows_updates(tx, true, true);
         });
         self.log_message("Windows Updates initiated.");
         self.update_checklist(category.clone(), item_text, true);
@@ -363,6 +363,51 @@ impl <'a> ScriptsTab <'a> {
             Ok(results) => self.log_message(&format!("Push Notifications => {results:#?}")),
             Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
         }
+        match disable_lockscreen_notifications() {
+            Ok(results) => self.log_message(&format!("disable_lockscreen_notifications => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_lockscreen_notifications => {e:?}")),
+        }
+        // match disable_copilot() {
+        //     Ok(results) => self.log_message(&format!("disable_copilot => {results:#?}")),
+        //     Err(e) => self.log_message(&format!("Error with disable_copilot => {e:?}")),
+        // }
+        match disable_content_delivery_allowed() {
+            Ok(results) => self.log_message(&format!("disable_content_delivery_allowed => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_content_delivery_allowed => {e:?}")),
+        }
+        match disable_silent_installed_apps_enabled() {
+            Ok(results) => self.log_message(&format!("disable_silent_installed_apps_enabled => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_silent_installed_apps_enabled => {e:?}")),
+        }
+        match disable_subscribed_content_enabled() {
+            Ok(results) => self.log_message(&format!("disable_subscribed_content_enabled => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_subscribed_content_enabled => {e:?}")),
+        }
+        match disable_system_pane_suggestions_enabled() {
+            Ok(results) => self.log_message(&format!("disable_system_pane_suggestions_enabled => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_system_pane_suggestions_enabled => {e:?}")),
+        }
+        match disable_account_notifications() {
+            Ok(results) => self.log_message(&format!("disable_account_notifications => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_account_notifications => {e:?}")),
+        }
+        match enable_more_pins_layout() {
+            Ok(results) => self.log_message(&format!("enable_more_pins_layout => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with enable_more_pins_layout => {e:?}")),
+        }
+        match disable_start_account_notifications() {
+            Ok(results) => self.log_message(&format!("disable_start_account_notifications => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_start_account_notifications => {e:?}")),
+        }
+        match disable_recent_items_tracking() {
+            Ok(results) => self.log_message(&format!("disable_recent_items_tracking => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with disable_recent_items_tracking => {e:?}")),
+        }
+        match remove_chat_from_taskbar() {
+            Ok(results) => self.log_message(&format!("remove_chat_from_taskbar => {results:#?}")),
+            Err(e) => self.log_message(&format!("Error with remove_chat_from_taskbar => {e:?}")),
+        }
+
         self.update_checklist(category.clone(), item_text, true);
     }
 
@@ -634,80 +679,12 @@ pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error
 
 fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
     let ps_script = r#"
-        # Define GUIDs and aliases for power settings
-        $settings = @(
-            @{
-                Name = "Turn off display after"
-                SubgroupGUID = "7516b95f-f776-4464-8c53-06167f40cc99"  # SUB_VIDEO
-                SettingGUID = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e"   # VIDEOIDLE
-                Units = "Seconds"
-            },
-            @{
-                Name = "Sleep after"
-                SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
-                SettingGUID = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"   # STANDBYIDLE
-                Units = "Seconds"
-            },
-            @{
-                Name = "Allow hybrid sleep"
-                SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
-                SettingGUID = "94ac6d29-73ce-41a6-809f-6363ba21b47e"   # HYBRIDSLEEP
-                Units = "On/Off"
-            },
-            @{
-                Name = "Hibernate after"
-                SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
-                SettingGUID = "9d7815a6-7ee4-497e-8888-515a05f02364"   # HIBERNATEIDLE
-                Units = "Seconds"
-            }
-        )
-
-        # Function to convert hex value to decimal (for seconds) or interpret as On/Off
-        function Convert-PowerSettingValue {
-            param (
-                [string]$HexValue,
-                [string]$Units
-            )
-            if ($Units -eq "Seconds") {
-                [uint32]("0x" + $HexValue)
-            } elseif ($Units -eq "On/Off") {
-                if ($HexValue -eq "0x00000000") { "Off" } else { "On" }
-            }
-        }
-
-        # Function to check if any setting is enabled
-        function Check-PowerSettingsEnabled {
-            $anyEnabled = $false
-            foreach ($setting in $settings) {
-                # Query current AC and DC settings
-                $acResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current AC Power Setting Index: (0x[0-9a-fA-F]+)"
-                $dcResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current DC Power Setting Index: (0x[0-9a-fA-F]+)"
-                
-                $acValue = if ($acResult) { $acResult.Matches.Groups[1].Value } else { "0x00000000" }
-                $dcValue = if ($dcResult) { $dcResult.Matches.Groups[1].Value } else { "0x00000000" }
-                
-                $acConverted = Convert-PowerSettingValue -HexValue $acValue -Units $setting.Units
-                $dcConverted = Convert-PowerSettingValue -HexValue $dcValue -Units $setting.Units
-
-                Write-Host "$($setting.Name): AC = $acConverted, DC = $dcConverted"
-
-                # Check if enabled (non-zero for Seconds, "On" for On/Off)
-                if (($setting.Units -eq "Seconds" -and ($acConverted -gt 0 -or $dcConverted -gt 0)) -or 
-                    ($setting.Units -eq "On/Off" -and ($acConverted -eq "On" -or $dcConverted -eq "On"))) {
-                    $anyEnabled = $true
-                }
-            }
-            return $anyEnabled
-        }
-
-
-        # Main logic
-        Write-Host "Checking power settings..."
-        $enabled = Check-PowerSettingsEnabled
-
-        if ($enabled) {
-            Write-Host "One or more power settings are enabled. Disabling all..."
-        }
+        powercfg /change standby-timeout-ac 0
+        powercfg /change standby-timeout-dc 0
+        powercfg /change monitor-timeout-ac 0
+        powercfg /change monitor-timeout-dc 0
+        powercfg /change hibernate-timeout-ac 0
+        powercfg /change hibernate-timeout-dc 0
     "#;
 
     let output = PsScriptBuilder::new()
@@ -745,8 +722,9 @@ pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, a
     let mut paths_with_sizes = Vec::new();
 
     for drive in mount_points {
+
         let results = read_folder(
-            &drive.to_path_buf(), 
+            drive.to_path_buf(), 
             1, 
             true
         );
@@ -788,17 +766,31 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
+pub fn read_folder(mut path: PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
+    // Construct the expected "Users" prefix from the input path (e.g., "C:/Users/")
+    path.push("Users");
+
     let mut result: Vec<PathBuf> = WalkDir::new(path)
         .min_depth(depth)
         .max_depth(depth)
         .into_iter()
-        .filter_map(|e| e.ok()) // Only retrieve the resulted items
-        .filter(|entry| !read_dirs_only || entry.path().is_dir()) // Include only directories if read_dirs_only is true
-        .map(|entry| entry.path().to_path_buf()) // Iterate through each DirEntry
+        .filter_map(|e| e.ok())
+        .filter(|entry| !read_dirs_only || entry.path().is_dir())
+        .map(|entry| entry.path().to_path_buf())
+        .filter(|path| {
+            let is_users_path = path.starts_with(&path);
+
+            let exclude = path.file_name()
+                .map(|name| {
+                    let name_str = name.to_string_lossy();
+                    name_str == "Public" || name_str.contains("Default") || name_str == "All Users"
+                })
+                .unwrap_or(false);
+
+            is_users_path && !exclude
+        })
         .collect();
 
-    // log::info!("path: {path:?} \nresult: {result:?}");
     result.sort_by(|a, b| {
         let da = a.is_dir();
         let db = b.is_dir();
@@ -807,21 +799,6 @@ pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<Pa
             false => db.cmp(&da),
         }
     });
-
-    let result = result
-        .into_iter()
-        .filter(|path| {
-            if read_dirs_only && !path.is_dir() {
-                return false;
-            }
-
-            // log::info!("path.file_name(): {:?}", path.file_name());
-            // Only include the "Users" directory if it exists in the path
-            path.file_name()
-                .map(|name| name == "Users")
-                .unwrap_or(false)
-        })
-        .collect::<Vec<PathBuf>>();
 
     result
 }
@@ -950,177 +927,18 @@ Write-Host "Checking power settings..."
 Write-output Check-PowerSettingsEnabled
 "#;
 
+#[test]
+fn test_read_folder() {
+    use std::fs;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let users_dir = temp_dir.path().join("Users");
+    fs::create_dir(&users_dir).unwrap();
+    fs::create_dir(users_dir.join("Alice")).unwrap();
+    fs::create_dir(users_dir.join("Public")).unwrap();
+    fs::create_dir(users_dir.join("Default")).unwrap();
+    fs::create_dir(users_dir.join("Bob")).unwrap();
 
-/* OTHER REG TWEAKS
-Windows Registry Editor Version 5.00
-
-
-# Uninstall Copilot
-Get-AppxPackage -Name 'Microsoft.Copilot' | Remove-AppxPackage
-Get-AppxPackage -Name 'Microsoft.Windows.Ai.Copilot.Provider' | Remove-AppxPackage
-
-; APPEARANCE AND PERSONALIZATION
-; open file explorer to this pc
-; show file name extensions
-; disable display file size information in folder tips
-; disable show pop-up description for folder and desktop items
-; disable show preview handlers in preview pane
-; disable show status bar
-; disable show sync provider notifications
-; disable use sharing wizard
-; disable animations in the taskbar
-; enable show thumbnails instead of icons
-; disable show translucent selection rectangle
-; disable use drop shadows for icon labels on the desktop
-; more pins personalization start
-; disable show account-related notifications
-; disable show recently opened items in start, jump lists and file explorer
-; left taskbar alignment
-; remove chat from taskbar
-; remove task view from taskbar
-; remove copilot from taskbar
-; disable show recommendations for tips shortcuts new apps and more
-; disable share any window from my taskbar
-; disable snap window settings - SnapAssist to JointResize Entries
-; alt tab open windows only
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced]
-"LaunchTo"=dword:00000001
-"HideFileExt"=dword:00000000
-"FolderContentsInfoTip"=dword:00000000
-"ShowInfoTip"=dword:00000000
-"ShowPreviewHandlers"=dword:00000000
-"ShowStatusBar"=dword:00000000
-"ShowSyncProviderNotifications"=dword:00000000
-"SharingWizardOn"=dword:00000000
-"TaskbarAnimations"=dword:0
-"IconsOnly"=dword:0
-"ListviewAlphaSelect"=dword:0
-"ListviewShadow"=dword:0
-"Start_Layout"=dword:00000001
-"Start_AccountNotifications"=dword:00000000
-"Start_TrackDocs"=dword:00000000 
-"TaskbarAl"=dword:00000000
-"TaskbarMn"=dword:00000000
-"ShowTaskViewButton"=dword:00000000
-"ShowCopilotButton"=dword:00000000
-"Start_IrisRecommendations"=dword:00000000
-"TaskbarSn"=dword:00000000
-"SnapAssist"=dword:00000000
-"DITest"=dword:00000000
-"EnableSnapBar"=dword:00000000
-"EnableTaskGroups"=dword:00000000
-"EnableSnapAssistFlyout"=dword:00000000
-"SnapFill"=dword:00000000
-"JointResize"=dword:00000000
-"MultiTaskingAltTabFilter"=dword:00000003
-
-; show all taskbar icons on Windows 10
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer]
-"ShowFrequent"=dword:00000000
-"ShowCloudFilesInQuickAccess"=dword:00000000
-"EnableAutoTray"=dword:00000000
-
-
-; --IMMERSIVE CONTROL PANEL--
-; PRIVACY
-; disable show me notification in the settings app
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications]
-"EnableAccountNotifications"=dword:00000000
-
-
-; disable notifications
-; Disable Notifications on Lock Screen
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\PushNotifications]
-"ToastEnabled"=dword:00000000
-"LockScreenToastEnabled"=dword:00000000
-
-; disable copilot
-[HKEY_CURRENT_USER\Software\Policies\Microsoft\Windows\WindowsCopilot]
-"TurnOffWindowsCopilot"=dword:00000001
-
-; DISABLE ADVERTISING & PROMOTIONAL
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager]
-"ContentDeliveryAllowed"=dword:00000000
-"FeatureManagementEnabled"=dword:00000000
-"OemPreInstalledAppsEnabled"=dword:00000000
-"PreInstalledAppsEnabled"=dword:00000000
-"PreInstalledAppsEverEnabled"=dword:00000000
-"RotatingLockScreenEnabled"=dword:00000000
-"RotatingLockScreenOverlayEnabled"=dword:00000000
-"SilentInstalledAppsEnabled"=dword:00000000
-"SlideshowEnabled"=dword:00000000
-"SoftLandingEnabled"=dword:00000000
-"SubscribedContent-310093Enabled"=dword:00000000
-"SubscribedContent-314563Enabled"=dword:00000000
-"SubscribedContent-338388Enabled"=dword:00000000
-"SubscribedContent-338389Enabled"=dword:00000000
-"SubscribedContent-338393Enabled"=dword:00000000
-"SubscribedContent-353694Enabled"=dword:00000000
-"SubscribedContent-353696Enabled"=dword:00000000
-"SubscribedContent-353698Enabled"=dword:00000000
-"SubscribedContentEnabled"=dword:00000000
-"SystemPaneSuggestionsEnabled"=dword:00000000
-
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband]
-"FavoritesRemovedChanges"=dword:00000003
-"FavoritesResolve"=hex:31,03,00,00,4c,00,00,00,01,14,02,00,00,00,00,00,c0,00,\
-  00,00,00,00,00,46,83,00,80,00,20,00,00,00,be,33,35,e7,d1,24,db,01,be,33,35,\
-  e7,d1,24,db,01,25,b3,7a,4d,05,84,da,01,97,01,00,00,00,00,00,00,01,00,00,00,\
-  00,00,00,00,00,00,00,00,00,00,00,00,a0,01,3a,00,1f,80,c8,27,34,1f,10,5c,10,\
-  42,aa,03,2e,e4,52,87,d6,68,26,00,01,00,26,00,ef,be,12,00,00,00,85,35,2b,d7,\
-  d1,24,db,01,9b,e4,33,e7,d1,24,db,01,ab,5a,34,e7,d1,24,db,01,14,00,56,00,31,\
-  00,00,00,00,00,56,59,b9,b3,11,00,54,61,73,6b,42,61,72,00,40,00,09,00,04,00,\
-  ef,be,56,59,b9,b3,56,59,b9,b3,2e,00,00,00,f2,69,01,00,00,00,04,00,00,00,00,\
-  00,00,00,00,00,00,00,00,00,00,00,ef,80,fc,00,54,00,61,00,73,00,6b,00,42,00,\
-  61,00,72,00,00,00,16,00,0e,01,32,00,97,01,00,00,81,58,c4,3a,20,00,46,49,4c,\
-  45,45,58,7e,31,2e,4c,4e,4b,00,00,7c,00,09,00,04,00,ef,be,56,59,b9,b3,56,59,\
-  b9,b3,2e,00,00,00,c3,6a,01,00,00,00,02,00,00,00,00,00,00,00,00,00,52,00,00,\
-  00,00,00,db,dc,91,00,46,00,69,00,6c,00,65,00,20,00,45,00,78,00,70,00,6c,00,\
-  6f,00,72,00,65,00,72,00,2e,00,6c,00,6e,00,6b,00,00,00,40,00,73,00,68,00,65,\
-  00,6c,00,6c,00,33,00,32,00,2e,00,64,00,6c,00,6c,00,2c,00,2d,00,32,00,32,00,\
-  30,00,36,00,37,00,00,00,1c,00,22,00,00,00,1e,00,ef,be,02,00,55,00,73,00,65,\
-  00,72,00,50,00,69,00,6e,00,6e,00,65,00,64,00,00,00,1c,00,12,00,00,00,2b,00,\
-  ef,be,7c,4c,37,e7,d1,24,db,01,1c,00,42,00,00,00,1d,00,ef,be,02,00,4d,00,69,\
-  00,63,00,72,00,6f,00,73,00,6f,00,66,00,74,00,2e,00,57,00,69,00,6e,00,64,00,\
-  6f,00,77,00,73,00,2e,00,45,00,78,00,70,00,6c,00,6f,00,72,00,65,00,72,00,00,\
-  00,1c,00,00,00,9a,00,00,00,1c,00,00,00,01,00,00,00,1c,00,00,00,2d,00,00,00,\
-  00,00,00,00,99,00,00,00,11,00,00,00,03,00,00,00,0e,76,ea,84,10,00,00,00,00,\
-  43,3a,5c,55,73,65,72,73,5c,6d,65,6d,5c,41,70,70,44,61,74,61,5c,52,6f,61,6d,\
-  69,6e,67,5c,4d,69,63,72,6f,73,6f,66,74,5c,49,6e,74,65,72,6e,65,74,20,45,78,\
-  70,6c,6f,72,65,72,5c,51,75,69,63,6b,20,4c,61,75,6e,63,68,5c,55,73,65,72,20,\
-  50,69,6e,6e,65,64,5c,54,61,73,6b,42,61,72,5c,46,69,6c,65,20,45,78,70,6c,6f,\
-  72,65,72,2e,6c,6e,6b,00,00,60,00,00,00,03,00,00,a0,58,00,00,00,00,00,00,00,\
-  64,65,73,6b,74,6f,70,2d,6e,76,6a,67,69,71,33,00,1e,48,b8,ac,e6,93,44,44,85,\
-  d1,06,17,eb,52,3b,ea,cc,41,5d,b0,c4,90,ef,11,b9,08,00,0c,29,5b,06,9a,1e,48,\
-  b8,ac,e6,93,44,44,85,d1,06,17,eb,52,3b,ea,cc,41,5d,b0,c4,90,ef,11,b9,08,00,\
-  0c,29,5b,06,9a,45,00,00,00,09,00,00,a0,39,00,00,00,31,53,50,53,b1,16,6d,44,\
-  ad,8d,70,48,a7,48,40,2e,a4,3d,78,8c,1d,00,00,00,68,00,00,00,00,48,00,00,00,\
-  d4,d9,2d,27,b2,34,c5,4f,ad,3b,78,a5,c4,f6,71,2d,00,00,00,00,00,00,00,00,00,\
-  00,00,00
-"Favorites"=hex:00,a4,01,00,00,3a,00,1f,80,c8,27,34,1f,10,5c,10,42,aa,03,2e,e4,\
-  52,87,d6,68,26,00,01,00,26,00,ef,be,12,00,00,00,85,35,2b,d7,d1,24,db,01,9b,\
-  e4,33,e7,d1,24,db,01,ab,5a,34,e7,d1,24,db,01,14,00,56,00,31,00,00,00,00,00,\
-  56,59,b9,b3,11,00,54,61,73,6b,42,61,72,00,40,00,09,00,04,00,ef,be,56,59,b9,\
-  b3,56,59,b9,b3,2e,00,00,00,f2,69,01,00,00,00,04,00,00,00,00,00,00,00,00,00,\
-  00,00,00,00,00,00,ef,80,fc,00,54,00,61,00,73,00,6b,00,42,00,61,00,72,00,00,\
-  00,16,00,12,01,32,00,97,01,00,00,81,58,c4,3a,20,00,46,49,4c,45,45,58,7e,31,\
-  2e,4c,4e,4b,00,00,7c,00,09,00,04,00,ef,be,56,59,b9,b3,56,59,b9,b3,2e,00,00,\
-  00,c3,6a,01,00,00,00,02,00,00,00,00,00,00,00,00,00,52,00,00,00,00,00,db,dc,\
-  91,00,46,00,69,00,6c,00,65,00,20,00,45,00,78,00,70,00,6c,00,6f,00,72,00,65,\
-  00,72,00,2e,00,6c,00,6e,00,6b,00,00,00,40,00,73,00,68,00,65,00,6c,00,6c,00,\
-  33,00,32,00,2e,00,64,00,6c,00,6c,00,2c,00,2d,00,32,00,32,00,30,00,36,00,37,\
-  00,00,00,1c,00,12,00,00,00,2b,00,ef,be,7c,4c,37,e7,d1,24,db,01,1c,00,42,00,\
-  00,00,1d,00,ef,be,02,00,4d,00,69,00,63,00,72,00,6f,00,73,00,6f,00,66,00,74,\
-  00,2e,00,57,00,69,00,6e,00,64,00,6f,00,77,00,73,00,2e,00,45,00,78,00,70,00,\
-  6c,00,6f,00,72,00,65,00,72,00,00,00,1c,00,26,00,00,00,1e,00,ef,be,02,00,53,\
-  00,79,00,73,00,74,00,65,00,6d,00,50,00,69,00,6e,00,6e,00,65,00,64,00,00,00,\
-  1c,00,00,00,ff
-"FavoritesChanges"=dword:00000002
-"FavoritesVersion"=dword:00000002
-
-[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins]
-"MailPin"=dword:00000000
-"TFLPin"=dword:00000000
-"CopilotPWAPin"=dword:00000000
-
-*/
+    let result = read_folder(users_dir, 2, true);
+    let names: Vec<_> = result.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, vec!["Alice", "Bob"]); // Excludes Public, Default
+}

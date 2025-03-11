@@ -104,12 +104,14 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                                         for (src, _size) in  source_clone.iter() {
                                             for (dest, _dest_size) in destination_clone.iter() {
                                                 log::info!("Source: {:?}\nDestination: {:?}", src, dest);
-                                                let result = run_robocopy(
-                                                    &PathBuf::from(src),
-                                                    &PathBuf::from(dest),
-                                                    data_transfer_progress_tx.clone()
-                                                ).await;
-                                                log::info!("Robocopy Run Result: {result:?}");
+                                                if src != dest {
+                                                    let result = run_robocopy(
+                                                        &PathBuf::from(src),
+                                                        &PathBuf::from(dest),
+                                                        data_transfer_progress_tx.clone()
+                                                    ).await;
+                                                    log::info!("Robocopy Run Result: {result:?}");
+                                                }
                                             }
                                         }
                                     });

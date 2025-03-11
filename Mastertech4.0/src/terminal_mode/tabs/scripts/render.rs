@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use tui_scrollview::ScrollView;
 
@@ -28,70 +28,93 @@ pub enum MoveDirection {
 }
 
 impl<'a> ScriptsTab<'a> {
+    
     fn draw_log_section<B: Backend>(&self, f: &mut Frame, area: Rect) {
         // 📝 Render logs
         let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
             let color = BASE_COLORS[index % BASE_COLORS.len()];
         
-            // Extract message and split at " => "
             let (left_text, right_text) = match r.msg.split_once(" => ") {
-                Some((left, right)) => (left.trim(), right.trim()), // Trim spaces
-                None => (r.msg.as_str(), ""), // If no " => ", treat it as left_text
+                Some((left, right)) => (left.trim(), right.trim()),
+                None => (r.msg.as_str(), ""),
             };
         
-            // Get the available width
-            let available_width = area.width as usize;
-        
-            // Get the length of the reporter field to subtract from available width
+            // Calculate available width for the line, accounting for borders and reporter
+            let available_width = area.width.saturating_sub(4) as usize; // Subtract borders (2) and padding
             let reporter_text = format!("{:?} =>", r.reporter);
             let reporter_length = reporter_text.len();
-        
-            // Calculate remaining width for right-aligned text
-            let width = available_width.saturating_sub(left_text.len() + reporter_length ); // +2 for extra spacing
-        
-            // Ensure formatted message stays within available width
-            let formatted_msg = format!("{:<} {:>width$}", left_text, right_text, width = width);
+            let width = available_width.saturating_sub(reporter_length); // Space for left + right text
+    
+            // Truncate left_text if too long, reserving space for right_text
+            let left_max = width.saturating_sub(right_text.len().min(width / 2)); // Reserve some space for right
+            let truncated_left = if left_text.len() > left_max {
+                &left_text[..left_max]
+            } else {
+                left_text
+            };
+    
+            let formatted_msg = format!("{} {:<}", truncated_left, right_text); // Left-align right_text after
         
             Line::from(vec![
-                Span::styled(format!("{} {}", reporter_text, formatted_msg), Style::default().fg(color))
+                Span::styled(reporter_text, Style::default().fg(color)),
+                Span::styled(formatted_msg, Style::default().fg(color)),
             ])
         }).collect();
-        
+    
         // Calculate virtual dimensions
-        let log_lines = log_text.len() as u16; // Number of lines for vertical scrolling
+        let log_lines = log_text.len() as u16;
         let visible_height = area.height.saturating_sub(2); // Subtract borders
-        let virtual_height = log_lines.max(visible_height); // Dynamic height based on content
-
-        // Calculate the maximum line width for horizontal scrolling
+        let virtual_height = log_lines.max(visible_height);
+    
+        // Calculate maximum line width for horizontal scrolling
         let max_line_width = log_text.iter()
-            .map(|line| line.width() as u16) // Width of each line in characters
+            .map(|line| line.width() as u16)
             .max()
-            .unwrap_or(area.width); // Default to visible width if no lines
-        let visible_width = area.width.saturating_sub(2); // Subtract borders
-        let virtual_width = max_line_width.max(visible_width); // Dynamic width based on longest line
-
+            .unwrap_or(area.width.saturating_sub(2));
+        let visible_width = area.width.saturating_sub(2);
+        let virtual_width = max_line_width.max(visible_width);
+    
         let virtual_size = Size {
             width: virtual_width,
             height: virtual_height,
-        };   
-
+        };
+    
         let mut scroll_view = ScrollView::new(virtual_size);
-            
         self.report_area.replace(Some(area));
-
-        let log_widget = Paragraph::new(log_text)
+    
+        // Get scroll position
+        let mut scroll_state = self.report_scroll_state.borrow_mut();
+        let scroll_y = scroll_state.offset().y;
+        let scroll_x = scroll_state.offset().x;
+    
+        // Slice log_text to only include visible lines
+        let start_line = scroll_y as usize;
+        let end_line = (scroll_y + visible_height).min(log_lines);
+        let visible_lines = &log_text[start_line..end_line as usize];
+    
+        // Create Paragraph with visible lines only, constrained to visible width
+        let log_widget = Paragraph::new(visible_lines.to_vec())
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .style(Style::new().fg(CATPPUCCIN.blue))
                     .title("Run Report")
                     .border_type(BorderType::Rounded)
-            );
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true }); // Ensure wrapping within bounds
     
-        scroll_view.render_widget(log_widget, scroll_view.area());
-        scroll_view.render(area, f.buffer_mut(), &mut self.report_scroll_state.borrow_mut());
-    } 
-
+        // Render widget with adjusted position for horizontal scroll
+        scroll_view.render_widget(log_widget, Rect {
+            x: scroll_x,
+            y: 0,
+            width: virtual_width,
+            height: virtual_height,
+        });
+    
+        // Apply scroll view to the visible area
+        scroll_view.render(area, f.buffer_mut(), &mut scroll_state);
+    }
+    
     fn draw_checklist<B: Backend>(&self, f: &mut Frame, area: Rect) {
         let list_scroll_layout = Layout::horizontal([
             Constraint::Percentage(5), 
@@ -190,13 +213,13 @@ impl<'a> ScriptsTab<'a> {
     }
     
     fn draw_data_path_buttons<B: Backend>(&self, f: &mut Frame, area: Rect) {
-        let popup_title = "Data Transfer Options";
-        let popup_text = "Please choose a destination for the data transfer, and right click on a path to exclude it from the data transfer";
+        let popup_title = "  Data Transfer Options  ";
+        let popup_text = "Please choose a destination for the data transfer, \nand right click on a path to exclude it from the data transfer";
 
         // Calculate button grid dimensions
         let button_count = self.data_path_buttons.len();
         let rows = (button_count + 1) / 2; // 2 columns
-        let popup_width = 60; // Fixed width, adjust as needed
+        let popup_width = 70; // Fixed width, adjust as needed
         let popup_height = rows as u16 * 4 + 4; // 3 lines per row + title/text/padding
 
         // Center the popup in the provided area
@@ -216,7 +239,7 @@ impl<'a> ScriptsTab<'a> {
             .border_type(BorderType::Rounded)
             .title(popup_title)
             .title_alignment(Alignment::Center)
-            .style(Style::default().fg(CATPPUCCIN.teal).bg(CATPPUCCIN.base));
+            .style(Style::default().fg(SPRINGGREEN.text));
 
         
         f.render_widget(block, popup_area);
@@ -229,14 +252,14 @@ impl<'a> ScriptsTab<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2), // Text (no title here since block handles it)
-                Constraint::Length(2), // Padding
+                Constraint::Length(4), // Padding
                 Constraint::Min(rows as u16 * 4 ), // Buttons: ensure enough space
             ])
             .split(inner_area);
 
         // Render the instructional text
         let text_block = Paragraph::new(popup_text)
-            .wrap(Wrap { trim: false })
+            .wrap(Wrap { trim: true })
             .alignment(Alignment::Center);
 
         f.render_widget(text_block, content_chunks[0]);
@@ -258,7 +281,7 @@ impl<'a> ScriptsTab<'a> {
                 .split(button_grid[row]);
 
             // f.render_widget(Clear, popup_area);
-            f.render_widget(button, col_chunks[col].shrink(2, 1));
+            f.render_widget(button, col_chunks[col].shrink(1, 0));
         }
     }
 
@@ -670,33 +693,33 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             }
             
                             // Checklist hover handling - Only if popup isn’t handling it
-                            if self.active_popup.borrow().is_none() {
-                                if let Some(checklist_area) = *self.checklist_area.borrow() {
-                                    let checklist_area_contains_mouse = checklist_area.contains(mouse_position);
-                                    if checklist_area_contains_mouse {
-                                        let content_start_y = checklist_area.y + 1; // Top border
-                                        let mut list_state = self.list_state.borrow_mut();
-                                        let mut popup_state = self.popup_list_state.borrow_mut();
-                                        if r >= content_start_y {
-                                            let relative_row = (r - content_start_y) as usize;
-                                            let total_items = *self.total_items.borrow();
-                                            if relative_row < total_items {
-                                                list_state.select(Some(relative_row));
-                                                popup_state.select(None); // Deselect popup
-                                            } else {
-                                                list_state.select(None);
-                                            }
-                                        } else {
-                                            list_state.select(None);
-                                        }
-                                    } else {
-                                        let mut list_state = self.list_state.borrow_mut();
-                                        let mut popup_state = self.popup_list_state.borrow_mut();
-                                        list_state.select(None);
-                                        popup_state.select(None); // Ensure popup stays deselected
-                                    }
-                                }
-                            }
+                            // if self.active_popup.borrow().is_none() {
+                            //     if let Some(checklist_area) = *self.checklist_area.borrow() {
+                            //         let checklist_area_contains_mouse = checklist_area.contains(mouse_position);
+                            //         if checklist_area_contains_mouse {
+                            //             let content_start_y = checklist_area.y + 1; // Top border
+                            //             let mut list_state = self.list_state.borrow_mut();
+                            //             let mut popup_state = self.popup_list_state.borrow_mut();
+                            //             if r >= content_start_y {
+                            //                 let relative_row = (r - content_start_y) as usize;
+                            //                 let total_items = *self.total_items.borrow();
+                            //                 if relative_row < total_items {
+                            //                     list_state.select(Some(relative_row));
+                            //                     popup_state.select(None); // Deselect popup
+                            //                 } else {
+                            //                     list_state.select(None);
+                            //                 }
+                            //             } else {
+                            //                 list_state.select(None);
+                            //             }
+                            //         } else {
+                            //             let mut list_state = self.list_state.borrow_mut();
+                            //             let mut popup_state = self.popup_list_state.borrow_mut();
+                            //             list_state.select(None);
+                            //             popup_state.select(None); // Ensure popup stays deselected
+                            //         }
+                            //     }
+                            // }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             let mut popup_clicked = false;

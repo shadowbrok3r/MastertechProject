@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::button::Button}, utilities::windows::{WindowsUpdateEvent, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::button::Button}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
 use egui::output;
 use ratatui::{layout::Rect, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
@@ -261,10 +261,10 @@ impl<'a> ScriptsTab<'a> {
             self.source_directories = path_info.clone();
             self.data_path_buttons.clear();
             for (path, size) in path_info {
-                self.log_message(&format!("Path {:<10} Size: {:>10}", path.clone(), size.clone()));
+                self.log_message(&format!("Path {:<5} Size: {:>5}", path.clone(), size.clone()));
                 self.data_path_buttons.push(
                     Button::new(
-                        format!("{} / {}", path.clone(), size.clone()), 
+                        format!(" {} | {} ", path.clone(), size.clone()), 
                         WidgetId(path)
                     )
                     .theme(CYAN)
@@ -277,7 +277,11 @@ impl<'a> ScriptsTab<'a> {
             let out = String::from_utf8(data_transfer_progress);
             log::info!("Robocopy Output: {out:?}");
             match out {
-                Ok(output) => self.log_message(output),
+                Ok(output) => {
+                    // Replace tabs with 4 spaces
+                    let cleaned_output = output.trim_ascii().replace("\t", "    ");
+                    self.log_message(cleaned_output);
+                },
                 Err(e) => self.log_message(format!("FromUTF8 Err: {e:?}")),
             }
         }
