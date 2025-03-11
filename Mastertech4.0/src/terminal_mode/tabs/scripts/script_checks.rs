@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{check_content_delivery_manager, check_explorer_advanced, check_push_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, disable_notifications::{align_taskbar_left, disable_notifications, get_installed_program_names}, install_windows_updates, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, WindowsUpdates}};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
 use std::{collections::HashSet, path::{Path, PathBuf}};
 use powershell_script::PsScriptBuilder;
@@ -205,22 +205,15 @@ impl <'a> ScriptsTab <'a> {
         self.current_reporter.replace(Reporter::RunPrechecks);
         self.log_message(&format!("Running precheck: {}", item_text));
 
-        match check_push_notifications() {
-            Ok(status) => self.log_message(&format!("Push Notifications => {status}")),
+        match disable_notifications() {
+            Ok(results) => self.log_message(&format!("Push Notifications => {results:#?}")),
             Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
         }
-        match check_content_delivery_manager() {
-            Ok(statuses) => {
-                for status in statuses.iter() {
-                    self.log_message(&format!("ContentDelivery => {status}"))
-                }
-            }
-            Err(e) => self.log_message(&format!("ContentDelivery => {e:?}")),
-        }
-        match check_explorer_advanced() {
-            Ok(status) => self.log_message(&format!("TaskBarAlignment => {status}")),
+        match align_taskbar_left() {
+            Ok(status) => self.log_message(&format!("TaskBarAlignment => {}", status.trim())),
             Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
         }
+
         match get_wlan_status() {
             Ok(_) => self.log_message("Wlan Status OK"),
             Err(e) => {
@@ -366,21 +359,9 @@ impl <'a> ScriptsTab <'a> {
     }
 
     fn disable_notifications(&mut self, item_text: &str, category: &Category) {
-        match check_push_notifications() {
-            Ok(status) => self.log_message(&format!("Push Notifications => {status}")),
+        match disable_notifications() {
+            Ok(results) => self.log_message(&format!("Push Notifications => {results:#?}")),
             Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
-        }
-        match check_content_delivery_manager() {
-            Ok(statuses) => {
-                for status in statuses.iter() {
-                    self.log_message(&format!("ContentDelivery => {status}"))
-                }
-            }
-            Err(e) => self.log_message(&format!("ContentDelivery => {e:?}")),
-        }
-        match check_explorer_advanced() {
-            Ok(status) => self.log_message(&format!("TaskBarAlignment => {status}")),
-            Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
         }
         self.update_checklist(category.clone(), item_text, true);
     }
@@ -395,8 +376,10 @@ impl <'a> ScriptsTab <'a> {
     fn disable_startup_apps(&mut self, item_text: &str, category: &Category) {
         if let Ok(programs) = StartupProgram::get_startup_programs() {
             for program in programs {
-                // let p = program.
-                self.log_message(format!("startup program -> {program:?}")); 
+                log::info!("startup program -> {program:?}");
+                if let Some(StartupState::Enabled) = program.decoded_state {
+                    self.log_message(format!("startup program -> {program:?}")); 
+                }
             }
         }
         self.update_checklist(category.clone(), item_text, false);
@@ -405,12 +388,15 @@ impl <'a> ScriptsTab <'a> {
     /// TODO: NOT YET IMPLEMENTED
     fn unpin_copilot(&mut self, item_text: &str, category: &Category) {
         self.log_message("Copilot unpin not implemented.");
+        // HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins
         self.update_checklist(category.clone(), item_text, false);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     fn align_taskbar_left(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Taskbar alignment to left not implemented.");
+        match align_taskbar_left() {
+            Ok(status) => self.log_message(&format!("TaskBarAlignment => {}", status.trim())),
+            Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
+        }
         self.update_checklist(category.clone(), item_text, false);
     }
 
@@ -963,3 +949,178 @@ function Check-PowerSettingsEnabled {
 Write-Host "Checking power settings..."
 Write-output Check-PowerSettingsEnabled
 "#;
+
+
+/* OTHER REG TWEAKS
+Windows Registry Editor Version 5.00
+
+
+# Uninstall Copilot
+Get-AppxPackage -Name 'Microsoft.Copilot' | Remove-AppxPackage
+Get-AppxPackage -Name 'Microsoft.Windows.Ai.Copilot.Provider' | Remove-AppxPackage
+
+; APPEARANCE AND PERSONALIZATION
+; open file explorer to this pc
+; show file name extensions
+; disable display file size information in folder tips
+; disable show pop-up description for folder and desktop items
+; disable show preview handlers in preview pane
+; disable show status bar
+; disable show sync provider notifications
+; disable use sharing wizard
+; disable animations in the taskbar
+; enable show thumbnails instead of icons
+; disable show translucent selection rectangle
+; disable use drop shadows for icon labels on the desktop
+; more pins personalization start
+; disable show account-related notifications
+; disable show recently opened items in start, jump lists and file explorer
+; left taskbar alignment
+; remove chat from taskbar
+; remove task view from taskbar
+; remove copilot from taskbar
+; disable show recommendations for tips shortcuts new apps and more
+; disable share any window from my taskbar
+; disable snap window settings - SnapAssist to JointResize Entries
+; alt tab open windows only
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced]
+"LaunchTo"=dword:00000001
+"HideFileExt"=dword:00000000
+"FolderContentsInfoTip"=dword:00000000
+"ShowInfoTip"=dword:00000000
+"ShowPreviewHandlers"=dword:00000000
+"ShowStatusBar"=dword:00000000
+"ShowSyncProviderNotifications"=dword:00000000
+"SharingWizardOn"=dword:00000000
+"TaskbarAnimations"=dword:0
+"IconsOnly"=dword:0
+"ListviewAlphaSelect"=dword:0
+"ListviewShadow"=dword:0
+"Start_Layout"=dword:00000001
+"Start_AccountNotifications"=dword:00000000
+"Start_TrackDocs"=dword:00000000 
+"TaskbarAl"=dword:00000000
+"TaskbarMn"=dword:00000000
+"ShowTaskViewButton"=dword:00000000
+"ShowCopilotButton"=dword:00000000
+"Start_IrisRecommendations"=dword:00000000
+"TaskbarSn"=dword:00000000
+"SnapAssist"=dword:00000000
+"DITest"=dword:00000000
+"EnableSnapBar"=dword:00000000
+"EnableTaskGroups"=dword:00000000
+"EnableSnapAssistFlyout"=dword:00000000
+"SnapFill"=dword:00000000
+"JointResize"=dword:00000000
+"MultiTaskingAltTabFilter"=dword:00000003
+
+; show all taskbar icons on Windows 10
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer]
+"ShowFrequent"=dword:00000000
+"ShowCloudFilesInQuickAccess"=dword:00000000
+"EnableAutoTray"=dword:00000000
+
+
+; --IMMERSIVE CONTROL PANEL--
+; PRIVACY
+; disable show me notification in the settings app
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications]
+"EnableAccountNotifications"=dword:00000000
+
+
+; disable notifications
+; Disable Notifications on Lock Screen
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\PushNotifications]
+"ToastEnabled"=dword:00000000
+"LockScreenToastEnabled"=dword:00000000
+
+; disable copilot
+[HKEY_CURRENT_USER\Software\Policies\Microsoft\Windows\WindowsCopilot]
+"TurnOffWindowsCopilot"=dword:00000001
+
+; DISABLE ADVERTISING & PROMOTIONAL
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager]
+"ContentDeliveryAllowed"=dword:00000000
+"FeatureManagementEnabled"=dword:00000000
+"OemPreInstalledAppsEnabled"=dword:00000000
+"PreInstalledAppsEnabled"=dword:00000000
+"PreInstalledAppsEverEnabled"=dword:00000000
+"RotatingLockScreenEnabled"=dword:00000000
+"RotatingLockScreenOverlayEnabled"=dword:00000000
+"SilentInstalledAppsEnabled"=dword:00000000
+"SlideshowEnabled"=dword:00000000
+"SoftLandingEnabled"=dword:00000000
+"SubscribedContent-310093Enabled"=dword:00000000
+"SubscribedContent-314563Enabled"=dword:00000000
+"SubscribedContent-338388Enabled"=dword:00000000
+"SubscribedContent-338389Enabled"=dword:00000000
+"SubscribedContent-338393Enabled"=dword:00000000
+"SubscribedContent-353694Enabled"=dword:00000000
+"SubscribedContent-353696Enabled"=dword:00000000
+"SubscribedContent-353698Enabled"=dword:00000000
+"SubscribedContentEnabled"=dword:00000000
+"SystemPaneSuggestionsEnabled"=dword:00000000
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband]
+"FavoritesRemovedChanges"=dword:00000003
+"FavoritesResolve"=hex:31,03,00,00,4c,00,00,00,01,14,02,00,00,00,00,00,c0,00,\
+  00,00,00,00,00,46,83,00,80,00,20,00,00,00,be,33,35,e7,d1,24,db,01,be,33,35,\
+  e7,d1,24,db,01,25,b3,7a,4d,05,84,da,01,97,01,00,00,00,00,00,00,01,00,00,00,\
+  00,00,00,00,00,00,00,00,00,00,00,00,a0,01,3a,00,1f,80,c8,27,34,1f,10,5c,10,\
+  42,aa,03,2e,e4,52,87,d6,68,26,00,01,00,26,00,ef,be,12,00,00,00,85,35,2b,d7,\
+  d1,24,db,01,9b,e4,33,e7,d1,24,db,01,ab,5a,34,e7,d1,24,db,01,14,00,56,00,31,\
+  00,00,00,00,00,56,59,b9,b3,11,00,54,61,73,6b,42,61,72,00,40,00,09,00,04,00,\
+  ef,be,56,59,b9,b3,56,59,b9,b3,2e,00,00,00,f2,69,01,00,00,00,04,00,00,00,00,\
+  00,00,00,00,00,00,00,00,00,00,00,ef,80,fc,00,54,00,61,00,73,00,6b,00,42,00,\
+  61,00,72,00,00,00,16,00,0e,01,32,00,97,01,00,00,81,58,c4,3a,20,00,46,49,4c,\
+  45,45,58,7e,31,2e,4c,4e,4b,00,00,7c,00,09,00,04,00,ef,be,56,59,b9,b3,56,59,\
+  b9,b3,2e,00,00,00,c3,6a,01,00,00,00,02,00,00,00,00,00,00,00,00,00,52,00,00,\
+  00,00,00,db,dc,91,00,46,00,69,00,6c,00,65,00,20,00,45,00,78,00,70,00,6c,00,\
+  6f,00,72,00,65,00,72,00,2e,00,6c,00,6e,00,6b,00,00,00,40,00,73,00,68,00,65,\
+  00,6c,00,6c,00,33,00,32,00,2e,00,64,00,6c,00,6c,00,2c,00,2d,00,32,00,32,00,\
+  30,00,36,00,37,00,00,00,1c,00,22,00,00,00,1e,00,ef,be,02,00,55,00,73,00,65,\
+  00,72,00,50,00,69,00,6e,00,6e,00,65,00,64,00,00,00,1c,00,12,00,00,00,2b,00,\
+  ef,be,7c,4c,37,e7,d1,24,db,01,1c,00,42,00,00,00,1d,00,ef,be,02,00,4d,00,69,\
+  00,63,00,72,00,6f,00,73,00,6f,00,66,00,74,00,2e,00,57,00,69,00,6e,00,64,00,\
+  6f,00,77,00,73,00,2e,00,45,00,78,00,70,00,6c,00,6f,00,72,00,65,00,72,00,00,\
+  00,1c,00,00,00,9a,00,00,00,1c,00,00,00,01,00,00,00,1c,00,00,00,2d,00,00,00,\
+  00,00,00,00,99,00,00,00,11,00,00,00,03,00,00,00,0e,76,ea,84,10,00,00,00,00,\
+  43,3a,5c,55,73,65,72,73,5c,6d,65,6d,5c,41,70,70,44,61,74,61,5c,52,6f,61,6d,\
+  69,6e,67,5c,4d,69,63,72,6f,73,6f,66,74,5c,49,6e,74,65,72,6e,65,74,20,45,78,\
+  70,6c,6f,72,65,72,5c,51,75,69,63,6b,20,4c,61,75,6e,63,68,5c,55,73,65,72,20,\
+  50,69,6e,6e,65,64,5c,54,61,73,6b,42,61,72,5c,46,69,6c,65,20,45,78,70,6c,6f,\
+  72,65,72,2e,6c,6e,6b,00,00,60,00,00,00,03,00,00,a0,58,00,00,00,00,00,00,00,\
+  64,65,73,6b,74,6f,70,2d,6e,76,6a,67,69,71,33,00,1e,48,b8,ac,e6,93,44,44,85,\
+  d1,06,17,eb,52,3b,ea,cc,41,5d,b0,c4,90,ef,11,b9,08,00,0c,29,5b,06,9a,1e,48,\
+  b8,ac,e6,93,44,44,85,d1,06,17,eb,52,3b,ea,cc,41,5d,b0,c4,90,ef,11,b9,08,00,\
+  0c,29,5b,06,9a,45,00,00,00,09,00,00,a0,39,00,00,00,31,53,50,53,b1,16,6d,44,\
+  ad,8d,70,48,a7,48,40,2e,a4,3d,78,8c,1d,00,00,00,68,00,00,00,00,48,00,00,00,\
+  d4,d9,2d,27,b2,34,c5,4f,ad,3b,78,a5,c4,f6,71,2d,00,00,00,00,00,00,00,00,00,\
+  00,00,00
+"Favorites"=hex:00,a4,01,00,00,3a,00,1f,80,c8,27,34,1f,10,5c,10,42,aa,03,2e,e4,\
+  52,87,d6,68,26,00,01,00,26,00,ef,be,12,00,00,00,85,35,2b,d7,d1,24,db,01,9b,\
+  e4,33,e7,d1,24,db,01,ab,5a,34,e7,d1,24,db,01,14,00,56,00,31,00,00,00,00,00,\
+  56,59,b9,b3,11,00,54,61,73,6b,42,61,72,00,40,00,09,00,04,00,ef,be,56,59,b9,\
+  b3,56,59,b9,b3,2e,00,00,00,f2,69,01,00,00,00,04,00,00,00,00,00,00,00,00,00,\
+  00,00,00,00,00,00,ef,80,fc,00,54,00,61,00,73,00,6b,00,42,00,61,00,72,00,00,\
+  00,16,00,12,01,32,00,97,01,00,00,81,58,c4,3a,20,00,46,49,4c,45,45,58,7e,31,\
+  2e,4c,4e,4b,00,00,7c,00,09,00,04,00,ef,be,56,59,b9,b3,56,59,b9,b3,2e,00,00,\
+  00,c3,6a,01,00,00,00,02,00,00,00,00,00,00,00,00,00,52,00,00,00,00,00,db,dc,\
+  91,00,46,00,69,00,6c,00,65,00,20,00,45,00,78,00,70,00,6c,00,6f,00,72,00,65,\
+  00,72,00,2e,00,6c,00,6e,00,6b,00,00,00,40,00,73,00,68,00,65,00,6c,00,6c,00,\
+  33,00,32,00,2e,00,64,00,6c,00,6c,00,2c,00,2d,00,32,00,32,00,30,00,36,00,37,\
+  00,00,00,1c,00,12,00,00,00,2b,00,ef,be,7c,4c,37,e7,d1,24,db,01,1c,00,42,00,\
+  00,00,1d,00,ef,be,02,00,4d,00,69,00,63,00,72,00,6f,00,73,00,6f,00,66,00,74,\
+  00,2e,00,57,00,69,00,6e,00,64,00,6f,00,77,00,73,00,2e,00,45,00,78,00,70,00,\
+  6c,00,6f,00,72,00,65,00,72,00,00,00,1c,00,26,00,00,00,1e,00,ef,be,02,00,53,\
+  00,79,00,73,00,74,00,65,00,6d,00,50,00,69,00,6e,00,6e,00,65,00,64,00,00,00,\
+  1c,00,00,00,ff
+"FavoritesChanges"=dword:00000002
+"FavoritesVersion"=dword:00000002
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins]
+"MailPin"=dword:00000000
+"TFLPin"=dword:00000000
+"CopilotPWAPin"=dword:00000000
+
+*/

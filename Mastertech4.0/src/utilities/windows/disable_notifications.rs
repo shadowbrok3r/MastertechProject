@@ -5,7 +5,7 @@ const UNINSTALL_KEY_32: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentV
 const PUSH_NOTIFICATIONS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\PushNotifications";
 const CONTENT_DELIVERY_MANAGER_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
 const EXPLORER_ADVANCED_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
-
+const USER_NOTIFS: &str = r"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement"; // ScoobeSystemSettingEnabled
 // Function to get all installed programs from both 64-bit and 32-bit registry keys
 pub fn get_installed_program_names() -> Result<Vec<String>> {
     let mut program_names = Vec::new();
@@ -47,66 +47,72 @@ pub fn get_installed_programs_from_registry(root_key: &Key, reg_path: &str) -> R
     Ok(program_names)
 }
 
-// Function to check the value of the PushNotifications registry key
-pub fn check_push_notifications() -> Result<String> {
-    let key = CURRENT_USER.open(PUSH_NOTIFICATIONS_KEY)?;
-    let value = key.get_u32("ToastEnabled")?;
+pub fn disable_notifications() -> Result<Vec<String>> {
+    let mut results = Vec::new();
+    let push_notifs_key = CURRENT_USER.options().read().write().open(PUSH_NOTIFICATIONS_KEY)?;
+
+    let value = push_notifs_key.get_u32("ToastEnabled")?;
     if value == 1 {
-        match CURRENT_USER.set_u32("ToastEnabled", 0x000) {
-            Ok(_) => return Ok("DISABLED Push Notifications".to_string()),
-            Err(e) => return Ok(format!("Push Notifications are ENABLED, but there was an error disabling: {e:?}")),
+        match push_notifs_key.set_u32("ToastEnabled", 0x000) {
+            Ok(_) => results.push("DISABLED Push Notifications".to_string()),
+            Err(e) => results.push(format!("Push Notifications are ENABLED, but there was an error disabling: {e:?}")),
         }
     } else {
-        return Ok("Push Notifications are DISABLED.".to_string());
+        results.push("Push Notifications are DISABLED.".to_string());
     }
-}
 
-// SubscribedContent-88000326Enabled // SubscribedContent-310093Enabled // SubscribedContent-338389Enabled
-pub fn check_content_delivery_manager() -> Result<Vec<String>> {
-    let key = CURRENT_USER.open(CONTENT_DELIVERY_MANAGER_KEY)?;
     
-    let mut x = Vec::new();
+    let content_key = CURRENT_USER.options().read().write().open(CONTENT_DELIVERY_MANAGER_KEY)?;
+    
     // Iterate through all the values in the registry key
-    for (val_name, val_data) in key.values()? {
+    for (val_name, val_data) in content_key.values()? {
         // Check if the value name contains "SubscribedContent"
         if val_name.contains("SubscribedContent") {
             log::info!("check_content_delivery_manager => \nval_name: {val_name:?}\nval_data: {val_data:?}");
-            let value = key.get_u32(val_name.clone())?;
-            if value == 0 {
-                log::info!("Key {} is DISABLED.", &val_name);
-                x.push(format!("Key {} is DISABLED.", &val_name));
-            } else {
+            let value = content_key.get_u32(val_name.clone())?;
+            if value == 1 {
                 match CURRENT_USER.set_u32("SubscribedContent", 0x000) {
-                    Ok(_) => x.push(format!("DISABLED SubscribedContent")),
-                    Err(e) => x.push(format!("Push Notifications are ENABLED, but there was an error disabling: {e:?}")),
+                    Ok(_) => results.push(format!("DISABLED SubscribedContent")),
+                    Err(e) => results.push(format!("Push Notifications are ENABLED, but there was an error disabling: {e:?}")),
                 }
                 log::info!("Key {} is ENABLED.", &val_name);
-                x.push(format!("Key {} is ENABLED.", &val_name));
+                results.push(format!("Key {} is ENABLED.", &val_name));
+            } else {
+                log::info!("Key {} is DISABLED.", &val_name);
+                results.push(format!("Key {} is DISABLED.", &val_name));
             }
         } 
     }
+
+    let user_notifs_key = CURRENT_USER.options().read().write().open(USER_NOTIFS)?;
+
+    let value = user_notifs_key.get_u32("ScoobeSystemSettingEnabled")?;
+    if value == 1 {
+        match user_notifs_key.set_u32("ScoobeSystemSettingEnabled", 0x000) {
+            Ok(_) => results.push("DISABLED User Notifications".to_string()),
+            Err(e) => results.push(format!("User Notifications are ENABLED, but there was an error disabling: {e:?}")),
+        }
+    } else {
+        results.push("Push Notifications are DISABLED.".to_string());
+    }
+
     // If we do not find a 0 value for any "SubscribedContent" value, assume it's enabled.
-    Ok(x)
+    Ok(results)
 }
 
 // Function to check the value of the Explorer Advanced registry key
-pub fn check_explorer_advanced() -> Result<String> {
-    let key = CURRENT_USER.open(EXPLORER_ADVANCED_KEY)?;
+pub fn align_taskbar_left() -> Result<String> {
+    let key = CURRENT_USER.options().read().write().open(EXPLORER_ADVANCED_KEY)?;
     let mut return_key = String::new();
-    // Iterate through all the values in the registry key
-    for (val_name, val_data) in key.values()? {
-        // Check if the value name contains "SubscribedContent" and ends with "Enabled"
-        if val_name.eq("TaskbarAl") {
-            log::info!("val_name: {val_name:?}\nval_data: {val_data:?}");
-            // Extract the data and check if it's a u32
-            if val_data == [1,0,0,0].into() {
-                return_key = "TaskBar is Centered".to_string();
-            } else if val_data == [0,0,0,0].into() {
-                return_key = "TaskBar is Left Aligned".to_string();
-            }
-        } else {
-            return_key = "Could not find 'TaskbarAl' key".to_string();
+    let value = key.get_u32("TaskbarAl")?;
+    log::info!("Value: {value}");
+    if value == 1 {
+        match key.set_u32("TaskbarAl", 0x000) {
+            Ok(_) => return_key = format!("Left Centered TaskBar"),
+            Err(e) => return_key = format!("Error Left Centering TaskBar: {e:?}"),
         }
+    } else if value == 0 {
+        return_key = "TaskBar is Left Aligned".to_string();
     }
     Ok(return_key)
 }
