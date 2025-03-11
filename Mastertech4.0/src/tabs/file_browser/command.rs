@@ -200,9 +200,39 @@ pub async fn run_robocopy(
         );
     }
 
+    let new_destination = destination.join("Desktop");
+    let folder_name = new_destination.file_name().clone().unwrap_or_default();
+
+    let final_path = if new_destination.ends_with("Desktop") {
+        new_destination.clone()
+    } else {
+        new_destination.join(folder_name)
+    };
+
+    log::info!(
+        "final_path: {final_path:?}"
+    );
+
+
+    std::fs::create_dir(&final_path)?;
+
+    let final_destination = if final_path.exists() {
+        final_path
+    } else {
+        destination.clone()
+    };
+
+    log::info!(
+        "Source: {:?} Dest: {:?}new_destination: {:?}\nfinal_destination: {:?}",
+        source, 
+        destination,
+        new_destination,
+        final_destination,
+    );
+
     let mut process = tokio::process::Command::new("robocopy")
         .arg(source)
-        .arg(destination)
+        .arg(final_destination)
         .arg("*.*")
         .arg("/S")
         .arg("/E")
