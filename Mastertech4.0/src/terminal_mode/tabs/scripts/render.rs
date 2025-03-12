@@ -27,73 +27,52 @@ pub enum MoveDirection {
     Down,
 }
 
+const LOG_VIRTUAL_HEIGHT: u16 = 50; // Fixed height, adjust as needed
+
 impl<'a> ScriptsTab<'a> {
     
     fn draw_log_section<B: Backend>(&self, f: &mut Frame, area: Rect) {
-        // 📝 Render logs
         let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
             let color = BASE_COLORS[index % BASE_COLORS.len()];
-        
             let (left_text, right_text) = match r.msg.split_once(" => ") {
                 Some((left, right)) => (left.trim(), right.trim()),
                 None => (r.msg.as_str(), ""),
             };
-        
-            // Calculate available width for the line, accounting for borders and reporter
-            let available_width = area.width.saturating_sub(4) as usize; // Subtract borders (2) and padding
+            let available_width = area.width.saturating_sub(4) as usize;
             let reporter_text = format!("{:?} =>", r.reporter);
             let reporter_length = reporter_text.len();
-            let width = available_width.saturating_sub(reporter_length); // Space for left + right text
-    
-            // Truncate left_text if too long, reserving space for right_text
-            let left_max = width.saturating_sub(right_text.len().min(width / 2)); // Reserve some space for right
+            let width = available_width.saturating_sub(reporter_length);
+            let left_max = width.saturating_sub(right_text.len().min(width / 2));
             let truncated_left = if left_text.len() > left_max {
                 &left_text[..left_max]
             } else {
                 left_text
             };
-    
-            let formatted_msg = format!("{} {:<}", truncated_left, right_text); // Left-align right_text after
-        
+            let formatted_msg = format!("{} {:<}", truncated_left, right_text);
             Line::from(vec![
                 Span::styled(reporter_text, Style::default().fg(color)),
                 Span::styled(formatted_msg, Style::default().fg(color)),
             ])
         }).collect();
-    
-        // Calculate virtual dimensions
+
         let log_lines = log_text.len() as u16;
-        let visible_height = area.height.saturating_sub(2); // Subtract borders
-        let virtual_height = log_lines.max(visible_height);
-    
-        // Calculate maximum line width for horizontal scrolling
-        let max_line_width = log_text.iter()
-            .map(|line| line.width() as u16)
-            .max()
-            .unwrap_or(area.width.saturating_sub(2));
-        let visible_width = area.width.saturating_sub(2);
-        let virtual_width = max_line_width.max(visible_width);
-    
+        let visible_height = area.height.saturating_sub(2);
+        let virtual_width = area.width;
+
         let virtual_size = Size {
             width: virtual_width,
-            height: virtual_height,
+            height: LOG_VIRTUAL_HEIGHT,
         };
-    
-        let mut scroll_view = ScrollView::new(virtual_size);
+
+        let mut scroll_view = ScrollView::new(virtual_size); // Enable horizontal scroll
+
         self.report_area.replace(Some(area));
-    
-        // Get scroll position
+
         let mut scroll_state = self.report_scroll_state.borrow_mut();
         let scroll_y = scroll_state.offset().y;
         let scroll_x = scroll_state.offset().x;
-    
-        // Slice log_text to only include visible lines
-        let start_line = scroll_y as usize;
-        let end_line = (scroll_y + visible_height).min(log_lines);
-        let visible_lines = &log_text[start_line..end_line as usize];
-    
-        // Create Paragraph with visible lines only, constrained to visible width
-        let log_widget = Paragraph::new(visible_lines.to_vec())
+
+        let log_widget = Paragraph::new(log_text.clone())
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -101,20 +80,17 @@ impl<'a> ScriptsTab<'a> {
                     .title("Run Report")
                     .border_type(BorderType::Rounded)
             )
-            .wrap(ratatui::widgets::Wrap { trim: true }); // Ensure wrapping within bounds
-    
-        // Render widget with adjusted position for horizontal scroll
-        scroll_view.render_widget(log_widget, Rect {
-            x: scroll_x,
-            y: 0,
-            width: virtual_width,
-            height: virtual_height,
-        });
-    
-        // Apply scroll view to the visible area
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+
+        log_widget.render_ref(scroll_view.area(), scroll_view.buf_mut());
+
+        // Render into ScrollView’s virtual area
+        // scroll_view.render_widget(log_widget, scroll_view.area());
+
         scroll_view.render(area, f.buffer_mut(), &mut scroll_state);
     }
-    
+
     fn draw_checklist<B: Backend>(&self, f: &mut Frame, area: Rect) {
         let list_scroll_layout = Layout::horizontal([
             Constraint::Percentage(5), 
@@ -259,7 +235,7 @@ impl<'a> ScriptsTab<'a> {
 
         // Render the instructional text
         let text_block = Paragraph::new(popup_text)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .alignment(Alignment::Center);
 
         f.render_widget(text_block, content_chunks[0]);
@@ -576,6 +552,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     if report_area_contains_mouse {
                         self.report_scroll_state.borrow_mut().scroll_down();
                         self.report_scroll_state.borrow_mut().scroll_down();
+                        *self.has_scrolled_manually.borrow_mut() = true;
                     }
                 }
                 if let Some(list_area) = *self.checklist_area.borrow() {
@@ -613,6 +590,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     if report_area_contains_mouse {
                         self.report_scroll_state.borrow_mut().scroll_up();
                         self.report_scroll_state.borrow_mut().scroll_up();
+                        *self.has_scrolled_manually.borrow_mut() = true;
                     }
                 }
                 if let Some(list_area) = *self.checklist_area.borrow() {
@@ -991,6 +969,16 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     let (current_category, current_item) = full_list[flat_selected].clone();
                     log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
                 }
+                true
+            }
+            KeyCode::PageUp => {
+                self.report_scroll_state.borrow_mut().scroll_page_up();
+                *self.has_scrolled_manually.borrow_mut() = true;
+                true
+            }
+            KeyCode::PageDown => {
+                self.report_scroll_state.borrow_mut().scroll_page_down();
+                *self.has_scrolled_manually.borrow_mut() = true;
                 true
             }
             _ => false

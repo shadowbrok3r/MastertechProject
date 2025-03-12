@@ -1,6 +1,6 @@
 use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::button::Button}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
 use egui::output;
-use ratatui::{layout::Rect, widgets::{ListState, ScrollbarState}};
+use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Category, Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
@@ -71,7 +71,8 @@ pub struct ScriptsTab<'a> {
     data_transfer_progress_tx: Sender<Vec<u8>>,
     data_transfer_progress_rx: Receiver<Vec<u8>>,
     source_directories: Vec<(String, String)>,
-    progress: RefCell<Option<(f64, f64)>>
+    progress: RefCell<Option<(f64, f64)>>,
+    has_scrolled_manually: RefCell<bool>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -242,6 +243,7 @@ impl<'a> ScriptsTab<'a> {
             destination_directory: String::new(),
             source_directories: Vec::new(),
             progress: RefCell::new(None),
+            has_scrolled_manually: RefCell::new(false),
             
         }
     }
@@ -249,11 +251,21 @@ impl<'a> ScriptsTab<'a> {
     /// Logs a message under the current `Reporter`
     pub fn log_message(&self, msg: impl Display) {
         let reporter = self.current_reporter.borrow().clone();
+        let log_lines = self.reports.borrow().len() as u16;
         let log_entry = Report {
             reporter,
             msg: msg.to_string(),
         };
         self.reports.borrow_mut().push(log_entry); // ✅ Store log
+        let mut scroll_state = self.report_scroll_state.borrow_mut();
+        let scroll_x = scroll_state.offset().x;
+        let visible_height = self.report_area.borrow().map_or(0, |area| area.height.saturating_sub(2));
+
+        if !*self.has_scrolled_manually.borrow() && log_lines > visible_height {
+            let scroll_y = log_lines.saturating_sub(visible_height);
+            scroll_state.set_offset(Position { x: scroll_x, y: scroll_y });
+        }
+        *self.has_scrolled_manually.borrow_mut() = false;
     }
 
     pub fn receive(&mut self) {
