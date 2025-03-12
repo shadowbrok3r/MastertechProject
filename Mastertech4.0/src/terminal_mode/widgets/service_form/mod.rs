@@ -162,6 +162,3 @@ impl<'a> ServiceFormWidget<'a> {
     //     *self.cached_cursor_position.borrow()
     // }
 }
-
-
-
