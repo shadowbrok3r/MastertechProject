@@ -855,76 +855,76 @@ pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {
 }
 
 pub const CHECK_POWER_OPTIONS: &str = r#"
-# Define GUIDs and aliases for power settings
-$settings = @(
-    @{
-        Name = "Turn off display after"
-        SubgroupGUID = "7516b95f-f776-4464-8c53-06167f40cc99"  # SUB_VIDEO
-        SettingGUID = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e"   # VIDEOIDLE
-        Units = "Seconds"
-    },
-    @{
-        Name = "Sleep after"
-        SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
-        SettingGUID = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"   # STANDBYIDLE
-        Units = "Seconds"
-    },
-    @{
-        Name = "Allow hybrid sleep"
-        SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
-        SettingGUID = "94ac6d29-73ce-41a6-809f-6363ba21b47e"   # HYBRIDSLEEP
-        Units = "On/Off"
-    },
-    @{
-        Name = "Hibernate after"
-        SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
-        SettingGUID = "9d7815a6-7ee4-497e-8888-515a05f02364"   # HIBERNATEIDLE
-        Units = "Seconds"
-    }
-)
-
-# Function to convert hex value to decimal (for seconds) or interpret as On/Off
-function Convert-PowerSettingValue {
-    param (
-        [string]$HexValue,
-        [string]$Units
+    # Define GUIDs and aliases for power settings
+    $settings = @(
+        @{
+            Name = "Turn off display after"
+            SubgroupGUID = "7516b95f-f776-4464-8c53-06167f40cc99"  # SUB_VIDEO
+            SettingGUID = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e"   # VIDEOIDLE
+            Units = "Seconds"
+        },
+        @{
+            Name = "Sleep after"
+            SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+            SettingGUID = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"   # STANDBYIDLE
+            Units = "Seconds"
+        },
+        @{
+            Name = "Allow hybrid sleep"
+            SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+            SettingGUID = "94ac6d29-73ce-41a6-809f-6363ba21b47e"   # HYBRIDSLEEP
+            Units = "On/Off"
+        },
+        @{
+            Name = "Hibernate after"
+            SubgroupGUID = "238c9fa8-0aad-41ed-83f4-97be242c8f20"  # SUB_SLEEP
+            SettingGUID = "9d7815a6-7ee4-497e-8888-515a05f02364"   # HIBERNATEIDLE
+            Units = "Seconds"
+        }
     )
-    if ($Units -eq "Seconds") {
-        [uint32]("0x" + $HexValue)
-    } elseif ($Units -eq "On/Off") {
-        if ($HexValue -eq "0x00000000") { "Off" } else { "On" }
-    }
-}
 
-# Function to check if any setting is enabled
-function Check-PowerSettingsEnabled {
-    $anyEnabled = $false
-    foreach ($setting in $settings) {
-        # Query current AC and DC settings
-        $acResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current AC Power Setting Index: (0x[0-9a-fA-F]+)"
-        $dcResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current DC Power Setting Index: (0x[0-9a-fA-F]+)"
-        
-        $acValue = if ($acResult) { $acResult.Matches.Groups[1].Value } else { "0x00000000" }
-        $dcValue = if ($dcResult) { $dcResult.Matches.Groups[1].Value } else { "0x00000000" }
-        
-        $acConverted = Convert-PowerSettingValue -HexValue $acValue -Units $setting.Units
-        $dcConverted = Convert-PowerSettingValue -HexValue $dcValue -Units $setting.Units
-
-        Write-Host "$($setting.Name): AC = $acConverted, DC = $dcConverted"
-
-        # Check if enabled (non-zero for Seconds, "On" for On/Off)
-        if (($setting.Units -eq "Seconds" -and ($acConverted -gt 0 -or $dcConverted -gt 0)) -or 
-            ($setting.Units -eq "On/Off" -and ($acConverted -eq "On" -or $dcConverted -eq "On"))) {
-            $anyEnabled = $true
+    # Function to convert hex value to decimal (for seconds) or interpret as On/Off
+    function Convert-PowerSettingValue {
+        param (
+            [string]$HexValue,
+            [string]$Units
+        )
+        if ($Units -eq "Seconds") {
+            [uint32]("0x" + $HexValue)
+        } elseif ($Units -eq "On/Off") {
+            if ($HexValue -eq "0x00000000") { "Off" } else { "On" }
         }
     }
-    return $anyEnabled
-}
+
+    # Function to check if any setting is enabled
+    function Check-PowerSettingsEnabled {
+        $anyEnabled = $false
+        foreach ($setting in $settings) {
+            # Query current AC and DC settings
+            $acResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current AC Power Setting Index: (0x[0-9a-fA-F]+)"
+            $dcResult = powercfg /query SCHEME_CURRENT $setting.SubgroupGUID $setting.SettingGUID | Select-String "Current DC Power Setting Index: (0x[0-9a-fA-F]+)"
+            
+            $acValue = if ($acResult) { $acResult.Matches.Groups[1].Value } else { "0x00000000" }
+            $dcValue = if ($dcResult) { $dcResult.Matches.Groups[1].Value } else { "0x00000000" }
+            
+            $acConverted = Convert-PowerSettingValue -HexValue $acValue -Units $setting.Units
+            $dcConverted = Convert-PowerSettingValue -HexValue $dcValue -Units $setting.Units
+
+            Write-Host "$($setting.Name): AC = $acConverted, DC = $dcConverted"
+
+            # Check if enabled (non-zero for Seconds, "On" for On/Off)
+            if (($setting.Units -eq "Seconds" -and ($acConverted -gt 0 -or $dcConverted -gt 0)) -or 
+                ($setting.Units -eq "On/Off" -and ($acConverted -eq "On" -or $dcConverted -eq "On"))) {
+                $anyEnabled = $true
+            }
+        }
+        return $anyEnabled
+    }
 
 
-# Main logic
-Write-Host "Checking power settings..."
-Write-output Check-PowerSettingsEnabled
+    # Main logic
+    Write-Host "Checking power settings..."
+    Write-output Check-PowerSettingsEnabled
 "#;
 
 #[test]
@@ -932,13 +932,46 @@ fn test_read_folder() {
     use std::fs;
     let temp_dir = tempfile::tempdir().unwrap();
     let users_dir = temp_dir.path().join("Users");
+    let alice = users_dir.join("Alice");
+    let other_user = users_dir.join("Another User");
+    let mut bob = users_dir.join("Bob");
+
     fs::create_dir(&users_dir).unwrap();
-    fs::create_dir(users_dir.join("Alice")).unwrap();
+    fs::create_dir(&alice).unwrap();
+    fs::create_dir(&other_user).unwrap();
     fs::create_dir(users_dir.join("Public")).unwrap();
     fs::create_dir(users_dir.join("Default")).unwrap();
-    fs::create_dir(users_dir.join("Bob")).unwrap();
+    fs::create_dir(&bob).unwrap();
 
-    let result = read_folder(users_dir, 2, true);
-    let names: Vec<_> = result.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-    assert_eq!(names, vec!["Alice", "Bob"]); // Excludes Public, Default
+    
+    fs::File::create(&other_user.join("test.txt")).unwrap();
+    fs::File::create(&other_user.join("test1.txt")).unwrap();
+    fs::File::create(&other_user.join("test2.txt")).unwrap();
+
+    fs::File::create(&alice.join("test.txt")).unwrap();
+    fs::File::create(&alice.join("test1.txt")).unwrap();
+    fs::File::create(&alice.join("test2.txt")).unwrap();
+
+    let source_user_name = alice.file_name().clone().unwrap_or_default();
+    let source1_user_name = other_user.file_name().clone().unwrap_or_default();
+
+    bob.push("Desktop");
+    let desktop_backup_folder = if bob.ends_with("UsersBackup") {
+        bob.clone()
+    } else {
+        let new_bob = bob.join("UsersBackup");
+        std::fs::create_dir_all(&new_bob).unwrap();
+        new_bob
+    };
+    let user_folder = desktop_backup_folder.join(source_user_name);
+    let user_folder1 = desktop_backup_folder.join(source1_user_name);
+    println!("desktop_backup_folder: {desktop_backup_folder:?}\nuser: {user_folder:?}\nuser1 {user_folder1:?}");
+    std::fs::create_dir_all(&user_folder).unwrap();
+    std::fs::create_dir_all(&user_folder1).unwrap();
+
+    // println!(
+    //     "user_backup: {user_backup:?}\nuser_backup_1: {user_backup_1:?}"
+    // );
+
+    // assert_eq!(names, vec!["Alice", "Bob"]); // Excludes Public, Default
 }

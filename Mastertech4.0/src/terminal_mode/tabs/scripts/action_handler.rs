@@ -63,15 +63,23 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "Informational" => {}
                     _ => {
                         if WidgetButton::Right == *button {
-                            for btn in self.data_path_buttons.iter() {
+                            // Collect the ID to remove (assuming single match for simplicity)
+                            let matching_id = self.data_path_buttons.iter()
+                            .find_map(|btn| {
                                 let btn_widget_id = btn.get_widget_id().clone();
                                 let btn_id = btn_widget_id.0.as_str();
-                                if btn_id.eq(id) {
-                                    let pre_source = self.source_directories.clone();
-                                    self.source_directories.retain(|(path, _size)| !path.eq(btn_id));
-                                    self.log_message(format!("sources before: {:?}\nAfter: {:?}", pre_source, self.source_directories));
+                                if btn_id.eq(widget_id.0.as_str()) {
+                                    Some(btn_id.to_string())
+                                } else {
+                                    None
                                 }
-                            } 
+                            });
+
+                            // Now mutate self after the immutable borrow ends
+                            if let Some(id) = matching_id {
+                                self.remove_button(&id);
+                            }
+
                         } else {
                             let mut is_open = self.is_popup_open.borrow_mut();
                             for btn in self.data_path_buttons.iter() {

@@ -200,39 +200,21 @@ pub async fn run_robocopy(
         );
     }
 
-    let new_destination = destination.join("Desktop");
-    let folder_name = new_destination.file_name().clone().unwrap_or_default();
-
-    let final_path = if new_destination.ends_with("Desktop") {
-        new_destination.clone()
-    } else {
-        new_destination.join(folder_name)
-    };
+    let source_user_name = source.file_name().clone().unwrap_or_default();
+    let backup_folder = destination.join("Desktop").join("UsersBackup").join(source_user_name);
+    std::fs::create_dir_all(&backup_folder)?;
 
     log::info!(
-        "final_path: {final_path:?}"
-    );
-
-
-    std::fs::create_dir(&final_path)?;
-
-    let final_destination = if final_path.exists() {
-        final_path
-    } else {
-        destination.clone()
-    };
-
-    log::info!(
-        "Source: {:?} Dest: {:?}new_destination: {:?}\nfinal_destination: {:?}",
+        "Source: {:?} Dest: {:?}source_user_name: {:?}\nbackup_folder: {:?}",
         source, 
         destination,
-        new_destination,
-        final_destination,
+        source_user_name,
+        backup_folder,
     );
 
     let mut process = tokio::process::Command::new("robocopy")
         .arg(source)
-        .arg(final_destination)
+        .arg(backup_folder)
         .arg("*.*")
         .arg("/S")
         .arg("/E")
