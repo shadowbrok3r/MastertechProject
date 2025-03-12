@@ -307,4 +307,29 @@ impl<'a> ScriptsTab<'a> {
             })
             .collect()
     }
+
+    fn remove_button(&mut self, id: &str) {
+        let pre_source = self.source_directories.clone();
+        
+        // Remove from source_directories
+        self.source_directories.retain(|(path, _size)| !path.eq(id));
+    
+        // Remove from data_path_buttons
+        let button_index = self.data_path_buttons.iter().position(|btn| {
+            let btn_widget_id = btn.get_widget_id();
+            let btn_id = btn_widget_id.0.as_str();
+            btn_id.eq(id)
+        });
+    
+        if let Some(index) = button_index {
+            self.data_path_buttons.remove(index);
+        }
+    
+        self.log_message(format!(
+            "Sources before: {:?}\nAfter: {:?}\nButtons: {:?}", 
+            pre_source, 
+            self.source_directories, 
+            self.data_path_buttons.iter().map(|btn| btn.get_widget_id().0.clone()).collect::<Vec<_>>()
+        ));
+    }
 }
