@@ -13,6 +13,7 @@ pub enum TodoItemTag {
     Custom(String)
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TodoList {
     pub name: String,
     pub items: Vec<TodoItem>,
