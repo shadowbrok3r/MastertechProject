@@ -214,19 +214,19 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
         }
 
         terminal.draw(|f| {
-            if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
-                let layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .margin(1)
-                .constraints([
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(50),
-                ]).split(f.area());
+            // if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
+            //     let layout = Layout::default()
+            //     .direction(Direction::Horizontal)
+            //     .margin(1)
+            //     .constraints([
+            //         Constraint::Percentage(50),
+            //         Constraint::Percentage(50),
+            //     ]).split(f.area());
 
-                f.render_widget(&mut splash_screen, layout[0]);
-                f.render_widget(&mut splash_screen2, layout[1]);
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            } else {
+            //     f.render_widget(&mut splash_screen, layout[0]);
+            //     f.render_widget(&mut splash_screen2, layout[1]);
+            //     std::thread::sleep(std::time::Duration::from_millis(50));
+            // } else {
                 
                 app.event_manager.process_events(app.ctx.clone());
                 if let Ok(mut lock) = app.ctx.lock() {
@@ -283,7 +283,7 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                         app.logger.draw::<B>(f, main_content_area);
                     },
                 }
-            }
+            // }
         })?;
     }
     Ok(())

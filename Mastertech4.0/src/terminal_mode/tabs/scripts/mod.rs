@@ -18,6 +18,7 @@ pub mod script_checks;
 // SCRIPTS TAB with Buttons
 ////////////////////////////////
 /// Let's say we have a subcomponent called ScriptsTab
+#[derive(Debug)]
 pub struct ScriptsTab<'a> {
     tuneup_btn: Button<'a>,
     qc_btn: Button<'a>,
@@ -73,6 +74,7 @@ pub struct ScriptsTab<'a> {
     source_directories: Vec<(String, String)>,
     progress: RefCell<Option<(f64, f64)>>,
     has_scrolled_manually: RefCell<bool>,
+    init: RefCell<bool>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -244,6 +246,7 @@ impl<'a> ScriptsTab<'a> {
             source_directories: Vec::new(),
             progress: RefCell::new(None),
             has_scrolled_manually: RefCell::new(false),
+            init: RefCell::new(true),
             
         }
     }
@@ -299,11 +302,11 @@ impl<'a> ScriptsTab<'a> {
         }
 
         // listen for Windows Update logs & results
-        while let Ok(event) = self.update_log_rx.try_recv() {
+        if let Ok(event) = self.update_log_rx.try_recv() {
             match event {
                 WindowsUpdateEvent::UpdateLogs(log) => self.log_message(&log),
                 WindowsUpdateEvent::ReturnedUpdates(windows_updates) => {
-                    self.log_message(&serde_json::to_string_pretty(&windows_updates).unwrap());
+                    self.log_message(&format!("{windows_updates:#?}"));
                     self.windows_updates = windows_updates;
                 },
             }
@@ -345,3 +348,134 @@ impl<'a> ScriptsTab<'a> {
         ));
     }
 }
+
+
+
+
+
+
+
+
+
+pub const TEST_TEXT: [&str; 120] = [
+    r#"23:15:09 [INFO] STARTING TERM MODE"#,
+    r#"23:15:09 [INFO] Hooking StdOut"#,
+    r#"23:15:09 [INFO] Creating Crossterm backend"#,
+    r#"23:15:09 [INFO] Creating Terminal"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Getting sysinfo"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Pulling Drive information"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> DriveData: "M.2-WDBlue""#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> DriveData: "HDD-Games""#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> DriveData: """#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> DriveData: "darkmage79@gmail.com - Google...""#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> DriveData: "logan@kingsofalchemy.com - Go...""#,
+    r#"23:15:09 [ERROR] Error Pulling SEB info: "The system cannot find the path specified. (os error 3)""#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> pulling GPU"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Process: Ok(Output { status: ExitStatus(ExitStatus(0)), stdout: "NVIDIA GeForce RTX 3090\r\n", stderr: "" })"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> x: [78, 86, 73, 68, 73, 65, 32, 71, 101, 70, 111, 114, 99, 101, 32, 82, 84, 88, 32, 51, 48, 57, 48, 13, 10]"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> GPU: "NVIDIA GeForce RTX 3090\r\n""#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Pulling CPU"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Pulling RAM"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Pulling OS"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> Pulling Hostname"#,
+    r#"23:15:09 [INFO] Filesystem -> generate_client_id -> combined: ShadowbrokerPC-AMD Ryzen 9 5950X 16-Core Processor-AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD"#,
+    r#"23:15:09 [INFO] Filesystem -> generate_client_id -> hex_string: bb6064d0dce336cb2731c7a708ddf1fcd764f2f66b4832b398197f3cfad76d8b"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> ID: ShadowbrokerPC:bb6064d0d"#,
+    r#"23:15:09 [INFO] Filesystem -> get_computer_data -> RecordID: Thing { tb: "computer", id: String("ShadowbrokerPC:bb6064d0d") }"#,
+    r#"23:15:09 [INFO] Computer Data: ComputerData { id: Thing { tb: "computer", id: String("ShadowbrokerPC:bb6064d0d") }, customer: None, seb_info: None, hostname: "ShadowbrokerPC", operating_system: "Windows 11 Pro", cpu: "AMD Ryzen 9 5950X 16-Core Processor", gpu: "NVIDIA GeForce RTX 3090", ram: "64", drives: [DriveData { drive_letter: "D:\\", drive_type: "SSD", total_size: "1,862", space_left: "593" }, DriveData { drive_letter: "E:\\", drive_type: "HDD", total_size: "5,589", space_left: "1,797" }, DriveData { drive_letter: "C:\\", drive_type: "SSD", total_size: "1,862", space_left: "798" }, DriveData { drive_letter: "G:\\", drive_type: "Unknown(-1)", total_size: "1,862", space_left: "132" }, DriveData { drive_letter: "M:\\", drive_type: "Unknown(-1)", total_size: "1,862", space_left: "758" }], device_name: None, device_mfg: None, device_model: None, device_serial: None }"#,
+    r#"23:15:09 [INFO] Retrieving sysinfo"#,
+    r#"23:15:10 [INFO] Running app"#,
+    r#"23:15:10 [INFO] Filesystem -> generate_client_id -> combined: ShadowbrokerPC-AMD Ryzen 9 5950X 16-Core Processor-AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD"#,
+    r#"23:15:10 [INFO] Filesystem -> generate_client_id -> hex_string: bb6064d0dce336cb2731c7a708ddf1fcd764f2f66b4832b398197f3cfad76d8b"#,
+    r#"23:15:10 [INFO] First Run Results: Ok(())"#,
+    r#"23:15:10 [INFO] Running splash"#,
+    r#"23:15:10 [INFO] Running splash 2"#,
+    r#"23:15:10 [INFO] Entering main loop"#,
+    r#"23:15:14 [INFO] DB: Err(There was an error processing a remote WS request: IO error: No connection could be made because the target machine actively refused it. (os error 10061)"#,
+    r#"Caused by:"#,
+    r#"    There was an error processing a remote WS request: IO error: No connection could be made because the target machine actively refused it. (os error 10061))"#,
+    r#"23:15:46 [INFO] Button: Left"#,
+    r#"23:15:46 [INFO] Button: Left"#,
+    r#"widget: WidgetId("Scripts")"#,
+    r#"23:15:46 [INFO] Button: Left"#,
+    r#"23:15:09 [INFO] 231123 STARTING TERM MODE"#,
+    r#"23:15:09 [INFO] 231123 Hooking StdOut"#,
+    r#"23:15:09 [INFO] 231123 Creating Crossterm backend"#,
+    r#"23:15:09 [INFO] 231123 Creating Terminal"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Getting sysinfo"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Pulling Drive information"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> DriveData: "M.2-WDBlue""#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> DriveData: "HDD-Games""#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> DriveData: """#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> DriveData: "darkmage79@gmail.com - Google...""#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> DriveData: "logan@kingsofalchemy.com - Go...""#,
+    r#"23:15:09 [ERROR]231123  Error Pulling SEB info: "The system cannot find the path specified. (os error 3)""#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> pulling GPU"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Process: Ok(Output { status: ExitStatus(ExitStatus(0)), stdout: "NVIDIA GeForce RTX 3090\r\n", stderr: "" })"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> x: [78, 86, 73, 68, 73, 65, 32, 71, 101, 70, 111, 114, 99, 101, 32, 82, 84, 88, 32, 51, 48, 57, 48, 13, 10]"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> GPU: "NVIDIA GeForce RTX 3090\r\n""#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Pulling CPU"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Pulling RAM"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Pulling OS"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> Pulling Hostname"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> generate_client_id -> combined: ShadowbrokerPC-AMD Ryzen 9 5950X 16-Core Processor-AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> generate_client_id -> hex_string: bb6064d0dce336cb2731c7a708ddf1fcd764f2f66b4832b398197f3cfad76d8b"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> ID: ShadowbrokerPC:bb6064d0d"#,
+    r#"23:15:09 [INFO] 231123 Filesystem -> get_computer_data -> RecordID: Thing { tb: "computer", id: String("ShadowbrokerPC:bb6064d0d") }"#,
+    r#"23:15:09 [INFO] 231123 Computer Data: ComputerData { id: Thing { tb: "computer", id: String("ShadowbrokerPC:bb6064d0d") }, customer: None, seb_info: None, hostname: "ShadowbrokerPC", operating_system: "Windows 11 Pro", cpu: "AMD Ryzen 9 5950X 16-Core Processor", gpu: "NVIDIA GeForce RTX 3090", ram: "64", drives: [DriveData { drive_letter: "D:\\", drive_type: "SSD", total_size: "1,862", space_left: "593" }, DriveData { drive_letter: "E:\\", drive_type: "HDD", total_size: "5,589", space_left: "1,797" }, DriveData { drive_letter: "C:\\", drive_type: "SSD", total_size: "1,862", space_left: "798" }, DriveData { drive_letter: "G:\\", drive_type: "Unknown(-1)", total_size: "1,862", space_left: "132" }, DriveData { drive_letter: "M:\\", drive_type: "Unknown(-1)", total_size: "1,862", space_left: "758" }], device_name: None, device_mfg: None, device_model: None, device_serial: None }"#,
+    r#"23:15:09 [INFO] 231123 Retrieving sysinfo"#,
+    r#"23:15:10 [INFO] 231123 Running app"#,
+    r#"23:15:10 [INFO] 231123 Filesystem -> generate_client_id -> combined: ShadowbrokerPC-AMD Ryzen 9 5950X 16-Core Processor-AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD"#,
+    r#"23:15:10 [INFO] 231123 Filesystem -> generate_client_id -> hex_string: bb6064d0dce336cb2731c7a708ddf1fcd764f2f66b4832b398197f3cfad76d8b"#,
+    r#"23:15:10 [INFO] 231123 First Run Results: Ok(())"#,
+    r#"23:15:10 [INFO] 231123 Running splash"#,
+    r#"23:15:10 [INFO] 231123 Running splash 2"#,
+    r#"23:15:10 [INFO] 231123 Entering main loop"#,
+    r#"23:15:14 [INFO] 231123 DB: Err(There was an error processing a remote WS request: IO error: No connection could be made because the target machine actively refused it. (os error 10061)"#,
+    r#"Caused by:"#,
+    r#"    There was an error processing a remote WS request: IO error: No connection could be made because the target machine actively refused it. (os error 10061))"#,
+    r#"23:15:46 [INFO] ```Button: Left"#,
+    r#"23:15:46 [INFO] ```Button: Left"#,
+    r#"widget: WidgetId```("Scripts")"#,
+    r#"23:15:46 [INFO] ```Button: Left"#,
+    r#"23:15:09 [INFO] ```STARTING TERM MODE"#,
+    r#"23:15:09 [INFO] ```Hooking StdOut"#,
+    r#"23:15:09 [INFO] ```Creating Crossterm backend"#,
+    r#"23:15:09 [INFO] ```Creating Terminal"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Getting sysinfo"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Pulling Drive information"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> DriveData: "M.2-WDBlue""#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> DriveData: "HDD-Games""#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> DriveData: """#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> DriveData: "darkmage79@gmail.com - Google...""#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> DriveData: "logan@kingsofalchemy.com - Go...""#,
+    r#"23:15:09 [ERROR]``` Error Pulling SEB info: "The system cannot find the path specified. (os error 3)""#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> pulling GPU"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Process: Ok(Output { status: ExitStatus(ExitStatus(0)), stdout: "NVIDIA GeForce RTX 3090\r\n", stderr: "" })"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> x: [78, 86, 73, 68, 73, 65, 32, 71, 101, 70, 111, 114, 99, 101, 32, 82, 84, 88, 32, 51, 48, 57, 48, 13, 10]"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> GPU: "NVIDIA GeForce RTX 3090\r\n""#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Pulling CPU"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Pulling RAM"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Pulling OS"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> Pulling Hostname"#,
+    r#"23:15:09 [INFO] ```Filesystem -> generate_client_id -> combined: ShadowbrokerPC-AMD Ryzen 9 5950X 16-Core Processor-AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD"#,
+    r#"23:15:09 [INFO] ```Filesystem -> generate_client_id -> hex_string: bb6064d0dce336cb2731c7a708ddf1fcd764f2f66b4832b398197f3cfad76d8b"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> ID: ShadowbrokerPC:bb6064d0d"#,
+    r#"23:15:09 [INFO] ```Filesystem -> get_computer_data -> RecordID: Thing { tb: "computer", id: String("ShadowbrokerPC:bb6064d0d") }"#,
+    r#"23:15:09 [INFO] ```Computer Data: ComputerData { id: Thing { tb: "computer", id: String("ShadowbrokerPC:bb6064d0d") }, customer: None, seb_info: None, hostname: "ShadowbrokerPC", operating_system: "Windows 11 Pro", cpu: "AMD Ryzen 9 5950X 16-Core Processor", gpu: "NVIDIA GeForce RTX 3090", ram: "64", drives: [DriveData { drive_letter: "D:\\", drive_type: "SSD", total_size: "1,862", space_left: "593" }, DriveData { drive_letter: "E:\\", drive_type: "HDD", total_size: "5,589", space_left: "1,797" }, DriveData { drive_letter: "C:\\", drive_type: "SSD", total_size: "1,862", space_left: "798" }, DriveData { drive_letter: "G:\\", drive_type: "Unknown(-1)", total_size: "1,862", space_left: "132" }, DriveData { drive_letter: "M:\\", drive_type: "Unknown(-1)", total_size: "1,862", space_left: "758" }], device_name: None, device_mfg: None, device_model: None, device_serial: None }"#,
+    r#"23:15:09 [INFO] ```Retrieving sysinfo"#,
+    r#"23:15:10 [INFO] ```Running app"#,
+    r#"23:15:10 [INFO] ```Filesystem -> generate_client_id -> combined: ShadowbrokerPC-AMD Ryzen 9 5950X 16-Core Processor-AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD"#,
+    r#"23:15:10 [INFO] ```Filesystem -> generate_client_id -> hex_string: bb6064d0dce336cb2731c7a708ddf1fcd764f2f66b4832b398197f3cfad76d8b"#,
+    r#"23:15:10 [INFO] ```First Run Results: Ok(())"#,
+    r#"23:15:10 [INFO] ```Running splash"#,
+    r#"23:15:10 [INFO] ```Running splash 2"#,
+    r#"23:15:10 [INFO] ```Entering main loop"#,
+    r#"23:15:14 [INFO] ```DB: Err(There was an error processing a remote WS request: IO error: No connection could be made because the target machine actively refused it. (os error 10061)"#,
+    r#"Caused by:"#,
+    r#"    There was an error processing a remote WS request: IO error: No connection could be made because the target machine actively refused it. (os error 10061))"#,
+    r#"23:15:46 [INFO] Button: Left"#,
+    r#"23:15:46 [INFO] Button: Left"#,
+    r#"widget: WidgetId("Scripts")"#,
+    r#"23:15:46 [INFO] Button: Left"#,
+];

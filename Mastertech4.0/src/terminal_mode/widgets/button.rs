@@ -19,7 +19,7 @@ use super::{ButtonType, SHORTCUT_SET};
 /// - `shrink`: The size to shrink the button by, 
 ///     to make the button not take the entire area it resides in
 /// - `on_click`: optional callback to do something when the button is clicked
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Button<'a> {
     id: WidgetId,
     title: String,

@@ -1,7 +1,6 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style, Stylize}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
-use tui_scrollview::ScrollView;
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -27,68 +26,119 @@ pub enum MoveDirection {
     Down,
 }
 
-const LOG_VIRTUAL_HEIGHT: u16 = 50; // Fixed height, adjust as needed
-
 impl<'a> ScriptsTab<'a> {
-    
     fn draw_log_section<B: Backend>(&self, f: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .style(Style::new().fg(CATPPUCCIN.blue))
+            .title("Run Report")
+            .border_type(BorderType::Rounded);
+
+        let outer_area = area;
+
+        let list_scroll_layout = Layout::horizontal([
+            Constraint::Percentage(4), 
+            Constraint::Percentage(96)
+            ])
+            .split(block.inner(outer_area));
+
+        let main_area = list_scroll_layout[1];
+        let v_scroll_area = list_scroll_layout[0];
+
+        let main_content = Layout::vertical([
+            Constraint::Percentage(97),
+            Constraint::Percentage(3), 
+            ])
+            .split(main_area);
+
+        let h_scroll_area = main_content[1];
+        let inner_area = main_content[0];
+
+        block.render_ref(outer_area, f.buffer_mut());
+
         let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
             let color = BASE_COLORS[index % BASE_COLORS.len()];
             let (left_text, right_text) = match r.msg.split_once(" => ") {
                 Some((left, right)) => (left.trim(), right.trim()),
                 None => (r.msg.as_str(), ""),
             };
-            let available_width = area.width.saturating_sub(4) as usize;
-            let reporter_text = format!("{:?} =>", r.reporter);
+            let available_width = inner_area.width as usize;
+            let reporter_text = format!("{:?} => ", r.reporter);
             let reporter_length = reporter_text.len();
-            let width = available_width.saturating_sub(reporter_length);
-            let left_max = width.saturating_sub(right_text.len().min(width / 2));
-            let truncated_left = if left_text.len() > left_max {
-                &left_text[..left_max]
-            } else {
-                left_text
-            };
-            let formatted_msg = format!("{} {:<}", truncated_left, right_text);
-            Line::from(vec![
-                Span::styled(reporter_text, Style::default().fg(color)),
-                Span::styled(formatted_msg, Style::default().fg(color)),
-            ])
+            let width = available_width.saturating_sub(left_text.len() + reporter_length);
+            let formatted_msg = format!("{:?} => {:<} {:>width$}", r.reporter, left_text, right_text, width = width);
+
+            Line::from(Span::styled(formatted_msg, Style::default().fg(color)))
         }).collect();
 
         let log_lines = log_text.len() as u16;
-        let visible_height = area.height.saturating_sub(2);
-        let virtual_width = area.width;
+        let visible_height = inner_area.height; // No extra subtraction since block is outside
+        let max_line_width = log_text.iter()
+            .map(|line| line.width() as u16)
+            .max()
+            .unwrap_or(inner_area.width);
 
-        let virtual_size = Size {
-            width: virtual_width,
-            height: LOG_VIRTUAL_HEIGHT,
-        };
-
-        let mut scroll_view = ScrollView::new(virtual_size); // Enable horizontal scroll
-
-        self.report_area.replace(Some(area));
+        self.report_area.replace(Some(inner_area));
 
         let mut scroll_state = self.report_scroll_state.borrow_mut();
-        let scroll_y = scroll_state.offset().y;
-        let scroll_x = scroll_state.offset().x;
+        // Clamp scroll_y and scroll_x to content bounds
+        let scroll_y = scroll_state.offset().y.min(log_lines.saturating_sub(visible_height));
+        let scroll_x = scroll_state.offset().x.min(max_line_width.saturating_sub(inner_area.width));
+        scroll_state.set_offset(Position { x: scroll_x, y: scroll_y });
 
-        let log_widget = Paragraph::new(log_text.clone())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .style(Style::new().fg(CATPPUCCIN.blue))
-                    .title("Run Report")
-                    .border_type(BorderType::Rounded)
-            )
-            .wrap(Wrap { trim: true })
+        let start_line = scroll_y as usize;
+        let end_line = (scroll_y + visible_height).min(log_lines) as usize;
+        let visible_lines = if start_line < log_text.len() {
+            &log_text[start_line..end_line]
+        } else {
+            &[]
+        };
+
+        let log_widget = Paragraph::new(visible_lines.to_vec())
+            .scroll((0, scroll_x)) // Only horizontal scroll here
             .alignment(Alignment::Left);
 
-        log_widget.render_ref(scroll_view.area(), scroll_view.buf_mut());
+        f.render_widget_ref(log_widget, inner_area);
 
-        // Render into ScrollView’s virtual area
-        // scroll_view.render_widget(log_widget, scroll_view.area());
+        // Vertical Scrollbar
+        if log_lines > visible_height {
+            let mut v_scrollbar_state = ScrollbarState::new(log_lines.saturating_sub(visible_height) as usize);
+            v_scrollbar_state = v_scrollbar_state.position(scroll_y as usize);
 
-        scroll_view.render(area, f.buffer_mut(), &mut scroll_state);
+            let v_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
+                .begin_symbol(Some(" 🢁 "))
+                .track_style(Style::new().fg(CATPPUCCIN.base))
+                .track_symbol(Some("║ ║"))
+                // .thumb_symbol("|▮|") // ⦕ ⦖
+                .thumb_symbol("⦕⌚⦖")
+                .thumb_style(Style::new().fg(CATPPUCCIN.sky))
+                .end_symbol(Some(" 🢃 "));
+
+            f.render_stateful_widget(
+                v_scrollbar,
+                v_scroll_area,
+                &mut v_scrollbar_state,
+            );
+        }
+
+        // Horizontal Scrollbar
+        if max_line_width > inner_area.width {
+            let mut h_scrollbar_state = ScrollbarState::new(max_line_width.saturating_sub(inner_area.width) as usize);
+            h_scrollbar_state = h_scrollbar_state.position(scroll_x as usize);
+
+            let h_scrollbar = Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
+                .begin_symbol(Some("⟸"))
+                .track_style(Style::new().fg(CATPPUCCIN.base))
+                .track_symbol(Some("⥈"))
+                .thumb_symbol("|⟗|")
+                .thumb_style(Style::new().fg(CATPPUCCIN.sky))
+                .end_symbol(Some("⟹"));
+            f.render_stateful_widget(
+                h_scrollbar,
+                h_scroll_area,
+                &mut h_scrollbar_state,
+            );
+        }
     }
 
     fn draw_checklist<B: Backend>(&self, f: &mut Frame, area: Rect) {
@@ -111,7 +161,7 @@ impl<'a> ScriptsTab<'a> {
             checklist_items.push(
                 ListItem::new(
                 Line::styled(
-                    format!("📌 {}", list.name),
+                    format!("* {} *", list.name),
                     Style::default().fg(CATPPUCCIN.sapphire).bold(),
                     )
                 )
@@ -119,8 +169,8 @@ impl<'a> ScriptsTab<'a> {
 
             for item in &list.items {
                 let symbol = match item.status {
-                    Status::Completed => "🗹", // ☒
-                    Status::Todo => "☐",
+                    Status::Completed => "[X]", // ☒
+                    Status::Todo => "[ ]",
                 };
 
                 let mut style = match item.status {
@@ -456,7 +506,13 @@ impl<'a> ScriptsTab<'a> {
 impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         self.receive();
-
+        // let mut init = self.init.borrow_mut();
+        // if *init {
+        //     for txt in TEST_TEXT.iter() {   
+        //         self.log_message(txt);
+        //     }
+        //     *init = false;
+        // }
         let mut frame_area = self.frame_area.borrow_mut();
         if frame_area.is_none() {
             *frame_area = Some(f.area());
@@ -540,13 +596,16 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
     }
     
+    // #[instrument]
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        // let start_total = Instant::now();
         let c = mouse_event.column;
         let r = mouse_event.row;
         let mouse_position = Position::new(c, r);
 
         match mouse_event.kind {
             MouseEventKind::ScrollDown => {
+                // let start_scroll_down = Instant::now();
                 if let Some(report_area) = *self.report_area.borrow() {
                     let report_area_contains_mouse = report_area.contains(mouse_position);
                     if report_area_contains_mouse {
@@ -583,8 +642,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         *scroll_state = scroll_state.position(list_state.offset());
                     }
                 }
+                
+                // log::info!("ScrollDown duration: {:?}", start_scroll_down.elapsed());
             },
             MouseEventKind::ScrollUp => {
+                // let start_scroll_up = Instant::now();
                 if let Some(report_area) = *self.report_area.borrow() {
                     let report_area_contains_mouse = report_area.contains(mouse_position);
                     if report_area_contains_mouse {
@@ -619,6 +681,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         *scroll_state = scroll_state.position(list_state.offset());
                     }
                 }
+                // log::info!("ScrollUp duration: {:?}", start_scroll_up.elapsed());
             },
             MouseEventKind::ScrollLeft => self.report_scroll_state.borrow_mut().scroll_left(),
             MouseEventKind::ScrollRight => self.report_scroll_state.borrow_mut().scroll_right(),
@@ -642,6 +705,25 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             }
                         }
                     }
+
+                    // if let Some(scroll_area) = *self.scroll_area.borrow() { // was gonna allow mouse to click and drag for report area
+                    //     let scroll_area_contains_mouse = scroll_area.contains(mouse_position);
+                    //     if scroll_area_contains_mouse {
+                    //         if let MouseEventKind::Drag(MouseButton::Left) = mouse_event.kind {
+                    //             let click_row = (r - scroll_area.y) as usize;
+                    //             let scroll_area_height = scroll_area.height as usize;
+                    //             let total_items = *self.total_items.borrow();
+                    //             let visible_height = *self.visible_height.borrow();
+                    //             let scrollable_length = total_items.saturating_sub(visible_height);
+                    //             let new_offset = (click_row * scrollable_length) / scroll_area_height;
+                    //             let mut list_state = self.list_state.borrow_mut();
+                    //             let max_offset = scrollable_length;
+                    //             *list_state.offset_mut() = new_offset.min(max_offset);
+                    //             let mut scroll_state = self.list_scroll_state.borrow_mut();
+                    //             *scroll_state = scroll_state.position(list_state.offset());
+                    //         }
+                    //     }
+                    // }
 
                     match mouse_event.kind {
                         MouseEventKind::Moved => {
@@ -670,34 +752,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                                 }
                             }
             
-                            // Checklist hover handling - Only if popup isn’t handling it
-                            // if self.active_popup.borrow().is_none() {
-                            //     if let Some(checklist_area) = *self.checklist_area.borrow() {
-                            //         let checklist_area_contains_mouse = checklist_area.contains(mouse_position);
-                            //         if checklist_area_contains_mouse {
-                            //             let content_start_y = checklist_area.y + 1; // Top border
-                            //             let mut list_state = self.list_state.borrow_mut();
-                            //             let mut popup_state = self.popup_list_state.borrow_mut();
-                            //             if r >= content_start_y {
-                            //                 let relative_row = (r - content_start_y) as usize;
-                            //                 let total_items = *self.total_items.borrow();
-                            //                 if relative_row < total_items {
-                            //                     list_state.select(Some(relative_row));
-                            //                     popup_state.select(None); // Deselect popup
-                            //                 } else {
-                            //                     list_state.select(None);
-                            //                 }
-                            //             } else {
-                            //                 list_state.select(None);
-                            //             }
-                            //         } else {
-                            //             let mut list_state = self.list_state.borrow_mut();
-                            //             let mut popup_state = self.popup_list_state.borrow_mut();
-                            //             list_state.select(None);
-                            //             popup_state.select(None); // Ensure popup stays deselected
-                            //         }
-                            //     }
-                            // }
+
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             let mut popup_clicked = false;
@@ -892,6 +947,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 }
             }
         }
+        // log::info!("Total handle_mouse_event duration: {:?}", start_total.elapsed());
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
@@ -899,13 +955,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         match key_event.code {
             KeyCode::Right => {
                 log::info!("RIGHT");
-                self.report_scroll_state.borrow_mut().scroll_right();
-                self.report_scroll_state.borrow_mut().scroll_right();
+                for _ in 0..30 { self.report_scroll_state.borrow_mut().scroll_right(); }
                 true
             },
             KeyCode::Left => {
-                self.report_scroll_state.borrow_mut().scroll_left();
-                self.report_scroll_state.borrow_mut().scroll_left();
+                for _ in 0..30 { self.report_scroll_state.borrow_mut().scroll_left(); }
                 true
             },
             KeyCode::Up => {
@@ -985,3 +1039,32 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
     }
 }
+
+                            // Checklist hover handling - Only if popup isn’t handling it
+                            // if self.active_popup.borrow().is_none() {
+                            //     if let Some(checklist_area) = *self.checklist_area.borrow() {
+                            //         let checklist_area_contains_mouse = checklist_area.contains(mouse_position);
+                            //         if checklist_area_contains_mouse {
+                            //             let content_start_y = checklist_area.y + 1; // Top border
+                            //             let mut list_state = self.list_state.borrow_mut();
+                            //             let mut popup_state = self.popup_list_state.borrow_mut();
+                            //             if r >= content_start_y {
+                            //                 let relative_row = (r - content_start_y) as usize;
+                            //                 let total_items = *self.total_items.borrow();
+                            //                 if relative_row < total_items {
+                            //                     list_state.select(Some(relative_row));
+                            //                     popup_state.select(None); // Deselect popup
+                            //                 } else {
+                            //                     list_state.select(None);
+                            //                 }
+                            //             } else {
+                            //                 list_state.select(None);
+                            //             }
+                            //         } else {
+                            //             let mut list_state = self.list_state.borrow_mut();
+                            //             let mut popup_state = self.popup_list_state.borrow_mut();
+                            //             list_state.select(None);
+                            //             popup_state.select(None); // Ensure popup stays deselected
+                            //         }
+                            //     }
+                            // }
