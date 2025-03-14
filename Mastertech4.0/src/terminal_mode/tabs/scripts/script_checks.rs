@@ -586,8 +586,8 @@ impl <'a> ScriptsTab <'a> {
         if !installed {
             self.log_message(&format!("Webroot not installed."));
             self.active_av_if_no_webroot_sas(item_text, category);
-            self.update_checklist(category.clone(), item_text, true);
         }
+        self.update_checklist(category.clone(), item_text, true);
     }
 
     fn is_superantispyware_installed(&mut self, item_text: &str, category: &Category) {
