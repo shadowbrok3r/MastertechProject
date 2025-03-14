@@ -198,19 +198,19 @@ fn select_category_color_cycle(
 ) -> ColorCycle<RepeatingCycle> {
     let color_step: usize = 7 * length_multiplier;
 
-    let (h, s, l) = base_color.to_hsl();
+    let (h, s, l) = base_color.to_hsl_f32();
 
-    let color_l = Color::from_hsl(h, s, 80.0);
-    let color_d = Color::from_hsl(h, s, 40.0);
+    let color_l = Color::from_hsl_f32(h, s, 80.0);
+    let color_d = Color::from_hsl_f32(h, s, 40.0);
 
     
     RepeatingColorCycle::new(base_color, &[
         (4 * length_multiplier, color_d),
         (2 * length_multiplier, color_l),
-        (4 * length_multiplier, Color::from_hsl((h - 25.0) % 360.0, s, (l + 10.0).min(100.0))),
-        (color_step, Color::from_hsl(h, (s - 20.0).max(0.0), (l + 10.0).min(100.0))),
-        (color_step, Color::from_hsl((h + 25.0) % 360.0, s, (l + 10.0).min(100.0))),
-        (color_step, Color::from_hsl(h, (s + 20.0).max(0.0), (l + 10.0).min(100.0))),
+        (4 * length_multiplier, Color::from_hsl_f32((h - 25.0) % 360.0, s, (l + 10.0).min(100.0))),
+        (color_step, Color::from_hsl_f32(h, (s - 20.0).max(0.0), (l + 10.0).min(100.0))),
+        (color_step, Color::from_hsl_f32((h + 25.0) % 360.0, s, (l + 10.0).min(100.0))),
+        (color_step, Color::from_hsl_f32(h, (s + 20.0).max(0.0), (l + 10.0).min(100.0))),
     ])
 }
 
@@ -238,7 +238,7 @@ pub fn outline_selected_cells(
             sweep_in(tachyonfx::Motion::LeftToRight, 80, 100, CATPPUCCIN.sapphire, (50, Interpolation::QuadIn)),
             // led_kbd_border(),
             color_cycle_fg(select_category_color_cycle(base_color, 4), 10, |_| true),
-        ]).with_cell_selection(filter),
+        ]).with_filter(filter),
     ]);
 
     stage.unique(UniqueEffectId::KeyCapOutline, fx)

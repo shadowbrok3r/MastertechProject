@@ -13,7 +13,7 @@ use reqwest::header::CONTENT_TYPE;
 use super::ServiceFormWidget;
 
 impl <'a> ActionHandler for ServiceFormWidget <'a> {
-    fn handle_event(&mut self, event: &WidgetEvent, _ctx: Arc<Mutex<TerminalContext>>) {
+    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>) {
         match event {
             WidgetEvent::ButtonClick { widget_id, button } => {
                 log::info!("Button: {button:?}");
@@ -57,6 +57,9 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
                     },
                     "CheckSeb" => {
                         if let Ok(svc_data) = self.service_data.lock() {
+                            if let Ok(ctx) = &mut ctx.lock() {
+                                ctx.service_data = svc_data.clone();
+                            }
                             let cust_email = svc_data.customer_data.email.clone();
                             if !cust_email.is_empty() {
                                 let client = self.client.clone();

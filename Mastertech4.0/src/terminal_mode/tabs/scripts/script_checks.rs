@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::{install_windows_updates, WindowsUpdates}}};
+use crate::{tabs::scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState, TaskbarItem}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::{install_windows_updates, WindowsUpdates}}};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
 use std::{collections::HashSet, path::{Path, PathBuf}};
 use powershell_script::PsScriptBuilder;
@@ -13,6 +13,7 @@ impl <'a> ScriptsTab <'a> {
             self.log_message("No scripts selected to run.");
             return;
         }
+
 
         for item in selected {
             let category = item.category().clone();
@@ -39,55 +40,57 @@ impl <'a> ScriptsTab <'a> {
                 Category::Custom(_) => Reporter::Unknown,
             });
 
-            self.current_script.replace(None);
+            
             log::info!("Cleared current script");
         }
         self.log_message("All selected scripts completed.");
+        self.current_script.replace(None);
     }
 
     fn remove_junkware(&mut self, item_text: Option<&str>) {
         if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
             for program in &mut *programs {
                 if let Some(publisher) = &program.publisher {
+                    let publisher = publisher.to_lowercase();
                     if let Some(txt) = item_text {
                         match txt {
-                            "OneLaunch" if publisher == "OneLaunch" => match program.uninstall() {
+                            "OneLaunch" if publisher.contains("onelaunch") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled OneLaunch"),
                                 Err(e) => self.log_message(&format!("Error uninstalling OneLaunch: {e:?}")),
                             }
-                            "WebNavigator Browser" if publisher == "WebNavigator Browser" => match program.uninstall() {
+                            "WebNavigator Browser" if publisher.contains("webnavigator") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Web Navigator Browser"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Web Navigator Browser: {e:?}")),
                             }
-                            "ESET Security" if publisher == "ESET Security" => match program.uninstall() {
+                            "ESET Security" if publisher.contains("eset") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled ESET"),
                                 Err(e) => self.log_message(&format!("Error uninstalling ESET: {e:?}")),
                             }
-                            "Wavesor" if publisher == "Wavesor" => match program.uninstall() {
+                            "Wave Browser" if publisher.contains("wavesor software") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Wave Browser"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Wave Browser: {e:?}")),
                             }
-                            "Clear Browser" if publisher == "Clear Browser" => match program.uninstall() {
+                            "Clear Browser" if publisher.contains("clear browser") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Clear Browser"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Clear Browser: {e:?}")),
                             }
-                            "Shift Browser" if publisher == "Shift Browser" => match program.uninstall() {
+                            "Shift Browser" if publisher.contains("shift technologies") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Shift Browser"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Shift Browser: {e:?}")),
                             }
-                            "Avast Browser" if publisher == "Avast Browser" => match program.uninstall() {
+                            "Avast Browser" if publisher.contains("Avast Browser") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Avast Browser"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Avast Browser: {e:?}")),
                             }
-                            "Mcaffee Safe Search" if publisher == "Mcaffee Safe" => match program.uninstall() {
+                            "Mcaffee Safe Search" if publisher.contains("Mcaffee Safe") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Mcaffee Safe Search"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Mcaffee Safe Search: {e:?}")),
                             }
-                            "Driver Support" if publisher == "Driver Support" => match program.uninstall() {
+                            "Driver Support" if publisher.contains("driver support") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Driver Support"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Driver Support: {e:?}")),
                             }
-                            "Winzip" if publisher == "Winzip" => match program.uninstall() {
+                            "Winzip" if publisher.contains("winzip") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Winzip"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Winzip: {e:?}")),
                             }
@@ -114,7 +117,7 @@ impl <'a> ScriptsTab <'a> {
                                 Ok(_) => self.log_message("Uninstalled ESET"),
                                 Err(e) => self.log_message(&format!("Error uninstalling ESET: {e:?}")),
                             }
-                            "Wavesor" => match program.uninstall() {
+                            "Wave Browser" => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled Wave Browser"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Wave Browser: {e:?}")),
                             }
@@ -150,6 +153,15 @@ impl <'a> ScriptsTab <'a> {
                 }
             }
         }
+        self.update_checklist(Category::JunkwareRemoval, "Wave Browser", true);
+        self.update_checklist(Category::JunkwareRemoval, "Clear Browser", true);
+        self.update_checklist(Category::JunkwareRemoval, "Shift Browser", true);
+        self.update_checklist(Category::JunkwareRemoval, "Avast Browser", true);
+        self.update_checklist(Category::JunkwareRemoval, "Mcaffee Safe", true);
+        self.update_checklist(Category::JunkwareRemoval, "Driver Support", true);
+        self.update_checklist(Category::JunkwareRemoval, "Winzip", true);
+        self.update_checklist(Category::JunkwareRemoval, "OneLaunch", true);
+        self.update_checklist(Category::JunkwareRemoval, "WebNavigator Browser", true);
     }
 
     // Category-specific handlers
@@ -163,6 +175,7 @@ impl <'a> ScriptsTab <'a> {
             "Activate SEB" => self.activate_seb(item_text, category),
             "Run Tron" => self.run_tron(item_text, category),
             "Run SuperAntiSpyware Scan" => self.run_superantispyware_scan(item_text, category),
+            "Run Webroot Scan" => self.run_webroot_scan(item_text, category),
             "Run Junkware Category" => self.run_junkware_category(item_text, category),
             _ => {
                 self.log_message(&format!("Unknown Tuneup script: {}", item_text));
@@ -210,7 +223,9 @@ impl <'a> ScriptsTab <'a> {
             Err(e) => self.log_message(&format!("Push Notifications => {e:?}")),
         }
         match align_taskbar_left() {
-            Ok(status) => self.log_message(&format!("TaskBarAlignment => {}", status.trim())),
+            Ok(messages) => for message in messages {
+                self.log_message(&format!("TaskBarAlignment => {}", message.trim()));
+            },
             Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
         }
 
@@ -231,7 +246,9 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
-    fn handle_informational(&mut self, item_text: &str, category: &Category){
+    fn handle_informational(&mut self, item_text: &str, category: &Category) {
+        self.installed_programs = InstalledProgram::get_installed_programs().unwrap_or_default();
+        self.antivirus_products = AntiVirusProduct::query_installed().unwrap_or_default();
         self.current_reporter.replace(Reporter::Informational);
         self.log_message(&format!("Fetching info: {}", item_text));
         match item_text {
@@ -239,7 +256,6 @@ impl <'a> ScriptsTab <'a> {
             "Is Webroot installed?" => self.is_webroot_installed(item_text, category),
             "Is SuperAntiSpyware installed?" => self.is_superantispyware_installed(item_text, category),
             "Are there scheduled tasks for it?" => self.are_scheduled_tasks_for_sas(item_text, category),
-            "If Webroot/SAS not installed, what AV is active?" => self.active_av_if_no_webroot_sas(item_text, category),
             "Are there any pending Windows updates?" => self.are_pending_windows_updates(item_text, category),
             "Is Windows Activated?" => self.is_windows_activated(item_text, category),
             "Is Hibernation/Sleep enabled?" => self.is_hibernation_sleep_enabled(item_text, category),
@@ -259,13 +275,26 @@ impl <'a> ScriptsTab <'a> {
         match item_text {
             "OneLaunch" => self.remove_onelaunch(),
             "WebNavigator Browser" => self.remove_webnavigator(),
-            "Wavesor" => self.remove_wavesor(),
+            "Wave Browser" => self.remove_wavesor(),
             "Clear Browser" => self.remove_clearbrowser(),
             "Shift Browser" => self.remove_shiftbrowser(),
             "Avast Browser" => self.remove_avastbrowser(),
             "Mcaffee Safe" => self.remove_mcaffeesafe(),
             "Driver Support" => self.remove_driversupport(),
             "Winzip" => self.remove_winzip(),
+            "Run Junkware Category" => {
+                self.remove_junkware(Some("OneLaunch"));
+                self.remove_junkware(Some("WebNavigator Browser"));
+                self.remove_junkware(Some("ESET Security"));
+                self.remove_junkware(Some("Wave Browser"));
+                self.remove_junkware(Some("Clear Browser"));
+                self.remove_junkware(Some("Shift Browser"));
+                self.remove_junkware(Some("Avast Browser"));
+                self.remove_junkware(Some("Mcaffee Safe Search"));
+                self.remove_junkware(Some("Driver Support"));
+                self.remove_junkware(Some("Winzip"));
+                
+            }
             _ => {
                 self.log_message(&format!("Unknown Junkware script: {}: {:?}", item_text, category));
             }
@@ -303,14 +332,42 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     fn activate_cps(&mut self, item_text: &str, category: &Category) {
-        self.log_message("CPS activation not implemented (requires SO number).");
-        self.update_checklist(category.clone(), item_text, false);
+        let service_number = self.service_number.clone();
+        if service_number.is_empty() {
+            self.log_message("CPS activation requires SO number.");
+            return;
+        }
+
+        let so = service_number.clone();
+        let tx = self.progress_tx.clone();
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let res = install_webroot(so.clone(), client.clone(), tx.clone()).await;
+            log::info!("install_webroot Result: {res:?}");
+            let res = install_sas(so.clone(), client.clone(), tx).await;
+            log::info!("install_sas Result: {res:?}");
+        });
+
+        self.update_checklist(category.clone(), item_text, true);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     fn activate_seb(&mut self, item_text: &str, category: &Category) {
+        let service_number = self.service_number.clone();
+        let email = self.customer_email.clone();
+        if service_number.is_empty() || email.is_empty() {
+            self.log_message("CPS activation requires SO number.");
+            return;
+        }
+        let client = self.client.clone();
+        let tx = self.progress_tx.clone();
+        tokio::spawn(async move {
+            match install_supereasybackup(email, client, tx).await {
+                Ok(_) => log::info!("Installed SEB"),
+                Err(e) => log::info!("Error Installing SEB: {e:?}"),
+            }
+        });
+        
         self.log_message("SEB activation not implemented (requires SO number or email).");
         self.update_checklist(category.clone(), item_text, false);
     }
@@ -319,6 +376,26 @@ impl <'a> ScriptsTab <'a> {
         self.log_message("Tron script not implemented yet.");
         self.update_checklist(category.clone(), item_text, false);
         
+    }
+
+    fn run_webroot_scan(&mut self, item_text: &str, category: &Category) {
+        for program in self.installed_programs.iter() {
+            let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
+            let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
+            if display_name.contains("webroot")
+                || display_name.contains("wrsa")
+                || publisher.contains("webroot")
+                || publisher.contains("wrsa")
+            {
+                let install_path = program.install_location.clone().unwrap_or_default();
+                let res = run_ps_script(&format!("{install_path} -scan=\"C:\""));
+                match res {
+                    Ok(out) => self.log_message(format!("Webroot scan: {out}")),
+                    Err(e) => self.log_message(format!("Error running Webroot scan: {e:?}")),
+                }
+            }
+        }
+        self.update_checklist(category.clone(), item_text, false);
     }
 
     /// TODO: NOT YET IMPLEMENTED
@@ -349,7 +426,13 @@ impl <'a> ScriptsTab <'a> {
     }
 
     fn install_libreoffice(&mut self, item_text: &str, category: &Category) {
-        self.log_message("LibreOffice installation not implemented.");
+        let download_url = "https://ninite.com/libreoffice/ninite.exe";
+        let progress_tx = self.progress_tx.clone();
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let res = install_program(download_url.to_string(), client, progress_tx).await;
+            log::info!("Downloaded libre office: {res:?}");
+        });
         self.update_checklist(category.clone(), item_text, false);
     }
 
@@ -430,16 +513,23 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     fn unpin_copilot(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Copilot unpin not implemented.");
-        // HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins
-        self.update_checklist(category.clone(), item_text, false);
+        match disable_copilot() {
+            Ok(results) => {
+                for result in results.iter() {
+                    self.log_message(result);
+                }
+            },
+            Err(e) => self.log_message(format!("Error disabling copilot: {e:?}")),
+        }
+        self.update_checklist(category.clone(), item_text, true);
     }
 
     fn align_taskbar_left(&mut self, item_text: &str, category: &Category) {
         match align_taskbar_left() {
-            Ok(status) => self.log_message(&format!("TaskBarAlignment => {}", status.trim())),
+            Ok(messages) => for message in messages {
+                self.log_message(&format!("TaskBarAlignment => {}", message.trim()));
+            },
             Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
         }
         self.update_checklist(category.clone(), item_text, false);
@@ -458,54 +548,65 @@ impl <'a> ScriptsTab <'a> {
 
     // Informational Items
     fn is_supereasybackup_installed(&mut self, item_text: &str, category: &Category) {
-        match InstalledProgram::get_installed_programs() {
-            Ok(programs) => {
-                let installed = programs.iter().any(|p| p.display_name.clone().unwrap_or_default().contains("SuperEasyBackup"));
-                self.log_message(&format!("SuperEasyBackup installed: {}", installed));
+        let mut installed = false;
+        for program in self.installed_programs.iter() {
+            let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
+            let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
+            if display_name.contains("supereasybackup")
+                || publisher.contains("supereasybackup")
+            {
+                installed = true;
+                self.log_message(&format!("SuperEasyBackup Found."));
+                self.log_message(&format!("--> Display Name: {}", display_name));
+                self.log_message(&format!("--> Uninstall Path: {}", program.uninstall_string.clone().unwrap_or_default()));
+                self.log_message(&format!("--> Version: {}", program.display_version.clone().unwrap_or_default()));
             }
-            Err(err) => self.log_message(&format!("Failed to fetch installed programs: {}", err)),
         }
-        self.update_checklist(category.clone(), item_text, true);
+        self.update_checklist(category.clone(), item_text, installed);
     }
 
     fn is_webroot_installed(&mut self, item_text: &str, category: &Category) {
-        match AntiVirusProduct::query_installed() {
-            Ok(products) => {
-                log::info!("Products: {products:?}");
-                let mut wrsa = AntiVirusProduct::default();
-                let mut installed = false;
-                for product in products.iter() {
-                    if product.display_name.contains("Webroot") {
-                        wrsa = product.clone();
-                        installed = true;
-                    }
-                }
-                self.antivirus_products = products;
-
-                if !installed {
-                    self.log_message(&format!("Couldnt determine WRSA install, checking program list"));
-                } else {
-                    self.log_message(&format!("Webroot installed: {wrsa:?}"));
-                }
-                self.update_checklist(category.clone(), item_text, true);
+        let mut installed = false;
+        for program in self.installed_programs.iter() {
+            let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
+            let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
+            if display_name.contains("webroot")
+                || display_name.contains("wrsa")
+                || publisher.contains("webroot")
+                || publisher.contains("wrsa")
+            {
+                installed = true;
+                self.log_message(&format!("Webroot Found."));
+                self.log_message(&format!("--> Display Name: {}", display_name));
+                self.log_message(&format!("--> Uninstall Path: {}", program.uninstall_string.clone().unwrap_or_default()));
+                self.log_message(&format!("--> Version: {}", program.display_version.clone().unwrap_or_default()));
+                // program.uninstall().unwrap();
             }
-            Err(err) => self.log_message(&format!("Failed to fetch antivirus products: {}", err)),
+        }
+        if !installed {
+            self.log_message(&format!("Webroot not installed."));
+            self.active_av_if_no_webroot_sas(item_text, category);
+            self.update_checklist(category.clone(), item_text, true);
         }
     }
 
     fn is_superantispyware_installed(&mut self, item_text: &str, category: &Category) {
-        match InstalledProgram::get_installed_programs() {
-            Ok(programs) => {
-                log::info!("SuperAnti: {programs:?}");
-                let installed = programs.iter().any(|p| 
-                    p.display_name.clone().unwrap_or_default().contains("SUPERAntiSpyware")
-                    || p.publisher.clone().unwrap_or_default().contains("SUPERAntiSpyware")
-                );
-                self.update_checklist(category.clone(), item_text, true);
-                self.log_message(&format!("SuperAntiSpyware installed: {}", installed));
+        let mut installed = false;
+        for program in self.installed_programs.iter() {
+            if program.display_name.clone().unwrap_or_default().contains("SUPERAntiSpyware")
+                || program.publisher.clone().unwrap_or_default().contains("SUPERAntiSpyware")
+            {
+                installed = true;
+                self.log_message(&format!("SuperAntiSpyware Found."));
+                self.log_message(&format!("--> Display Name: {}", program.display_name.clone().unwrap_or_default()));
+                self.log_message(&format!("--> Uninstall Path: {}", program.uninstall_string.clone().unwrap_or_default()));
+                self.log_message(&format!("--> Version: {}", program.display_version.clone().unwrap_or_default()));
             }
-            Err(err) => self.log_message(&format!("Failed to fetch installed programs: {}", err)),
         }
+        if !installed {
+            self.active_av_if_no_webroot_sas(item_text, category);
+        }
+        self.update_checklist(category.clone(), item_text, true);
     }
 
     fn are_scheduled_tasks_for_sas(&mut self, item_text: &str, category: &Category) {
@@ -528,17 +629,18 @@ impl <'a> ScriptsTab <'a> {
     }
 
     fn active_av_if_no_webroot_sas(&mut self, item_text: &str, category: &Category) {
-        match AntiVirusProduct::query_installed() {
-            Ok(products) => {
-                self.antivirus_products = products;
-                self.update_checklist(category.clone(), item_text, true);
-                self.log_message(&format!("Active AV: {:?}", self.antivirus_products));
+        let antivirus = &self.antivirus_products;
+        if !antivirus.is_empty() {
+            for product in antivirus.iter() {
+                self.log_message(&format!("Active antivirus: {}", product.display_name));
             }
-            Err(err) => self.log_message(&format!("Failed to fetch antivirus products: {}", err)),
-        }
-        match check_antivirus() {
-            Ok(products) => self.log_message(&format!("Antivirus: {products:?}")),
-            Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
+            self.update_checklist(category.clone(), item_text, true);
+            self.log_message(&format!("Active AV: {:?}", self.antivirus_products));
+        } else {
+            match check_antivirus() {
+                Ok(products) => self.log_message(&format!("Antivirus: {products:?}")),
+                Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
+            }
         }
     }
 
@@ -594,60 +696,22 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     fn windows_version(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Windows version check not implemented.");
+        let win_ver = sysinfo::System::long_os_version().clone().unwrap_or_default();
+        self.log_message(format!("Windows Version: {win_ver}"));
         self.update_checklist(category.clone(), item_text, false);
     }
 
     // JunkwareRemoval Items (assuming remove_junkware handles these)
     fn remove_onelaunch(&mut self) { self.remove_junkware(Some("OneLaunch")); }
-    fn remove_webnavigator(&mut self) { self.remove_junkware(Some("WebNavigatorBrowser")); }
-    fn remove_wavesor(&mut self) { self.remove_junkware(Some("Wavesor")); }
-    fn remove_clearbrowser(&mut self) { self.remove_junkware(Some("ClearBrowser")); }
-    fn remove_shiftbrowser(&mut self) { self.remove_junkware(Some("ShiftBrowser")); }
-    fn remove_avastbrowser(&mut self) { self.remove_junkware(Some("AvastBrowser")); }
-    fn remove_mcaffeesafe(&mut self) { self.remove_junkware(Some("McaffeeSafe")); }
-    fn remove_driversupport(&mut self) { self.remove_junkware(Some("DriverSupport")); }
+    fn remove_webnavigator(&mut self) { self.remove_junkware(Some("WebNavigator Browser")); }
+    fn remove_wavesor(&mut self) { self.remove_junkware(Some("Wave Browser")); }
+    fn remove_clearbrowser(&mut self) { self.remove_junkware(Some("Clear Browser")); }
+    fn remove_shiftbrowser(&mut self) { self.remove_junkware(Some("Shift Browser")); }
+    fn remove_avastbrowser(&mut self) { self.remove_junkware(Some("Avast Browser")); }
+    fn remove_mcaffeesafe(&mut self) { self.remove_junkware(Some("Mcaffee Safe")); }
+    fn remove_driversupport(&mut self) { self.remove_junkware(Some("Driver Support")); }
     fn remove_winzip(&mut self) { self.remove_junkware(Some("Winzip")); }
-}
-
-fn get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
-    let ps_script = r#"Get-Process | Select-Object -ExpandProperty ProcessName | ConvertTo-Json"#;
-
-    let ps = PsScriptBuilder::new()
-        .no_profile(true)
-        .non_interactive(true)
-        .hidden(true)
-        .print_commands(false)
-        .build();
-
-    let output = ps.run(ps_script)?;
-    if output.success() {
-        let stdout = output.stdout().unwrap_or_default();
-        let processes: Vec<String> = serde_json::from_str(&stdout)?;
-        Ok(processes.into_iter().collect())
-    } else {
-        Err(anyhow::anyhow!("Failed to retrieve running processes"))
-    }
-}
-
-fn _install_pc_health_check() -> String {
-    format!("winget install Microsoft.WindowsPCHealthCheck -h --accept-package-agreements --force")
-}
-
-fn _install_windbg() -> String {
-    format!("winget install Microsoft.WinDbg -h --accept-package-agreements --force")
-}
-
-fn _check_program_running(process_name: &str) -> String {
-    format!(
-        r#"
-        $process = Get-Process -Name "{}" -ErrorAction SilentlyContinue
-        if ($process) {{ "Running" }} else {{ "Not Running" }}
-        "#,
-        process_name
-    )
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -803,16 +867,12 @@ pub fn read_folder(mut path: PathBuf, depth: usize, read_dirs_only: bool) -> Vec
     result
 }
 
-pub fn _activate_seb(activation_code: &str) -> anyhow::Result<(), anyhow::Error> {
-    let _install_cmd = format!(r#"
-        msiexec /i SuperEasyBackup.msi /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}
-    "#, activation_code);
-    Ok(())
+fn _install_pc_health_check() -> anyhow::Result<String, anyhow::Error> {
+    Ok(run_ps_script("winget install Microsoft.WindowsPCHealthCheck -h --accept-package-agreements --force")?)
 }
 
-pub fn _install_libre_office() -> anyhow::Result<(), anyhow::Error> {
-
-    Ok(())
+fn _install_windbg() -> anyhow::Result<String, anyhow::Error> {
+    Ok(run_ps_script("winget install Microsoft.WinDbg -h --accept-package-agreements --force")?)
 }
 
 pub fn _find_activation_keys() -> anyhow::Result<(), anyhow::Error> {
@@ -825,20 +885,11 @@ pub fn _prompt_for_user_pw() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-pub fn _checkdisk() -> anyhow::Result<(), anyhow::Error> {
+pub fn _checkdisk() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("chkdsk /f/x/r C:")?) }
 
-    Ok(())
-}
+pub fn _dism_scan() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("")?) }
 
-pub fn _dism_scan() -> anyhow::Result<(), anyhow::Error> {
-
-    Ok(())
-}
-
-pub fn _sfc_scan() -> anyhow::Result<(), anyhow::Error> {
-
-    Ok(())
-}
+pub fn _sfc_scan() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("sfc /scannow")?) }
 
 pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {
 
@@ -852,6 +903,36 @@ pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {
     let output = ps.run(CHECK_POWER_OPTIONS)?;
     log::info!("output.stdout(): {:?}", output.stdout());
     Ok(())
+}
+
+fn _get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
+    let ps_script = r#"Get-Process | Select-Object -ExpandProperty ProcessName | ConvertTo-Json"#;
+
+    let ps = PsScriptBuilder::new()
+        .no_profile(true)
+        .non_interactive(true)
+        .hidden(true)
+        .print_commands(false)
+        .build();
+
+    let output = ps.run(ps_script)?;
+    if output.success() {
+        let stdout = output.stdout().unwrap_or_default();
+        let processes: Vec<String> = serde_json::from_str(&stdout)?;
+        Ok(processes.into_iter().collect())
+    } else {
+        Err(anyhow::anyhow!("Failed to retrieve running processes"))
+    }
+}
+
+fn _check_program_running(process_name: &str) -> String {
+    format!(
+        r#"
+        $process = Get-Process -Name "{}" -ErrorAction SilentlyContinue
+        if ($process) {{ "Running" }} else {{ "Not Running" }}
+        "#,
+        process_name
+    )
 }
 
 pub const CHECK_POWER_OPTIONS: &str = r#"

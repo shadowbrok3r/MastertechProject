@@ -68,7 +68,7 @@ impl<K: Clone + Debug + 'static> Shader for Unique<K> {
     }
 
     fn set_cell_selection(&mut self, filter: CellFilter) {
-        self.fx.set_cell_selection(filter);
+        self.fx.filter(filter);
     }
 
     fn reverse(&mut self) {
@@ -84,10 +84,14 @@ impl<K: Clone + Debug + 'static> Shader for Unique<K> {
     }
 
     fn cell_selection(&self) -> Option<CellFilter> {
-        self.fx.cell_selection()
+        self.fx.cell_filter()
     }
 
     fn reset(&mut self) {
         self.fx.reset();
+    }
+    
+    fn filter(&mut self, filter: CellFilter) {
+        filter.selector(self.area().unwrap_or_default());
     }
 }

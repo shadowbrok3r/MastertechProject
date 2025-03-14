@@ -300,7 +300,11 @@ where
         Ok(response_json.get(0).unwrap().clone())
     } else {
         // supereasybackup.com/downloads/SuperEasyBackup.exe
-        let file_path = Path::new("{drive}DCProtectData\\Shared\\Logs\\InstallationTracking.log");
+        let mut file_path = PathBuf::from(drive);
+        if file_path.exists() {
+            file_path.push("DCProtectData\\Shared\\Logs\\InstallationTracking.log")
+        }
+
         if file_path.exists() { // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log";
 
             // Read the file content

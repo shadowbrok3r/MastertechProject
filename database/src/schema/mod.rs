@@ -1,6 +1,7 @@
 use anyhow::Error;
 use async_trait::async_trait;
 use helper_traits::GetAssociatedDataFromId;
+use reqwest::Client;
 // use prestashop_schema::PrestashopPayload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -432,6 +433,99 @@ pub struct ExtendedSeb {
     pub date_modified: String,
     pub date_created: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct CarboniteResponse {
+    pub id_carbonite: String,
+    pub id_customer: String,
+    pub record: String,
+    pub email: String,
+    pub phone: String,
+    pub userid: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub company: String,
+    pub companyid: String,
+    pub partner: String,
+    pub partnerid: String,
+    pub device_name: String,
+    pub device_id: String,
+    pub user_group: String,
+    pub state: String,
+    pub policy_set: String,
+    pub usage_gb: String,
+    pub quota_gb: String,
+    pub date_device_created: String,
+    pub activated: String,
+    pub activation_code: String,
+    pub client_version: String,
+    pub operating_system: String,
+    pub os_edition: String,
+    pub service_pack: String,
+    pub os_bit_size: String,
+    pub cache_used_mb: String,
+    pub cache_available_mb: String,
+    pub last_complete_backup: String,
+    pub last_client_status_update: String,
+    pub physical_memory_installed_mb: String,
+    pub id_recurly_account: String,
+    pub scanned: String,
+    pub delete_scanned: String,
+    pub date_last_scan: String,
+    pub date_email_sent: String,
+    pub date_canceled_account: String,
+    pub date_deleted_account: String,
+    pub current_period_ends_at: String,
+    pub id_user_modified: String,
+    pub id_user_owner: String,
+    pub date_modified: String,
+    pub date_created: String,
+}
+
+impl CarboniteResponse {
+    pub async fn from_customer_email(&self, customer_email: String, client: Client) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        params.insert("user_email", "logan.lees@pclaptops.com");
+        params.insert("user_password", "Poolparty1");
+        params.insert("application", "carbonite");
+        params.insert("action", "search");
+        params.insert("search", &customer_email);
+
+        let response = client
+            .post("https://scaffold.pclaptops.com/api/index")
+            .header(reqwest::header::CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+            .form(&params)
+            .send()
+            .await?;
+
+        let response_json: Vec<Self> = response.json().await?;
+        log::info!("response_json: {:?}", response_json);
+        Ok(response_json)
+    }
+
+    fn latest_timestamp(&self) -> Option<chrono::NaiveDateTime> {
+        let format = "%Y-%m-%d %H:%M:%S";
+
+        let last_scan = chrono::NaiveDateTime::parse_from_str(&self.date_last_scan, format).ok();
+        let date_modified = chrono::NaiveDateTime::parse_from_str(&self.date_modified, format).ok();
+
+        match (last_scan, date_modified) {
+            (Some(scan), Some(modified)) => Some(scan.max(modified)),
+            (Some(scan), None) => Some(scan),
+            (None, Some(modified)) => Some(modified),
+            _ => None,
+        }
+    }
+}
+
+pub fn find_latest_carbonite_entry(entries: &[CarboniteResponse]) -> Option<&CarboniteResponse> {
+    entries
+        .iter()
+        .filter_map(|entry| entry.latest_timestamp().map(|ts| (entry, ts)))
+        .max_by_key(|&(_, ts)| ts)
+        .map(|(entry, _)| entry)
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DriveData {

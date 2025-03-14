@@ -1,5 +1,16 @@
+use database::schema::{find_latest_carbonite_entry, CarboniteResponse, GetKeysResponse};
+use tokio::{fs, io::AsyncWriteExt, process::Command};
 use powershell_script::PsScriptBuilder;
+use winapi::um::winbase::CREATE_NO_WINDOW;
 use serde::{Deserialize, Serialize};
+use crossbeam::channel::Sender;
+use futures::StreamExt;
+use reqwest::Client;
+use sha2::Digest;
+use log::info;
+use std::io;
+
+use crate::tabs::tur_sheet::get_ticket::SendRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AntiVirusProduct {
@@ -93,4 +104,185 @@ impl AntiVirusProduct {
             )))
         }
     }
+}
+
+
+pub async fn install_webroot(
+    service_number: String, 
+    client: Client,
+    progress_tx: Sender<(u64, u64)>
+) -> anyhow::Result<(), anyhow::Error> {
+    info!("running install_webroot!");
+    let response = client
+        .get("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
+        .send()
+        .await?;
+
+    let total_length = response.content_length().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
+    })?;
+
+    let mut downloaded_bytes: u64 = 0;
+
+    let temp_directory = std::env::temp_dir();
+    let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
+
+    let mut file = fs::File::create(wrv_path.clone()).await?;
+    let mut sha = sha2::Sha256::new();
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        file.write_all(&chunk).await?;
+        sha.update(&chunk);
+        downloaded_bytes += chunk.len() as u64;
+        progress_tx.try_send((downloaded_bytes, total_length))?;
+    }
+
+    if downloaded_bytes == total_length {
+        let cps_request = SendRequest::get_cps(service_number.clone(), client.clone());
+        let cps_keys = cps_request.await.unwrap_or(GetKeysResponse::default());
+
+        info!("cps_keys: {:?}", cps_keys.clone());
+
+        let hash = sha.finalize();
+        info!("Download complete. SHA-256: {:x}", hash);
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_stdout = Command::new("cmd")
+                .arg("/c ")
+                .arg(wrv_path)
+                .arg(format!("/key={}", cps_keys.webroot_key))
+                .arg("/silent")
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()?
+                .stdout;
+
+            info!("cmd_stdout: {:?}", cmd_stdout);
+        }
+    }
+    Ok(())
+}
+
+pub async fn install_sas(
+    service_number: String, 
+    client: Client,
+    progress_tx: Sender<(u64, u64)>
+) -> anyhow::Result<(), anyhow::Error> {
+    let response = client
+        .get(format!(
+            "https://secure.superantispyware.com/SUPERAntiSpyware.exe"
+        ))
+        .send()
+        .await?;
+
+    let total_length = response.content_length().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
+    })?;
+    let mut downloaded_bytes: u64 = 0;
+
+    let temp_directory = std::env::temp_dir();
+    let sas_path = format!("{}\\sas.exe", temp_directory.display());
+
+    let mut file = fs::File::create(sas_path.clone()).await?;
+    let mut sha = sha2::Sha256::new();
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        file.write_all(&chunk).await?;
+        sha.update(&chunk);
+        downloaded_bytes += chunk.len() as u64;
+        progress_tx.try_send((downloaded_bytes, total_length))?;
+    }
+
+    if downloaded_bytes == total_length {
+        let cps_request = SendRequest::get_cps(service_number.clone(), client.clone());
+        let cps_keys = cps_request.await.unwrap_or(GetKeysResponse::default());
+
+        info!("cps_keys: {:?}", cps_keys.clone());
+
+        let hash = sha.finalize();
+        info!("Download complete. SHA-256: {:x}", hash);
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_stdout = Command::new("cmd")
+                .arg("/c ")
+                .arg(sas_path)
+                .arg(format!("/REGCODE={}", cps_keys.superanti_key))
+                .arg("/silent")
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()?
+                .stdout;
+
+            info!("cmd_stdout: {:?}", cmd_stdout);
+        }
+    }
+    Ok(())
+}
+
+
+pub async fn install_supereasybackup(
+    customer_email: String, 
+    client: Client,
+    progress_tx: Sender<(u64, u64)>,
+) -> anyhow::Result<(), anyhow::Error> {
+    info!("running install_supereasybackup!");
+    let response = client
+        .get("https://dcgeneral.blob.core.windows.net/downloads/MUS/v11.2.0/DCProtect-11.2.0.5777-SuperEasyBackup.msi")
+        .send()
+        .await?;
+
+    let total_length = response.content_length().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
+    })?;
+
+    let mut downloaded_bytes: u64 = 0;
+
+    let temp_directory = std::env::temp_dir();
+    let seb_path = format!("{}\\seb.msi", temp_directory.display());
+
+    let mut file = fs::File::create(seb_path.clone()).await?;
+    let mut sha = sha2::Sha256::new();
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        file.write_all(&chunk).await?;
+        sha.update(&chunk);
+        downloaded_bytes += chunk.len() as u64;
+        progress_tx.try_send((downloaded_bytes, total_length))?;
+    }
+
+    if downloaded_bytes == total_length {
+        let response_json: Vec<CarboniteResponse> = CarboniteResponse::default().from_customer_email(customer_email, client.clone()).await?;
+        let hash = sha.finalize();
+        info!("Download complete. SHA-256: {:x}", hash);
+
+        if response_json.is_empty() { return Err(anyhow::anyhow!("Response is empty")); }
+
+        if let Some(carbonite_entry) = find_latest_carbonite_entry(&response_json) {
+            let activation_code = &carbonite_entry.activation_code;
+            #[cfg(target_os = "windows")]
+            {
+                // msiexec /i SuperEasyBackup.msi /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}
+                let cmd_stdout = Command::new("msiexec")
+                    .arg("/i ")
+                    .arg(seb_path)
+                    .arg("/qn")
+                    .arg("Silent=1")
+                    .arg("ActivationURL=https://blue.mysecuredatavault.com")
+                    .arg(format!("ActivationCode={}", activation_code))
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()?
+                    .stdout;
+    
+                info!("cmd_stdout: {:?}", cmd_stdout);
+            }
+        }
+    }
+    Ok(())
 }
