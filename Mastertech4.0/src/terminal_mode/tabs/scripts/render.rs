@@ -568,22 +568,25 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         
 
         let current_script = self.current_script.borrow().clone();
+        let script_name = &mut String::new();
         if let Some((_, script)) = current_script {
-            let script_textarea = Paragraph::new(script)
-                .alignment(Alignment::Center)
-                .centered()
-                .block(
-                    Block::default()
-                    .border_type(BorderType::Rounded)
-                    .style(Style::default().fg(CATPPUCCIN.sky))
-                );
-            f.render_widget(script_textarea, button_grid[6].shrink(4, 1));
+            *script_name = script.clone();
         }
+        let script_textarea = Paragraph::new(script_name.clone())
+            .alignment(Alignment::Center)
+            .centered()
+            .block(
+                Block::default()
+                .border_type(BorderType::Rounded)
+                .style(Style::default().fg(CATPPUCCIN.sky))
+            );
+            
+        f.render_widget(script_textarea, button_grid[6].shrink(4, 1));
 
         let mut progress_mut = self.progress.borrow_mut();
         if let Some(progress) = *progress_mut {
             let gauge = Gauge::default()
-                .block(Block::bordered().title("Progress"))
+                .block(Block::bordered().title(format!("{script_name} Progress")))
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(progress.0 as f64 / progress.1 as f64);
 
