@@ -53,6 +53,19 @@ impl <'a> ScriptsTab <'a> {
                 if let Some(publisher) = &program.publisher {
                     let publisher = publisher.to_lowercase();
                     if let Some(txt) = item_text {
+                        // if (txt.eq("") && publisher.contains("onelaunch"))
+                        //     || (txt.eq("") && publisher.contains("webnavigator"))
+                        //     || (txt.eq("") && publisher.contains("eset"))
+                        //     || (txt.eq("") && publisher.contains("wavesor software"))
+                        //     || (txt.eq("") && publisher.contains("clear browser"))
+                        //     || (txt.eq("") && publisher.contains("shift technologies"))
+                        //     || (txt.eq("") && publisher.contains("Avast Browser"))
+                        //     || (txt.eq("") && publisher.contains("Mcaffee Safe"))
+                        //     || (txt.eq("") && publisher.contains("driver support"))
+                        //     || (txt.eq("") && publisher.contains("winzip"))
+                        // {
+
+                        // }
                         match txt {
                             "OneLaunch" if publisher.contains("onelaunch") => match program.uninstall() {
                                 Ok(_) => self.log_message("Uninstalled OneLaunch"),
@@ -94,11 +107,21 @@ impl <'a> ScriptsTab <'a> {
                                 Ok(_) => self.log_message("Uninstalled Winzip"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Winzip: {e:?}")),
                             }
-                            "SuperAntiSpyware" => {
-                                self.update_checklist(Category::Informational, "Is SuperAntiSpyware installed?", true);
-                            }
-                            "Webroot" => {
-                                self.update_checklist(Category::Informational, "Is Webroot installed?", true);
+                            "Webroot TEST" | "SuperAnti TEST" => {
+                                for program in self.installed_programs.iter() {
+                                    let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
+                                    let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
+                                    if display_name.contains("webroot")
+                                        || display_name.contains("wrsa")
+                                        || publisher.contains("webroot")
+                                        || publisher.contains("wrsa")
+                                        || display_name.contains("superantispyware")
+                                        || publisher.contains("superantispyware")
+                                    {
+                                        self.log_message(&format!("Webroot or SAS found. attempting uninstall: {display_name:?}"));
+                                        program.uninstall().unwrap();
+                                    }
+                                }
                             }
                             _ => {}
                         }
@@ -283,6 +306,8 @@ impl <'a> ScriptsTab <'a> {
             "Driver Support" => self.remove_driversupport(),
             "Winzip" => self.remove_winzip(),
             "Run Junkware Category" => {
+                self.remove_junkware(Some("Webroot TEST"));
+                self.remove_junkware(Some("SuperAnti TEST"));
                 self.remove_junkware(Some("OneLaunch"));
                 self.remove_junkware(Some("WebNavigator Browser"));
                 self.remove_junkware(Some("ESET Security"));
