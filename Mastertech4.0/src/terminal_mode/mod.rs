@@ -18,6 +18,7 @@ use ratatui::{
 
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
 
+pub mod systems;
 pub mod widgets;
 pub mod tabs;
 pub mod events;
@@ -295,3 +296,6 @@ fn center_horizontal(area: Rect, width: u16) -> Rect {
         .areas(area);
     area
 }
+
+
+
