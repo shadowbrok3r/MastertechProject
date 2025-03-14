@@ -164,11 +164,13 @@ impl InstalledProgram {
     }
 }
 
+/// TODO: THIS DOESNT DROP
 pub async fn install_program(
     url: String, 
     client: Client,
     progress_tx: Sender<(u64, u64)>,
 ) -> anyhow::Result<(), anyhow::Error> {
+
     log::info!("running install_program!");
     let response = client
         .get(url)
