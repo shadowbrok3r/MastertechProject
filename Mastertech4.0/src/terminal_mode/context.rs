@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::AppState;
 
+use super::data::ServiceData;
+
 
 
 pub struct TerminalContext {
@@ -19,7 +21,8 @@ pub struct TerminalContext {
     pub url: Option<String>,
     // pub client_friendly_name: String,
     pub client_title: String,
-    pub state: AppState
+    pub state: AppState,
+    pub service_data: ServiceData
 }
 
 impl Default for TerminalContext {
@@ -37,7 +40,8 @@ impl Default for TerminalContext {
             // client_friendly_name: String::new(),
             client_title: String::new(),
             // current_user: None,
-            state: AppState::default()
+            state: AppState::default(),
+            service_data: ServiceData::default()
         }
     }
 }

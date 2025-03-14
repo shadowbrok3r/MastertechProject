@@ -2,13 +2,29 @@ use std::{path::PathBuf, sync::{Arc, Mutex}};
 
 use ratatui::layout::Rect;
 
-use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, WidgetButton, WidgetEvent}, widgets::ButtonType}};
+use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent}, widgets::ButtonType}};
 use super::ScriptsTab;
 
 impl<'a> ActionHandler for ScriptsTab<'a> {
-    fn handle_event(&mut self, event: &WidgetEvent, _ctx: Arc<Mutex<TerminalContext>>) {
+    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>) {
         match event {
             WidgetEvent::ButtonClick { widget_id , button} => {
+                if let Ok(ctx) = &mut ctx.lock() {
+                    let cust_email = ctx.service_data.customer_data.email.clone();
+                    let so_num = ctx.service_data.ticket_data.service_number.clone();
+                    if !cust_email.is_empty() && !so_num.is_empty(){
+                        self.service_number = so_num;
+                        self.customer_email = cust_email;
+                    } else {
+                        let text_area_input = self.service_number_field.input.borrow().clone();
+                        let user_input = &text_area_input.lines()[0];
+                        ctx.service_data.ticket_data.service_number = user_input.to_string();
+                        ctx.service_data.get_ticket();
+                        self.service_number = user_input.clone();
+                        log::info!("input: {user_input}");
+                    }
+                }
+
                 log::info!("Button: {button:?}\nwidget: {widget_id:?}");
                 // Show popup to the right of the clicked button
                 let widget_button = match widget_id.0.as_str() {
@@ -130,7 +146,13 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     }
                 }
             }
-            WidgetEvent::Api(_) => {},
+            WidgetEvent::Api(api_event) => {
+                match api_event {
+                    ApiEvent::GetTicketResponse(presta_data) => {
+                        self.customer_email = presta_data.customer.email.clone();
+                    }
+                }
+            }
             WidgetEvent::Active { widget_id } => {self.log_message(&format!("{widget_id:?}"));}
         }
     }

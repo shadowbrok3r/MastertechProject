@@ -11,7 +11,7 @@ use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
 pub mod first_run;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct ServiceData {
     pub task_data: TaskPayload,
     pub ticket_data: TicketPayload,

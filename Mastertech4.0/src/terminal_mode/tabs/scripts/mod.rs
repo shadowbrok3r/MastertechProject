@@ -1,6 +1,7 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::button::Button}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
 use egui::output;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
+use reqwest::Client;
 use std::{cell::RefCell, collections::HashMap, fmt::Display};
 use checklist::{Category, Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
@@ -20,12 +21,14 @@ pub mod script_checks;
 /// Let's say we have a subcomponent called ScriptsTab
 #[derive(Debug)]
 pub struct ScriptsTab<'a> {
+    service_number_field: InputField<'a>,
     tuneup_btn: Button<'a>,
     qc_btn: Button<'a>,
     updates_btn: Button<'a>,
     prechecks_btn: Button<'a>,
     informational_btn: Button<'a>,
     run_btn: Button<'a>,
+    data_path_buttons: Vec<Button<'a>>,
 
     reports: RefCell<Vec<Report>>, 
     current_reporter: RefCell<Reporter>,
@@ -33,8 +36,11 @@ pub struct ScriptsTab<'a> {
     update_log_rx: Receiver<WindowsUpdateEvent>,
     path_size_tx: Sender<Vec<(String, String)>>,
     path_size_rx: Receiver<Vec<(String, String)>>,
-    data_path_buttons: Vec<Button<'a>>,
+    progress_rx: Receiver<(u64, u64)>, // Receive progress updates
+    progress_tx: Sender<(u64, u64)>, // Receive progress updates
+    progress: RefCell<Option<(u64, u64)>>,
     
+    service_number: String,
     /// Antivirus tab
     antivirus_products: Vec<AntiVirusProduct>,
     /// Installed Programs tab
@@ -72,9 +78,11 @@ pub struct ScriptsTab<'a> {
     data_transfer_progress_tx: Sender<Vec<u8>>,
     data_transfer_progress_rx: Receiver<Vec<u8>>,
     source_directories: Vec<(String, String)>,
-    progress: RefCell<Option<(f64, f64)>>,
+    
     has_scrolled_manually: RefCell<bool>,
     init: RefCell<bool>,
+    client: Client,
+    customer_email: String,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -82,6 +90,7 @@ impl<'a> ScriptsTab<'a> {
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
         let (data_transfer_progress_tx, data_transfer_progress_rx) = crossbeam::channel::unbounded();
+        let (progress_tx, progress_rx) = crossbeam::channel::unbounded();
         let mut checklists = HashMap::new();
         
         // Define checklists with categories
@@ -97,6 +106,7 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("Activate SEB", Category::Tuneup),
                     TodoItem::new("Run Tron", Category::Tuneup),
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
+                    TodoItem::new("Run Webroot Scan", Category::Tuneup),
                     TodoItem::new("Run Junkware Category", Category::JunkwareRemoval),
                 ],
             },
@@ -130,7 +140,7 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("OneLaunch", Category::JunkwareRemoval),
                     TodoItem::new("WebNavigator Browser", Category::JunkwareRemoval),
                     // TodoItem::new("ESET Security", Category::JunkwareRemoval),
-                    TodoItem::new("Wavesor", Category::JunkwareRemoval),
+                    TodoItem::new("Wave Browser", Category::JunkwareRemoval),
                     TodoItem::new("Clear Browser", Category::JunkwareRemoval),
                     TodoItem::new("Shift Browser", Category::JunkwareRemoval),
                     TodoItem::new("Avast Browser", Category::JunkwareRemoval),
@@ -160,7 +170,6 @@ impl<'a> ScriptsTab<'a> {
                         .set_warning_criteria("Not installed OR its not active")
                         .set_error_criteria("Script Failed To Run"),
                     TodoItem::new("Are there scheduled tasks for it?", Category::Informational),
-                    TodoItem::new("If Webroot/SAS not installed, what AV is active?", Category::Informational),
                     TodoItem::new("Are there any pending Windows updates?", Category::Informational),
                     TodoItem::new("Is Windows Activated?", Category::Informational),
                     TodoItem::new("Is Hibernation/Sleep enabled?", Category::Informational),
@@ -203,6 +212,7 @@ impl<'a> ScriptsTab<'a> {
         );
 
         Self {
+            service_number_field: InputField::new("Service #", WidgetId("ServiceNumber".to_string())),
             tuneup_btn: Button::new("Tuneup =>", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
             qc_btn: Button::new("Quality Check =>", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
             updates_btn: Button::new("Windows Updates =>", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),
@@ -218,12 +228,14 @@ impl<'a> ScriptsTab<'a> {
 
             reports: RefCell::new(vec![]),
             current_reporter: RefCell::new(Reporter::Unknown),
+            service_number: String::new(),
             update_log_tx, 
             update_log_rx,
             path_size_tx, 
             path_size_rx,
             data_transfer_progress_tx, 
-            data_transfer_progress_rx,
+            data_transfer_progress_rx, 
+            progress_tx, progress_rx,
 
             checklists,
             windows_updates: WindowsUpdates::default(),
@@ -247,7 +259,8 @@ impl<'a> ScriptsTab<'a> {
             progress: RefCell::new(None),
             has_scrolled_manually: RefCell::new(false),
             init: RefCell::new(true),
-            
+            client: Client::new(),
+            customer_email: String::new()
         }
     }
 
@@ -272,6 +285,10 @@ impl<'a> ScriptsTab<'a> {
     }
 
     pub fn receive(&mut self) {
+        if let Ok(progress) = self.progress_rx.try_recv() {
+            self.progress.replace(Some(progress));
+        }
+
         if let Ok(path_info) = self.path_size_rx.try_recv() {
             self.source_directories = path_info.clone();
             self.data_path_buttons.clear();

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::app_state::MastertechContext;
 use anyhow::{Error, Result};
-use database::schema::LocalSebData;
+use database::schema::{CarboniteResponse, LocalSebData};
 use eframe::egui::{
     Button, CentralPanel, Frame, Margin, RichText, ScrollArea, TextEdit,
     TextStyle, TopBottomPanel, Ui, Widget,
@@ -45,24 +45,9 @@ impl MastertechContext {
                     if Button::new("Lookup SEB Info").ui(ui).clicked() {
                         let tx = self.seb_channel.0.clone();
                         let client = self.client.clone();
-                        let search_string = self.seb_email.clone();
+                        let customer_email = self.seb_email.clone();
                         spawn(async move {
-                            let mut params: HashMap<&str, &str> = HashMap::new();
-                            params.insert("user_email", "logan.lees@pclaptops.com");
-                            params.insert("user_password", "Poolparty1");
-                            params.insert("application", "carbonite");
-                            params.insert("action", "search");
-                            params.insert("search", &search_string);
-
-                            let response = client
-                                .post("https://scaffold.pclaptops.com/api/index")
-                                .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                                .form(&params)
-                                .send()
-                                .await?;
-
-                            let response_json: Vec<Value> = response.json().await?;
-                            info!("response_json: {:?}", response_json);
+                            let response_json = CarboniteResponse::default().from_customer_email(customer_email, client.clone()).await?;
 
                             // let seb_data: Result<LocalSebData, anyhow::Error> =
                             //     request_seb_info(client, Some(search_string))
@@ -95,48 +80,48 @@ impl MastertechContext {
                     for drive in drives.iter().cloned() {
                         let button = Button::new(RichText::new(drive.clone()));
                         if ui.add(button).clicked() {
-                            let tx = self.seb_channel.0.clone();
-                            let client = self.client.clone();
-                            let search = search_string.clone();
+                            // let tx = self.seb_channel.0.clone();
+                            // let client = self.client.clone();
+                            // let search = search_string.clone();
 
-                            spawn(async move {
-                                let mut params: HashMap<&str, &str> = HashMap::new();
-                                params.insert("user_email", "logan.lees@pclaptops.com");
-                                params.insert("user_password", "Poolparty1");
-                                params.insert("application", "carbonite");
-                                params.insert("action", "search");
-                                params.insert("search", &search);
+                            // spawn(async move {
+                            //     let mut params: HashMap<&str, &str> = HashMap::new();
+                            //     params.insert("user_email", "logan.lees@pclaptops.com");
+                            //     params.insert("user_password", "Poolparty1");
+                            //     params.insert("application", "carbonite");
+                            //     params.insert("action", "search");
+                            //     params.insert("search", &search);
 
-                                let response = client
-                                    .post("https://scaffold.pclaptops.com/api/index")
-                                    .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                                    .form(&params)
-                                    .send()
-                                    .await
-                                    .unwrap();
+                            //     let response = client
+                            //         .post("https://scaffold.pclaptops.com/api/index")
+                            //         .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+                            //         .form(&params)
+                            //         .send()
+                            //         .await
+                            //         .unwrap();
 
-                                let response_json: Vec<Value> = response.json().await.unwrap();
-                                info!("response_json: {:?}", response_json);
+                            //     let response_json: Vec<Value> = response.json().await.unwrap();
+                            //     info!("response_json: {:?}", response_json);
 
-                                let seb_data: Result<LocalSebData, anyhow::Error> =
-                                    request_seb_info_from_drive(client, None, drive.clone())
-                                        .await
-                                        .or_else(|err| {
-                                            log::error!(
-                                                "Error Pulling SEB info: {:?}",
-                                                err.to_string()
-                                            );
-                                            Err(err)
-                                        })
-                                        .and_then(|data| {
-                                            info!("Pulled SEB Data successfully: {data:#?}");
-                                            Ok(data)
-                                        });
+                            //     let seb_data: Result<LocalSebData, anyhow::Error> =
+                            //         request_seb_info_from_drive(client, None, drive.clone())
+                            //             .await
+                            //             .or_else(|err| {
+                            //                 log::error!(
+                            //                     "Error Pulling SEB info: {:?}",
+                            //                     err.to_string()
+                            //                 );
+                            //                 Err(err)
+                            //             })
+                            //             .and_then(|data| {
+                            //                 info!("Pulled SEB Data successfully: {data:#?}");
+                            //                 Ok(data)
+                            //             });
 
-                                info!("SEB Data pull: {seb_data:?}");
-                                tx.try_send(response_json).unwrap();
-                            });
-                        };
+                            //     info!("SEB Data pull: {seb_data:?}");
+                            //     tx.try_send(response_json).unwrap();
+                            // });
+                        }
                     }
                 });
             });

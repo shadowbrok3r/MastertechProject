@@ -1,59 +1,26 @@
-#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
-use anyhow::{anyhow, Context};
-use async_trait::async_trait;
-use crossbeam::channel::Sender;
-use database::schema::{
-    ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE
-};
-use dotenv::dotenv;
-use futures_util::FutureExt;
-use log::{debug, error, info};
+use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
+use sysinfo::{Components, Disks, Networks, System};
 use num_format::{Locale, ToFormattedString};
-use regex::Regex;
-use reqwest::{
-    header::{HeaderValue, ACCEPT, CONTENT_TYPE, COOKIE},
-    Client,
-};
-use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use serde_json::Value;
+use tokio::{io::{self, ErrorKind}, spawn};
+use crossbeam::channel::Sender;
+use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use shell_words::{join, quote, split, ParseError};
-use std::{
-    collections::HashMap,
-    env,
-    error::Error,
-    fmt::Display,
-    path::Path,
-    process::{Output, Stdio},
-    str,
-    sync::Arc,
-    time::Duration,
-};
-use surrealdb::{sql::Thing, RecordId};
-use sysinfo::*;
-use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
-use tokio::{
-    io::{self, ErrorKind},
-    process::{Child, Command},
-    runtime::Handle,
-    spawn,
-};
-use tokio::{
-    sync::{mpsc, Mutex},
-    time::{self, sleep},
-};
-use uuid::Uuid;
-
-use super::{machine::Machine, SYSINFO};
+use surrealdb::RecordId;
+use log::{error, info};
+use reqwest::Client;
+use anyhow::Context;
+use super::SYSINFO;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[async_trait]
 pub trait ComputerInfo {
     async fn get_computer_data(&mut self) -> anyhow::Result<ComputerData, anyhow::Error>;
+    #[allow(unused)]
     async fn get_computer_data_no_gpu(&mut self) -> anyhow::Result<ComputerData, anyhow::Error>;
+    #[allow(unused)]
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error>;
     #[cfg(target_os = "windows")]
     fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>>;
@@ -169,7 +136,7 @@ impl ComputerInfo for ComputerData {
     async fn get_computer_data_no_gpu(&mut self) -> anyhow::Result<Self, anyhow::Error> {
         info!("Filesystem -> get_computer_data -> Getting sysinfo");
     
-        let gpu_info = Gpu::default();
+        let _gpu_info = Gpu::default();
         
         let sys = &mut SYSINFO.lock().await;
         // info!("GPU: {gpu_info:?}");
@@ -273,7 +240,6 @@ impl ComputerInfo for ComputerData {
         Ok(self.to_owned())
     }
 
-
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         Ok(get_sysinfo().await?)
     }
@@ -355,18 +321,18 @@ impl ComputerInfo for ComputerData {
     }
 }
 
-#[async_trait]
-pub trait SysInf {
-    fn init_machine(&mut self);
-    fn get_cpu(&mut self);
-    fn get_gpu(&mut self);
-    fn get_memory(&mut self);
-    fn get_disks(&mut self);
-    fn get_processes(&mut self);
-    fn get_components(&mut self);
-    fn get_static_info(&mut self);
-    fn get_network_interfaces(&mut self);
-}
+// #[async_trait]
+// pub trait SysInf {
+//     fn init_machine(&mut self);
+//     fn get_cpu(&mut self);
+//     fn get_gpu(&mut self);
+//     fn get_memory(&mut self);
+//     fn get_disks(&mut self);
+//     fn get_processes(&mut self);
+//     fn get_components(&mut self);
+//     fn get_static_info(&mut self);
+//     fn get_network_interfaces(&mut self);
+// }
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let machine = get_machine_instance().await?.clone();

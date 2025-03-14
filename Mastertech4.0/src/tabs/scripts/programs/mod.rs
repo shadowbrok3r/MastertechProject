@@ -1,3 +1,12 @@
+use std::io;
+
+use crossbeam::channel::Sender;
+use futures::StreamExt;
+use reqwest::Client;
+use sha2::Digest;
+use tokio::{fs, io::AsyncWriteExt, process::Command};
+use winapi::um::winbase::CREATE_NO_WINDOW;
+
 /// Struct for generic installed programs
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct InstalledProgram {
@@ -35,11 +44,10 @@ impl InstalledProgram {
     pub fn get_installed_programs() -> anyhow::Result<Vec<Self>, anyhow::Error> {
         let script = r#"
             $programs = @()
-
-            # Query installed programs from both HKLM and HKCU
             $paths = @(
                 "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-                "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
             )
 
             foreach ($path in $paths) {
@@ -48,8 +56,6 @@ impl InstalledProgram {
                         Select-Object DisplayName, DisplayVersion, Publisher, UninstallString, InstallLocation, InstallDate, PSPath
                 }
             }
-
-            # Convert to JSON and return
             $programs | ConvertTo-Json
         "#;
 
@@ -119,40 +125,109 @@ impl InstalledProgram {
     }
 
     pub fn uninstall(&self) -> anyhow::Result<(), anyhow::Error> {
-        if let (Some(command), Some(display_name)) = (&self.uninstall_string, &self.display_name) {
-            if command.contains("MsiExec /I") {
+        // https://download.eset.com/com/eset/tools/installers/av_remover/latest/avremover_nt64_enu.exe
+        if let (Some(command), Some(display_name)) = (self.uninstall_string.clone(), self.display_name.clone()) {    
+            std::thread::spawn(move || {
+                // try this for inno setups
+                let script = format!(r#"& {command} /silent /verysilent /suppressmsgboxes /norestart"#);
+                log::info!("Uninstalling program: {display_name}\nUninstall String: {command}\n{script}");
+                let ps = powershell_script::PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
 
-            }
-            
-            // try this for inno setups
-            let script = format!(r#"& {command} /silent /verysilent /suppressmsgboxes /norestart"#);
-            log::info!("Uninstalling program: {display_name}\nUninstall String: {command}\n{script}");
-            let ps = powershell_script::PsScriptBuilder::new()
-                .no_profile(true)
-                .non_interactive(true)
-                .hidden(true)
-                .print_commands(false)
-                .build();
+                let output = ps.run(&script);
+                
+                if let Err(e) = output {
+                    log::info!("Error with PS: {e:?}");
+                    let cmd = command.to_lowercase();
+                    if cmd.contains("MsiExec /I") 
+                        || cmd.contains("--uninstall")
+                        || cmd.contains("-uninstall") 
+                    {
 
-            let output = ps.run(&script)?;
+                    }
+                    let ps = powershell_script::PsScriptBuilder::new()
+                        .no_profile(true)
+                        .non_interactive(true)
+                        .hidden(true)
+                        .print_commands(false)
+                        .build();
 
-            if output.success() {
-                log::info!("Successfully uninstalled: {}", display_name);
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!(format!(
-                    "Failed to uninstall {:?}: {}",
-                    display_name,
-                    output.stderr().unwrap_or_default()
-                )))
-            }
-        } else {
-            Err(anyhow::anyhow!(format!(
-                "No uninstall string found for program: {:?}",
-                self.display_name
-            )))
+                    let _output = ps.run(&format!("& {command}"));
+                }
+            });    
+        }
+        Ok(())
+    }
+}
+
+pub async fn install_program(
+    url: String, 
+    client: Client,
+    progress_tx: Sender<(u64, u64)>,
+) -> anyhow::Result<(), anyhow::Error> {
+    log::info!("running install_program!");
+    let response = client
+        .get(url)
+        .send()
+        .await?;
+
+    let total_length = response.content_length().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
+    })?;
+
+    let mut downloaded_bytes: u64 = 0;
+
+    let temp_directory = std::env::temp_dir();
+    let download_path: String = format!("{}\\prgrm.exe", temp_directory.display());
+
+    let mut file = fs::File::create(download_path.clone()).await?;
+    let mut sha = sha2::Sha256::new();
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        file.write_all(&chunk).await?;
+        sha.update(&chunk);
+        downloaded_bytes += chunk.len() as u64;
+        progress_tx.try_send((downloaded_bytes, total_length))?;
+    }
+
+    if downloaded_bytes == total_length {
+        let hash = sha.finalize();
+        log::info!("Download complete. SHA-256: {:x}", hash);
+
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_stdout = Command::new("cmd")
+                .arg("/k ")
+                .arg(download_path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()?
+                .stdout;
+
+            log::info!("cmd_stdout: {:?}", cmd_stdout);
         }
     }
+    Ok(())
+}
+
+
+pub fn run_ps_script(script: &str) -> anyhow::Result<String, anyhow::Error> {
+    let ps = powershell_script::PsScriptBuilder::new()
+        .no_profile(true)
+        .non_interactive(true)
+        .hidden(true)
+        .print_commands(false)
+        .build();
+
+    let output = ps.run(&format!("& {script}"))?;
+    let out = output.stdout().unwrap_or_default();
+    Ok(out)
 }
 
 /// Custom deserializer to handle fields that may be a string or a map

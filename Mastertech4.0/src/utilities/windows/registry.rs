@@ -6,7 +6,7 @@ const EXPLORER_ADVANCED_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\
 const USER_NOTIFS: &str = r"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement"; // ScoobeSystemSettingEnabled
 const WINDOWS_COPILOT_KEY: &str = r"Software\Policies\Microsoft\Windows\WindowsCopilot";
 const ACCOUNT_NOTIFICATIONS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications";
-
+const AUX_PINS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins";
 pub fn disable_notifications() -> Result<Vec<String>> {
     let mut results = Vec::new();
     let push_notifs_key = CURRENT_USER.options().read().write().open(PUSH_NOTIFICATIONS_KEY)?;
@@ -61,27 +61,31 @@ pub fn disable_notifications() -> Result<Vec<String>> {
 }
 
 // Function to check the value of the Explorer Advanced registry key
-pub fn align_taskbar_left() -> Result<String> {
+pub fn align_taskbar_left() -> Result<Vec<String>> {
     let key = CURRENT_USER.options().read().write().create().open(EXPLORER_ADVANCED_KEY)?;
-    let return_key = &mut String::new();
-    let value = key.get_u32("TaskbarAl")?;
-    log::info!("Value: {value}");
-    if value == 1 {
-        if let Err(e) = key.set_u32("TaskbarAl", 0x000) {
-            *return_key = format!("Need to create the reg key: {e:?}");
-            match key.create("ToastEnabled") {
-                Ok(_) => *return_key = "DISABLED Push Notifications".to_string(),
-                Err(e) => *return_key = format!("Error Left Centering TaskBar: {e:?}"),
+    let mut return_result = Vec::new();
+    let key_result = key.get_u32("TaskbarAl");
+    match key_result {
+        Ok(value) => {
+            return_result.push(format!("Found Taskbar alignment key: {value:?}"));
+            if value == 1 {
+                match key.set_u32("TaskbarAl", 0x000) {
+                    Ok(_) => return_result.push(format!("Left Centered TaskBar")),
+                    Err(e) => return_result.push(format!("Error Left Centering TaskBar: {e:?}")),
+                }
+            } else if value == 0 {
+                return_result.push(format!("TaskBar is Left Aligned"));
             }
-        }
-        match key.set_u32("TaskbarAl", 0x000) {
-            Ok(_) => *return_key = format!("Left Centered TaskBar"),
-            Err(e) => *return_key = format!("Error Left Centering TaskBar: {e:?}"),
-        }
-    } else if value == 0 {
-        *return_key = "TaskBar is Left Aligned".to_string();
+        },
+        Err(e) => {
+            return_result.push(format!("Error getting the TaskBar Alignment Key: {e:?}"));
+            match key.set_u32("TaskbarAl", 0x000) {
+                Ok(_) => return_result.push(format!("DISABLED Push Notifications (Created Reg Key)")),
+                Err(e) => return_result.push(format!("Error Creating TaskBar Reg Key: {e:?}")),
+            }
+        },
     }
-    Ok(return_key.clone())
+    Ok(return_result)
 }
 
 // Disable Lock Screen Notifications
@@ -101,20 +105,46 @@ pub fn disable_lockscreen_notifications() -> Result<String> {
 }
 
 // Disable Copilot
-pub fn disable_copilot() -> Result<String> {
+pub fn disable_copilot() -> Result<Vec<String>> {
+    let co_key = CURRENT_USER.options().read().write().create().open(AUX_PINS_KEY)?;
+    let mut return_result = Vec::new();
+    let key_result = co_key.get_u32("CopilotPWAPin");
+    match key_result {
+        Ok(value) => {
+            return_result.push(format!("Found CopilotPWAPin: {value:?}"));
+            if value == 1 {
+                match co_key.set_u32("CopilotPWAPin", 0x000) {
+                    Ok(_) => return_result.push(format!("DISABLED CopilotPWAPin")),
+                    Err(e) => return_result.push(format!("Error with CopilotPWAPin key: {e:?}")),
+                }
+            } else if value == 0 {
+                return_result.push(format!("CopilotPWAPin disabled"));
+            }
+        },
+        Err(e) => {
+            return_result.push(format!("Error getting CopilotPWAPin: {e:?}"));
+            match co_key.set_u32("CopilotPWAPin", 0x000) {
+                Ok(_) => return_result.push(format!("DISABLED Copilot")),
+                Err(e) => return_result.push(format!("Error Creating CopilotPWAPin Reg Key: {e:?}")),
+            }
+        },
+    }
+
     let key = CURRENT_USER.options().read().write().open(WINDOWS_COPILOT_KEY)?;
     let value: u32 = key.get_u32("TurnOffWindowsCopilot").unwrap_or(0);
     if value == 0 {
         match key.set_u32("TurnOffWindowsCopilot", 1) {
-            Ok(_) => Ok("Copilot Disabled".to_string()),
-            Err(e) => Ok(format!("Error Disabling Copilot: {:?}", e)),
+            Ok(_) => return_result.push("Copilot Disabled".to_string()),
+            Err(e) => return_result.push(format!("Error Disabling Copilot: {:?}", e)),
         }
     } else if value == 1 {
-        Ok("Copilot Already Disabled".to_string())
+        return_result.push("Copilot Already Disabled".to_string())
     } else {
-        Ok(format!("Unexpected TurnOffWindowsCopilot Value: {}", value))
+        return_result.push(format!("Unexpected TurnOffWindowsCopilot Value: {}", value))
     }
+    Ok(return_result)
 }
+
 
 // Disable Advertising & Promotional - All 20 keys
 pub fn disable_content_delivery_allowed() -> Result<String> {
