@@ -137,6 +137,8 @@ impl<'a> ScriptsTab<'a> {
                 name: "Junkware Removal".to_string(),
                 state: ListState::default(),
                 items: vec![
+                    TodoItem::new("Webroot TEST", Category::JunkwareRemoval),
+                    TodoItem::new("SuperAnti TEST", Category::JunkwareRemoval),
                     TodoItem::new("OneLaunch", Category::JunkwareRemoval),
                     TodoItem::new("WebNavigator Browser", Category::JunkwareRemoval),
                     // TodoItem::new("ESET Security", Category::JunkwareRemoval),
