@@ -179,18 +179,6 @@ impl <'a> ButtonType<'a> for Button<'a> {
 impl <'a> WidgetRef for Button<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();
-        let mut init = self.init.borrow_mut();
-        if *init {
-            *init = false;
-            let mut effect_stage = self.effect_stage.borrow_mut();
-            let effect1 = outline_selected_cells(
-                &mut effect_stage, 
-                area.as_size(),
-                background,
-                CellFilter::FgColor(Color::White)
-            );
-            effect_stage.add_effect(effect1);
-        }
 
         buf.set_style(area, Style::default().fg(text));
         // block.render_ref(area, buf);
@@ -262,6 +250,20 @@ impl <'a> WidgetRef for Button<'a> {
         buf.set_line(label_x, label_y, &self.label, area.width);
 
         self.set_area(area);
+        
+        let mut init = self.init.borrow_mut();
+        if *init {
+            *init = false;
+            let mut effect_stage = self.effect_stage.borrow_mut();
+            let effect1 = outline_selected_cells(
+                &mut effect_stage, 
+                area.as_size(),
+                background,
+                CellFilter::FgColor(Color::White)
+            );
+            effect_stage.add_effect(effect1);
+        }
+
         let fx_duration = tachyonfx::Duration::from_millis(16);
         self.effect_stage.borrow_mut().process_effects(fx_duration, buf, area);
     }
