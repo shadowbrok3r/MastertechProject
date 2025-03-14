@@ -6,6 +6,13 @@ use serde::Deserialize;
 use walkdir::WalkDir;
 use sysinfo::Disks;
 
+/*
+ FIGURED OUT HOW TO ******REACTIVATE****** SUPERANTISPYWARE.
+ "C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe" /autoregister:1HT2-ZJEA-VV0B5
+
+ YOU HAVE TO *KILL* THE EXECUTABLE, THEN RELAUNCH THE EXECUTABLE WITH THAT COMMANDLINE FLAG
+ 
+*/
 impl <'a> ScriptsTab <'a> {
     pub fn run_selected_scripts(&mut self) {
         let selected = self.get_selected_scripts();
