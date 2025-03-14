@@ -1,3 +1,5 @@
+use crossbeam::channel::unbounded;
+use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use fx::{effect::{ outline_selected_cells, UniqueEffectId}, EffectStage};
@@ -122,7 +124,7 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
 
     log::info!("First Run Results: {first_run:?}");
 
-    let res = run_app(&mut terminal, app);
+    let res = run_app(&mut terminal, app).await;
 
     disable_raw_mode()?;
 
@@ -141,12 +143,42 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>) -> anyhow::Result<(), anyhow::Error> {
+async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>) -> anyhow::Result<(), anyhow::Error> {
     // render splash screen
-    log::info!("Running splash");
     let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
-    log::info!("Running splash 2");
     let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
+
+    // Create channels explicitly for communication between Data and Render systems
+    let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
+    let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
+
+    // Create systems separately
+    let render_system = Arc::new(RenderSystem::new(render_to_data_tx.clone(), data_to_render_rx));
+    let data_system = Arc::new(DataSystem::new(data_to_render_tx.clone(), render_to_data_rx));
+
+    let notifications = render_system.notifications.clone();
+    let ui_messages = render_system.ui_messages.clone();
+
+
+    // Clone Arc for running background tasks
+    let render_system_bg = Arc::clone(&render_system);
+    let data_system_bg = Arc::clone(&data_system);
+
+    let mut join_handles = Vec::new();
+    // Run DataSystem in the background
+    join_handles.push(
+        tokio::spawn(async move {
+            data_system_bg.run().await;
+        })
+    );
+    // Run RenderSystem in the background
+    join_handles.push(
+        tokio::spawn(async move {
+            render_system_bg.run().await;
+        })
+    );
+
+    let quit = &mut false;
     log::info!("Entering main loop");
     loop {
         if let Ok(events) = app.event_handler.next() {
@@ -155,9 +187,21 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 events::Event::Key(key_event) => {
                     let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     match key_event.code {
-                        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('c') if ctrl_key => {
                             log::info!("Quitting");
+                            *quit = true;
                             break;
+                        }
+                        KeyCode::Char('n') if ctrl_key => { // Pressing 'n' triggers a notification
+                            let notification = Notification::new(
+                                NotificationType::Info, 
+                                "Some Shit Has Happened.", 
+                                "You pressed the notification key.", 
+                                20
+                            );
+            
+                            let x = data_system.send(Box::new(notification));
+                            log::info!("Result: {x:?}");
                         }
                         _ => {
                             if ctrl_key {
@@ -228,7 +272,6 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
             //     f.render_widget(&mut splash_screen2, layout[1]);
             //     std::thread::sleep(std::time::Duration::from_millis(50));
             // } else {
-                
                 app.event_manager.process_events(app.ctx.clone());
                 if let Ok(mut lock) = app.ctx.lock() {
                     lock.receive();
@@ -259,14 +302,20 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                 
                 if app.first_run {
                     app.first_run = false;
-                    let effect1 = outline_selected_cells(
-                        &mut app.menu_bar.effect_stage, 
-                        main_content_area.as_size(),
-                        CATPPUCCIN.maroon,
-                        CellFilter::FgColor(CATPPUCCIN.maroon)
-                    );
+                    // let effect1 = outline_selected_cells(
+                    //     &mut app.menu_bar.effect_stage, 
+                    //     main_content_area.as_size(),
+                    //     CATPPUCCIN.maroon,
+                    //     CellFilter::FgColor(CATPPUCCIN.maroon)
+                    // );
 
-                    app.effect_stage.add_effect(effect1);
+                    // app.effect_stage.add_effect(effect1);
+                    if let Ok(notifs) = notifications.lock() {
+                        if let Some(notification) = notifs.last() {
+                            let a = notification.notification_area::<B>(f);
+                            notification.render_effects(&mut app.effect_stage, a);
+                        }
+                    }
                 }
 
                 app.menu_bar.draw::<B>(f, tab_area);
@@ -284,8 +333,39 @@ fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>)
                         app.logger.draw::<B>(f, main_content_area);
                     },
                 }
+                // Render notifications (synchronously) at top-right corner
+                if let Ok(mut notifs) = notifications.lock() {
+                    notifs.retain(|notif| !notif.is_expired());
+                    if let Some(notification) = notifs.last() {
+                        let a = notification.notification_area::<B>(f);
+                        notification.display::<B>(f);
+                        app.effect_stage.process_effects(
+                            tachyonfx::Duration::from_millis(16), 
+                            f.buffer_mut(), 
+                            a
+                        );
+                    }
+                }
+                // Synchronously render other UI messages
+                if let Ok(messages) = ui_messages.lock() {
+                    for ui_message in messages.iter() {
+                        ui_message.as_display().render_widget::<B>(f, area);
+                    }
+                }
+
             // }
         })?;
+    }
+    
+    if *quit {
+        let abort_handles: Vec<tokio::task::AbortHandle> = join_handles.iter().map(|h| h.abort_handle()).collect();
+        for handle in abort_handles.iter() {
+            handle.abort();
+        }
+        for handle in join_handles {
+            let handle_res = handle.await;
+            log::info!("Handle: {handle_res:?}");
+        }
     }
     Ok(())
 }
