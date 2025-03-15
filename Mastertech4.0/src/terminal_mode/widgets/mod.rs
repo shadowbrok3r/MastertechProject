@@ -4,7 +4,6 @@ use button::ButtonState;
 
 pub mod json_viewer;
 pub mod button;
-pub mod service_form;
 pub mod input_field;
 
 pub const SHORTCUT_SET: Set = Set {

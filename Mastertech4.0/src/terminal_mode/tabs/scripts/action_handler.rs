@@ -1,15 +1,14 @@
-use std::{path::PathBuf, sync::{Arc, Mutex}};
-
+use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent}, widgets::ButtonType}};
 use ratatui::layout::Rect;
+use std::path::PathBuf;
 
-use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent}, widgets::ButtonType}};
 use super::ScriptsTab;
 
 impl<'a> ActionHandler for ScriptsTab<'a> {
-    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>) {
+    fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id , button} => {
-                if let Ok(ctx) = &mut ctx.lock() {
+                if let Ok(ctx) = &mut self.ctx.lock() {
                     let cust_email = ctx.service_data.customer_data.email.clone();
                     let so_num = ctx.service_data.ticket_data.service_number.clone();
                     if !cust_email.is_empty() && !so_num.is_empty(){

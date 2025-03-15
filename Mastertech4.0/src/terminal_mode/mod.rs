@@ -1,23 +1,18 @@
-use crossbeam::channel::unbounded;
+use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
+use reqwest::Client;
 use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, MenuBar, ScriptsTab, ServiceTab, SysinfoTab, Tab};
+use tabs::{logger::Logger, login::LoginTab, MenuBar, ScriptsTab, service_form::ServiceFormTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
-use fx::{effect::{ outline_selected_cells, UniqueEffectId}, EffectStage};
+use fx::{effect::UniqueEffectId, EffectStage};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
-use tachyonfx::CellFilter;
-use widgets::HandleWidget;
-use ratatui::prelude::*;
-use styling::CATPPUCCIN;
-use context::TerminalContext;
-use ratatui::{
-    crossterm::{
-        event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
-        execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    }, layout::{Constraint, Direction, Flex, Layout},
-};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
+use crossbeam::channel::unbounded;
+use context::TerminalContext;
+// use tachyonfx::CellFilter;
+use widgets::HandleWidget;
+// use styling::CATPPUCCIN;
+use ratatui::prelude::*;
 
 pub mod systems;
 pub mod widgets;
@@ -47,7 +42,7 @@ pub struct TerminalApp<'a> {
     logger: Logger,
     menu_bar: MenuBar<'a>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
-    service_tab: ServiceTab<'a>,
+    service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     effect_stage: EffectStage<UniqueEffectId>,
@@ -61,6 +56,7 @@ pub struct TerminalApp<'a> {
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
+        let client = Client::new();
         // Create channels explicitly for communication between Data and Render systems
         let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
         let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
@@ -68,23 +64,23 @@ impl Default for TerminalApp <'_>{
         // Create systems separately
         let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx.clone(), data_to_render_rx));
         let data_system: Arc<DataSystem> = Arc::new(DataSystem::new(data_to_render_tx.clone(), render_to_data_rx));
-
         let ctx = Arc::new(Mutex::new(TerminalContext::new(data_to_render_tx, render_to_data_tx)));
+
         // Create a global event channel.
         let mut event_manager = EventManager::new(get_event_receiver());
-        let service_tab = ServiceTab::new();
-        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new()));
-        let login_tab = Rc::new(RefCell::new(LoginTab::new()));
-        // Register the ServiceFormWidget with the event manager.
+        let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
+        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
+        let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
+        let menu_bar = MenuBar::new(ctx.clone());
+        // Register the ServiceFormTab with the event manager.
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
-        event_manager.register_handler(service_tab.service_form_widget.clone());
+        event_manager.register_handler(service_tab.clone());
         event_manager.register_handler(scripts_tab.clone());
         event_manager.register_handler(login_tab.clone());
-        
 
         Self {
             logger: Logger::new(),
-            menu_bar: MenuBar::new(),
+            menu_bar,
             scripts_tab,
             service_tab,
             sysinfo_tab: SysinfoTab::new(),
@@ -161,27 +157,31 @@ async fn run_app<'a, B: Backend>(
     // data_system_bg: Arc<DataSystem>,
 ) -> anyhow::Result<(), anyhow::Error> {
     // render splash screen
-    let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
-    let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
+    let mut _splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
+    let mut _splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
 
     let notifications = app.render_system.notifications.clone();
     let ui_messages = app.render_system.ui_messages.clone();
+    // Create a shutdown channel
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
 
     // Clone Arc for running background tasks
     let render_system_bg: Arc<RenderSystem> = Arc::clone(&app.render_system);
     let data_system_bg: Arc<DataSystem> = Arc::clone(&app.data_system);
 
     let mut join_handles = Vec::new();
+    let shutdown_rx_data = shutdown_tx.subscribe();
     // Run DataSystem in the background
     join_handles.push(
         tokio::spawn(async move {
-            data_system_bg.run().await;
+            data_system_bg.run(shutdown_rx_data).await;
         })
     );
+    let shutdown_rx_render = shutdown_tx.subscribe();
     // Run RenderSystem in the background
     join_handles.push(
         tokio::spawn(async move {
-            render_system_bg.run().await;
+            render_system_bg.run(shutdown_rx_render).await;
         })
     );
 
@@ -239,9 +239,9 @@ async fn run_app<'a, B: Backend>(
 
                             // Now dispatch key event to the active widget, and only one widget:
                             let consumed = match current_tab {
-                                Tab::TurSheet => app.service_tab.handle_key_event(key_event),
+                                Tab::TurSheet => app.service_tab.borrow_mut().handle_key_event(key_event),
                                 Tab::Scripts => app.scripts_tab.borrow_mut().handle_key_event(key_event),
-                                Tab::SystemInfo => app.service_tab.handle_key_event(key_event),
+                                Tab::SystemInfo => app.sysinfo_tab.handle_key_event(key_event),
                                 Tab::Logs => app.logger.handle_key_event(key_event),
                                 Tab::Login => app.login_tab.borrow_mut().handle_key_event(key_event),
                             };
@@ -253,9 +253,9 @@ async fn run_app<'a, B: Backend>(
                 events::Event::Mouse(mouse_event) => {
                     app.menu_bar.handle_mouse_event(&mouse_event);
                      match current_tab {
-                        Tab::TurSheet => app.service_tab.handle_mouse_event(&mouse_event),
+                        Tab::TurSheet => app.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::Scripts => app.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                        Tab::SystemInfo => app.service_tab.handle_mouse_event(&mouse_event),
+                        Tab::SystemInfo => app.sysinfo_tab.handle_mouse_event(&mouse_event),
                         Tab::Logs => {}
                         Tab::Login => app.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                     };
@@ -278,7 +278,7 @@ async fn run_app<'a, B: Backend>(
             //     f.render_widget(&mut splash_screen2, layout[1]);
             //     std::thread::sleep(std::time::Duration::from_millis(50));
             // } else {
-                app.event_manager.process_events(app.ctx.clone());
+                app.event_manager.process_events();
                 if let Ok(mut ctx) = app.ctx.lock() {
                     ctx.receive();
                     match ctx.state {
@@ -351,7 +351,7 @@ async fn run_app<'a, B: Backend>(
 
                 // (2) Render Main content area depends on which tab is selected
                 match *app.menu_bar.current_tab.borrow() {
-                    Tab::TurSheet => app.service_tab.draw::<B>(f, main_content_area),
+                    Tab::TurSheet => app.service_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::Scripts => app.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area),
                     Tab::Login => app.login_tab.borrow_mut().draw::<B>(f, main_content_area),
@@ -385,13 +385,13 @@ async fn run_app<'a, B: Backend>(
     }
     
     if *quit {
-        let abort_handles: Vec<tokio::task::AbortHandle> = join_handles.iter().map(|h| h.abort_handle()).collect();
-        for handle in abort_handles.iter() {
-            handle.abort();
-        }
+        // Signal shutdown
+        shutdown_tx.send(())?;
+        log::info!("Sent shutdown signal");
+
+        // Wait for tasks to complete with a timeout
         for handle in join_handles {
-            let handle_res = handle.await;
-            log::info!("Handle: {handle_res:?}");
+            handle.abort();
         }
     }
     Ok(())

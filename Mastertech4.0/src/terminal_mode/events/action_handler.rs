@@ -1,10 +1,6 @@
-use std::sync::{Arc, Mutex};
-
 use database::schema::prestashop_schema::PrestashopPayload;
 use crossbeam::channel::{Receiver, Sender};
 use once_cell::sync::Lazy;
-
-use crate::terminal_mode::context::TerminalContext;
 
 // Define a global event sender (wrapped in `Arc<Mutex<T>>` for safe access)
 static GLOBAL_EVENT_SENDER: Lazy<(Sender<WidgetEvent>, Receiver<WidgetEvent>)> = Lazy::new(|| crossbeam::channel::unbounded());
@@ -46,7 +42,7 @@ pub trait ActionHandler {
     // Returns the unique widget identifier.
     // fn widget_id(&self) -> WidgetId;
     /// Process an incoming event.
-    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>);
+    fn handle_event(&mut self, event: &WidgetEvent);
 }
 
 /// A centralized event manager that receives events from a global channel
@@ -69,11 +65,11 @@ impl <'a> EventManager <'a> {
         self.handlers.push(handler);
     }
 
-    pub fn process_events(&mut self, ctx: Arc<Mutex<TerminalContext>>) {
+    pub fn process_events(&mut self) {
         while let Ok(event) = self.receiver.try_recv() {
             for handler in self.handlers.iter() {
                 // Borrow mutably to dispatch the event.
-                handler.borrow_mut().handle_event(&event, ctx.clone());
+                handler.borrow_mut().handle_event(&event);
             }
         }
     }
