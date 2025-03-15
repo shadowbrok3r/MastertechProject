@@ -1,6 +1,6 @@
-use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::Message, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
-use database::{Database, DATABASE};
+use database::{schema::User, Database, DATABASE};
 use crossbeam::channel::Sender;
 use reqwest::Client;
 pub mod action_handler;
@@ -92,7 +92,16 @@ impl <'a> LoginTab <'a> {
             match database{
                 Ok(db) => {
                     if let Some(ref usr) = db.user{
-                        let _usr = serde_json::to_string(&usr).unwrap();
+                        render_tx.send(Box::new(Notification::new(
+                            NotificationType::Info, 
+                            "Logged in", 
+                            &format!("Welcome, {}", &usr.name), 
+                            10
+                        )))?;
+
+                        render_tx.send(Box::new(
+                            DataMessage(usr.clone())
+                        ))?;
                     }else{ 
                         log::info!("no usr"); 
                         let _ = DATABASE.invalidate().await;
@@ -104,6 +113,14 @@ impl <'a> LoginTab <'a> {
                     log::error!("Error with db: {e:?}");
                     let check = e.to_string().contains("Already connected");
                     if check { 
+                        let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id")
+                            .await?
+                            .take(0)?;
+                        if let Some(usr) = user {
+                            render_tx.send(Box::new(
+                                DataMessage(usr.clone())
+                            ))?;
+                        }
                         appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; 
                         render_tx.send(Box::new(Notification::new(
                             NotificationType::Info, 

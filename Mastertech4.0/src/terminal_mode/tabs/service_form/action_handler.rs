@@ -89,9 +89,17 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         if let Ok(svc_data) = &mut self.service_data.lock() {
                             log::info!("ServiceFormTab handled a ButtonClick event.");
                             // Here you might access the input field's current value or trigger an API call.
-                            let current_text = self.order_number.input.borrow().clone();
-                            log::info!("Current order number: {}", current_text.lines()[0]);
-                            svc_data.ticket_data.service_number = current_text.lines()[0].to_string();
+                            let service_number = self.order_number.input.borrow().clone();
+                            let phone = self.customer_phone.input.borrow().clone();
+                            let phone_number = phone.lines()[0].to_string();
+                            svc_data.ticket_data.service_number = service_number.lines()[0].to_string();
+
+                            log::info!("Current order number: {}\nPhone: {phone_number}", service_number.lines()[0]);
+                            
+                            if !phone_number.is_empty() {
+                                log::info!("Current phone number: {}", phone_number);
+                                svc_data.customer_data.phone_number = phone_number;
+                            }
                             svc_data.get_ticket();
                         }
                     },
@@ -104,6 +112,13 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         if let Ok(svc_data) = &mut self.service_data.lock() {
 
                             let _ = svc_data.receive(presta_data.clone());
+
+                            let mut service_number = self.order_number.input.borrow_mut();
+                            if service_number.lines()[0].is_empty() {
+                                service_number.select_all();
+                                service_number.cut();
+                                service_number.insert_str(svc_data.ticket_data.service_number.clone());
+                            }
 
                             let mut customer_name = self.customer_name.input.borrow_mut();
                             customer_name.select_all();

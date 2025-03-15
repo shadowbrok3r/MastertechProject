@@ -1,10 +1,10 @@
-use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
+use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
 use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use crossbeam::channel::Sender;
-use tui_textarea::TextArea;
-use std::cell::RefCell;
+use tui_textarea::{CursorMove, TextArea};
+use std::{cell::RefCell, rc::Rc};
 
 // ---------------------------------------------------------------------------
 // InputField: A wrapper around tui_input::Input for our form fields.
@@ -23,6 +23,8 @@ pub struct InputField <'a> {
     theme: Theme,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
+    has_wrapped: Rc<RefCell<bool>>,
+    last_width: RefCell<Option<usize>>,
 }
 
 impl <'a> InputField <'a>{
@@ -40,57 +42,159 @@ impl <'a> InputField <'a>{
             area: RefCell::new(None),
             state: RefCell::new(ButtonState::Normal),
             theme: CATPPUCCINTHEME,
-            event_sender: get_event_sender()
+            event_sender: get_event_sender(),
+            has_wrapped: Rc::new(RefCell::new(false)),
+            last_width: RefCell::new(None),
+            
         }
     }
 
     fn set_cursor(&self) {
         let mut input = self.input.borrow_mut();
         match *self.state.borrow() {
-            ButtonState::Active => input.set_cursor_style(Style::default().fg(Color::Cyan)),
-            _ => input.set_cursor_style(Style::default().hidden())
+            ButtonState::Active => {
+                input.set_cursor_style(Style::default().fg(Color::Cyan).not_hidden()); // Visible when active
+            }
+            _ => {
+                input.set_cursor_style(Style::default().fg(Color::Cyan).hidden()); // Hidden otherwise
+            }
         }
     }
 
     pub fn set_block(&self, block: Block<'a>) {
         self.block.replace(Some(block));
     }
-}
 
-impl <'a> WidgetRef for InputField <'a> {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        let (_background, text_color, _shadow, highlight) = self.colors();
-        
-        // self.add_effect(*buf.area());
-        
-        // ----- Process TachyonFX Effects -----
-        // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-        // let fx_duration = tachyonfx::Duration::from_millis(16);
-        // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-        // self.effect_stage.borrow_mut().process_effects(fx_duration, buf, *buf.area());
+    pub fn get_text(&self) -> Vec<String> {
+        self.input.borrow().lines().to_vec()
+    }
 
-        // buf.set_style(area, Style::default().bg(background).fg(text_color));
-        // Save the area for later use.
-        self.set_area(area);
-        
-        // Draw a bordered block with the field’s title.
-        let default_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .title(Line::raw(self.title).fg(text_color))
-            .style(Style::default().fg(highlight));
-
-        // Render the input's value in a Paragraph.
+    pub fn insert_wrapped_text(&self, text: String, width: usize) {
         let mut input = self.input.borrow_mut();
-        let block = if let Some(block) = self.block.borrow().clone(){
-            block
-        } 
-        else { 
-            default_block 
-        };
+        let mut lines: Vec<String> = Vec::new();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut current_line = String::new();
 
-        input.set_block(block);
-        input.render(area, buf);
+        for word in words {
+            let potential_line = if current_line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{} {}", current_line, word)
+            };
+            if potential_line.chars().count() <= width {
+                current_line = potential_line;
+            } else {
+                if !current_line.is_empty() {
+                    lines.push(current_line);
+                }
+                current_line = if word.chars().count() > width {
+                    let mut word_chars = word.chars();
+                    let mut truncated = String::new();
+                    for _ in 0..width {
+                        if let Some(c) = word_chars.next() {
+                            truncated.push(c);
+                        }
+                    }
+                    lines.push(truncated);
+                    word_chars.collect::<String>()
+                } else {
+                    word.to_string()
+                };
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        input.delete_line_by_head();
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                input.insert_newline();
+            }
+            input.insert_str(line);
+        }
+    }
+
+    pub fn get_cursor_position(&self) -> Option<Position> {
+        let area = self.get_area()?;
+        let input = self.input.borrow();
+        let (row, col) = input.cursor();
+
+        // Adjust for area's position and borders
+        let cursor_x = area.x + 1 + col as u16; // +1 for left border
+        let cursor_y = area.y + 1 + row as u16; // +1 for top border
+
+        // Ensure cursor stays within area bounds
+        if cursor_x < area.x + area.width && cursor_y < area.y + area.height {
+            Some(Position::new(cursor_x, cursor_y))
+        } else {
+            None
+        }
+    }
+
+    pub fn check_text_wrapping(&self, area: Rect) {
+        // Render the input's value in a Paragraph.
+        let Ok(mut input) = self.input.try_borrow_mut() else { return; };
+
+        let width = area.width.saturating_sub(2);
+        let lines = input.lines();
+        let cursor_line_idx = input.cursor().0;
+        let cursor_col = input.cursor().1;
+        let current_line = lines.get(cursor_line_idx).cloned().unwrap_or(String::new());
+
+        let is_current_clipped = current_line.chars().count() > width as usize && cursor_col >= width as usize;
+        let lines = lines.to_vec();
+        let mut has_wrapped = self.has_wrapped.borrow_mut();
+        if is_current_clipped && !has_wrapped.clone() {
+            input.insert_newline();
+            *has_wrapped = true;
+        } else if !is_current_clipped {
+            *has_wrapped = false;
+        }
+
+        // Check for width change and unwrap if necessary
+        let mut last_width = self.last_width.borrow_mut();
+        if let Some(prev_width) = *last_width {
+            if width as usize > prev_width {
+                let mut unwrapped = String::new();
+                for (i, line) in lines.iter().enumerate() {
+                    let potential_line = if unwrapped.is_empty() {
+                        line.to_string()
+                    } else {
+                        format!("{} {}", unwrapped, line)
+                    };
+                    if potential_line.chars().count() <= width as usize {
+                        unwrapped = potential_line;
+                    } else {
+                        unwrapped.push_str(line);
+                        if i < lines.len() - 1 {
+                            unwrapped.push('\n');
+                        }
+                    }
+                }
+        
+                input.delete_line_by_head();
+                input.insert_str(&unwrapped);
+            }
+        }
+
+        *last_width = Some(width as usize);
+
+        let lines = input.lines();
+
+        // Check for pasted text (optional fallback, can remove if using insert_wrapped_text)
+        let mut needs_split = false;
+        for (i, line) in lines.iter().enumerate() {
+            if line.chars().count() > width as usize {
+                needs_split = true;
+                input.move_cursor(CursorMove::Jump(i as u16, width));
+                input.insert_newline();
+                break;
+            }
+        }
+        if needs_split && !is_current_clipped {
+            *has_wrapped = false;
+        }
     }
 }
 
@@ -129,6 +233,65 @@ impl <'a> ButtonType <'a> for InputField <'a> {
         }
     }
 
+    fn handle_key_event(&self, key_event: &ratatui::crossterm::event::KeyEvent) -> bool {
+        let mut input = self.input.borrow_mut();
+        let modifiers = key_event.modifiers;
+        match key_event.code {
+            KeyCode::Backspace => {
+                let (row, col) = input.cursor();
+                if col == 0 && row > 0 {
+                    input.move_cursor(CursorMove::Up);
+                    input.move_cursor(CursorMove::End);
+                    input.delete_char();
+                    true
+                } else {
+                    input.input_without_shortcuts(*key_event)
+                }
+            }
+            KeyCode::End | KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.move_cursor(CursorMove::End);
+                true
+            }
+            KeyCode::Home | KeyCode::Left if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.move_cursor(CursorMove::Head);
+                true
+            }
+            KeyCode::Up => {
+                input.move_cursor(CursorMove::Up);
+                true
+            }
+            KeyCode::Down => {
+                input.move_cursor(CursorMove::Down);
+                true
+            }
+            KeyCode::Left => {
+                input.move_cursor(CursorMove::Back);
+                true
+            }
+            KeyCode::Right => {
+                input.move_cursor(CursorMove::Forward);
+                true
+            }
+            KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.select_all();
+                true
+            }
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.copy();
+                true
+            }
+            KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+                let mut clipboard = arboard::Clipboard::new().unwrap();
+                let get_clipboard_contents = clipboard.get().text();
+                if let (Ok(contents), Some(area)) = (get_clipboard_contents, self.get_area()) {
+                    self.insert_wrapped_text(contents, area.width.saturating_sub(2) as usize);
+                }
+                true
+            }
+            _ => input.input_without_shortcuts(*key_event),
+        }
+    }
+    
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
         // If we haven’t assigned an area yet, do nothing
         let Some(area) = *self.area.borrow() else { return; };
@@ -166,6 +329,45 @@ impl <'a> ButtonType <'a> for InputField <'a> {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl <'a> WidgetRef for InputField <'a> {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+        let (_background, text_color, _shadow, highlight) = self.colors();
+        
+        // self.add_effect(*buf.area());
+        
+        // ----- Process TachyonFX Effects -----
+        // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
+        // let fx_duration = tachyonfx::Duration::from_millis(16);
+        // Process all effects added to our effect_stage. They will update and render onto f's buffer.
+        // self.effect_stage.borrow_mut().process_effects(fx_duration, buf, *buf.area());
+
+        // buf.set_style(area, Style::default().bg(background).fg(text_color));
+        // Save the area for later use.
+        self.set_area(area);
+        self.check_text_wrapping(area);
+
+        // Draw a bordered block with the field’s title.
+        let default_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(Line::raw(self.title).fg(text_color))
+            .style(Style::default().fg(highlight));
+
+        let input = self.input.try_borrow_mut();
+
+        if let Ok(mut input) = input {
+            let block = if let Some(block) = self.block.borrow().clone(){
+                block
+            } 
+            else { 
+                default_block 
+            };
+            input.set_block(block);
+            input.render(area, buf);
         }
     }
 }

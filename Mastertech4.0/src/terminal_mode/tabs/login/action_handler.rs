@@ -1,6 +1,4 @@
 use crate::{pages::login_page::Login, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId}};
-use database::{schema::TaskPayload, DATABASE};
-
 use super::LoginTab;
 
 impl <'a> ActionHandler for LoginTab <'a> {
@@ -37,7 +35,7 @@ impl <'a> ActionHandler for LoginTab <'a> {
                         if let Ok(context) = self.ctx.lock() {
                             let tx = context.app_state_tx.clone();
                             let render_tx = context.render_sender.clone();
-                            let login_result = self.login(
+                            let _ = self.login(
                                 Login {
                                     username: username.to_string(),
                                     password: password.to_string(),

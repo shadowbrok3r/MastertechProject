@@ -17,6 +17,8 @@ pub struct ServiceFormTab<'a> {
     get_ticket_btn: Button<'a>,
     submit_btn: Button<'a>,
     order_number: Rc<InputField<'a>>,
+    // Other display only fields
+    pub other_fields: Vec<InputField<'a>>,
 
     // Row 1: Customer Info
     pub customer_name: InputField<'a>,
@@ -50,7 +52,8 @@ pub struct ServiceFormTab<'a> {
 
     scroll_state: RefCell<ScrollViewState>,
     ctx: Arc<Mutex<TerminalContext>>,
-    service_form_area: Rc<RefCell<Option<Rect>>>, // Add this
+    service_form_area: Rc<RefCell<Option<Rect>>>,
+    total_offset: Rc<RefCell<u16>>,
 }
 
 impl<'a> ServiceFormTab<'a> {
@@ -58,6 +61,15 @@ impl<'a> ServiceFormTab<'a> {
         let service_data =  Arc::new(Mutex::new(ServiceData::new()));
         // Wrap the InputField in an Rc.
         let service_num_field = Rc::new(InputField::new("Service #", WidgetId("ServiceNumber".to_string())));
+
+        let other_fields = vec![
+            InputField::new("Customer Email", WidgetId("CustomerEmail".to_string())),
+            InputField::new("Customer Phone", WidgetId("CustomerPhone".to_string())),
+            InputField::new("Salesman Name", WidgetId("SalesmanName".to_string())),
+            InputField::new("Technician Name", WidgetId("TechnicianName".to_string())),
+            InputField::new("CheckIn Notes", WidgetId("CheckInNotes".to_string())),
+            InputField::new("Recommendations", WidgetId("Recommendations".to_string())),
+        ];
 
         Self {
             order_number: service_num_field,
@@ -98,6 +110,7 @@ impl<'a> ServiceFormTab<'a> {
                     WidgetId("CopySuperAnti".to_owned())
                 )
                 .theme(DEEPPINK),
+            other_fields,
             service_data,
             client,
             keys: GetKeysResponse::default(),
@@ -105,6 +118,7 @@ impl<'a> ServiceFormTab<'a> {
             scroll_state: RefCell::new(ScrollViewState::default()),
             service_form_area: Rc::new(RefCell::new(None)),
             ctx,
+            total_offset: Rc::new(RefCell::new(0))
         }
     }
 
