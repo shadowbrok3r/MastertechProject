@@ -3,7 +3,7 @@ use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, B
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use super::LoginTab;
 
-/// Implement the HandleWidget trait for ServiceFormWidget.
+/// Implement the HandleWidget trait for ServiceFormTab.
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {

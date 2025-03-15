@@ -1,19 +1,18 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}};
-
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, ApiEvent, WidgetEvent}}
+    terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent}
 };
+use std::collections::HashMap;
 
 use database::schema::{
     utilities::PhoneNumberFormatter, GetKeysResponse
 };
 use reqwest::header::CONTENT_TYPE;
 
-use super::ServiceFormWidget;
+use super::ServiceFormTab;
 
-impl <'a> ActionHandler for ServiceFormWidget <'a> {
-    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>) {
+impl <'a> ActionHandler for ServiceFormTab <'a> {
+    fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id, button } => {
                 log::info!("Button: {button:?}");
@@ -57,7 +56,7 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
                     },
                     "CheckSeb" => {
                         if let Ok(svc_data) = self.service_data.lock() {
-                            if let Ok(ctx) = &mut ctx.lock() {
+                            if let Ok(ctx) = &mut self.ctx.lock() {
                                 ctx.service_data = svc_data.clone();
                             }
                             let cust_email = svc_data.customer_data.email.clone();
@@ -88,7 +87,7 @@ impl <'a> ActionHandler for ServiceFormWidget <'a> {
                     },
                     "GetTicket" => {
                         if let Ok(svc_data) = &mut self.service_data.lock() {
-                            log::info!("ServiceFormWidget handled a ButtonClick event.");
+                            log::info!("ServiceFormTab handled a ButtonClick event.");
                             // Here you might access the input field's current value or trigger an API call.
                             let current_text = self.order_number.input.borrow().clone();
                             log::info!("Current order number: {}", current_text.lines()[0]);

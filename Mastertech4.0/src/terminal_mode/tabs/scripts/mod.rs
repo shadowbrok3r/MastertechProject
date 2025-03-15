@@ -1,8 +1,8 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
+use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
 use egui::output;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use reqwest::Client;
-use std::{cell::RefCell, collections::HashMap, fmt::Display};
+use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use checklist::{Category, Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
 use tui_scrollview::ScrollViewState;
@@ -83,10 +83,11 @@ pub struct ScriptsTab<'a> {
     init: RefCell<bool>,
     client: Client,
     customer_email: String,
+    ctx: Arc<Mutex<TerminalContext>>,
 }
 
 impl<'a> ScriptsTab<'a> {
-    pub fn new() -> Self {
+    pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
         let (data_transfer_progress_tx, data_transfer_progress_rx) = crossbeam::channel::unbounded();
@@ -259,8 +260,9 @@ impl<'a> ScriptsTab<'a> {
             progress: RefCell::new(None),
             has_scrolled_manually: RefCell::new(false),
             init: RefCell::new(true),
-            client: Client::new(),
-            customer_email: String::new()
+            client,
+            customer_email: String::new(),
+            ctx,
         }
     }
 

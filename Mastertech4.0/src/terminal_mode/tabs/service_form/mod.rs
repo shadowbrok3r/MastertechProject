@@ -1,14 +1,18 @@
-use crate::terminal_mode::{data::ServiceData, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}};
-use super::{button::{Button, ButtonState}, input_field::InputField, ButtonType};
-use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
+use crate::terminal_mode::{context::TerminalContext, data::ServiceData, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}};
+use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
 use database::schema::GetKeysResponse;
+use ratatui::layout::Rect;
+use tui_scrollview::ScrollViewState;
 use reqwest::Client;
+
 pub mod action_handler;
 pub mod render;
 
-// ---------------------------------------------------------------------------
-/// ServiceFormWidget: The complete two‑column form.
-pub struct ServiceFormWidget<'a> {
+////////////////////////////////
+// TUR SHEET TAB with SERVICE NUM INPUT
+////////////////////////////////
+/// ServiceTab Component
+pub struct ServiceFormTab<'a> {
     input_idx: RefCell<i32>,
     get_ticket_btn: Button<'a>,
     submit_btn: Button<'a>,
@@ -37,23 +41,23 @@ pub struct ServiceFormWidget<'a> {
     /// Tracks which input field is currently focused.
     pub active_field: RefCell<Option<WidgetId>>,
 
-    /// The final cursor position after drawing, so the parent can read it
-    pub cached_cursor_position: RefCell<Option<(u16, u16)>>,
-
     /// Service information (this is where all of these fields' values will be stored)
     pub service_data: Arc<Mutex<ServiceData>>,
     
     client: Client,
 
-    keys: GetKeysResponse
+    keys: GetKeysResponse,
+
+    scroll_state: RefCell<ScrollViewState>,
+    ctx: Arc<Mutex<TerminalContext>>,
+    service_form_area: Rc<RefCell<Option<Rect>>>, // Add this
 }
 
-impl<'a> ServiceFormWidget<'a> {
-    pub fn new() -> Self {
+impl<'a> ServiceFormTab<'a> {
+    pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         let service_data =  Arc::new(Mutex::new(ServiceData::new()));
         // Wrap the InputField in an Rc.
         let service_num_field = Rc::new(InputField::new("Service #", WidgetId("ServiceNumber".to_string())));
-        // .on_click(move || {tx.try_send(WidgetEvent::ButtonClick { widget_id: WidgetId::GetTicket});});
 
         Self {
             order_number: service_num_field,
@@ -95,10 +99,12 @@ impl<'a> ServiceFormWidget<'a> {
                 )
                 .theme(DEEPPINK),
             service_data,
-            client: Client::new(),
+            client,
             keys: GetKeysResponse::default(),
             active_field: RefCell::new(None),
-            cached_cursor_position: RefCell::new(None),
+            scroll_state: RefCell::new(ScrollViewState::default()),
+            service_form_area: Rc::new(RefCell::new(None)),
+            ctx,
         }
     }
 
@@ -155,10 +161,4 @@ impl<'a> ServiceFormWidget<'a> {
             _ => WidgetId("ServiceNumber".to_string()),
         }
     }
-
-    // /// The parent can call this after `render_ref()` to retrieve the local
-    // /// cursor position, then do `frame.set_cursor_position(...)`.
-    // pub fn _cursor_position(&self) -> Option<(u16, u16)> {
-    //     *self.cached_cursor_position.borrow()
-    // }
 }

@@ -1,13 +1,10 @@
-use std::sync::{Arc, Mutex};
-
+use crate::{pages::login_page::Login, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId}};
 use database::{schema::TaskPayload, DATABASE};
-
-use crate::{pages::login_page::Login, terminal_mode::{context::TerminalContext, events::action_handler::{ActionHandler, WidgetEvent, WidgetId}}};
 
 use super::LoginTab;
 
 impl <'a> ActionHandler for LoginTab <'a> {
-    fn handle_event(&mut self, event: &WidgetEvent, ctx: Arc<Mutex<TerminalContext>>) {
+    fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::Active { widget_id } => {
                 match widget_id.0.as_str() {
@@ -37,40 +34,17 @@ impl <'a> ActionHandler for LoginTab <'a> {
                         password_input.cut();
 
                         log::info!("Logging in");
-                        if let Ok(context) = ctx.lock() {
+                        if let Ok(context) = self.ctx.lock() {
                             let tx = context.app_state_tx.clone();
                             let render_tx = context.render_sender.clone();
-                            let login_result = self.login(Login {
-                                username: username.to_string(),
-                                password: password.to_string(),
-                            }, tx, render_tx);
-
-                            log::info!("Login Result: {login_result:?}");
-                            tokio::spawn(async move {
-                                let query = r#"
-                                    SELECT *, (
-                                        SELECT * FROM task_note 
-                                            WHERE task_id == $parent.id
-                                    ) AS task_note 
-                                    FROM task 
-                                    WHERE $this.assignee.store == $store AND $this.completed IS false
-                                    FETCH 
-                                        service_ticket, 
-                                        service_ticket.computer, 
-                                        service_ticket.customer
-                                    PARALLEL
-                                "#;
-                            
-                                let query_results: Vec<TaskPayload> = DATABASE
-                                    .query(query)
-                                    .bind(("store", "RIV"))
-                                    .await.unwrap()
-                                    .take(0).unwrap();
-
-                                log::info!("Query results: {query_results:?}");
-
-                                // Ok::<(), anyhow::Error>(())
-                            });
+                            let login_result = self.login(
+                                Login {
+                                    username: username.to_string(),
+                                    password: password.to_string(),
+                                }, 
+                                tx, 
+                                render_tx
+                            );
                         }
 
                     }

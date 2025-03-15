@@ -1,23 +1,24 @@
-use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::Message, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
-use std::cell::RefCell;
+use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::Message, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::{Database, DATABASE};
 use crossbeam::channel::Sender;
+use reqwest::Client;
 pub mod action_handler;
 pub mod render;
 
 pub struct LoginTab <'a> {
     login_btn: Button<'a>,
-    // Row 2: Sales/Tech Names
     pub username_field: InputField<'a>,
     pub password_field: InputField<'a>,
-
     /// Tracks which input field is currently focused.
     pub active_field: RefCell<Option<WidgetId>>,
-    pub input_idx: RefCell<i32>
+    pub input_idx: RefCell<i32>,
+    pub _client: Client,
+    ctx: Arc<Mutex<TerminalContext>>,
 }
 
 impl <'a> LoginTab <'a> {
-    pub fn new() -> Self {
+    pub fn new(_client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         let password_field = InputField::new("Password", WidgetId("Password".to_string()));
         password_field.input.borrow_mut().set_mask_char('*');
         Self {
@@ -25,11 +26,12 @@ impl <'a> LoginTab <'a> {
                 "Login",
                 WidgetId("Login".to_owned())
             ).theme(CATPPUCCINTHEME),
-            // Row 2: Sales/Tech Names
             username_field: InputField::new("Username", WidgetId("Username".to_string())),
             password_field,
             active_field: RefCell::new(None),
-            input_idx: RefCell::new(0)
+            input_idx: RefCell::new(0),
+            _client,
+            ctx,
         }
     }
 

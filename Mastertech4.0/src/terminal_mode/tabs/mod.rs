@@ -1,14 +1,13 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, widgets::WidgetRef, Frame};
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, style::Style, widgets::{Block, Paragraph, WidgetRef}, Frame};
 use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}};
-use std::cell::RefCell;
-pub use service_order::*;
+use std::{cell::RefCell, sync::{Arc, Mutex}};
 pub use scripts::*;
 pub use sysinfo::*;
 
-use super::{events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
+use super::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCIN, CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
 
 pub mod scripts;
-pub mod service_order;
+pub mod service_form;
 pub mod sysinfo;
 pub mod logger;
 pub mod login;
@@ -38,10 +37,12 @@ pub struct MenuBar<'a> {
     system_tab: Button<'a>,
     logs_tab: Button<'a>,
     pub login_tab: Button<'a>,
+    ctx: Arc<Mutex<TerminalContext>>,
+    client_title: String,
 }
 
 impl<'a> MenuBar<'a> {
-    pub fn new() -> Self {
+    pub fn new(ctx: Arc<Mutex<TerminalContext>>) -> Self {
         let menu_bar = Self {
             current_tab: RefCell::new(Tab::TurSheet),
             effect_stage: EffectStage::default(),
@@ -50,6 +51,8 @@ impl<'a> MenuBar<'a> {
             system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK),
             logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DARKORANGE),
             login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(SPRINGGREEN),
+            ctx,
+            client_title: String::new(),
         };
         menu_bar
     }
@@ -94,15 +97,17 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let row = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 6),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 6),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 6),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 6),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 6),
+                Constraint::Length(1),
+                Constraint::Ratio(1, 6),
             ])
             .split(area);
 
@@ -112,7 +117,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let ticket_tab_btn_area = row[0].shrink(1, 1);
         self.ticket_tab.render_ref(ticket_tab_btn_area, f.buffer_mut());
 
-        let scripts_tab_area = row[2].shrink(0, 1);
+        let scripts_tab_area = row[2].shrink(1, 1);
         self.scripts_tab.render_ref(scripts_tab_area, f.buffer_mut());
 
         let system_tab_area = row[4].shrink(1, 1);
@@ -124,6 +129,22 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let login_tab_area = row[8].shrink(1, 1);
         self.login_tab.render_ref(login_tab_area, f.buffer_mut());
 
+        let title = &mut self.client_title;
+        if title.is_empty() {
+            if let Ok(ctx) = &self.ctx.lock() {
+                *title = ctx.client_title.clone();
+            }
+        } else {
+            Paragraph::new(&**title)
+                .block(
+                    Block::default()
+                    .style(
+                        Style::default().fg(CATPPUCCIN.pink)
+                    )
+                    .border_type(ratatui::widgets::BorderType::Rounded))
+                .right_aligned()
+                .render_ref(row[10], f.buffer_mut());
+        }
         // ----- Process TachyonFX Effects -----
         // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
         // Process all effects added to our effect_stage. They will update and render onto f's buffer.

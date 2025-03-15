@@ -5,7 +5,7 @@ use surrealdb::RecordId;
 impl <'a>TerminalApp<'a> {
     pub fn first_run(&mut self) -> anyhow::Result<(), anyhow::Error> {
         if let Ok(mut ctx) = self.ctx.lock() {
-            let service_form = self.service_tab.service_form_widget.borrow();
+            let service_form = self.service_tab.borrow();
             let service_data = service_form.service_data.lock();
             if let Ok(svc_data) = service_data {
                 let computer_data = &svc_data.computer_data;

@@ -9,6 +9,7 @@ use super::{data::ServiceData, systems::communication_system::Message};
 
 
 
+#[derive(Debug)]
 pub struct TerminalContext {
     pub client_uuid: RecordId,
     // pub current_user: Option<User>,
