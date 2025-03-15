@@ -101,7 +101,7 @@ impl<'a> ScriptsTab<'a> {
                 state: ListState::default(),
                 items: vec![
                     TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup),
-                    TodoItem::new("Install Windows Updates", Category::Tuneup),
+                    TodoItem::new("Install Windows Updates", Category::WindowsUpdates),
                     TodoItem::new("Activate CPS", Category::Tuneup),
                     TodoItem::new("Activate SEB", Category::Tuneup),
                     TodoItem::new("Run Tron", Category::Tuneup),
@@ -172,12 +172,10 @@ impl<'a> ScriptsTab<'a> {
                         .set_warning_criteria("Not installed OR its not active")
                         .set_error_criteria("Script Failed To Run"),
                     TodoItem::new("Are there scheduled tasks for it?", Category::Informational),
-                    TodoItem::new("Are there any pending Windows updates?", Category::Informational),
                     TodoItem::new("Is Windows Activated?", Category::Informational),
                     TodoItem::new("Is Hibernation/Sleep enabled?", Category::Informational),
-                    TodoItem::new("Have there been any Blue Screens in the past 30 days?", Category::Informational),
+                    TodoItem::new("Any Recent Blue Screens?", Category::Informational),
                     TodoItem::new("When Was The Last Service Date?", Category::Informational),
-                    TodoItem::new("Check Windows Updates", Category::Informational),
                     TodoItem::new("Windows Version", Category::Informational)
                         .set_pass_criteria("Windows 11")
                         .set_warning_criteria("Windows 10")

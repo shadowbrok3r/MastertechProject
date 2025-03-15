@@ -17,7 +17,6 @@ use ratatui::{
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     }, layout::{Constraint, Direction, Flex, Layout},
 };
-
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
 
 pub mod systems;
@@ -55,12 +54,22 @@ pub struct TerminalApp<'a> {
     first_run: bool,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
-    ctx: Arc<Mutex<TerminalContext>>
+    ctx: Arc<Mutex<TerminalContext>>,
+    render_system: Arc<RenderSystem>,
+    data_system: Arc<DataSystem>,
 }
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
-        let ctx = Arc::new(Mutex::new(TerminalContext::default()));
+        // Create channels explicitly for communication between Data and Render systems
+        let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
+        let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
+
+        // Create systems separately
+        let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx.clone(), data_to_render_rx));
+        let data_system: Arc<DataSystem> = Arc::new(DataSystem::new(data_to_render_tx.clone(), render_to_data_rx));
+
+        let ctx = Arc::new(Mutex::new(TerminalContext::new(data_to_render_tx, render_to_data_tx)));
         // Create a global event channel.
         let mut event_manager = EventManager::new(get_event_receiver());
         let service_tab = ServiceTab::new();
@@ -84,7 +93,9 @@ impl Default for TerminalApp <'_>{
             event_handler: EventHandler::new(),
             first_run: true,
             event_manager,
-            ctx
+            ctx,
+            render_system,
+            data_system,
         }
     }
 }
@@ -143,26 +154,22 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>) -> anyhow::Result<(), anyhow::Error> {
+async fn run_app<'a, B: Backend>(
+    terminal: &mut Terminal<B>, 
+    mut app: TerminalApp<'a>,
+    // render_system_bg: Arc<RenderSystem>,
+    // data_system_bg: Arc<DataSystem>,
+) -> anyhow::Result<(), anyhow::Error> {
     // render splash screen
     let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
     let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
 
-    // Create channels explicitly for communication between Data and Render systems
-    let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
-    let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
-
-    // Create systems separately
-    let render_system = Arc::new(RenderSystem::new(render_to_data_tx.clone(), data_to_render_rx));
-    let data_system = Arc::new(DataSystem::new(data_to_render_tx.clone(), render_to_data_rx));
-
-    let notifications = render_system.notifications.clone();
-    let ui_messages = render_system.ui_messages.clone();
-
+    let notifications = app.render_system.notifications.clone();
+    let ui_messages = app.render_system.ui_messages.clone();
 
     // Clone Arc for running background tasks
-    let render_system_bg = Arc::clone(&render_system);
-    let data_system_bg = Arc::clone(&data_system);
+    let render_system_bg: Arc<RenderSystem> = Arc::clone(&app.render_system);
+    let data_system_bg: Arc<DataSystem> = Arc::clone(&app.data_system);
 
     let mut join_handles = Vec::new();
     // Run DataSystem in the background
@@ -197,10 +204,10 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
                                 NotificationType::Info, 
                                 "Some Shit Has Happened.", 
                                 "You pressed the notification key.", 
-                                20
+                                10
                             );
             
-                            let x = data_system.send(Box::new(notification));
+                            let x = app.data_system.send(Box::new(notification));
                             log::info!("Result: {x:?}");
                         }
                         _ => {
@@ -267,14 +274,34 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
             //         Constraint::Percentage(50),
             //         Constraint::Percentage(50),
             //     ]).split(f.area());
-
             //     f.render_widget(&mut splash_screen, layout[0]);
             //     f.render_widget(&mut splash_screen2, layout[1]);
             //     std::thread::sleep(std::time::Duration::from_millis(50));
             // } else {
                 app.event_manager.process_events(app.ctx.clone());
-                if let Ok(mut lock) = app.ctx.lock() {
-                    lock.receive();
+                if let Ok(mut ctx) = app.ctx.lock() {
+                    ctx.receive();
+                    match ctx.state {
+                        crate::app_state::AppState::Authenticated(_) => {
+                            if ctx.new_state {
+                                ctx.new_state = false;
+                                if let Ok(mut tab) = app.menu_bar.current_tab.try_borrow_mut() {
+                                    *tab = Tab::TurSheet;
+                                    app.menu_bar.login_tab.set_label("Logout".to_string());
+                                    let notification = Notification::new(
+                                        NotificationType::Info, 
+                                        "Logged in", 
+                                        "Switching to TUR Sheet tab", 
+                                        10
+                                    );
+                    
+                                    let x = app.data_system.send(Box::new(notification));
+                                    log::info!("Result: {x:?}");
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
                 }
 
                 let area = f.area();
