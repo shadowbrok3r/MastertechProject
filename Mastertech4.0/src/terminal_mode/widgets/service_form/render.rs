@@ -67,16 +67,16 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for ServiceFormWidget<'
                             // Dispatch key events to the active input field.
                     if let Some(ref active) = *self.active_field.borrow() {
                         match active.0.as_str() {
-                            "CustomerName" => self.customer_name.input.borrow_mut().input(key_event),
-                            "CustomerPhone" => self.customer_phone.input.borrow_mut().input(key_event),
-                            "SalesmanName" => self.salesman_name.input.borrow_mut().input(key_event),
-                            "TechnicianName" => self.technician_name.input.borrow_mut().input(key_event),
-                            "CheckInNotes" => self.checkin_notes.input.borrow_mut().input(key_event),
-                            "Recommendations" => self.recommendations.input.borrow_mut().input(key_event),
+                            "CustomerName" => self.customer_name.input.borrow_mut().input_without_shortcuts(key_event),
+                            "CustomerPhone" => self.customer_phone.input.borrow_mut().input_without_shortcuts(key_event),
+                            "SalesmanName" => self.salesman_name.input.borrow_mut().input_without_shortcuts(key_event),
+                            "TechnicianName" => self.technician_name.input.borrow_mut().input_without_shortcuts(key_event),
+                            "CheckInNotes" => self.checkin_notes.input.borrow_mut().input_without_shortcuts(key_event),
+                            "Recommendations" => self.recommendations.input.borrow_mut().input_without_shortcuts(key_event),
                             "ServiceNumber" => {
                                 let order_num_field = &mut self.order_number;
                                 let mut text_area_input = order_num_field.input.borrow_mut();
-                                let input = text_area_input.input(key_event);
+                                let input = text_area_input.input_without_shortcuts(key_event);
                                 if input {
                                     if let Err(err) = text_area_input.lines()[0].parse::<i32>() {
                                         order_num_field.set_block(

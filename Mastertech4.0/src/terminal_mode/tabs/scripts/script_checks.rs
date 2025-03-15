@@ -200,7 +200,6 @@ impl <'a> ScriptsTab <'a> {
         self.log_message(&format!("Starting Tuneup script: {}", item_text));
         match item_text {
             "Disable Sleep / Hibernation" => self.disable_sleep_hibernation(item_text, category),
-            "Install Windows Updates" => self.install_windows_updates(item_text, category),
             "Activate CPS" => self.activate_cps(item_text, category),
             "Activate SEB" => self.activate_seb(item_text, category),
             "Run Tron" => self.run_tron(item_text, category),
@@ -286,13 +285,11 @@ impl <'a> ScriptsTab <'a> {
             "Is Webroot installed?" => self.is_webroot_installed(item_text, category),
             "Is SuperAntiSpyware installed?" => self.is_superantispyware_installed(item_text, category),
             "Are there scheduled tasks for it?" => self.are_scheduled_tasks_for_sas(item_text, category),
-            "Are there any pending Windows updates?" => self.are_pending_windows_updates(item_text, category),
             "Is Windows Activated?" => self.is_windows_activated(item_text, category),
             "Is Hibernation/Sleep enabled?" => self.is_hibernation_sleep_enabled(item_text, category),
-            "Have there been any Blue Screens in the past 30 days?" => self.recent_blue_screens(item_text, category),
+            "Any Recent Blue Screens?" => self.recent_blue_screens(item_text, category),
             "When Was The Last Service Date?" => self.last_service_date(item_text, category),
             "Windows Version" => self.windows_version(item_text, category),
-            "Check Windows Updates" => self.check_updates(item_text, category),
             _ => {
                 self.log_message(&format!("Unknown Informational script: {}", item_text));
             }
@@ -674,16 +671,6 @@ impl <'a> ScriptsTab <'a> {
                 Err(e) => self.log_message(&format!("ERR(Antivirus) => {e:?}")),
             }
         }
-    }
-
-    fn are_pending_windows_updates(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Checking for Windows updates...");
-        let tx = self.update_log_tx.clone();
-        std::thread::spawn(move || {
-            let _ = install_windows_updates(tx, false, false);
-        });
-        self.log_message("Windows update check finished.");
-        self.update_checklist(category.clone(), item_text, true);
     }
 
     fn is_windows_activated(&mut self, item_text: &str, category: &Category) {

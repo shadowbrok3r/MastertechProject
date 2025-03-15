@@ -37,7 +37,7 @@ pub struct MenuBar<'a> {
     scripts_tab: Button<'a>,
     system_tab: Button<'a>,
     logs_tab: Button<'a>,
-    login_tab: Button<'a>,
+    pub login_tab: Button<'a>,
 }
 
 impl<'a> MenuBar<'a> {

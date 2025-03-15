@@ -73,20 +73,14 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
                 let next_idx = (current_idx + 1) % 2; // Cycle between 0 and 1
                 self.set_input_idx(next_idx);
                 self.set_input_state_from_input_idx(next_idx, ButtonState::Active);
-
-                log::info!(
-                    "active field: {:?} / input_idx: {}",
-                    self.active_field.borrow(),
-                    next_idx
-                );
                 true
             }
             _ => {
                 // Dispatch key events to the active input field.
                 if let Some(ref active) = *self.active_field.borrow() {
                     match active.0.as_str() {
-                        "Username" => self.username_field.input.borrow_mut().input(key_event),
-                        "Password" => self.password_field.input.borrow_mut().input(key_event),
+                        "Username" => self.username_field.input.borrow_mut().input_without_shortcuts(key_event),
+                        "Password" => self.password_field.input.borrow_mut().input_without_shortcuts(key_event),
                         _ => {false}
                     }
                 } else { false }

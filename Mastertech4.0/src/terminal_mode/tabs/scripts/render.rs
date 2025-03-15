@@ -553,8 +553,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(35),  // Checklist 
-                Constraint::Percentage(65),  // Log Messages
+                Constraint::Percentage(25),  // Checklist 
+                Constraint::Percentage(75),  // Log Messages
             ])
             .split(right_half);
 
@@ -564,7 +564,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         f.render_widget(&self.updates_btn, button_grid[2].shrink(4, 1));
         f.render_widget(&self.prechecks_btn, button_grid[3].shrink(4, 1));
         f.render_widget(&self.informational_btn, button_grid[4].shrink(4, 1));
-        self.service_number_field.render_ref(button_grid[5].shrink(4, 3), f.buffer_mut());
+        self.service_number_field.render_ref(button_grid[5].shrink(4, 2), f.buffer_mut());
         
 
         let current_script = self.current_script.borrow().clone();
@@ -1056,7 +1056,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             }
             _ => {
-                self.service_number_field.input.borrow_mut().input(key_event);
+                self.service_number_field.input.borrow_mut().input_without_shortcuts(key_event);
                 false
             }
         }

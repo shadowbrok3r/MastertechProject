@@ -3,7 +3,7 @@ use std::{any::Any, fmt::Debug};
 use super::{data_system::DataSystem, notification_system::Notification, render_system::RenderSystem};
 
 // Generic Message trait
-pub trait Message: Send + Sync + Debug{
+pub trait Message: Send + Sync + Debug {
     fn as_display(&self) -> String;
     fn as_any(&self) -> &dyn Any;
 }

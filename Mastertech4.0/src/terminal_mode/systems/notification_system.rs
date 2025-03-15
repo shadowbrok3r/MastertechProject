@@ -85,7 +85,7 @@ impl Notification {
             effect_stage, 
             area.as_size(),
             border_color,
-            CellFilter::FgColor(border_color)
+            CellFilter::All // FgColor(border_color)
         );
         effect_stage.add_effect(effect);
     }

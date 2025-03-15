@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 
-use super::data::ServiceData;
+use super::{data::ServiceData, systems::communication_system::Message};
 
 
 
@@ -22,11 +22,14 @@ pub struct TerminalContext {
     // pub client_friendly_name: String,
     pub client_title: String,
     pub state: AppState,
-    pub service_data: ServiceData
+    pub new_state: bool,
+    pub service_data: ServiceData,
+    pub render_sender: Sender<Box<dyn Message>>,
+    pub data_sender: Sender<Box<dyn Message>>,
 }
 
-impl Default for TerminalContext {
-    fn default() -> Self {
+impl TerminalContext {
+    pub fn new(render_sender: Sender<Box<dyn Message>>, data_sender: Sender<Box<dyn Message>>) -> Self {
         // let (db_tx, db_rx) = crossbeam::channel::unbounded();
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
@@ -41,7 +44,10 @@ impl Default for TerminalContext {
             client_title: String::new(),
             // current_user: None,
             state: AppState::default(),
-            service_data: ServiceData::default()
+            service_data: ServiceData::default(),
+            render_sender,
+            data_sender,
+            new_state: false,
         }
     }
 }
@@ -49,6 +55,7 @@ impl Default for TerminalContext {
 impl TerminalContext {
     pub fn receive(&mut self) {
         if let Ok(state) = self.app_state_rx.try_recv() {
+            self.new_state = true;
             self.state = state;
         }
     }

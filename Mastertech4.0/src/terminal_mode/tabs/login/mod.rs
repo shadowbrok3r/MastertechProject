@@ -1,4 +1,4 @@
-use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::Message, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
 use std::cell::RefCell;
 use database::{Database, DATABASE};
 use crossbeam::channel::Sender;
@@ -73,7 +73,8 @@ impl <'a> LoginTab <'a> {
     pub fn login(
         &self,
         login: Login,
-        appstate_tx: Sender<AppState>
+        appstate_tx: Sender<AppState>,
+        render_tx: crossbeam::channel::Sender<Box<dyn Message>>
     )
         -> anyhow::Result<(), anyhow::Error>
     {
@@ -100,7 +101,15 @@ impl <'a> LoginTab <'a> {
                 Err(e) => {
                     log::error!("Error with db: {e:?}");
                     let check = e.to_string().contains("Already connected");
-                    if check { appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; }
+                    if check { 
+                        appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; 
+                        render_tx.send(Box::new(Notification::new(
+                            NotificationType::Info, 
+                            "Logged in", 
+                            "Switching to TUR Sheet tab", 
+                            10
+                        )))?;
+                    }
                     else { appstate_tx.try_send(AppState::NoAuth(e.to_string()))?; }
                 },
             }
