@@ -1,5 +1,6 @@
-use crate::terminal_mode::systems::notification_system::Notification;
+use crate::terminal_mode::{context::TerminalContext, systems::{communication_system::DataMessage, notification_system::Notification}};
 use crossbeam::channel::{Receiver, Sender};
+use database::schema::User;
 use std::{sync::{Arc, Mutex}, time::Duration};
 use super::communication_system::{CommunicationSystem, Message};
 
@@ -9,16 +10,18 @@ pub struct RenderSystem {
     pub receiver: Receiver<Box<dyn Message>>,
     pub notifications: Arc<Mutex<Vec<Notification>>>,
     pub ui_messages: Arc<Mutex<Vec<Box<dyn Message>>>>,
+    pub ctx: Arc<Mutex<TerminalContext>>,
 }
 
 impl RenderSystem {
     pub fn new(
         sender: Sender<Box<dyn Message>>,
         receiver: Receiver<Box<dyn Message>>,
+        ctx: Arc<Mutex<TerminalContext>>,
     ) -> Self {
         let notifications = Arc::new(Mutex::new(Vec::new()));
         let ui_messages = Arc::new(Mutex::new(vec![]));
-        Self { sender, receiver, notifications, ui_messages }
+        Self { sender, receiver, notifications, ui_messages, ctx }
     }
 
     pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
@@ -46,6 +49,10 @@ impl RenderSystem {
                                 notif.retain(|n| n.id() != notification_id && !n.is_expired());
                             }
                         });
+                    } else if let Some(user) = message.as_any().downcast_ref::<DataMessage<User>>() {
+                        if let Ok(mut ctx) = self.ctx.lock() {
+                            ctx.user = user.0.clone();
+                        }
                     } else {
                         if let Ok(mut ui_msg) = self.ui_messages.lock() {
                             ui_msg.push(message);

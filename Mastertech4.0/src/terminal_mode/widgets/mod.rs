@@ -51,6 +51,7 @@ pub trait ButtonType <'a> {
     fn is_active(&self) -> bool;
     fn set_area(&self, area: Rect);
     fn handle_mouse_event(&self, mouse_event: &MouseEvent);
+    fn handle_key_event(&self, _key_event: &KeyEvent) -> bool {false}
     /// Helper method to get the right colors based on the current state.
     fn colors(&self) -> (Color, Color, Color, Color);
 }

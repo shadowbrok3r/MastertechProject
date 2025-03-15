@@ -1,5 +1,8 @@
 use std::{any::Any, fmt::Debug};
 
+use database::schema::User;
+use serde::Serialize;
+
 use super::{data_system::DataSystem, notification_system::Notification, render_system::RenderSystem};
 
 // Generic Message trait
@@ -41,6 +44,29 @@ impl CommunicationSystem for RenderSystem {
 impl Message for Notification {
     fn as_display(&self) -> String {
         format!("{}: {}", self.header, self.text)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+
+// impl <T> DataMessage <T> 
+//     where T: 
+//         Serialize 
+//         + Debug 
+//         + Clone 
+//         + Default
+// {
+
+// }
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct DataMessage<T: Serialize + Debug + Clone + Default>(pub T);
+
+impl Message for DataMessage<User> {
+    fn as_display(&self) -> String {
+        format!("{:?}", self.0)
     }
 
     fn as_any(&self) -> &dyn Any {

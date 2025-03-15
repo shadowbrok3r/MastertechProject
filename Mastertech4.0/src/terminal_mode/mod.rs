@@ -61,10 +61,12 @@ impl Default for TerminalApp <'_>{
         let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
         let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
 
+        // Global App Context, passed through most widgets / event handlers / 'Systems' via Arc 
+        let ctx = Arc::new(Mutex::new(TerminalContext::new(data_to_render_tx.clone(), render_to_data_tx.clone())));
+
         // Create systems separately
-        let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx.clone(), data_to_render_rx));
-        let data_system: Arc<DataSystem> = Arc::new(DataSystem::new(data_to_render_tx.clone(), render_to_data_rx));
-        let ctx = Arc::new(Mutex::new(TerminalContext::new(data_to_render_tx, render_to_data_tx)));
+        let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx, data_to_render_rx, ctx.clone()));
+        let data_system: Arc<DataSystem> = Arc::new(DataSystem::new(data_to_render_tx, render_to_data_rx));
 
         // Create a global event channel.
         let mut event_manager = EventManager::new(get_event_receiver());
@@ -194,7 +196,7 @@ async fn run_app<'a, B: Backend>(
                 events::Event::Key(key_event) => {
                     let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     match key_event.code {
-                        KeyCode::Char('c') if ctrl_key => {
+                        KeyCode::Char('q') if ctrl_key => {
                             log::info!("Quitting");
                             *quit = true;
                             break;

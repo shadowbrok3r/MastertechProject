@@ -528,6 +528,171 @@ impl LiveTaskPayload {
 
 }
 
+pub fn format_us_phone_number(phone: &str) -> Vec<String> {
+    // Remove all non-numeric characters
+    let re = Regex::new(r"\D").unwrap();
+    let digits: String = re.replace_all(phone, "").to_string();
+
+    // Ensure it's a valid 10-digit number
+    if digits.len() != 10 {
+        return vec![]; // Return empty vector if not valid
+    }
+
+    // Extract parts
+    let area_code = &digits[0..3];
+    let prefix = &digits[3..6];
+    let line_number = &digits[6..10];
+
+    // Create different formats
+    vec![
+        format!("{}-{}-{}", area_code, prefix, line_number),
+        format!("({}){}-{}", area_code, prefix, line_number),
+        format!("{}", digits),
+        format!("({}) {}-{}", area_code, prefix, line_number),
+    ]
+}
+
+pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+    let api_call = Prestashop::default();
+
+    let mut tmp_address = Address::default();
+    let mut potential_order = Order::default();
+    for phone_number in format_us_phone_number(phone).iter() {
+        let mut query = HashMap::new();
+        query.insert("filter[phone]", phone_number.as_str());
+        query.insert("output_format", "JSON");
+    
+        let customer_addresses: Vec<Address> = api_call
+            .request_resources_wasm("addresses", query.clone())
+            .await?;
+
+        log::info!("Addresses: {customer_addresses:#?}");
+
+        if let Some(address) = customer_addresses.get(0) {
+            tmp_address = address.clone();
+            break;
+        }
+    }
+
+    if tmp_address == Default::default() {
+        return Err(
+            anyhow::anyhow!("Could not find customer info from phone number")
+        );
+    }
+
+    let mut query = HashMap::new();
+    query.insert("filter[id_customer]", tmp_address.id_customer.as_str());
+    query.insert("sort", "[id_DESC]");
+    query.insert("output_format", "JSON");
+
+    let orders: Vec<Order> = api_call
+        .request_resources_wasm("orders", query.clone())
+        .await?;
+
+    if let Some(order) = orders.get(0) {
+        potential_order = order.clone();
+    }
+    
+    if potential_order == Default::default() {
+        return Err(
+            anyhow::anyhow!("Could not find order from customer ID")
+        );
+    }
+
+    let mut query = HashMap::new();
+
+    query.insert("filter[id_order]", potential_order.id.as_str());
+    query.insert("output_format", "JSON");
+
+    let customer_threads: Vec<CustomerThread> = api_call
+        .request_resources_wasm("customer_threads", query.clone())
+        .await?;
+
+    let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+
+    if !customer_threads.is_empty() {
+        for thread in customer_threads.iter() {
+            for msg in thread.associations.customer_messages.iter() {
+                let msg =  api_call
+                    .request_subresources_by_id_wasm(
+                        "customer_messages",
+                        "customer_message",
+                        msg.id.as_str(),
+                    )
+                    .await?;
+                customer_messages.push(msg)
+            }
+        }
+    }
+
+    if potential_order.id_customer.is_empty() {
+        info!("schema/utilities.rs -> Order is likely gonna fuKKKK");
+    }
+
+    info!("schema/utilities.rs -> order: {potential_order:#?}");
+
+    let sales_rep: Option<Employee> = if !potential_order.id_employee_sales_rep.eq("0") {
+        let employee: Employee = api_call
+            .request_subresources_by_id_wasm(
+                "employees",
+                "employee",
+                &potential_order.id_employee_sales_rep,
+            )
+            .await?;
+
+        info!("schema/utilities.rs -> employee: {employee:#?}");
+        Some(employee)
+    } else {
+        None
+    };
+
+    let split_rep: Option<Employee> = if !potential_order.id_employee_split_rep.eq("0") {
+        let employee_2: Employee = api_call
+            .request_subresources_by_id_wasm(
+                "employees",
+                "employee",
+                &potential_order.id_employee_split_rep,
+            )
+            .await?;
+
+        info!("schema/utilities.rs -> employee: {sales_rep:#?}");
+        Some(employee_2)
+    } else {
+        None
+    };
+
+    let cust: Customer = api_call
+        .request_subresources_by_id_wasm("customers", "customer", &tmp_address.id_customer)
+        .await?;
+
+
+    info!("schema/utilities.rs -> address: {tmp_address:#?}");
+
+    let customer = CustomerData {
+        id: RecordId::from((
+            CUSTOMER_TABLE.to_string(),
+            potential_order.id_customer.clone(),
+        )),
+        cust_code: potential_order.id_customer.clone(),
+        name: format!("{} {}", &cust.firstname, &cust.lastname),
+        phone_number: tmp_address.phone.clone().to_string(),
+        email: cust.email,
+        ..Default::default()
+    };
+
+    Ok( 
+        PrestashopPayload {
+            customer,
+            order: potential_order,
+            sales_rep,
+            split_rep,
+            address: tmp_address,
+            customer_threads,
+            customer_messages,
+        }
+    )
+}
+
 pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
     let api_call = Prestashop::default();
     let mut query = HashMap::new();
