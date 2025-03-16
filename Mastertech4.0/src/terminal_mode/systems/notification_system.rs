@@ -78,14 +78,14 @@ impl Notification {
     }
 
     pub fn render_effects(&self, effect_stage: &mut EffectStage<UniqueEffectId>, area: Rect) {
-        let border_color = self.border_color();
-        let effect = outline_selected_cells(
-            effect_stage, 
-            area.as_size(),
-            border_color,
-            CellFilter::All // FgColor(border_color)
-        );
-        effect_stage.add_effect(effect);
+        // let border_color = self.border_color();
+        // let effect = outline_selected_cells(
+        //     effect_stage, 
+        //     area.as_size(),
+        //     border_color,
+        //     CellFilter::All // FgColor(border_color)
+        // );
+        // effect_stage.add_effect(effect);
     }
 
     pub fn display<B: Backend>(&self, frame: &mut Frame<'_>) {

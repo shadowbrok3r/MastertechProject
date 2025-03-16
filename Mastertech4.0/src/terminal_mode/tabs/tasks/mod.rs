@@ -1,19 +1,22 @@
 use crate::terminal_mode::context::TerminalContext;
-use std::sync::{Arc, Mutex};
-use database::schema::TaskPayload;
+use std::{cell::RefCell, sync::{Arc, Mutex}};
+use database::schema::{TaskPayload, User};
 use ratatui::widgets::{ScrollbarState, TableState};
 use reqwest::Client;
+use tui_scrollview::ScrollViewState;
 
 pub mod action_handler;
 pub mod render;
 
 pub struct TasksTab {
-    state: TableState,
+    state: RefCell<TableState>,
     items: Vec<TaskPayload>,
     widths: Vec<u16>, // Column widths
-    scroll_state: ScrollbarState,
+    scroll_state: RefCell<ScrollViewState>,
     pub _client: Client,
     ctx: Arc<Mutex<TerminalContext>>,
+    users: Vec<User>,
+    current_user: User
 }
 
 
@@ -23,14 +26,30 @@ impl TasksTab {
         Self {
             ctx,
             _client,
-            state: TableState::default(),
+            state: RefCell::new(TableState::default()),
             items: Vec::new(),
             widths: Vec::new(),
-            scroll_state: ScrollbarState::default(),
+            scroll_state: RefCell::new(ScrollViewState::default()),
+            users: Vec::new(),
+            current_user: User::default(),
         }
     }
 
-    pub fn set_tasks(&mut self, tasks: Vec<TaskPayload>) {
-        self.items = tasks;
+    pub fn check_tasks(&mut self) {
+        if let Ok(mut ctx) = self.ctx.lock() {
+            if ctx.new_tasks {
+                ctx.new_tasks = false;
+                for task in ctx.tasks.iter() {
+                    if task.assignee == self.current_user.id && !task.completed {
+                        self.items.push(task.clone());
+                    }
+                }
+        
+                self.widths = Self::calculate_widths(&self.items);
+            }
+            if !ctx.user.name.is_empty() {
+                self.current_user = ctx.user.clone();
+            }
+        }
     }   
 }

@@ -1,8 +1,8 @@
-use crate::{tabs::scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}};
+use crate::{tabs::{scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState}, tur_sheet::get_ticket::SendRequest}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
-use std::{collections::HashSet, path::{Path, PathBuf}};
+use std::{path::{Path, PathBuf}, process::Command};
 use powershell_script::PsScriptBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use sysinfo::Disks;
 
@@ -363,6 +363,25 @@ impl <'a> ScriptsTab <'a> {
 
     fn activate_cps(&mut self, item_text: &str, category: &Category) {
         let service_number = self.service_number.clone();
+        if let Ok(processes) = get_running_processes() {
+            for process in processes {
+                let name = process.process_name.to_lowercase();
+                let exe_path = process.exe_path.clone().unwrap_or_default().to_lowercase();
+                if name.contains("sascore") 
+                    || exe_path.contains("superanti") 
+                    || name.contains("superanti")
+                {
+                    self.log_message(format!("PID {} found, attempting to kill SAS", process.id));
+                    
+                    let output = Command::new("taskkill")
+                        .args(&["/PID", &format!("{}", process.id), "/F"])
+                        .output();
+                
+                    self.log_message(format!("{:?}", output));
+                }
+            }
+        }
+
         if service_number.is_empty() {
             self.log_message("CPS activation requires SO number.");
             return;
@@ -372,9 +391,11 @@ impl <'a> ScriptsTab <'a> {
         let tx = self.progress_tx.clone();
         let client = self.client.clone();
         tokio::spawn(async move {
-            let res = install_webroot(so.clone(), client.clone(), tx.clone()).await;
-            log::info!("install_webroot Result: {res:?}");
-            let res = install_sas(so.clone(), client.clone(), tx).await;
+            let cps_request = SendRequest::get_cps(so.clone(), client.clone());
+            let cps_keys = cps_request.await.unwrap_or_default();
+            // let res = install_webroot(cps_keys.webroot_key.clone(), client.clone(), tx.clone()).await;
+            // log::info!("install_webroot Result: {res:?}");
+            let res = install_sas(cps_keys.superanti_key.clone(), client.clone(), tx).await;
             log::info!("install_sas Result: {res:?}");
         });
 
@@ -736,7 +757,7 @@ impl <'a> ScriptsTab <'a> {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LicenseStatus {
     #[serde(rename = "Description")]
-    pub description: String,
+    pub _description: String,
     #[serde(rename = "LicenseStatus")]
     pub license_status: i32
 }
@@ -924,8 +945,18 @@ pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn _get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
-    let ps_script = r#"Get-Process | Select-Object -ExpandProperty ProcessName | ConvertTo-Json"#;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Process {
+    #[serde(rename="ProcessId")]
+    id: usize,
+    #[serde(rename="Name")]
+    process_name: String,
+    #[serde(rename="ExecutablePath")]
+    exe_path: Option<String>,
+}
+
+pub fn get_running_processes() -> Result<Vec<Process>, anyhow::Error> {
+    let ps_script = r#"Get-WmiObject Win32_Process | Select-Object ProcessId, Name, ExecutablePath | ConvertTo-Json"#; // r#"Get-Process | Select-Object Id, ProcessName | ConvertTo-Json"#;
 
     let ps = PsScriptBuilder::new()
         .no_profile(true)
@@ -937,8 +968,7 @@ fn _get_running_processes() -> Result<HashSet<String>, anyhow::Error> {
     let output = ps.run(ps_script)?;
     if output.success() {
         let stdout = output.stdout().unwrap_or_default();
-        let processes: Vec<String> = serde_json::from_str(&stdout)?;
-        Ok(processes.into_iter().collect())
+        Ok(serde_json::from_str(&stdout)?)
     } else {
         Err(anyhow::anyhow!("Failed to retrieve running processes"))
     }

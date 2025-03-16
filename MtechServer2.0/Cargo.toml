@@ -48,4 +48,16 @@ rfd = { workspace=true }
 gloo-console = { workspace=true }
 
 
+[dependencies.uuid]
+version = "1.13"
+features = ["v4", "rng-getrandom"]
 
+[dependencies.getrandom_v03]
+package = "getrandom"
+version = "0.3"
+features = ["wasm_js"]
+
+[dependencies.getrandom_v02]
+package = "getrandom"
+version = "0.2"
+features = ["js"]

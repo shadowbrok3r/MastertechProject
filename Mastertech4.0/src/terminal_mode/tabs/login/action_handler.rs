@@ -28,7 +28,6 @@ impl <'a> ActionHandler for LoginTab <'a> {
                         
                         if let Ok(context) = self.ctx.lock() {
                             let tx = context.app_state_tx.clone();
-                            // let render_tx = context.render_sender.clone();
                             let data_tx = context.data_sender.clone();
 
                             let _ = self.login(

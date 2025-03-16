@@ -1,5 +1,6 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use reqwest::Client;
+use serde::Serialize;
 use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
@@ -284,6 +285,7 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
                 std::thread::sleep(std::time::Duration::from_millis(50));
             } else {
                 app.event_manager.process_events();
+                app.tasks_tab.borrow_mut().check_tasks();
                 if let Ok(mut ctx) = app.ctx.lock() {
                     ctx.receive();
                     match ctx.state {
@@ -293,9 +295,6 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
                                 if let Ok(mut tab) = app.menu_bar.current_tab.try_borrow_mut() {
                                     *tab = Tab::TurSheet;
                                     app.menu_bar.login_tab.set_label("Logout".to_string());
-                                    if !ctx.tasks.is_empty() {
-                                        app.tasks_tab.borrow_mut().set_tasks(ctx.tasks.clone());
-                                    }
                                 }
                             }
                         },
@@ -318,9 +317,9 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
                 let tab_layout = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
-                        Constraint::Percentage(20),
-                        Constraint::Percentage(60),
-                        Constraint::Percentage(20),
+                        Constraint::Percentage(10),
+                        Constraint::Percentage(80),
+                        Constraint::Percentage(10),
                     ]).split(outer_chunks[0]);
 
                 let tab_area = center_horizontal(tab_layout[1], tab_layout[1].width);

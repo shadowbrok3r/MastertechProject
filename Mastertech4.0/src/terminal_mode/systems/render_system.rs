@@ -1,6 +1,6 @@
 use crate::terminal_mode::{context::TerminalContext, systems::{communication_system::DataMessage, notification_system::Notification}};
 use crossbeam::channel::{Receiver, Sender};
-use database::{schema::{utilities::get_tasks, TaskPayload, User}, DATABASE};
+use database::schema::{utilities::get_tasks_for_store, User};
 use std::{sync::{Arc, Mutex}, time::Duration};
 use super::communication_system::Message;
 
@@ -41,7 +41,7 @@ impl RenderSystem {
                 }) => {
                     match recv_result {
                         Ok(Ok(message)) => {
-                            log::info!("Message received: {}", message.as_display());
+                            log::info!("RenderSystem Received Message: {}", message.as_display());
     
                             if let Some(notification) = message.as_any().downcast_ref::<Notification>() {
                                 if let Ok(mut notif) = self.notifications.lock() {
@@ -61,27 +61,12 @@ impl RenderSystem {
                             } else if let Some(user) = message.as_any().downcast_ref::<DataMessage<User>>() {
                                 if let Ok(mut ctx) = self.ctx.lock() {
                                     ctx.user = user.0.clone();
-                                    // let tasks = get_tasks(tx).await?;
-                                    let query = r#"
-                                        SELECT *, (
-                                            SELECT * FROM task_note 
-                                                WHERE task_id == $parent.id
-                                        ) AS task_note 
-                                        FROM task
-                                        
-                                        WHERE $this.assignee.store == $auth.store 
-                                        
-                                        FETCH 
-                                            service_ticket, 
-                                            service_ticket.computer, 
-                                            service_ticket.customer
-                                        PARALLEL
-                                    "#; // ORDER BY due_date ASC WITH INDEX idx_store_due_date
-                                    
-                                    // tokio::spawn(async move {
-                                        // let query_results: Vec<TaskPayload> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-                                        // ctx.tasks = query_results.clone();
-                                    // });
+                                    let tx = ctx.tasks_tx.clone();
+                                    let store = user.0.clone().store.as_str().to_string();
+                                    tokio::spawn(async move {
+                                        let tasks_result = get_tasks_for_store(tx, store).await;
+                                        log::info!("Tasks result: {tasks_result:?}");
+                                    });
                                 }
                             } else {
                                 if let Ok(mut ui_msg) = self.ui_messages.lock() {

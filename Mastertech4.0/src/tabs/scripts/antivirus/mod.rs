@@ -1,16 +1,16 @@
-use database::schema::{find_latest_carbonite_entry, CarboniteResponse, GetKeysResponse};
+use database::schema::{find_latest_carbonite_entry, CarboniteResponse};
 use tokio::{fs, io::AsyncWriteExt, process::Command};
-use powershell_script::PsScriptBuilder;
 use winapi::um::winbase::CREATE_NO_WINDOW;
+use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use futures::StreamExt;
 use reqwest::Client;
 use sha2::Digest;
 use log::info;
-use std::io;
+use std::{io, path::PathBuf};
 
-use crate::tabs::tur_sheet::get_ticket::SendRequest;
+use super::InstalledProgram;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AntiVirusProduct {
@@ -108,10 +108,14 @@ impl AntiVirusProduct {
 
 
 pub async fn install_webroot(
-    service_number: String, 
+    activation_key: String, 
     client: Client,
     progress_tx: Sender<(u64, u64)>
 ) -> anyhow::Result<(), anyhow::Error> {
+    if activation_key.is_empty() {
+        return Err(anyhow::anyhow!("Activation key is empty"));
+    }
+
     info!("running install_webroot!");
     let response = client
         .get("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
@@ -141,11 +145,6 @@ pub async fn install_webroot(
     }
 
     if downloaded_bytes == total_length {
-        let cps_request = SendRequest::get_cps(service_number.clone(), client.clone());
-        let cps_keys = cps_request.await.unwrap_or(GetKeysResponse::default());
-
-        info!("cps_keys: {:?}", cps_keys.clone());
-
         let hash = sha.finalize();
         info!("Download complete. SHA-256: {:x}", hash);
         #[cfg(target_os = "windows")]
@@ -153,7 +152,7 @@ pub async fn install_webroot(
             let cmd_stdout = Command::new("cmd")
                 .arg("/c ")
                 .arg(wrv_path)
-                .arg(format!("/key={}", cps_keys.webroot_key))
+                .arg(format!("/key={activation_key}"))
                 .arg("/silent")
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn()?
@@ -166,10 +165,40 @@ pub async fn install_webroot(
 }
 
 pub async fn install_sas(
-    service_number: String, 
+    activation_key: String, 
     client: Client,
     progress_tx: Sender<(u64, u64)>
 ) -> anyhow::Result<(), anyhow::Error> {
+    if activation_key.is_empty() {
+        return Err(anyhow::anyhow!("Activation key is empty"));
+    }
+    if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
+        for program in &mut *programs {
+            if let (Some(publisher), Some(install_location)) = (&program.publisher, &program.install_location) {
+                if program.display_name.clone().unwrap_or_default().contains("SUPERAntiSpyware")
+                    || publisher.clone().contains("SUPERAntiSpyware")
+                { // "C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe" /autoregister:1HT2-ZJEA-VV0B5
+                    let path = PathBuf::from(install_location);
+                    let sas_exe = path.join("SUPERAntiSpyware.exe");
+                    if sas_exe.exists() {
+                        log::info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
+
+                        let cmd_stdout = Command::new("cmd")
+                            .arg("/c ")
+                            .arg(sas_exe)
+                            .arg(format!(" /autoregister:{activation_key}"))
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .spawn()?
+                            .stdout;
+                        log::info!("cmd_stdout: {cmd_stdout:?}");
+                        return Ok(());
+
+                    } else {log::info!("Install location: {sas_exe:?}");}
+                }
+            }
+        }
+    }
+
     let response = client
         .get(format!(
             "https://secure.superantispyware.com/SUPERAntiSpyware.exe"
@@ -199,10 +228,6 @@ pub async fn install_sas(
     }
 
     if downloaded_bytes == total_length {
-        let cps_request = SendRequest::get_cps(service_number.clone(), client.clone());
-        let cps_keys = cps_request.await.unwrap_or(GetKeysResponse::default());
-
-        info!("cps_keys: {:?}", cps_keys.clone());
 
         let hash = sha.finalize();
         info!("Download complete. SHA-256: {:x}", hash);
@@ -211,7 +236,7 @@ pub async fn install_sas(
             let cmd_stdout = Command::new("cmd")
                 .arg("/c ")
                 .arg(sas_path)
-                .arg(format!("/REGCODE={}", cps_keys.superanti_key))
+                .arg(format!("/REGCODE={activation_key}"))
                 .arg("/silent")
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn()?

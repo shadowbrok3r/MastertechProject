@@ -18,7 +18,7 @@ inline = []
 eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "wgpu", "x11"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
-ratatui = { version = "0.29", features = ["crossterm", "unstable-widget-ref"] }
+ratatui = { version = "0.29", features = ["crossterm", "unstable-widget-ref", "serde"]  }
 yeehaw = "0.1.0"
 tui-textarea = { version = "0.7"}
 sysinfo = "0.33"
