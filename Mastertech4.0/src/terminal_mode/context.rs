@@ -1,13 +1,9 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{TaskPayload, User, CONNECTED_CLIENT_TABLE};
 use surrealdb::RecordId;
-use uuid::Uuid;
-
 use crate::AppState;
-
+use uuid::Uuid;
 use super::{data::ServiceData, systems::communication_system::Message};
-
-
 
 #[derive(Debug)]
 pub struct TerminalContext {
@@ -23,13 +19,17 @@ pub struct TerminalContext {
     pub data_sender: Sender<Box<dyn Message>>,
     pub user: User,
     pub tasks: Vec<TaskPayload>,
+    pub tasks_tx: Sender<Vec<TaskPayload>>,
+    pub tasks_rx: Receiver<Vec<TaskPayload>>,
+    pub new_tasks: bool
+    
 }
 
 impl TerminalContext {
     pub fn new(render_sender: Sender<Box<dyn Message>>, data_sender: Sender<Box<dyn Message>>) -> Self {
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
-        
+        let (tasks_tx, tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         Self {
             client_uuid,
             app_state_tx,
@@ -43,12 +43,20 @@ impl TerminalContext {
             new_state: false,
             user: User::default(),
             tasks: Vec::new(),
+            tasks_tx,
+            tasks_rx,
+            new_tasks: false,
         }
     }
 }
 
 impl TerminalContext {
     pub fn receive(&mut self) {
+        if let Ok(tasks) = self.tasks_rx.try_recv() {
+            self.new_tasks = true;
+            self.tasks = tasks;
+        }
+
         if let Ok(state) = self.app_state_rx.try_recv() {
             self.new_state = true;
             self.state = state;

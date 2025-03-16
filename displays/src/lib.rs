@@ -14,6 +14,7 @@ pub mod egui_data_table;
 pub mod markdown_editor;
 pub mod modals;
 pub mod ui_tools;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod remote_viewer;
 pub mod views;
 pub mod virtual_filesystem;

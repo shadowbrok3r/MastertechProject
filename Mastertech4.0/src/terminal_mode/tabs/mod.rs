@@ -1,11 +1,11 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Paragraph, WidgetRef, Wrap}, Frame};
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::User;
 pub use scripts::*;
 pub use sysinfo::*;
 
-use super::{context::TerminalContext, events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
+use super::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCIN, CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
 
 pub mod scripts;
 pub mod service_form;
@@ -116,8 +116,8 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                 Constraint::Length(20),
                 Constraint::Length(1),
                 Constraint::Length(20),
-                Constraint::Length(5),
-                Constraint::Length(20),
+                Constraint::Length(1),
+                Constraint::Length(25),
             ])
             .split(area);
 
@@ -145,7 +145,14 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                 *title = ctx.client_title.clone();
             }
         } else {
-            Paragraph::new(format!("{} {}", &**title, user.name.clone()))
+            Paragraph::new(format!("{}", &**title))
+                .block(
+                    Block::default()
+                        .title_alignment(ratatui::layout::Alignment::Center)
+                        .border_type(ratatui::widgets::BorderType::Rounded)
+                        .fg(CATPPUCCIN.lavender)
+                        .title(user.name.clone())
+                )
                 .right_aligned()
                 .wrap(Wrap{ trim: false})
                 .render_ref(row[12], f.buffer_mut());

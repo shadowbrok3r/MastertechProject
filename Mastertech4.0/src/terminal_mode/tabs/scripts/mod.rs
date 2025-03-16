@@ -212,7 +212,7 @@ impl<'a> ScriptsTab<'a> {
         );
 
         Self {
-            service_number_field: InputField::new("Service #", WidgetId("ServiceNumber".to_string())),
+            service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
             tuneup_btn: Button::new("Tuneup =>", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
             qc_btn: Button::new("Quality Check =>", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
             updates_btn: Button::new("Windows Updates =>", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),

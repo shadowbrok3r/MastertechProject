@@ -85,8 +85,9 @@ impl <'a> LoginTab <'a> {
                 login.username.clone()
             };
 
+            log::info!("Usr: {email:?}");
             let database = Database::new(
-                email, 
+                email.clone(), 
                 login.password.clone(), 
                 None
             ).await;
@@ -94,7 +95,10 @@ impl <'a> LoginTab <'a> {
             match database{
                 Ok(db) => {
                     if let Some(ref usr) = db.user{
-                        save_encrypted_user_data(&login, HASH)?;
+                        save_encrypted_user_data(&Login {
+                            username: email.clone(),
+                            password: login.password.clone(),
+                        }, HASH)?;
                         data_tx.send(Box::new(Notification::new(
                             NotificationType::Info, 
                             "Logged in", 
@@ -122,7 +126,10 @@ impl <'a> LoginTab <'a> {
                             .take(0)?;
                         log::info!("user: {user:?}");
                         if let Some(usr) = user {
-                            save_encrypted_user_data(&login, HASH)?;
+                            save_encrypted_user_data(&Login {
+                                username: email.clone(),
+                                password: login.password.clone(),
+                            }, HASH)?;
 
                             let res = data_tx.send(Box::new(
                                 DataMessage(usr.clone())

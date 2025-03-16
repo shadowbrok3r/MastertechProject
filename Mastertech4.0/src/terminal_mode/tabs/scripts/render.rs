@@ -106,13 +106,13 @@ impl<'a> ScriptsTab<'a> {
             v_scrollbar_state = v_scrollbar_state.position(scroll_y as usize);
 
             let v_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
-                .begin_symbol(Some(" 🢁 "))
+                .begin_symbol(Some("🢁"))
                 .track_style(Style::new().fg(CATPPUCCIN.base))
-                .track_symbol(Some("║ ║"))
+                .track_symbol(Some("║║"))
                 // .thumb_symbol("|▮|") // ⦕ ⦖
-                .thumb_symbol("⦕⌚⦖")
+                .thumb_symbol("⦕⦖")
                 .thumb_style(Style::new().fg(CATPPUCCIN.sky))
-                .end_symbol(Some(" 🢃 "));
+                .end_symbol(Some("🢃"));
 
             f.render_stateful_widget(
                 v_scrollbar,

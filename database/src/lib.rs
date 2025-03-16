@@ -149,8 +149,14 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        DATABASE.connect::<Ws>(DB_URL_LOCAL).await?;
-        DATABASE.use_ns(NS).use_db(DB).await?;
+        match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
+            Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
+            Err(e) => log::info!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
+        }
+        match DATABASE.use_ns(NS).use_db(DB).await {
+            Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
+            Err(e) => log::info!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
+        }
 
         match jwt {
             Some(jwt) => {

@@ -1,5 +1,5 @@
 use ratatui::{layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
-use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}};
+use crate::{pages::login_page::Login, terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}}};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use super::LoginTab;
 
@@ -72,14 +72,52 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
                 true
             }
             _ => {
-                // Dispatch key events to the active input field.
-                if let Some(ref active) = *self.active_field.borrow() {
-                    match active.0.as_str() {
-                        "Username" => self.username_field.input.borrow_mut().input_without_shortcuts(key_event),
-                        "Password" => self.password_field.input.borrow_mut().input_without_shortcuts(key_event),
-                        _ => {false}
+                match key_event.code {
+                    KeyCode::Enter => {
+                        if let Some(ref active) = *self.active_field.borrow() {
+                            match active.0.as_str() {
+                                "Password" => {
+                                    let mut username_input = self.username_field.input.borrow_mut();
+                                    let username = username_input.lines()[0].clone();
+                                    let mut password_input = self.password_field.input.borrow_mut();
+                                    let password = password_input.lines()[0].clone();
+                                    
+                                    if let Ok(context) = self.ctx.lock() {
+                                        let tx = context.app_state_tx.clone();
+                                        // let render_tx = context.render_sender.clone();
+                                        let data_tx = context.data_sender.clone();
+            
+                                        let _ = self.login(
+                                            Login {
+                                                username: username.to_string(),
+                                                password: password.to_string(),
+                                            }, 
+                                            tx, 
+                                            data_tx
+                                        );
+                                        username_input.select_all();
+                                        username_input.cut();
+                                        password_input.select_all();
+                                        password_input.cut();
+                                    }
+                                },
+                                _ => {}
+                            }
+                            return true;
+                        }
+                        false
                     }
-                } else { false }
+                    _ => {
+                        // Dispatch key events to the active input field.
+                        if let Some(ref active) = *self.active_field.borrow() {
+                            match active.0.as_str() {
+                                "Username" => self.username_field.input.borrow_mut().input_without_shortcuts(key_event),
+                                "Password" => self.password_field.input.borrow_mut().input_without_shortcuts(key_event),
+                                _ => {false}
+                            }
+                        } else { false }
+                    }
+                }
             }
         }
     }

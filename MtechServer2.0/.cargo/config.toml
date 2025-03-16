@@ -1,5 +1,5 @@
 [target.wasm32-unknown-unknown]
-rustflags = [ "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"] # , "-Awarnings" "--cfg=web_sys_unstable_apis",
+rustflags = [ "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals", '--cfg', 'getrandom_backend="wasm_js"'] # , "-Awarnings" "--cfg=web_sys_unstable_apis",
 [build]
 target = [ "wasm32-unknown-unknown"]
 

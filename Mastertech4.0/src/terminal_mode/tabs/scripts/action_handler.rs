@@ -18,7 +18,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         let text_area_input = self.service_number_field.input.borrow().clone();
                         let user_input = &text_area_input.lines()[0];
                         ctx.service_data.ticket_data.service_number = user_input.to_string();
-                        ctx.service_data.get_ticket();
+                        // ctx.service_data.get_ticket();
                         self.service_number = user_input.clone();
                         log::info!("input: {user_input}");
                     }
