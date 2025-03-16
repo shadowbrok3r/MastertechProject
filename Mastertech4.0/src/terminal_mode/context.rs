@@ -1,5 +1,5 @@
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{User, CONNECTED_CLIENT_TABLE};
+use database::schema::{TaskPayload, User, CONNECTED_CLIENT_TABLE};
 use surrealdb::RecordId;
 use uuid::Uuid;
 
@@ -20,8 +20,9 @@ pub struct TerminalContext {
     pub new_state: bool,
     pub service_data: ServiceData,
     pub render_sender: Sender<Box<dyn Message>>,
-    pub _data_sender: Sender<Box<dyn Message>>,
+    pub data_sender: Sender<Box<dyn Message>>,
     pub user: User,
+    pub tasks: Vec<TaskPayload>,
 }
 
 impl TerminalContext {
@@ -38,9 +39,10 @@ impl TerminalContext {
             state: AppState::default(),
             service_data: ServiceData::default(),
             render_sender,
-            _data_sender: data_sender,
+            data_sender,
             new_state: false,
-            user: User::default()
+            user: User::default(),
+            tasks: Vec::new(),
         }
     }
 }

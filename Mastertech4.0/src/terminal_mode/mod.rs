@@ -1,7 +1,7 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use reqwest::Client;
 use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, MenuBar, ScriptsTab, service_form::ServiceFormTab, SysinfoTab, Tab};
+use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use fx::{effect::UniqueEffectId, EffectStage};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
@@ -43,6 +43,7 @@ pub struct TerminalApp<'a> {
     menu_bar: MenuBar<'a>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
+    tasks_tab: Rc<RefCell<TasksTab>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     effect_stage: EffectStage<UniqueEffectId>,
@@ -62,7 +63,7 @@ impl Default for TerminalApp <'_>{
         let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
 
         // Global App Context, passed through most widgets / event handlers / 'Systems' via Arc 
-        let ctx = Arc::new(Mutex::new(TerminalContext::new(data_to_render_tx.clone(), render_to_data_tx.clone())));
+        let ctx = Arc::new(Mutex::new(TerminalContext::new(render_to_data_tx.clone(), data_to_render_tx.clone())));
 
         // Create systems separately
         let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx, data_to_render_rx, ctx.clone()));
@@ -71,9 +72,11 @@ impl Default for TerminalApp <'_>{
         // Create a global event channel.
         let mut event_manager = EventManager::new(get_event_receiver());
         let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
+        let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
         let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
         let menu_bar = MenuBar::new(ctx.clone());
+        
         // Register the ServiceFormTab with the event manager.
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.clone());
@@ -94,6 +97,7 @@ impl Default for TerminalApp <'_>{
             ctx,
             render_system,
             data_system,
+            tasks_tab,
         }
     }
 }
@@ -152,12 +156,7 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn run_app<'a, B: Backend>(
-    terminal: &mut Terminal<B>, 
-    mut app: TerminalApp<'a>,
-    // render_system_bg: Arc<RenderSystem>,
-    // data_system_bg: Arc<DataSystem>,
-) -> anyhow::Result<(), anyhow::Error> {
+async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalApp<'a>) -> anyhow::Result<(), anyhow::Error> {
     // render splash screen
     let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
     let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
@@ -206,7 +205,7 @@ async fn run_app<'a, B: Backend>(
                                 NotificationType::Info, 
                                 "Some Shit Has Happened.", 
                                 "You pressed the notification key.", 
-                                10
+                                3
                             );
             
                             let x = app.data_system.send(Box::new(notification));
@@ -220,7 +219,8 @@ async fn run_app<'a, B: Backend>(
                                         log::info!("Current tab: {current_tab:?}");
                                         match current_tab {
                                             Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Scripts),
-                                            Tab::Scripts => app.menu_bar.set_active_tab(Tab::SystemInfo),
+                                            Tab::Scripts => app.menu_bar.set_active_tab(Tab::Tasks),
+                                            Tab::Tasks => app.menu_bar.set_active_tab(Tab::SystemInfo),
                                             Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Logs),
                                             Tab::Logs => app.menu_bar.set_active_tab(Tab::Login),
                                             Tab::Login => app.menu_bar.set_active_tab(Tab::TurSheet),
@@ -230,7 +230,8 @@ async fn run_app<'a, B: Backend>(
                                         match current_tab {
                                             Tab::TurSheet => app.menu_bar.set_active_tab(Tab::Login),
                                             Tab::Scripts => app.menu_bar.set_active_tab(Tab::TurSheet),
-                                            Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Scripts),
+                                            Tab::Tasks => app.menu_bar.set_active_tab(Tab::Scripts),
+                                            Tab::SystemInfo => app.menu_bar.set_active_tab(Tab::Tasks),
                                             Tab::Logs => app.menu_bar.set_active_tab(Tab::SystemInfo),
                                             Tab::Login => app.menu_bar.set_active_tab(Tab::Logs),
                                         };
@@ -243,6 +244,7 @@ async fn run_app<'a, B: Backend>(
                             let consumed = match current_tab {
                                 Tab::TurSheet => app.service_tab.borrow_mut().handle_key_event(key_event),
                                 Tab::Scripts => app.scripts_tab.borrow_mut().handle_key_event(key_event),
+                                Tab::Tasks => app.tasks_tab.borrow_mut().handle_key_event(key_event),
                                 Tab::SystemInfo => app.sysinfo_tab.handle_key_event(key_event),
                                 Tab::Logs => app.logger.handle_key_event(key_event),
                                 Tab::Login => app.login_tab.borrow_mut().handle_key_event(key_event),
@@ -260,6 +262,7 @@ async fn run_app<'a, B: Backend>(
                         Tab::SystemInfo => app.sysinfo_tab.handle_mouse_event(&mouse_event),
                         Tab::Logs => {}
                         Tab::Login => app.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Tasks => app.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
                     };
                 },
                 events::Event::Error => log::info!("Error in event loop"),
@@ -290,15 +293,9 @@ async fn run_app<'a, B: Backend>(
                                 if let Ok(mut tab) = app.menu_bar.current_tab.try_borrow_mut() {
                                     *tab = Tab::TurSheet;
                                     app.menu_bar.login_tab.set_label("Logout".to_string());
-                                    let notification = Notification::new(
-                                        NotificationType::Info, 
-                                        "Logged in", 
-                                        "Switching to TUR Sheet tab", 
-                                        10
-                                    );
-                    
-                                    let x = app.data_system.send(Box::new(notification));
-                                    log::info!("Result: {x:?}");
+                                    if !ctx.tasks.is_empty() {
+                                        app.tasks_tab.borrow_mut().set_tasks(ctx.tasks.clone());
+                                    }
                                 }
                             }
                         },
@@ -330,7 +327,7 @@ async fn run_app<'a, B: Backend>(
                 let main_content_area = outer_chunks[1];
                 
                 if app.first_run {
-                    app.first_run = false;
+
                     // let effect1 = outline_selected_cells(
                     //     &mut app.menu_bar.effect_stage, 
                     //     main_content_area.as_size(),
@@ -355,6 +352,7 @@ async fn run_app<'a, B: Backend>(
                 match *app.menu_bar.current_tab.borrow() {
                     Tab::TurSheet => app.service_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::Scripts => app.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
+                    Tab::Tasks => app.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::SystemInfo => app.sysinfo_tab.draw::<B>(f, main_content_area),
                     Tab::Login => app.login_tab.borrow_mut().draw::<B>(f, main_content_area),
                     Tab::Logs => {
