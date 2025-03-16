@@ -150,6 +150,9 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     ApiEvent::GetTicketResponse(presta_data) => {
                         self.customer_email = presta_data.customer.email.clone();
                     }
+                    ApiEvent::GetSebResponse(carbonite_response) => {
+                        
+                    },
                 }
             }
             WidgetEvent::Active { widget_id } => {self.log_message(&format!("{widget_id:?}"));}

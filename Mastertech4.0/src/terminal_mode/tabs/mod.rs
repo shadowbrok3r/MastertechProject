@@ -1,10 +1,11 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, style::Style, widgets::{Block, Paragraph, WidgetRef}, Frame};
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, widgets::{Paragraph, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
+use database::schema::User;
 pub use scripts::*;
 pub use sysinfo::*;
 
-use super::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCIN, CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
+use super::{context::TerminalContext, events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
 
 pub mod scripts;
 pub mod service_form;
@@ -107,7 +108,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                 Constraint::Length(1),
                 Constraint::Ratio(1, 6),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 6),
+                Constraint::Length(20),
             ])
             .split(area);
 
@@ -130,19 +131,24 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         self.login_tab.render_ref(login_tab_area, f.buffer_mut());
 
         let title = &mut self.client_title;
+        let user = &mut User::default();
+
+        if user.name.is_empty() {
+            if let Ok(ctx) = self.ctx.lock() {
+                if !ctx.user.name.is_empty() {
+                    *user = ctx.user.clone();
+                }
+            }
+        }
+
         if title.is_empty() {
             if let Ok(ctx) = &self.ctx.lock() {
                 *title = ctx.client_title.clone();
             }
         } else {
-            Paragraph::new(&**title)
-                .block(
-                    Block::default()
-                    .style(
-                        Style::default().fg(CATPPUCCIN.pink)
-                    )
-                    .border_type(ratatui::widgets::BorderType::Rounded))
+            Paragraph::new(format!("{} {}", &**title, user.name.clone()))
                 .right_aligned()
+                .wrap(Wrap{ trim: false})
                 .render_ref(row[10], f.buffer_mut());
         }
         // ----- Process TachyonFX Effects -----

@@ -5,7 +5,7 @@ use crate::{
 use std::collections::HashMap;
 
 use database::schema::{
-    utilities::PhoneNumberFormatter, GetKeysResponse
+    prestashop_schema::ServiceOrder, utilities::PhoneNumberFormatter, GetKeysResponse
 };
 use reqwest::header::CONTENT_TYPE;
 
@@ -109,6 +109,12 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
             WidgetEvent::Api(api_event) => {
                 match api_event {
                     ApiEvent::GetTicketResponse(presta_data) => {
+                        let order_rows = presta_data.order.associations.order_rows.clone();
+                        if !order_rows.is_empty() {
+                            log::info!("Order rows: {:?}", order_rows );
+                            self.set_order_rows(order_rows);
+                        }
+
                         if let Ok(svc_data) = &mut self.service_data.lock() {
 
                             let _ = svc_data.receive(presta_data.clone());
@@ -151,8 +157,79 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                             checkin_notes.cut();
                             checkin_notes.insert_str(svc_data.ticket_data.checkin_notes.clone());
 
+                            for field in self.other_fields.iter_mut() {
+                                let widget_id = field.id();
+
+                                let device_details: Vec<ServiceOrder> = presta_data
+                                    .order
+                                    .associations
+                                    .order_service
+                                    .iter()
+                                    .map(|o| {
+                                        ServiceOrder {
+                                            device_name: o.device_name.clone(),
+                                            device_mfg: o.device_mfg.clone(),
+                                            device_model: o.device_model.clone(),
+                                            device_serial: o.device_serial.clone(),
+                                            device_password: o.device_password.clone(),
+                                            device_power_supply: o.device_power_supply.clone(),
+                                            check_in_notes: o.check_in_notes.clone(),
+                                            ..Default::default()
+                                        }
+                                    }).collect();
+                    
+                                let device = device_details.get(0).cloned().unwrap_or_default();
+                                match widget_id.0.as_str() {
+                                    "CustomerEmail" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(svc_data.customer_data.email.clone());
+                                    }
+                                    "DeviceName" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(device.device_name);
+                                    }
+                                    "DeviceMfg" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(device.device_mfg);
+                                    }
+                                    "DeviceModel" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(device.device_model);
+                                    }
+                                    "DeviceSerial" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(device.device_serial);
+                                    }
+                                    "DevicePassword" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(device.device_password);
+                                    }
+                                    "DevicePowerSupply" => {
+                                        let mut input = field.input.borrow_mut();
+                                        input.select_all();
+                                        input.cut();
+                                        input.insert_str(device.device_power_supply);
+                                    }
+                                    _ => ()
+                                }
+                            }
                             log::info!("SVC DATA: {svc_data:?}");
                         }
+                    },
+                    ApiEvent::GetSebResponse(carbonite_response) => {
+                        
                     },
                 }
             },
