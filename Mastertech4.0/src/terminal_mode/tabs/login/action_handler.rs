@@ -14,35 +14,35 @@ impl <'a> ActionHandler for LoginTab <'a> {
                     _ => {},
                 }
             }
-            WidgetEvent::ButtonClick { widget_id, button} => {
-                log::info!("Button: {button:?}");
+            WidgetEvent::ButtonClick { widget_id, button: _} => {
                 let logout_label = self.login_btn.get_label();
                 if logout_label == "Logout" {
                     // let mut file = std::fs::File::
                 }
                 match widget_id.0.as_str() {
-                    "Login" => {
+                    "LoginSubmit" => {
                         let mut username_input = self.username_field.input.borrow_mut();
                         let username = username_input.lines()[0].clone();
                         let mut password_input = self.password_field.input.borrow_mut();
                         let password = password_input.lines()[0].clone();
-                        username_input.select_all();
-                        username_input.cut();
-                        password_input.select_all();
-                        password_input.cut();
-
-                        log::info!("Logging in");
+                        
                         if let Ok(context) = self.ctx.lock() {
                             let tx = context.app_state_tx.clone();
-                            let render_tx = context.render_sender.clone();
+                            // let render_tx = context.render_sender.clone();
+                            let data_tx = context.data_sender.clone();
+
                             let _ = self.login(
                                 Login {
                                     username: username.to_string(),
                                     password: password.to_string(),
                                 }, 
                                 tx, 
-                                render_tx
+                                data_tx
                             );
+                            username_input.select_all();
+                            username_input.cut();
+                            password_input.select_all();
+                            password_input.cut();
                         }
 
                     }

@@ -22,10 +22,7 @@ impl <'a> LoginTab <'a> {
         let password_field = InputField::new("Password", WidgetId("Password".to_string()));
         password_field.input.borrow_mut().set_mask_char('*');
         Self {
-            login_btn: Button::new(
-                "Login",
-                WidgetId("Login".to_owned())
-            ).theme(CATPPUCCINTHEME),
+            login_btn: Button::new("Login",WidgetId("LoginSubmit".to_owned())).theme(CATPPUCCINTHEME),
             username_field: InputField::new("Username", WidgetId("Username".to_string())),
             password_field,
             active_field: RefCell::new(None),
@@ -76,32 +73,38 @@ impl <'a> LoginTab <'a> {
         &self,
         login: Login,
         appstate_tx: Sender<AppState>,
-        render_tx: crossbeam::channel::Sender<Box<dyn Message>>
+        data_tx: crossbeam::channel::Sender<Box<dyn Message>>
     )
         -> anyhow::Result<(), anyhow::Error>
     {
+
         tokio::spawn(async move {
-            save_encrypted_user_data(&login, HASH)?;
+            let email = if !login.username.contains("@pclaptops.com") {
+                format!("{}@pclaptops.com", login.username)
+            } else {
+                login.username.clone()
+            };
 
             let database = Database::new(
-                login.username, 
-                login.password, 
+                email, 
+                login.password.clone(), 
                 None
             ).await;
 
             match database{
                 Ok(db) => {
                     if let Some(ref usr) = db.user{
-                        render_tx.send(Box::new(Notification::new(
+                        save_encrypted_user_data(&login, HASH)?;
+                        data_tx.send(Box::new(Notification::new(
                             NotificationType::Info, 
                             "Logged in", 
                             &format!("Welcome, {}", &usr.name), 
-                            10
-                        )))?;
+                            5
+                        ))).unwrap();
 
-                        render_tx.send(Box::new(
+                        data_tx.send(Box::new(
                             DataMessage(usr.clone())
-                        ))?;
+                        )).unwrap();
                     }else{ 
                         log::info!("no usr"); 
                         let _ = DATABASE.invalidate().await;
@@ -112,22 +115,31 @@ impl <'a> LoginTab <'a> {
                 Err(e) => {
                     log::error!("Error with db: {e:?}");
                     let check = e.to_string().contains("Already connected");
+                    log::info!("db check: {check}");
                     if check { 
                         let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id")
                             .await?
                             .take(0)?;
+                        log::info!("user: {user:?}");
                         if let Some(usr) = user {
-                            render_tx.send(Box::new(
+                            save_encrypted_user_data(&login, HASH)?;
+
+                            let res = data_tx.send(Box::new(
                                 DataMessage(usr.clone())
-                            ))?;
+                            ));
+
+                            log::info!("data_tx: {res:?}");
+                            let res1 = data_tx.send(Box::new(Notification::new(
+                                NotificationType::Info, 
+                                "Logged in", 
+                                &format!("Welcome, {}", usr.name), 
+                                5
+                            )));
+
+                            log::info!("data_tx: {res1:?}");
                         }
                         appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; 
-                        render_tx.send(Box::new(Notification::new(
-                            NotificationType::Info, 
-                            "Logged in", 
-                            "Switching to TUR Sheet tab", 
-                            10
-                        )))?;
+
                     }
                     else { appstate_tx.try_send(AppState::NoAuth(e.to_string()))?; }
                 },

@@ -25,7 +25,9 @@ impl CommunicationSystem for DataSystem {
     }
 
     fn receive(&self) -> anyhow::Result<Box<dyn Message>, anyhow::Error> {
-        Ok(self.receiver.recv()?)
+        let received = self.receiver.recv()?;
+        log::info!("DataSystem got msg: {received:?}");
+        Ok(received)
     }
 }
 
@@ -37,7 +39,9 @@ impl CommunicationSystem for RenderSystem {
     }
 
     fn receive(&self) -> anyhow::Result<Box<dyn Message>, anyhow::Error> {
-        Ok(self.receiver.recv()?)
+        let received = self.receiver.recv()?;
+        log::info!("DataSystem got msg: {received:?}");
+        Ok(received)
     }
 }
 

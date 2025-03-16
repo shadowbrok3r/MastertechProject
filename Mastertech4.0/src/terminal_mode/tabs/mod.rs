@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Offset, Rect}, prelude::Backend, widgets::{Paragraph, WidgetRef, Wrap}, Frame};
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Paragraph, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::User;
@@ -9,6 +9,7 @@ use super::{context::TerminalContext, events::action_handler::WidgetId, styling:
 
 pub mod scripts;
 pub mod service_form;
+pub mod tasks;
 pub mod sysinfo;
 pub mod logger;
 pub mod login;
@@ -21,6 +22,7 @@ pub enum Tab {
     #[default]
     TurSheet,
     Scripts,
+    Tasks,
     SystemInfo,
     Login,
     Logs
@@ -35,6 +37,7 @@ pub struct MenuBar<'a> {
     pub effect_stage: EffectStage<UniqueEffectId>,
     ticket_tab: Button<'a>,
     scripts_tab: Button<'a>,
+    tasks_tab: Button<'a>,
     system_tab: Button<'a>,
     logs_tab: Button<'a>,
     pub login_tab: Button<'a>,
@@ -50,6 +53,7 @@ impl<'a> MenuBar<'a> {
             ticket_tab: Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME),
             scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN),
             system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK),
+            tasks_tab: Button::new("Tasks", WidgetId("Tasks".to_owned())).theme(DEEPPINK),
             logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DARKORANGE),
             login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(SPRINGGREEN),
             ctx,
@@ -65,6 +69,7 @@ impl<'a> MenuBar<'a> {
         let scripts_tab_active = self.scripts_tab.is_active();
         let logs_tab_active = self.logs_tab.is_active();
         let login_tab_active = self.login_tab.is_active();
+        let tasks_tab_active = self.tasks_tab.is_active();
 
         let new_tab = if ticket_tab_active {
             Tab::TurSheet
@@ -72,6 +77,8 @@ impl<'a> MenuBar<'a> {
             Tab::SystemInfo
         } else if scripts_tab_active {
             Tab::Scripts
+        } else if tasks_tab_active {
+            Tab::Tasks
         } else if logs_tab_active {
             Tab::Logs
         } else if login_tab_active {
@@ -98,37 +105,29 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let row = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Ratio(1, 6),
+                Constraint::Length(20),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 6),
+                Constraint::Length(20),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 6),
+                Constraint::Length(20),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 6),
+                Constraint::Length(20),
                 Constraint::Length(1),
-                Constraint::Ratio(1, 6),
+                Constraint::Length(20),
                 Constraint::Length(1),
+                Constraint::Length(20),
+                Constraint::Length(5),
                 Constraint::Length(20),
             ])
             .split(area);
 
-        let mut off = Offset::default();
-        off.x = (area.width / 3) as i32;
-        // let rec = area.offset(off);
-        let ticket_tab_btn_area = row[0].shrink(1, 1);
-        self.ticket_tab.render_ref(ticket_tab_btn_area, f.buffer_mut());
 
-        let scripts_tab_area = row[2].shrink(1, 1);
-        self.scripts_tab.render_ref(scripts_tab_area, f.buffer_mut());
-
-        let system_tab_area = row[4].shrink(1, 1);
-        self.system_tab.render_ref(system_tab_area, f.buffer_mut());
-
-        let log_tab_area = row[6].shrink(1, 1);
-        self.logs_tab.render_ref(log_tab_area, f.buffer_mut());
-
-        let login_tab_area = row[8].shrink(1, 1);
-        self.login_tab.render_ref(login_tab_area, f.buffer_mut());
+        self.ticket_tab.render_ref(row[0].shrink(1, 1), f.buffer_mut());
+        self.scripts_tab.render_ref(row[2].shrink(1, 1), f.buffer_mut());
+        self.tasks_tab.render_ref(row[4].shrink(1, 1), f.buffer_mut());
+        self.system_tab.render_ref(row[6].shrink(1, 1), f.buffer_mut());
+        self.logs_tab.render_ref(row[8].shrink(1, 1), f.buffer_mut());
+        self.login_tab.render_ref(row[10].shrink(1, 1), f.buffer_mut());
 
         let title = &mut self.client_title;
         let user = &mut User::default();
@@ -149,7 +148,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
             Paragraph::new(format!("{} {}", &**title, user.name.clone()))
                 .right_aligned()
                 .wrap(Wrap{ trim: false})
-                .render_ref(row[10], f.buffer_mut());
+                .render_ref(row[12], f.buffer_mut());
         }
         // ----- Process TachyonFX Effects -----
         // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
@@ -164,6 +163,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
         self.ticket_tab.handle_mouse_event(&mouse_event);
         self.scripts_tab.handle_mouse_event(&mouse_event);
+        self.tasks_tab.handle_mouse_event(&mouse_event);
         self.system_tab.handle_mouse_event(&mouse_event);
         self.logs_tab.handle_mouse_event(&mouse_event);
         self.login_tab.handle_mouse_event(&mouse_event);

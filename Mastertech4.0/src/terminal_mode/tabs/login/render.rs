@@ -46,11 +46,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
 
         self.username_field.render_ref(row1[1], f.buffer_mut());
         self.password_field.render_ref(row1[2], f.buffer_mut());
-        self.login_btn.render_ref(
-            row2[2].shrink(4, 0), 
-            f.buffer_mut()
-        );
-
+        self.login_btn.render_ref(row2[2].shrink(4, 0), f.buffer_mut());
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {

@@ -1,5 +1,5 @@
 use ratatui::{layout::{Alignment, Constraint, Direction, Layout, Rect}, prelude::{Backend, Color}, style::{Modifier, Style}, symbols::line::DOUBLE, widgets::{Block, BorderType, Borders, Clear, LineGauge, Paragraph, Wrap}, Frame};
-use crate::terminal_mode::{fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CYAN, DEEPPINK, SPRINGGREEN}};
+use crate::terminal_mode::{fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CYAN, SPRINGGREEN}};
 use std::{hash::Hasher, time::Instant};
 use tachyonfx::CellFilter;
 
@@ -45,7 +45,6 @@ impl Notification {
     pub fn elapsed_ratio(&self) -> f64 {
         let elapsed = Instant::now().duration_since(self.created_at);
         let ratio = (elapsed.as_secs_f64() / self.duration_secs as f64).clamp(0.0, 1.0);
-        log::info!("Ratio: {ratio:?}");
         ratio
     }
 
@@ -66,7 +65,6 @@ impl Notification {
 
     pub fn is_expired(&self) -> bool {
         let expiry = self.created_at.elapsed().as_secs() >= self.duration_secs;
-        log::info!("expiry: {expiry:?}");
         expiry
     }
 
