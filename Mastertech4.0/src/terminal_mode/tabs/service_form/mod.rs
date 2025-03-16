@@ -1,7 +1,7 @@
 use crate::terminal_mode::{context::TerminalContext, data::ServiceData, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
-use database::schema::GetKeysResponse;
-use ratatui::layout::Rect;
+use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
+use ratatui::{layout::Rect, style::Style};
 use tui_scrollview::ScrollViewState;
 use reqwest::Client;
 
@@ -19,6 +19,7 @@ pub struct ServiceFormTab<'a> {
     order_number: Rc<InputField<'a>>,
     // Other display only fields
     pub other_fields: Vec<InputField<'a>>,
+    pub order_row_fields: Vec<(InputField<'a>, InputField<'a>)>,
 
     // Row 1: Customer Info
     pub customer_name: InputField<'a>,
@@ -64,13 +65,15 @@ impl<'a> ServiceFormTab<'a> {
 
         let other_fields = vec![
             InputField::new("Customer Email", WidgetId("CustomerEmail".to_string())),
-            InputField::new("Customer Phone", WidgetId("CustomerPhone".to_string())),
-            InputField::new("Salesman Name", WidgetId("SalesmanName".to_string())),
-            InputField::new("Technician Name", WidgetId("TechnicianName".to_string())),
-            InputField::new("CheckIn Notes", WidgetId("CheckInNotes".to_string())),
-            InputField::new("Recommendations", WidgetId("Recommendations".to_string())),
+            InputField::new("Device Name", WidgetId("DeviceName".to_string())),
+            InputField::new("Device Mfg", WidgetId("DeviceMfg".to_string())),
+            InputField::new("Device Model", WidgetId("DeviceModel".to_string())),
+            InputField::new("Device Serial", WidgetId("DeviceSerial".to_string())),
+            InputField::new("Device Password", WidgetId("DevicePassword".to_string())),
+            InputField::new("Device Power Supply", WidgetId("DevicePowerSupply".to_string())),
         ];
 
+        
         Self {
             order_number: service_num_field,
             input_idx: RefCell::new(0),
@@ -118,10 +121,30 @@ impl<'a> ServiceFormTab<'a> {
             scroll_state: RefCell::new(ScrollViewState::default()),
             service_form_area: Rc::new(RefCell::new(None)),
             ctx,
-            total_offset: Rc::new(RefCell::new(0))
+            total_offset: Rc::new(RefCell::new(0)),
+            order_row_fields: Vec::new(),
         }
     }
 
+    // Optional: Method to populate order_rows later
+    pub fn set_order_rows(&mut self, order_rows: Vec<OrderRow>) {
+        self.order_row_fields = order_rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let name_field = InputField::new("Product Name", WidgetId(format!("ProductName{}", i)));
+                let mut name_field_input = name_field.input.borrow_mut();
+                name_field_input.insert_str(row.product_name);
+                name_field_input.set_cursor_style(Style::default());
+                let price_field = InputField::new("Price", WidgetId(format!("ProductPrice{}", i)));
+                let mut price_field_input = price_field.input.borrow_mut();
+                price_field_input.insert_str(row.product_price);
+                price_field_input.set_cursor_style(Style::default());
+                (name_field.clone(), price_field.clone())
+            })
+            .collect();
+    }
+    
     fn set_active_field(&self, input_field: WidgetId) {
         let idx = Self::get_input_idx(&input_field);
         self.active_field.replace(Some(input_field));

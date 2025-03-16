@@ -434,7 +434,7 @@ pub struct ExtendedSeb {
     pub date_created: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct CarboniteResponse {
     pub id_carbonite: String,
     pub id_customer: String,

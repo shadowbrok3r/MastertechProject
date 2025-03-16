@@ -159,8 +159,8 @@ async fn run_app<'a, B: Backend>(
     // data_system_bg: Arc<DataSystem>,
 ) -> anyhow::Result<(), anyhow::Error> {
     // render splash screen
-    let mut _splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
-    let mut _splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
+    let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
+    let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
 
     let notifications = app.render_system.notifications.clone();
     let ui_messages = app.render_system.ui_messages.clone();
@@ -268,18 +268,18 @@ async fn run_app<'a, B: Backend>(
         }
 
         terminal.draw(|f| {
-            // if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
-            //     let layout = Layout::default()
-            //     .direction(Direction::Horizontal)
-            //     .margin(1)
-            //     .constraints([
-            //         Constraint::Percentage(50),
-            //         Constraint::Percentage(50),
-            //     ]).split(f.area());
-            //     f.render_widget(&mut splash_screen, layout[0]);
-            //     f.render_widget(&mut splash_screen2, layout[1]);
-            //     std::thread::sleep(std::time::Duration::from_millis(50));
-            // } else {
+            if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
+                let layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .margin(1)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ]).split(f.area());
+                f.render_widget(&mut splash_screen, layout[0]);
+                f.render_widget(&mut splash_screen2, layout[1]);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            } else {
                 app.event_manager.process_events();
                 if let Ok(mut ctx) = app.ctx.lock() {
                     ctx.receive();
@@ -382,7 +382,8 @@ async fn run_app<'a, B: Backend>(
                     }
                 }
 
-            // }
+            }
+        
         })?;
     }
     

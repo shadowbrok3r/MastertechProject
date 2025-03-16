@@ -1,5 +1,4 @@
 use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
-use egui::output;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use reqwest::Client;
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};

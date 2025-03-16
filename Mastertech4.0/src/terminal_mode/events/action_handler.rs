@@ -1,4 +1,4 @@
-use database::schema::prestashop_schema::PrestashopPayload;
+use database::schema::{prestashop_schema::PrestashopPayload, CarboniteResponse};
 use crossbeam::channel::{Receiver, Sender};
 use once_cell::sync::Lazy;
 
@@ -20,7 +20,8 @@ pub struct WidgetId(pub String);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApiEvent {
-    GetTicketResponse(PrestashopPayload)
+    GetTicketResponse(PrestashopPayload),
+    GetSebResponse(CarboniteResponse)
 }
 
 #[derive(Debug, Clone, PartialEq)]

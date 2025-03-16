@@ -49,15 +49,15 @@ impl <'a> InputField <'a>{
         }
     }
 
+    pub fn id(&self) -> WidgetId {
+        self.id.clone()
+    }
+
     fn set_cursor(&self) {
         let mut input = self.input.borrow_mut();
         match *self.state.borrow() {
-            ButtonState::Active => {
-                input.set_cursor_style(Style::default().fg(Color::Cyan).not_hidden()); // Visible when active
-            }
-            _ => {
-                input.set_cursor_style(Style::default().fg(Color::Cyan).hidden()); // Hidden otherwise
-            }
+            ButtonState::Active => input.set_cursor_style(Style::default().fg(Color::Cyan).not_hidden()),
+            _ => input.set_cursor_style(Style::default().hidden())
         }
     }
 
@@ -248,11 +248,11 @@ impl <'a> ButtonType <'a> for InputField <'a> {
                     input.input_without_shortcuts(*key_event)
                 }
             }
-            KeyCode::End | KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::End => { // | KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL)
                 input.move_cursor(CursorMove::End);
                 true
             }
-            KeyCode::Home | KeyCode::Left if modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Home => { // | KeyCode::Left if modifiers.contains(KeyModifiers::CONTROL)
                 input.move_cursor(CursorMove::Head);
                 true
             }
