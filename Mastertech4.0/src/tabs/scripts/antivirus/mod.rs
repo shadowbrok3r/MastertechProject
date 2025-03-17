@@ -8,7 +8,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use sha2::Digest;
 use log::info;
-use std::{io, path::PathBuf};
+use std::{io, path::PathBuf, time::Duration};
 
 use super::InstalledProgram;
 
@@ -183,13 +183,14 @@ pub async fn install_sas(
                     if sas_exe.exists() {
                         log::info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
 
-                        let cmd_stdout = Command::new("cmd")
-                            .arg("/c ")
-                            .arg(sas_exe)
-                            .arg(format!(" /autoregister:{activation_key}"))
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let cmd_stdout: tokio::process::Child = Command::new("cmd")
+                            .arg("/C")
+                            .arg(sas_exe.as_os_str())
+                            .arg(format!("/autoregister:{activation_key}"))
                             .creation_flags(CREATE_NO_WINDOW)
-                            .spawn()?
-                            .stdout;
+                            .spawn()?;
+
                         log::info!("cmd_stdout: {cmd_stdout:?}");
                         return Ok(());
 
@@ -234,7 +235,7 @@ pub async fn install_sas(
         #[cfg(target_os = "windows")]
         {
             let cmd_stdout = Command::new("cmd")
-                .arg("/c ")
+                .arg("/C")
                 .arg(sas_path)
                 .arg(format!("/REGCODE={activation_key}"))
                 .arg("/silent")
