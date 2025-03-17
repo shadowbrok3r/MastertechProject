@@ -17,6 +17,7 @@ pub struct ServiceFormTab<'a> {
     get_ticket_btn: Button<'a>,
     submit_btn: Button<'a>,
     order_number: Rc<InputField<'a>>,
+    pub seb_fields: Vec<InputField<'a>>,
     // Other display only fields
     pub other_fields: Vec<InputField<'a>>,
     pub order_row_fields: Vec<(InputField<'a>, InputField<'a>)>,
@@ -70,12 +71,23 @@ impl<'a> ServiceFormTab<'a> {
             InputField::new("Device Model", WidgetId("DeviceModel".to_string())),
             InputField::new("Device Serial", WidgetId("DeviceSerial".to_string())),
             InputField::new("Device Password", WidgetId("DevicePassword".to_string())),
-            InputField::new("Device Power Supply", WidgetId("DevicePowerSupply".to_string())),
+            InputField::new("Device Power Supply", WidgetId("DevicePowerSupply".to_string()))
         ];
 
-        
+        let seb_fields = vec![
+            InputField::new("Carbonite Device Name", WidgetId("CarboniteDeviceName".to_string())),
+            InputField::new("Device ID", WidgetId("CarboniteDeviceId".to_string())),
+            InputField::new("Activation Code", WidgetId("ActivationCode".to_string())),
+            InputField::new("Recurly Id", WidgetId("RecurlyId".to_string())),
+            InputField::new("Usage (Gb)", WidgetId("UsageGb".to_string())),
+        ];
+
         Self {
-            order_number: service_num_field,
+            scroll_state: RefCell::new(ScrollViewState::default()),
+            service_form_area: Rc::new(RefCell::new(None)),
+            total_offset: Rc::new(RefCell::new(0)),
+            keys: GetKeysResponse::default(),
+            active_field: RefCell::new(None),
             input_idx: RefCell::new(0),
             customer_name: InputField::new("Customer Name", WidgetId("CustomerName".to_string())),
             customer_phone: InputField::new("Customer Phone", WidgetId("CustomerPhone".to_string())),
@@ -83,63 +95,49 @@ impl<'a> ServiceFormTab<'a> {
             technician_name: InputField::new("Technician Name", WidgetId("TechnicianName".to_string())),
             checkin_notes: InputField::new("CheckIn Notes", WidgetId("CheckInNotes".to_string())),
             recommendations: InputField::new("Recommendations", WidgetId("Recommendations".to_string())),
-            get_ticket_btn: Button::new(
-                    "Get Ticket",
-                    WidgetId("GetTicket".to_owned())
-                )
-                .theme(MEDIUMSLATEBLUE),
-            submit_btn: Button::new(
-                    "Submit",
-                    WidgetId("SubmitTur".to_owned())
-                )
-                .theme(DEEPPINK),
-            get_keys_btn: Button::new(
-                    "Get Keys",
-                    WidgetId("GetKeys".to_owned())
-                )
-                .theme(CATPPUCCINTHEME),
-            check_seb_btn: Button::new(
-                    "Check SEB",
-                    WidgetId("CheckSeb".to_owned())
-                )
-                .theme(CATPPUCCINTHEME),
-            webroot_key_btn: Button::new(
-                    "Webroot Key",
-                    WidgetId("CopyWebroot".to_owned())
-                )
-                .theme(SPRINGGREEN),
-            superanti_key_btn: Button::new(
-                    "SuperAnti Key",
-                    WidgetId("CopySuperAnti".to_owned())
-                )
-                .theme(DEEPPINK),
+            get_ticket_btn: Button::new("Get Ticket",WidgetId("GetTicket".to_owned())).theme(MEDIUMSLATEBLUE),
+            submit_btn: Button::new("Submit",WidgetId("SubmitTur".to_owned())).theme(DEEPPINK),
+            get_keys_btn: Button::new("Get Keys",WidgetId("GetKeys".to_owned())).theme(CATPPUCCINTHEME),
+            check_seb_btn: Button::new("Check SEB",WidgetId("CheckSeb".to_owned())).theme(CATPPUCCINTHEME),
+            webroot_key_btn: Button::new("Webroot Key",WidgetId("CopyWebroot".to_owned())).theme(SPRINGGREEN),
+            superanti_key_btn: Button::new("SuperAnti Key",WidgetId("CopySuperAnti".to_owned())).theme(DEEPPINK),
+            order_row_fields: Vec::new(),
+            order_number: service_num_field,
             other_fields,
             service_data,
+            seb_fields,
             client,
-            keys: GetKeysResponse::default(),
-            active_field: RefCell::new(None),
-            scroll_state: RefCell::new(ScrollViewState::default()),
-            service_form_area: Rc::new(RefCell::new(None)),
             ctx,
-            total_offset: Rc::new(RefCell::new(0)),
-            order_row_fields: Vec::new(),
         }
     }
 
     // Optional: Method to populate order_rows later
     pub fn set_order_rows(&mut self, order_rows: Vec<OrderRow>) {
+        log::info!("SetOrderRows");
         self.order_row_fields = order_rows
             .into_iter()
             .enumerate()
             .map(|(i, row)| {
+                log::info!("mapping order_row_fields");
+    
+                log::info!("creating name_field");
                 let name_field = InputField::new("Product Name", WidgetId(format!("ProductName{}", i)));
-                let mut name_field_input = name_field.input.borrow_mut();
-                name_field_input.insert_str(row.product_name);
-                name_field_input.set_cursor_style(Style::default());
+                {
+                    let mut name_field_input = name_field.input.borrow_mut();
+                    name_field_input.insert_str(row.product_name);
+                    name_field_input.set_cursor_style(Style::default());
+                } // name_field_input dropped here
+    
+                log::info!("creating price_field");
                 let price_field = InputField::new("Price", WidgetId(format!("ProductPrice{}", i)));
-                let mut price_field_input = price_field.input.borrow_mut();
-                price_field_input.insert_str(row.product_price);
-                price_field_input.set_cursor_style(Style::default());
+                {
+                    let mut price_field_input = price_field.input.borrow_mut();
+                    price_field_input.insert_str(row.product_price);
+                    price_field_input.set_cursor_style(Style::default());
+                } // price_field_input dropped here
+                
+                log::info!("returning name and price field");
+                
                 (name_field.clone(), price_field.clone())
             })
             .collect();

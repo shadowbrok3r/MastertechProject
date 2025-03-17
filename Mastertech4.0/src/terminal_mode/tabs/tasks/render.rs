@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseEvent}, layout::{Constraint, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Padding, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseEvent}, layout::{Constraint, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::HandleWidget};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use unicode_width::UnicodeWidthStr;
@@ -6,13 +6,13 @@ use database::schema::TaskPayload;
 use std::cmp::max;
 use super::TasksTab;
 // Static default widths for columns (used when no tasks are available)
-const DEFAULT_WIDTHS: [u16; 7] = [10, 8, 30, 10, 10, 60, 80]; // Due, Status, Task,
+const DEFAULT_WIDTHS: [u16; 7] = [10, 8, 35, 10, 10, 60, 80]; // Due, Status, Task,
 
 /// Implement the HandleWidget trait for ServiceFormTab.
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> HandleWidget <'a> for TasksTab {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        let mut total_height = 2; // Start with header height
+        let mut total_height = 3; // Start with header height
         // Use static defaults for header, safe even if no tasks
         let header = Row::new(vec![
             Cell::from(Text::from(Self::center_text_with_borders("Due".to_string(), DEFAULT_WIDTHS[0] as usize, 3))),
@@ -34,11 +34,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
             let wrapped_desc = Self::wrap_text_with_borders(task.task_description.clone(), self.widths[6] as usize);
             let height = max(wrapped_notes.len(), wrapped_desc.len()).max(3) as u16; // Min 3 for top/content/bottom
             total_height += height;
-            // let notes_cell = if wrapped_notes.is_empty() { Cell::from("") } 
-            // else { Cell::from(Text::from(wrapped_notes.into_iter().collect::<Vec<_>>())) };
-            // let desc_cell = if wrapped_desc.is_empty() { Cell::from("") } 
-            // else { Cell::from(Text::from(wrapped_desc.into_iter().collect::<Vec<_>>())) };
-
+            
             Row::new(vec![
                 Cell::from(Text::from(Self::center_text_with_borders(Self::format_due_date(&task.due_date), widths[0] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.status.as_str().to_string(), widths[1] as usize, height))),
@@ -95,10 +91,9 @@ impl<'a> HandleWidget <'a> for TasksTab {
 
         f.render_stateful_widget(table, area, &mut table_state);
 
-        // Vertical Scrollbar (optional, for visual feedback)
-        let total_height = 4;
-        if total_height > area.height.saturating_sub(2) { // Account for header and borders
-            let mut v_scrollbar_state = ScrollbarState::new(total_height as usize - area.height as usize + 2);
+        // Vertical Scrollbar
+        if total_height > area.height { // Show scrollbar if content exceeds visible area
+            let mut v_scrollbar_state = ScrollbarState::new(total_height as usize - area.height as usize);
             v_scrollbar_state = v_scrollbar_state.position(table_state.offset());
             f.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -177,7 +172,7 @@ impl TasksTab {
         }
         widths[0] = max(widths[0], headers[0].len() as u16).min(10);
         widths[1] = max(widths[1], headers[1].len() as u16).min(8);
-        widths[2] = max(widths[2], headers[2].len() as u16).min(30);
+        widths[2] = max(widths[2], headers[2].len() as u16).min(34);
         widths[3] = max(widths[3], headers[3].len() as u16).min(10);
         widths[4] = max(widths[4], headers[4].len() as u16).min(10);
         widths[5] = max(widths[5], headers[5].len() as u16).min(60);
@@ -233,19 +228,19 @@ impl TasksTab {
         }
     }
 
-    pub fn scroll_down(&mut self) {
+    pub fn _scroll_down(&mut self) {
         self.state.borrow_mut().scroll_down_by(1);
     }
 
-    pub fn scroll_up(&mut self) {
+    pub fn _scroll_up(&mut self) {
         self.state.borrow_mut().scroll_up_by(1);
     }
 
-    pub fn scroll_right(&mut self) {
+    pub fn _scroll_right(&mut self) {
         self.state.borrow_mut().scroll_right_by(1);
     }
 
-    pub fn scroll_left(&mut self) {
+    pub fn _scroll_left(&mut self) {
         self.state.borrow_mut().scroll_left_by(1);
     }
     

@@ -1,4 +1,4 @@
-use crate::{tabs::{scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState}, tur_sheet::get_ticket::SendRequest}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}};
+use crate::{tabs::{scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState}, tur_sheet::get_ticket::SendRequest}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
 use std::{path::{Path, PathBuf}, process::Command};
 use powershell_script::PsScriptBuilder;
@@ -114,22 +114,22 @@ impl <'a> ScriptsTab <'a> {
                                 Ok(_) => self.log_message("Uninstalled Winzip"),
                                 Err(e) => self.log_message(&format!("Error uninstalling Winzip: {e:?}")),
                             }
-                            "Webroot TEST" | "SuperAnti TEST" => {
-                                for program in self.installed_programs.iter() {
-                                    let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
-                                    let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
-                                    if display_name.contains("webroot")
-                                        || display_name.contains("wrsa")
-                                        || publisher.contains("webroot")
-                                        || publisher.contains("wrsa")
-                                        || display_name.contains("superantispyware")
-                                        || publisher.contains("superantispyware")
-                                    {
-                                        self.log_message(&format!("Webroot or SAS found. attempting uninstall: {display_name:?}"));
-                                        program.uninstall().unwrap();
-                                    }
-                                }
-                            }
+                            // "Webroot TEST" | "SuperAnti TEST" => {
+                            //     for program in self.installed_programs.iter() {
+                            //         let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
+                            //         let publisher = program.publisher.clone().unwrap_or_default().to_lowercase();
+                            //         if display_name.contains("webroot")
+                            //             || display_name.contains("wrsa")
+                            //             || publisher.contains("webroot")
+                            //             || publisher.contains("wrsa")
+                            //             || display_name.contains("superantispyware")
+                            //             || publisher.contains("superantispyware")
+                            //         {
+                            //             self.log_message(&format!("Webroot or SAS found. attempting uninstall: {display_name:?}"));
+                            //             program.uninstall().unwrap();
+                            //         }
+                            //     }
+                            // }
                             _ => {}
                         }
                     } else {
@@ -258,6 +258,14 @@ impl <'a> ScriptsTab <'a> {
             Err(e) => self.log_message(&format!("TaskBarAlignment => {e:?}")),
         }
 
+        match scan_wifi_networks() {
+            Ok(networks) => {
+                self.log_message(&format!("Wifi Networks: {networks:?}"));
+                let connect_to_wifi = connect_to_wifi("PClaptops5.0", Some("bestburger"), None);
+                self.log_message(&format!("connect_to_wifi: {connect_to_wifi:?}"));
+            },
+            Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
+        }
         match get_wlan_status() {
             Ok(_) => self.log_message("Wlan Status OK"),
             Err(e) => {
@@ -268,10 +276,6 @@ impl <'a> ScriptsTab <'a> {
         match check_network_adapters() {
             Ok(adapters) => self.log_message(&format!("Network Adapters => {adapters:?}")),
             Err(e) => self.log_message(&format!("Error getting Network Adapter list => {e:?}")),
-        }
-        match scan_wifi_networks() {
-            Ok(networks) => self.log_message(&format!("Wifi Networks: {networks:?}")),
-            Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),
         }
     }
 
@@ -290,9 +294,7 @@ impl <'a> ScriptsTab <'a> {
             "Any Recent Blue Screens?" => self.recent_blue_screens(item_text, category),
             "When Was The Last Service Date?" => self.last_service_date(item_text, category),
             "Windows Version" => self.windows_version(item_text, category),
-            _ => {
-                self.log_message(&format!("Unknown Informational script: {}", item_text));
-            }
+            _ =>self.log_message(&format!("Unknown Informational script: {}", item_text)),
         }
     }
 
@@ -310,8 +312,8 @@ impl <'a> ScriptsTab <'a> {
             "Driver Support" => self.remove_driversupport(),
             "Winzip" => self.remove_winzip(),
             "Run Junkware Category" => {
-                self.remove_junkware(Some("Webroot TEST"));
-                self.remove_junkware(Some("SuperAnti TEST"));
+            //     self.remove_junkware(Some("Webroot TEST"));
+            //     self.remove_junkware(Some("SuperAnti TEST"));
                 self.remove_junkware(Some("OneLaunch"));
                 self.remove_junkware(Some("WebNavigator Browser"));
                 self.remove_junkware(Some("ESET Security"));
@@ -424,8 +426,7 @@ impl <'a> ScriptsTab <'a> {
 
     fn run_tron(&mut self, item_text: &str, category: &Category) {
         self.log_message("Tron script not implemented yet.");
-        self.update_checklist(category.clone(), item_text, false);
-        
+        self.update_checklist(category.clone(), item_text, false);   
     }
 
     fn run_webroot_scan(&mut self, item_text: &str, category: &Category) {

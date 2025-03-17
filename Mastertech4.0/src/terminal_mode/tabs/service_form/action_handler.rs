@@ -1,11 +1,11 @@
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::events::action_handler::{ActionHandler, ApiEvent, WidgetEvent}
+    terminal_mode::events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent}
 };
 use std::collections::HashMap;
 
 use database::schema::{
-    prestashop_schema::ServiceOrder, utilities::PhoneNumberFormatter, GetKeysResponse
+    prestashop_schema::ServiceOrder, utilities::PhoneNumberFormatter, CarboniteResponse, GetKeysResponse
 };
 use reqwest::header::CONTENT_TYPE;
 
@@ -77,30 +77,37 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                         .send()
                                         .await?;
 
-                                    let response_json: Vec<serde_json::Value> = response.json().await?;
+                                    let response_json: Vec<CarboniteResponse> = response.json().await?;
                                     log::info!("SEB Response: {:?}", response_json);
-            
+                                    let tx = get_event_sender();
+                                    tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
                                     Ok::<(), anyhow::Error>(())
                                 });
+                                
+
                             }
                         }
                     },
                     "GetTicket" => {
                         if let Ok(svc_data) = &mut self.service_data.lock() {
                             log::info!("ServiceFormTab handled a ButtonClick event.");
-                            // Here you might access the input field's current value or trigger an API call.
-                            let service_number = self.order_number.input.borrow().clone();
-                            let phone = self.customer_phone.input.borrow().clone();
-                            let phone_number = phone.lines()[0].to_string();
-                            svc_data.ticket_data.service_number = service_number.lines()[0].to_string();
-
-                            log::info!("Current order number: {}\nPhone: {phone_number}", service_number.lines()[0]);
-                            
-                            if !phone_number.is_empty() {
-                                log::info!("Current phone number: {}", phone_number);
-                                svc_data.customer_data.phone_number = phone_number;
+                            if let (
+                                Ok(service_number), 
+                                Ok(phone)
+                            ) = (
+                                self.order_number.input.try_borrow(), 
+                                self.customer_phone.input.try_borrow()
+                            ) {
+                                let phone_number = phone.lines()[0].to_string();
+                                svc_data.ticket_data.service_number = service_number.lines()[0].to_string();
+                                log::info!("Current order number: {}\nPhone: {phone_number}", service_number.lines()[0]);
+                                
+                                if !phone_number.is_empty() {
+                                    log::info!("Current phone number: {}", phone_number);
+                                    svc_data.customer_data.phone_number = phone_number;
+                                }
+                                svc_data.get_ticket();
                             }
-                            svc_data.get_ticket();
                         }
                     },
                     _ => {}
@@ -109,54 +116,72 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
             WidgetEvent::Api(api_event) => {
                 match api_event {
                     ApiEvent::GetTicketResponse(presta_data) => {
+                        log::info!("GetTicketResponse");
                         let order_rows = presta_data.order.associations.order_rows.clone();
                         if !order_rows.is_empty() {
-                            log::info!("Order rows: {:?}", order_rows );
                             self.set_order_rows(order_rows);
                         }
 
                         if let Ok(svc_data) = &mut self.service_data.lock() {
 
                             let _ = svc_data.receive(presta_data.clone());
+                            log::info!("service_number");
+                            // Update service_number
+                            {
+                                let mut service_number = self.order_number.input.borrow_mut();
+                                if service_number.lines()[0].is_empty() {
+                                    service_number.select_all();
+                                    service_number.cut();
+                                    service_number.insert_str(svc_data.ticket_data.service_number.clone());
+                                }
+                            } // service_number dropped here
+                            log::info!("customer_name");
+                            // Update customer_name
+                            {
+                                let mut customer_name = self.customer_name.input.borrow_mut();
+                                customer_name.select_all();
+                                customer_name.cut();
+                                customer_name.insert_str(svc_data.customer_data.name.clone());
+                            } // customer_name dropped here
+                            log::info!("customer_phone");
+                            // Update customer_phone
+                            {
+                                let mut customer_phone = self.customer_phone.input.borrow_mut();
+                                let mut formatter = PhoneNumberFormatter::default();
+                                let phone_number = formatter
+                                    .format_phone_number(&svc_data.customer_data.phone_number.clone())
+                                    .unwrap_or_default();
+                                customer_phone.select_all();
+                                customer_phone.cut();
+                                customer_phone.insert_str(phone_number);
+                            } // customer_phone dropped here
+                            log::info!("salesman_name");
+                            // Update salesman_name
+                            {
+                                let mut salesman_name = self.salesman_name.input.borrow_mut();
+                                salesman_name.select_all();
+                                salesman_name.cut();
+                                salesman_name.insert_str(svc_data.ticket_data.salesman.clone());
+                            } // salesman_name dropped here
+                            log::info!("technician_name");
+                            // Update technician_name
+                            {
+                                let mut technician_name = self.technician_name.input.borrow_mut();
+                                technician_name.select_all();
+                                technician_name.cut();
+                                technician_name.insert_str(svc_data.ticket_data.tech.clone());
+                            } // technician_name dropped here
+                            log::info!("checkin_notes");
+                            // Update checkin_notes
+                            {
+                                let mut checkin_notes = self.checkin_notes.input.borrow_mut();
+                                checkin_notes.select_all();
+                                checkin_notes.cut();
+                                checkin_notes.insert_str(svc_data.ticket_data.checkin_notes.clone());
+                            } // checkin_notes dropped here
+                            log::info!("other_fields");
 
-                            let mut service_number = self.order_number.input.borrow_mut();
-                            if service_number.lines()[0].is_empty() {
-                                service_number.select_all();
-                                service_number.cut();
-                                service_number.insert_str(svc_data.ticket_data.service_number.clone());
-                            }
-
-                            let mut customer_name = self.customer_name.input.borrow_mut();
-                            customer_name.select_all();
-                            customer_name.cut();
-                            customer_name.insert_str(svc_data.customer_data.name.clone());
-
-                            let mut customer_phone = self.customer_phone.input.borrow_mut();
-                            let mut formatter = PhoneNumberFormatter::default();
-                            let phone_number = formatter
-                                .format_phone_number(
-                                    &svc_data.customer_data.phone_number.clone()
-                                )
-                                .unwrap_or_default();
-                            customer_phone.select_all();
-                            customer_phone.cut();
-                            customer_phone.insert_str(phone_number);
-
-                            let mut salesman_name = self.salesman_name.input.borrow_mut();
-                            salesman_name.select_all();
-                            salesman_name.cut();
-                            salesman_name.insert_str(svc_data.ticket_data.salesman.clone());
-
-                            let mut technician_name = self.technician_name.input.borrow_mut();
-                            technician_name.select_all();
-                            technician_name.cut();
-                            technician_name.insert_str(svc_data.ticket_data.tech.clone());
-
-                            let mut checkin_notes = self.checkin_notes.input.borrow_mut();
-                            checkin_notes.select_all();
-                            checkin_notes.cut();
-                            checkin_notes.insert_str(svc_data.ticket_data.checkin_notes.clone());
-
+                            log::info!("Filling other fields");
                             for field in self.other_fields.iter_mut() {
                                 let widget_id = field.id();
 
@@ -179,6 +204,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                     }).collect();
                     
                                 let device = device_details.get(0).cloned().unwrap_or_default();
+                                log::info!("Unwrapping device details");
                                 match widget_id.0.as_str() {
                                     "CustomerEmail" => {
                                         let mut input = field.input.borrow_mut();
@@ -229,11 +255,49 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         }
                     },
                     ApiEvent::GetSebResponse(carbonite_response) => {
-                        
+                        log::info!("GetSebResponse");
+                        for field in self.seb_fields.iter_mut() {
+                            let id = field.id();
+                            let carbonite = carbonite_response.get(0).cloned().unwrap_or_default();
+                            match id.0.as_str() {
+                                "CarboniteDeviceName" => {
+                                    let mut input = field.input.borrow_mut();
+                                    input.select_all();
+                                    input.cut();
+                                    input.insert_str(carbonite.device_name);
+                                }
+                                "CarboniteDeviceId" => {
+                                    let mut input = field.input.borrow_mut();
+                                    input.select_all();
+                                    input.cut();
+                                    input.insert_str(carbonite.device_id);
+                                }
+                                "ActivationCode" => {
+                                    let mut input = field.input.borrow_mut();
+                                    input.select_all();
+                                    input.cut();
+                                    input.insert_str(carbonite.activation_code);
+                                }
+                                "RecurlyId" => {
+                                    let mut input = field.input.borrow_mut();
+                                    input.select_all();
+                                    input.cut();
+                                    input.insert_str(carbonite.id_recurly_account);
+                                }
+                                "UsageGb" => {
+                                    let mut input = field.input.borrow_mut();
+                                    input.select_all();
+                                    input.cut();
+                                    input.insert_str(carbonite.usage_gb);
+                                }
+                                _ => {}
+                            }
+                        }
                     },
                 }
             },
             WidgetEvent::Active { widget_id } => {
+                log::info!("New active field: {widget_id:?}");
                 self.set_active_field(widget_id.clone());
             }
         }

@@ -23,6 +23,7 @@ pub mod seb_lookup;
 pub mod system_information;
 pub mod tur_sheet;
 pub mod websockets;
+pub mod egui_terminal;
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -69,6 +70,7 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
+            "Egui Terminal" => self.egui_terminal(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),

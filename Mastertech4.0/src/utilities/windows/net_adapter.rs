@@ -1,8 +1,9 @@
-use std::{ffi::CString, ptr::null_mut};
 use windows::{
     core::PCWSTR,
-    Win32::{Foundation::HANDLE, NetworkManagement::{IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH}, Ndis::IF_OPER_STATUS, WiFi::{wlan_interface_state_connected, WlanCloseHandle, WlanConnect, WlanEnumInterfaces, WlanGetAvailableNetworkList, WlanOpenHandle, WlanQueryInterface, WlanSetProfile, DOT11_BSS_TYPE, DOT11_SSID, WLAN_AVAILABLE_NETWORK_LIST, WLAN_CONNECTION_ATTRIBUTES, WLAN_CONNECTION_MODE, WLAN_CONNECTION_PARAMETERS, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST, WLAN_INTF_OPCODE}}, Networking::WinSock::AF_UNSPEC},
+    Win32::{Foundation::HANDLE, NetworkManagement::{IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH}, Ndis::IF_OPER_STATUS, WiFi::{wlan_interface_state_connected, WlanCloseHandle, WlanConnect, WlanEnumInterfaces, WlanGetAvailableNetworkList, WlanOpenHandle, WlanQueryInterface, WlanReasonCodeToString, WlanSetProfile, DOT11_BSS_TYPE, DOT11_SSID, WLAN_AVAILABLE_NETWORK_LIST, WLAN_CONNECTION_ATTRIBUTES, WLAN_CONNECTION_MODE, WLAN_CONNECTION_PARAMETERS, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST, WLAN_INTF_OPCODE}}, Networking::WinSock::AF_UNSPEC},
 };
+use windows_core::w;
+use std::ptr::null_mut;
 
 /// Connect to a Wi-Fi SSID, optionally specifying a password and BSSID
 pub fn connect_to_wifi(ssid: &str, password: Option<&str>, bssid: Option<[u8; 6]>) -> anyhow::Result<()> {
@@ -59,99 +60,140 @@ pub fn connect_to_wifi(ssid: &str, password: Option<&str>, bssid: Option<[u8; 6]
         };
         dot11_ssid.ucSSID[..ssid_bytes.len()].copy_from_slice(ssid_bytes);
 
-        // Set up connection parameters
+        // Use the profile name explicitly
+        let profile_name = w!("PClaptops5.0");
+
         let connection_params = WLAN_CONNECTION_PARAMETERS {
-            wlanConnectionMode: WLAN_CONNECTION_MODE(0), // Use profile-based connection
-            strProfile: PCWSTR(null_mut()), // Windows will match based on SSID
+            wlanConnectionMode: WLAN_CONNECTION_MODE(0),
+            strProfile: profile_name,
             pDot11Ssid: &mut dot11_ssid,
-            pDesiredBssidList: null_mut(), // Allow Windows to pick best BSSID
-            dot11BssType: DOT11_BSS_TYPE(1), // Infrastructure mode
+            pDesiredBssidList: null_mut(),
+            dot11BssType: DOT11_BSS_TYPE(1),
             dwFlags: 0,
         };
 
         log::info!(
             "Attempting to connect to SSID: {}{}",
             ssid,
-            if bssid.is_some() {
-                " with specific BSSID"
-            } else {
-                " (auto-select BSSID)"
-            }
+            if bssid.is_some() { " with specific BSSID" } else { " (auto-select BSSID)" }
         );
 
-        if WlanConnect(client_handle, &interface_guid, &connection_params, None) != 0 {
-            log::error!("Failed to initiate connection to SSID: {}", ssid);
-            WlanCloseHandle(client_handle, None);
-            return Err(anyhow::anyhow!("WlanConnect failed"));
+        let connect_result = WlanConnect(client_handle, &interface_guid, &connection_params, None);
+        if connect_result != 0 {
+            let error_desc = match connect_result {
+                87 => "ERROR_INVALID_PARAMETER",
+                5 => "ERROR_ACCESS_DENIED",
+                1169 => "ERROR_NO_MATCH",
+                _ => "Unknown error",
+            };
+            log::error!(
+                "Failed to initiate connection to SSID: {} (Error code: {} - {})",
+                ssid,
+                connect_result,
+                error_desc
+            );
+            return Err(anyhow::anyhow!("WlanConnect failed with error code: {} - {}", connect_result, error_desc));
         }
 
         log::info!("Successfully initiated connection to {}", ssid);
-        WlanCloseHandle(client_handle, None);
     }
 
     Ok(())
 }
 
 /// Creates a Wi-Fi profile for the SSID with the given password
-pub fn create_wifi_profile(client_handle: HANDLE, interface_guid: &windows_core::GUID, ssid: &str, password: &str) -> anyhow::Result<()> {
+pub fn create_wifi_profile(client_handle: HANDLE, interface_guid: &windows_core::GUID, ssid: &str, _password: &str) -> anyhow::Result<()> {
     log::info!("Creating a Wi-Fi profile for SSID: {}", ssid);
+    // WPA2-PSK profile with hex SSID
+    let profile_xml = w!(r#"<?xml version="1.0"?>
+    <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
+        <name>PClaptops5.0</name>
+        <SSIDConfig>
+            <SSID>
+                <hex>50436C6170746F7073352E30</hex>
+                <name>PClaptops5.0</name>
+            </SSID>
+        </SSIDConfig>
+        <connectionType>ESS</connectionType>
+        <connectionMode>auto</connectionMode>
+        <MSM>
+            <security>
+                <authEncryption>
+                    <authentication>WPA2PSK</authentication>
+                    <encryption>AES</encryption>
+                    <useOneX>false</useOneX>
+                </authEncryption>
+                <sharedKey>
+                    <keyType>passPhrase</keyType>
+                    <protected>false</protected>
+                    <keyMaterial>bestburger</keyMaterial>
+                </sharedKey>
+            </security>
+        </MSM>
+    </WLANProfile>"#);
 
-    // Generate an XML profile for the Wi-Fi network
-    let profile_xml = format!(
-        r#"<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
-            <name>{}</name>
-            <SSIDConfig>
-                <SSID>
-                    <name>{}</name>
-                </SSID>
-            </SSIDConfig>
-            <connectionType>ESS</connectionType>
-            <connectionMode>manual</connectionMode>
-            <MSM>
-                <security>
-                    <authEncryption>
-                        <authentication>WPA2</authentication>
-                        <encryption>AES</encryption>
-                        <useOneX>false</useOneX>
-                    </authEncryption>
-                    <sharedKey>
-                        <keyType>passPhrase</keyType>
-                        <protected>false</protected>
-                        <keyMaterial>{}</keyMaterial>
-                    </sharedKey>
-                </security>
-            </MSM>
-        </WLANProfile>"#,
-        ssid, ssid, password
-    );
-
-    // Convert the XML string to PCWSTR
-    let profile_wstr = CString::new(profile_xml)?.into_raw();
-
-    // Add the profile to Windows
+    // Add the profile
     let mut profile_result = 0;
     let res = unsafe {
         WlanSetProfile(
             client_handle,
             interface_guid,
-            0, // No flags
-            PCWSTR(profile_wstr as _),
-            None,
+            0, // All-user profile
+            profile_xml,
+            PCWSTR::null(), // Default security descriptor
             true,
             None,
             &mut profile_result,
         )
     };
+    
+    // Reclaim the pointer to avoid memory leak
+    // unsafe { let _ = CString::from_raw(profile_wstr); }
 
     if res != 0 {
-        log::error!("Failed to set Wi-Fi profile for SSID: {}", ssid);
-        return Err(anyhow::anyhow!("WlanSetProfile failed"));
+        // Allocate a buffer for the reason string (256 WCHARs = 512 bytes)
+        let buffer_size = 256;
+        let mut reason_buffer: Vec<u16> = vec![0; buffer_size as usize];
+        
+        // Get reason string using profile_result (if populated)
+        let reason_res = unsafe {
+            WlanReasonCodeToString(
+                profile_result,               // Error code (e.g., 1206)
+                &mut reason_buffer,      // Buffer size in WCHARs
+                None,   // Mutable buffer
+            )
+        };
+
+        let reason_string = if reason_res == 0 && profile_result != 0 {
+            let null_pos = reason_buffer.iter().position(|&x| x == 0).unwrap_or(buffer_size as usize);
+            String::from_utf16(&reason_buffer[..null_pos]).unwrap_or_else(|_| "Failed to decode reason string".to_string())
+        } else {
+            format!("No specific reason available (WlanReasonCodeToString error: {}, profile_result: {})", reason_res, profile_result)
+        };
+
+        // Map system error code for clarity
+        let error_desc = match res {
+            87 => "ERROR_INVALID_PARAMETER",
+            5 => "ERROR_ACCESS_DENIED",
+            1206 => "ERROR_BAD_PROFILE",
+            _ => "Unknown error",
+        };
+
+        log::error!(
+            "Failed to set Wi-Fi profile for SSID: {}\nProfile: {:?}\nError code: {} ({})\nProfile result: {}\nReason: {}",
+            ssid,
+            profile_xml,
+            res,
+            error_desc,
+            profile_result,
+            reason_string
+        );
+        return Err(anyhow::anyhow!("WlanSetProfile failed: {res:?}\n{profile_result:?}"));
     }
 
-    log::info!("Successfully added Wi-Fi profile for {}", ssid);
+    log::info!("Successfully added Wi-Fi profile for {ssid}\nProfile: {profile_xml:?}");
     Ok(())
 }
-
 
 /// Scan for available Wi-Fi networks and return their SSID-BSSID pairs
 pub fn scan_wifi_networks() -> anyhow::Result<Vec<(String, Vec<[u8; 6]>)>> {

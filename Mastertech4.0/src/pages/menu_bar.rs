@@ -24,6 +24,7 @@ impl MasterTechApp {
                             &"File Browser 📂".to_string(),
                             &"SysInfo".to_string(),
                             &"Minidump Analysis".to_string(),
+                            &"Egui Terminal".to_string(),
                             &"Ai".to_string(),
                             &"Resource Monitor".to_string(),
                             // &"QC ☑️".to_string(),

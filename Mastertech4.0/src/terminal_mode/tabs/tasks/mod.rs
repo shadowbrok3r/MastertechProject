@@ -1,13 +1,12 @@
 use crate::terminal_mode::context::TerminalContext;
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::{TaskPayload, User};
-use ratatui::widgets::{ScrollbarState, TableState};
-use reqwest::Client;
 use tui_scrollview::ScrollViewState;
+use ratatui::widgets::TableState;
+use reqwest::Client;
 
 pub mod action_handler;
 pub mod render;
-
 pub struct TasksTab {
     state: RefCell<TableState>,
     items: Vec<TaskPayload>,
@@ -15,10 +14,9 @@ pub struct TasksTab {
     scroll_state: RefCell<ScrollViewState>,
     pub _client: Client,
     ctx: Arc<Mutex<TerminalContext>>,
-    users: Vec<User>,
+    _users: Vec<User>,
     current_user: User
 }
-
 
 impl TasksTab {
     pub fn new(_client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
@@ -30,12 +28,13 @@ impl TasksTab {
             items: Vec::new(),
             widths: Vec::new(),
             scroll_state: RefCell::new(ScrollViewState::default()),
-            users: Vec::new(),
+            _users: Vec::new(),
             current_user: User::default(),
         }
     }
 
     pub fn check_tasks(&mut self) {
+        
         if let Ok(mut ctx) = self.ctx.lock() {
             if ctx.new_tasks {
                 ctx.new_tasks = false;

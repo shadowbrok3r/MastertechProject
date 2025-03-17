@@ -1,19 +1,18 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
-use reqwest::Client;
-use serde::Serialize;
 use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
-use fx::{effect::UniqueEffectId, EffectStage};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
+use fx::{effect::UniqueEffectId, EffectStage};
 use crossbeam::channel::unbounded;
 use context::TerminalContext;
 // use tachyonfx::CellFilter;
 use widgets::HandleWidget;
 // use styling::CATPPUCCIN;
 use ratatui::prelude::*;
+use reqwest::Client;
 
 pub mod systems;
 pub mod widgets;
@@ -105,17 +104,17 @@ impl Default for TerminalApp <'_>{
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     // Set max_log_level to Trace
-    // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
-    // // Set default level for unknown targets to Trace
-    // tui_logger::set_default_level(log::LevelFilter::Info);
+    tui_logger::init_logger(log::LevelFilter::Info).unwrap();
+    // Set default level for unknown targets to Trace
+    tui_logger::set_default_level(log::LevelFilter::Info);
 
-    let log_level = log::LevelFilter::Info;
-    let log_file = std::fs::File::create("output.log").unwrap();
-    simplelog::WriteLogger::init(
-        log_level,
-        simplelog::Config::default(),
-        log_file
-    ).unwrap();
+    // let log_level = log::LevelFilter::Info;
+    // let log_file = std::fs::File::create("output.log").unwrap();
+    // simplelog::WriteLogger::init(
+    //     log_level,
+    //     simplelog::Config::default(),
+    //     log_file
+    // ).unwrap();
 
     log::info!("STARTING TERM MODE");
     enable_raw_mode()?;
@@ -272,6 +271,7 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
         }
 
         terminal.draw(|f| {
+            // f.buffer_mut().clone();
             if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
                 let layout = Layout::default()
                 .direction(Direction::Horizontal)
@@ -378,10 +378,12 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
                         ui_message.as_display().render_widget::<B>(f, area);
                     }
                 }
-
             }
-        
         })?;
+
+        // if let Some(tx) = buffer_tx.clone() {
+        //     let _ = tx.try_send(terminal.current_buffer_mut().clone());
+        // }
     }
     
     if *quit {

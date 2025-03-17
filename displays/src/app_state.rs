@@ -1,7 +1,8 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, remote_viewer::ratagui::RataguiBackend, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
+use ratatui::{buffer::Buffer, Terminal};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
@@ -176,13 +177,21 @@ pub struct SharedContext {
     #[serde(skip)]
     pub resource_mon: ResourceMonitor,
     #[serde(skip)]
-    pub web_console_layout: WebConsoleLayout
+    pub web_console_layout: WebConsoleLayout,
+    #[serde(skip)]
+    pub terminal: Terminal<RataguiBackend>,
+    #[serde(skip)]
+    pub buffer_tx: Sender<Buffer>,
+    #[serde(skip)]
+    pub buffer_rx: Receiver<Buffer>,
 }
 
 impl SharedContext {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
 
+        let (buffer_tx, buffer_rx) = crossbeam::channel::unbounded::<Buffer>();
+        
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
@@ -218,6 +227,9 @@ impl SharedContext {
         let web_console_layout = WebConsoleLayout::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
 
+        let backend = RataguiBackend::new(80, 24); // Width, height
+        let terminal = Terminal::new(backend).unwrap();
+
         Self {
             current_user: None,
             tasks: Vec::new(),
@@ -229,6 +241,8 @@ impl SharedContext {
             rerun_filtering_store_tasks: false,
             rerun_filtering_completed: false,
             store_selection: 76,
+
+            terminal,
 
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
@@ -263,6 +277,7 @@ impl SharedContext {
             serial_channel,
             extra_stock_channel,
             ai_thread_channel,
+            buffer_tx, buffer_rx,
             // github_releases_channel,
             // seb_channel,
             undock_client: HashMap::new(),

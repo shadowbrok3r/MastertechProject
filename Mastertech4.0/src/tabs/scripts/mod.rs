@@ -81,6 +81,9 @@ impl MastertechContext {
         let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
         keys.sort_unstable(); // Sort the script names alphabetically
 
+        // for scripts in self.scripts.iter() {
+        //     ui.checkbox(&mut false, script)
+        // }
         Grid::new("scripts")
             .min_col_width(self.widget_size)
             .num_columns(1)
@@ -157,6 +160,17 @@ impl MastertechContext {
 
 impl Default for Scripts {
     fn default() -> Self {
+        // let scripts = vec![
+        //     "Disable Sleep / Hibernation", "Install Windows Updates","Activate CPS","Activate SEB","Run Tron",
+        //     "Run SuperAntiSpyware Scan","Run Webroot Scan","Run Junkware Category","Data Transfer",
+        //     "Install LibreOffice","Disable Sleep / Hibernation","Disable proxy settings","Disable Notifications",
+        //     "Change SuperAntiSpyware settings","Disable Startup Apps","Unpin Copilot","Align Taskbar to left",
+        //     "Webroot TEST","SuperAnti TEST","OneLaunch","WebNavigator Browser","ESET Security","Wave Browser",
+        //     "Clear Browser","Shift Browser","Avast Browser","Mcaffee Safe","Driver Support", "Winzip", 
+        //     "Is SuperEasyBackup installed?", "Is Webroot installed?", "Is SuperAntiSpyware installed?", 
+        //     "Are there scheduled tasks for it?", "Is Windows Activated?", "Is Hibernation/Sleep enabled?", 
+        //     "Any Recent Blue Screens?", "When Was The Last Service Date?", "Windows Version"
+        // ];
         Self {
             service_number: None,
             client: Client::new(),

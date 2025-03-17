@@ -21,7 +21,7 @@ pub struct WidgetId(pub String);
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApiEvent {
     GetTicketResponse(PrestashopPayload),
-    GetSebResponse(CarboniteResponse)
+    GetSebResponse(Vec<CarboniteResponse>)
 }
 
 #[derive(Debug, Clone, PartialEq)]
