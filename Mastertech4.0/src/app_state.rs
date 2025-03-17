@@ -202,7 +202,7 @@ impl MasterTechApp {
         let tur_channel = PrestashopPayload::create_unbounded_channel();
 
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
-        
+
         let mastertech_context = MastertechContext {
             shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),

@@ -89,7 +89,7 @@ pub fn get_db_url() -> String {
 }
 
 pub async fn initialize_db() -> anyhow::Result<()> {
-    DATABASE.connect::<Wss>(DB_URL_LOCAL).await?;
+    DATABASE.connect::<Wss>(DB_URL_DEV).await?;
     DATABASE.use_ns(NS).use_db(DB).await?;
     Ok(())
 }

@@ -1,29 +1,11 @@
 //! This module provides the `RataguiBackend` implementation for the [`Backend`] trait.
 //! It is used in the integration tests to verify the correctness of the library.
-
-use eframe::egui::{epaint::{
-    text::{LayoutJob, TextFormat},
-    Color32, FontFamily, FontId, Fonts,
-}, Align, Widget};
-use eframe::egui::text::TextWrapping;
-use eframe::egui::{Label, Response, Stroke, Ui};
-
-use ratatui::{
-    layout::Position,
-    style::{Color, Modifier},
-};
-
-use std::io;
+use ratatui::{backend::{Backend, ClearType, WindowSize}, buffer::{Buffer, Cell}, layout::{Position, Rect, Size}, style::{Color, Modifier}};
+use eframe::egui::{epaint::{text::{LayoutJob, TextFormat, TextWrapping},Color32, FontFamily, FontId, Fonts}, Align, Widget, Label, Response, Stroke, Ui};
 use web_time::Instant;
-
-use ratatui::{
-    backend::{Backend, ClearType, WindowSize},
-    buffer::{Buffer, Cell},
-    layout::{Rect, Size},
-};
+use std::io;
 
 use super::terminal_line::TerminalLine;
-//use egui::Label as TerminalLine;
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 struct InstantWrapper(Instant);
@@ -242,6 +224,7 @@ impl RataguiBackend {
             blinking_fast: false,
         }
     }
+    
     pub fn new_with_fonts(
         width: u16,
         height: u16,
@@ -270,6 +253,7 @@ impl RataguiBackend {
     pub fn get_font_size(&self) -> u16 {
         self.font_size.clone()
     }
+    
     pub fn set_font_size(&mut self, desired: u16) {
         self.font_size = desired;
 
@@ -290,6 +274,7 @@ impl RataguiBackend {
         self.width = width;
         self.height = height;
     }
+    
     pub fn get_font_width(&self, fontiki: &Fonts) -> f32 {
         let fid = self.regular_font.clone();
         let widik = fontiki.glyph_width(&fid, ' ');

@@ -21,15 +21,17 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
 
         let mut scroll_view = ScrollView::new(virtual_size);
 
+        // Updated constraints: Larger row 8, product/price starts at row 9
         let constraints = vec![
-            Constraint::Length(3),  // Row 1
-            Constraint::Length(3),  // Row 2
-            Constraint::Length(3),  // Row 3
-            Constraint::Length(3),  // Row 4
-            Constraint::Length(3),  // Row 5
-            Constraint::Length(1),  // Row 6
-            Constraint::Length(3),  // Row 7
-            Constraint::Max(10),    // Row 8
+            Constraint::Length(3),  // Row 1: Get Ticket | Submit
+            Constraint::Length(3),  // Row 2: Service Number | Device Name | Device Mfg
+            Constraint::Length(3),  // Row 3: Customer Email | Device Model | Device Serial
+            Constraint::Length(3),  // Row 4: Customer Name | Customer Phone | Device Password | Device Powersupply
+            Constraint::Length(3),  // Row 5: Salesman | Technician | Carbonite Device Name | Device ID
+            Constraint::Length(3),  // Row 6: Get Keys | Check SEB | Activation Code | Recurly Id
+            Constraint::Length(3),  // Row 7: Webroot Key | SuperAnti Key | Usage (Gb) | (empty)
+            Constraint::Length(8),  // Row 8: CheckIn Notes | Recommendations | (empty) | (empty)
+            Constraint::Max(10),    // Row 9+: product_name | product_price rows
         ];
 
         let rows = Layout::default()
@@ -97,19 +99,21 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             self.other_fields[6].render_ref(row4[3], scroll_view.buf_mut());
         }
 
-        // Row 5: Salesman | Technician | product_name | product_price
+        // Row 5: Salesman | Technician | Carbonite Device Name | Device ID
         let row5 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
             .split(rows[4]);
         self.salesman_name.render_ref(row5[0], scroll_view.buf_mut());
         self.technician_name.render_ref(row5[1], scroll_view.buf_mut());
-        if self.order_row_fields.len() > 0 {
-            self.order_row_fields[0].0.render_ref(row5[2], scroll_view.buf_mut());
-            self.order_row_fields[0].1.render_ref(row5[3], scroll_view.buf_mut());
+        if self.seb_fields.len() > 0 {
+            self.seb_fields[0].render_ref(row5[2], scroll_view.buf_mut()); // Carbonite Device Name
+        }
+        if self.seb_fields.len() > 1 {
+            self.seb_fields[1].render_ref(row5[3], scroll_view.buf_mut()); // Device ID
         }
 
-        // Row 6: Get Keys | Check SEB | product_name | product_price
+        // Row 6: Get Keys | Check SEB | Activation Code | Recurly Id
         let row6 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
@@ -118,12 +122,14 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
         self.get_keys_btn.render_ref(get_keys_btn_area, scroll_view.buf_mut());
         let check_seb_btn_area = row6[1].shrink(4, 0);
         self.check_seb_btn.render_ref(check_seb_btn_area, scroll_view.buf_mut());
-        if self.order_row_fields.len() > 1 {
-            self.order_row_fields[1].0.render_ref(row6[2], scroll_view.buf_mut());
-            self.order_row_fields[1].1.render_ref(row6[3], scroll_view.buf_mut());
+        if self.seb_fields.len() > 2 {
+            self.seb_fields[2].render_ref(row6[2], scroll_view.buf_mut()); // Activation Code
+        }
+        if self.seb_fields.len() > 3 {
+            self.seb_fields[3].render_ref(row6[3], scroll_view.buf_mut()); // Recurly Id
         }
 
-        // Row 7: Webroot Key | SuperAnti Key | product_name | product_price
+        // Row 7: Webroot Key | SuperAnti Key | Usage (Gb) | (empty)
         let row7 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
@@ -132,22 +138,22 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
         self.webroot_key_btn.render_ref(webroot_key_btn_area, scroll_view.buf_mut());
         let superanti_key_btn_area = row7[1].shrink(4, 0);
         self.superanti_key_btn.render_ref(superanti_key_btn_area, scroll_view.buf_mut());
-        if self.order_row_fields.len() > 2 {
-            self.order_row_fields[2].0.render_ref(row7[2], scroll_view.buf_mut());
-            self.order_row_fields[2].1.render_ref(row7[3], scroll_view.buf_mut());
+        if self.seb_fields.len() > 4 {
+            self.seb_fields[4].render_ref(row7[2], scroll_view.buf_mut()); // Usage (Gb)
         }
 
-        // Row 8: CheckIn Notes | Recommendations
+        // Row 8: CheckIn Notes | Recommendations | (empty) | (empty)
         let row8 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
             .split(rows[7]);
         self.checkin_notes.render_ref(row8[0], scroll_view.buf_mut());
         self.recommendations.render_ref(row8[1], scroll_view.buf_mut());
+        // No rendering in row8[2] or row8[3] to keep them empty
 
-        // Additional Rows: (empty) | (empty) | product_name | product_price
-        for (i, (name_field, price_field)) in self.order_row_fields.iter().enumerate().skip(3) {
-            let row_idx = 8 + i - 3; // Start at row 9 (index 8)
+        // Row 9+: (empty) | (empty) | product_name | product_price
+        for (i, (name_field, price_field)) in self.order_row_fields.iter().enumerate() {
+            let row_idx = 8 + i; // Start at row 9 (index 8)
             if row_idx < rows.len() {
                 let extra_row = Layout::default()
                     .direction(Direction::Horizontal)
@@ -223,6 +229,11 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                     for input_fields in self.other_fields.iter() {
                         input_fields.handle_mouse_event(&adjusted_event);
                     }
+
+                    for input_fields in self.seb_fields.iter() {
+                        input_fields.handle_mouse_event(&adjusted_event);
+                    }
+
                     self.get_keys_btn.handle_mouse_event(&adjusted_event);
                     self.check_seb_btn.handle_mouse_event(&adjusted_event);
                     self.webroot_key_btn.handle_mouse_event(&adjusted_event);
