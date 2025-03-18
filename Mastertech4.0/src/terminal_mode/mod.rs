@@ -1,3 +1,4 @@
+use database::WS_CLIENT_URL;
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
@@ -6,7 +7,7 @@ use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
 use fx::{effect::UniqueEffectId, EffectStage};
-use crossbeam::channel::unbounded;
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use context::TerminalContext;
 // use tachyonfx::CellFilter;
 use widgets::HandleWidget;
@@ -53,10 +54,15 @@ pub struct TerminalApp<'a> {
     ctx: Arc<Mutex<TerminalContext>>,
     render_system: Arc<RenderSystem>,
     data_system: Arc<DataSystem>,
+    buffer_tx: Sender<Buffer>,
+    buffer_rx: Receiver<Buffer>,
 }
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
+        // Create the channel for Buffer messages.
+        let (buffer_tx, buffer_rx) = unbounded();
+
         let client = Client::new();
         // Create channels explicitly for communication between Data and Render systems
         let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
@@ -98,6 +104,8 @@ impl Default for TerminalApp <'_>{
             render_system,
             data_system,
             tasks_tab,
+            buffer_tx,
+            buffer_rx,
         }
     }
 }
@@ -185,6 +193,8 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
             render_system_bg.run(shutdown_rx_render).await;
         })
     );
+
+    start_websocket_sender(app.buffer_rx);
 
     let quit = &mut false;
     log::info!("Entering main loop");
@@ -381,9 +391,9 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
             }
         })?;
 
-        // if let Some(tx) = buffer_tx.clone() {
-        //     let _ = tx.try_send(terminal.current_buffer_mut().clone());
-        // }
+        // Clone or obtain the current Buffer and send it.
+        let current_buffer = terminal.current_buffer_mut().clone();
+        let _ = app.buffer_tx.try_send(current_buffer).unwrap();
     }
     
     if *quit {
@@ -408,3 +418,45 @@ fn center_horizontal(area: Rect, width: u16) -> Rect {
 
 
 
+
+use std::thread;
+use ewebsock::{Options, WsMessage};
+use serde_json;
+
+// This function spawns a thread that continuously receives a Buffer,
+// serializes it, and sends it via WebSocket.
+fn start_websocket_sender(buffer_rx: Receiver<ratatui::buffer::Buffer>) {
+    thread::spawn(move || {
+        let options = Options::default();
+        let _url = format!(
+            "{WS_CLIENT_URL}&room_id=test"
+        );
+        // Adjust the URL to use "wss://" if TLS is needed.
+        let (mut sender, receiver) =
+            ewebsock::connect(_url, options)
+                .expect("Failed to connect to websocket server");
+
+        loop {
+            // Block until a new Buffer is received.
+            match buffer_rx.recv() {
+                Ok(buffer) => {
+                    // Serialize the whole Buffer to a JSON string.
+                    let payload = serde_json::to_string(&buffer)
+                        .expect("Failed to serialize Buffer");
+                    
+                    // Send the JSON payload as a text message.
+                    sender.send(WsMessage::Text(payload));
+                }
+                Err(err) => {
+                    log::info!("Buffer channel disconnected: {:?}", err);
+                    break;
+                }
+            }
+
+            // Optionally, process any incoming events from the server.
+            while let Some(event) = receiver.try_recv() {
+               log::info!("Received event: {:?}", event);
+            }
+        }
+    });
+}

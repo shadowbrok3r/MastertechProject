@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0" ] #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
+members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server" ] #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
 
 [workspace.dependencies]
 database = { path = "database" }
