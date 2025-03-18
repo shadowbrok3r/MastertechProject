@@ -181,6 +181,7 @@ pub struct SharedContext {
     pub web_console_layout: WebConsoleLayout,
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
+    pub cached_buffer: Option<Buffer>, // Existing from previous solution
     #[serde(skip)]
     pub buffer_tx: Sender<Buffer>,
     #[serde(skip)]
@@ -197,7 +198,12 @@ impl SharedContext {
         let _url = format!(
             "{WS_MASTER_URL}&room_id=test"
         );
-        let (ws_sender, ws_receiver) = ewebsock::connect(_url, Options::default()).expect("Failed to connect to websocket server");
+        let ctx = cc.egui_ctx.clone();
+        let (ws_sender, ws_receiver) = ewebsock::connect_with_wakeup(
+            _url, 
+            Options::default(),
+            move || ctx.request_repaint()
+        ).expect("Failed to connect to websocket server");
 
         let (buffer_tx, buffer_rx) = crossbeam::channel::unbounded::<Buffer>();
         
@@ -236,10 +242,11 @@ impl SharedContext {
         let web_console_layout = WebConsoleLayout::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
 
-        let backend = RataguiBackend::new(80, 24); // Width, height
+        let backend = RataguiBackend::new(100,200); // Width, height
         let terminal = Terminal::new(backend).unwrap();
 
         Self {
+            cached_buffer: None,
             ws_receiver,
             ws_sender,
             current_user: None,

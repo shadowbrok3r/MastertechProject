@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server" ] #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
+members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server", "websocket_server2" ] #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
 
 [workspace.dependencies]
 database = { path = "database" }
-eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false }
+eframe = { version="0.31.1", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false }
 egui_extras = { version = "0.31.1", features = ["datepicker", "syntect", "serde", "image" ]}
 egui_plot = "0.31"
 image = { version = "0.25.5", features = ["jpeg", "png"] }
@@ -24,7 +24,7 @@ futures = "0.3.31"
 fuzzy-matcher = "0.3"
 rusty-s3 = "0.7"
 uuid = { version = "1", features = ["v4"] } 
-bincode = "1"
+bincode = {version="1"} # , features = ["serde", "derive"]
 rfd = "0.15"
 regex = "1.11.1"
 async-trait = "0.1"

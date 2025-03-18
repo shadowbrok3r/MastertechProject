@@ -77,12 +77,13 @@ impl ComputerInfo for ComputerData {
 
             info!("Filesystem -> get_computer_data -> Process: {process:?}");
 
-            let x = process.unwrap().stdout;
-            info!("Filesystem -> get_computer_data -> x: {x:?}");
+            if let Ok(out) = process {
+                info!("Filesystem -> get_computer_data -> out: {out:?}");
+                let gpu = String::from_utf8(out.stdout).unwrap_or(String::new());
+                info!("Filesystem -> get_computer_data -> GPU: {gpu:?}");
+                self.gpu = gpu.clone().trim().to_string();
+            }
 
-            let gpu = String::from_utf8(x).unwrap_or(String::new());
-            info!("Filesystem -> get_computer_data -> GPU: {gpu:?}");
-            self.gpu = gpu.clone().trim().to_string();
         }
 
         #[cfg(target_os = "linux")]

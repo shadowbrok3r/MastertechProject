@@ -1,56 +1,132 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
-use ratatui::buffer::Buffer;
-use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
-use database::{schema::{utilities::get_connected_clients, ConnectedClient}, WS_MASTER_URL};
+use crate::{channel_manager::ChannelManager, remote_viewer::ratagui::DiffMerge, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
+use database::{schema::{utilities::{decompress_data, get_connected_clients}, ConnectedClient}, WS_MASTER_URL};
+use ratatui::{buffer::Buffer, layout::{Position, Rect}, style::{Color, Style as TermStyle}};
+use websockets::{WebSocketClient, ClientHandler};
+use base64::{engine::general_purpose, Engine};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
-use core::f32;
 use std::collections::{BTreeMap, HashMap};
 use crate::app_state::SharedContext;
-use websockets::{WebSocketClient, ClientHandler};
 use std::collections::BTreeSet;
 use chrono::{DateTime, Local};
 use std::borrow::BorrowMut;
 use serde::Serialize;
 use std::sync::Arc;
 use log::info;
+use core::f32;
 
 use super::script_editor::ScriptEditor;
 
 pub mod websockets;
 
+/// Decompress and decode the given Vec<u8> (which is base64-encoded compressed JSON)
+/// and deserialize it back into a Buffer.
+pub fn decompress_buffer(input: Vec<u8>) -> anyhow::Result<Buffer, anyhow::Error> {
+    // Convert the input Vec<u8> into a String.
+    let encoded_str = String::from_utf8(input)?;
+    // Base64-decode into the compressed data.
+    let compressed = general_purpose::STANDARD.decode(&encoded_str)?;
+    // Decompress the data.
+    let decompressed = decompress_data(&compressed)?;
+    // Convert decompressed bytes into a string.
+    let decompressed_string = String::from_utf8(decompressed)?;
+    // Deserialize the JSON string into a Buffer.
+    let buf = serde_json::from_str::<Buffer>(&decompressed_string)?;
+    Ok(buf)
+}
+
+// Helper function to resize a buffer
+fn resize_buffer(source: &Buffer, target_area: Rect) -> Buffer {
+    let mut new_buffer = Buffer::empty(target_area);
+
+    // Copy content from source to new buffer, respecting bounds
+    for y in 0..source.area.height.min(target_area.height) {
+        for x in 0..source.area.width.min(target_area.width) {
+            if let Some(source_cell) = source.cell((x, y)) {
+                if let Some(target_cell) = new_buffer.cell_mut(Position::new(x, y)) {
+                    target_cell.clone_from(source_cell);
+                }
+            }
+        }
+    }
+
+    new_buffer
+}
+
 impl SharedContext {
     pub fn egui_terminal(&mut self, ui: &mut Ui) {
-        let maybe_buf = &mut Buffer::default();
-        if let Some(ws_event) = self.ws_receiver.try_recv() {
+        // Handle incoming WebSocket events
+        while let Some(ws_event) = self.ws_receiver.try_recv() {
             match ws_event {
                 ewebsock::WsEvent::Message(ws_message) => {
-                    match ws_message {
-                        ewebsock::WsMessage::Text(buf_string) => {
-                            
-                            let buf = serde_json::from_str::<Buffer>(&buf_string);
-                            match buf {
-                                Ok(buffer) => {
-                                    *maybe_buf = buffer;
+                    if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
+                        let buffer_tx = self.buffer_tx.clone(); // Clone sender for the task
+
+                        // Spawn a task to process the buffer
+                        PlatformSpawner::spawn(async move {
+                            if let Ok(new_buffer) = decompress_buffer(buffer_array) {
+                                // Send the processed buffer back to the main thread
+                                if buffer_tx.try_send(new_buffer).is_err() {
+                                    log::warn!("Failed to send processed buffer to main thread");
                                 }
-                                Err(e) => log::info!("Error: {e:?}")
                             }
-                        },
-                        _ => {}
+                        });
                     }
-                },
+                }
                 _ => {}
             }
         }
-        self.terminal.draw(|f| {
-            f.buffer_mut().merge(maybe_buf);
-        }).unwrap();
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        // Get the available size from the CentralPanel
+        let available_size = ui.available_size();
+        let target_width = available_size.x as u16;
+        let target_height = available_size.y as u16;
+        let target_area = Rect::new(0, 0, target_width, target_height);
+
+        // Process received buffers from the spawned task
+        while let Ok(new_buffer) = self.buffer_rx.try_recv() {
+            let resized_buffer = if new_buffer.area != target_area {
+                resize_buffer(&new_buffer, target_area)
+            } else {
+                new_buffer
+            };
+
+            // let should_update = if let Some(ref cached) = self.cached_buffer {
+            //     !cached.diff(&resized_buffer).is_empty()
+            // } else {
+            //     true
+            // };
+
+            // if should_update {
+                log::info!("Should update");
+                log::info!("target_area: {target_area:?}");
+                log::info!("resized_buffer.area: {:?}", resized_buffer.area);
+
+                self.terminal
+                    .draw(|f| {
+                        let available_area = f.area();
+                        if available_area != resized_buffer.area {
+                            f.buffer_mut().resize(resized_buffer.area);
+                        }
+                        // f.buffer_mut().set_style(resized_buffer.area, TermStyle::default().bg(Color::Rgb(8, 8, 12)));
+                        f.buffer_mut().merge(&resized_buffer); // .diff_merge(&resized_buffer);
+                    })
+                    .expect("Failed to draw terminal frame");
+
+                self.cached_buffer = Some(resized_buffer);
+                ui.ctx().request_repaint();
+            // }
+        }
+
+        // Render the terminal in egui
+        eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.add(self.terminal.backend_mut());
         });
     }
 }
+
+
 
 pub enum ClientUiAction {
     UndockClient(String),
