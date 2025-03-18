@@ -840,17 +840,18 @@ impl PhoneNumberFormatter {
     }
 }
 
-
+/// Compress data using Brotli.
 pub fn compress_data(input: &[u8]) -> Result<Vec<u8>, Error> {
     let mut compressed = Vec::new();
     {
+        // Create a Brotli compressor with a buffer size of 4096, quality 11 and lgwin 22.
         let mut compressor = brotli::CompressorReader::new(input, 4096, 11, 22);
         std::io::copy(&mut compressor, &mut compressed)?;
     }
     Ok(compressed)
 }
 
-
+/// Decompress data using Brotli.
 pub fn decompress_data(input: &[u8]) -> Result<Vec<u8>, Error> {
     let mut decompressed = Vec::new();
     let mut decompressor = brotli::Decompressor::new(input, 4096);

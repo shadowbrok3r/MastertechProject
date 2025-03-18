@@ -17,6 +17,25 @@ impl Default for InstantWrapper {
     }
 }
 
+pub trait DiffMerge {
+    fn diff_merge(&mut self, new: &ratatui::buffer::Buffer);
+}
+
+impl DiffMerge for ratatui::buffer::Buffer {
+    fn diff_merge(&mut self, new: &ratatui::buffer::Buffer) {
+        // Compute diff
+        let changes = self.diff(new);
+        // Apply each change
+        for (x, y, new_cell) in changes {
+            let cell = self.cell_mut(Position { x, y });
+            if let Some(c) = cell {
+                c.clone_from(new_cell)
+            }
+        }
+    }
+}
+
+
 ///The RataguiBackend is the widget+backend itself , from which you can make a ratatui terminal ,
 /// then you can do ui.add(terminal.backend_mut()) inside an egui context    .
 /// Spawn with RataguiBackend::new() or RataguiBackend::new_with_fonts()   .
@@ -288,7 +307,7 @@ impl RataguiBackend {
                 if is_a_fg {
                     Color32::from_rgb(204, 204, 255)
                 } else {
-                    Color32::from_rgb(15, 15, 112)
+                    Color32::from_rgb(10,10,14)
                 }
             }
             Color::Black => Color32::BLACK,

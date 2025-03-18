@@ -1,19 +1,22 @@
-use database::WS_CLIENT_URL;
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use systems::{communication_system::{CommunicationSystem, Message}, data_system::DataSystem, notification_system::{Notification, NotificationType}, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
+use database::{schema::utilities::compress_data, WS_CLIENT_URL};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
-use fx::{effect::UniqueEffectId, EffectStage};
 use crossbeam::channel::{unbounded, Receiver, Sender};
+use base64::{engine::general_purpose, Engine as _};
+use fx::{effect::UniqueEffectId, EffectStage};
 use context::TerminalContext;
 // use tachyonfx::CellFilter;
 use widgets::HandleWidget;
 // use styling::CATPPUCCIN;
 use ratatui::prelude::*;
 use reqwest::Client;
+use std::thread;
+use serde_json;
 
 pub mod systems;
 pub mod widgets;
@@ -56,6 +59,7 @@ pub struct TerminalApp<'a> {
     data_system: Arc<DataSystem>,
     buffer_tx: Sender<Buffer>,
     buffer_rx: Receiver<Buffer>,
+    cached_buffer: Option<Buffer>, // Existing from previous solution
 }
 
 impl Default for TerminalApp <'_>{
@@ -106,6 +110,7 @@ impl Default for TerminalApp <'_>{
             tasks_tab,
             buffer_tx,
             buffer_rx,
+            cached_buffer: None,
         }
     }
 }
@@ -194,7 +199,8 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
         })
     );
 
-    start_websocket_sender(app.buffer_rx);
+    let ws_sender = start_websocket_sender(app.buffer_rx);
+    log::info!("Ws Sender: {ws_sender:?}");
 
     let quit = &mut false;
     log::info!("Entering main loop");
@@ -389,11 +395,25 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
                     }
                 }
             }
-        })?;
+            // Avoid cloning the buffer twice by reusing it
+            // let current_buffer = f.buffer_mut(); // Borrow mutably without cloning initially
+            // let should_send = if let Some(ref cached) = app.cached_buffer {
+            //     !cached.diff(current_buffer).is_empty() // Compare directly with borrowed buffer
+            // } else {
+            //     true // No cache yet, so send
+            // };
 
-        // Clone or obtain the current Buffer and send it.
-        let current_buffer = terminal.current_buffer_mut().clone();
-        let _ = app.buffer_tx.try_send(current_buffer).unwrap();
+            let buffer_to_send = f.buffer_mut().clone();
+            if let Err(e) = app.buffer_tx.try_send(buffer_to_send) {
+                log::warn!("Failed to send buffer: {:?}", e); // Log if channel is full
+            } //else {
+            //     app.cached_buffer = Some(buffer_to_send.clone()); // Update cache only on successful send
+            // }
+            // if should_send {
+            //     // Clone only once, when necessary, and send
+
+            // }
+        })?;
     }
     
     if *quit {
@@ -416,47 +436,51 @@ fn center_horizontal(area: Rect, width: u16) -> Rect {
     area
 }
 
-
-
-
-use std::thread;
-use ewebsock::{Options, WsMessage};
-use serde_json;
-
-// This function spawns a thread that continuously receives a Buffer,
-// serializes it, and sends it via WebSocket.
-fn start_websocket_sender(buffer_rx: Receiver<ratatui::buffer::Buffer>) {
+/// This function spawns a thread that continuously receives a Buffer,
+/// serializes it, and sends it via WebSocket.
+fn start_websocket_sender(buffer_rx: Receiver<ratatui::buffer::Buffer>) -> anyhow::Result<()> {
     thread::spawn(move || {
-        let options = Options::default();
-        let _url = format!(
-            "{WS_CLIENT_URL}&room_id=test"
+        let connection = ewebsock::connect(
+            format!("{WS_CLIENT_URL}&room_id=test"), 
+            ewebsock::Options::default()
         );
-        // Adjust the URL to use "wss://" if TLS is needed.
-        let (mut sender, receiver) =
-            ewebsock::connect(_url, options)
-                .expect("Failed to connect to websocket server");
-
-        loop {
-            // Block until a new Buffer is received.
-            match buffer_rx.recv() {
-                Ok(buffer) => {
-                    // Serialize the whole Buffer to a JSON string.
-                    let payload = serde_json::to_string(&buffer)
-                        .expect("Failed to serialize Buffer");
-                    
-                    // Send the JSON payload as a text message.
-                    sender.send(WsMessage::Text(payload));
+        if let Ok((mut sender, receiver)) = connection {
+            loop {
+                // Use select-like behavior to handle both buffer reception and WebSocket events
+                match buffer_rx.recv() {
+                    Ok(buffer) => sender.send(ewebsock::WsMessage::Binary(encode_buffer(&buffer)?)),
+                    Err(err) => {
+                        log::info!("Buffer channel disconnected: {:?}", err);
+                        break;
+                    }
                 }
-                Err(err) => {
-                    log::info!("Buffer channel disconnected: {:?}", err);
-                    break;
+
+                // Process incoming WebSocket events to avoid backlog
+                while let Some(event) = receiver.try_recv() {
+                    log::info!("Received event: {:?}", event);
                 }
             }
-
-            // Optionally, process any incoming events from the server.
-            while let Some(event) = receiver.try_recv() {
-               log::info!("Received event: {:?}", event);
-            }
+        } else {
+            log::error!("Failed to establish WebSocket connection");
         }
+        Ok::<(), anyhow::Error>(())
     });
+    Ok(())
 }
+
+
+
+/// Serialize the Buffer to JSON, compress it with Brotli, then base64 encode it and return as Vec<u8>.
+pub fn encode_buffer(buffer: &Buffer) -> anyhow::Result<Vec<u8>, anyhow::Error> {
+    // Serialize the entire buffer into JSON bytes.
+    let serialized = serde_json::to_vec(&buffer)?;
+    // Compress the JSON bytes.
+    let compressed = compress_data(&serialized)?;
+    // Base64-encode the compressed data.
+    let encoded = general_purpose::STANDARD.encode(&compressed);
+    // Return the base64 string as bytes.
+    Ok(encoded.into_bytes())
+}
+
+
+

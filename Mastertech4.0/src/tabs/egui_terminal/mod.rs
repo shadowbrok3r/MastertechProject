@@ -1,6 +1,6 @@
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, CentralPanel};
-use ratatui::{buffer::Buffer, widgets::Paragraph};
+use ratatui::buffer::Buffer;
 
 impl MastertechContext{
     pub fn egui_terminal(&mut self, ui: &mut Ui) {
@@ -22,6 +22,7 @@ impl MastertechContext{
             }
         }
         self.shared_ctx.terminal.draw(|f| {
+            // log::info!("Got a {maybe_buf:?}\n{:?}", f.buffer_mut());
             f.buffer_mut().merge(maybe_buf);
         }).unwrap();
 

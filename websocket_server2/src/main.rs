@@ -55,7 +55,7 @@ impl ChatServer {
     
         // Reject new connections if room already has both a master and a client
         if entry.master.is_some() && entry.client.is_some() {
-            info!(
+            tracing::error!(
                 "Room {} already has a master and a client. Rejecting new {} connection.",
                 room_id, role
             );
@@ -67,7 +67,7 @@ impl ChatServer {
         match role.as_str() {
             "master" => {
                 if entry.master.is_some() {
-                    info!("Room {} already has a master. Rejecting duplicate master connection.", room_id);
+                    tracing::error!("Room {} already has a master. Rejecting duplicate master connection.", room_id);
                     let _ = ws_tx.lock().await.send(Message::Text("Master already exists.".into())).await;
                     return;
                 }
@@ -75,7 +75,7 @@ impl ChatServer {
             }
             "client" => {
                 if entry.client.is_some() {
-                    info!("Room {} already has a client. Rejecting duplicate client connection.", room_id);
+                    tracing::error!("Room {} already has a client. Rejecting duplicate client connection.", room_id);
                     let _ = ws_tx.lock().await.send(Message::Text("Client already exists.".into())).await;
                     return;
                 }
@@ -84,7 +84,7 @@ impl ChatServer {
             _ => {}
         };
 
-        info!("Registering session for role: {role}");
+        tracing::error!("Registering session for role: {role}");
 
         // Register the session with its ID
         self.session_map
@@ -92,8 +92,8 @@ impl ChatServer {
             .await
             .insert(session_id.clone(), ws_tx.clone());
 
-        info!("Updated room: {:?}", entry);
-        info!("Processing messages");
+        tracing::error!("Updated room: {:?}", entry);
+        tracing::error!("Processing messages");
     
         // Clone `Arc<Self>` and `session_id` for the read loop
         let server_clone = Arc::clone(&self);
@@ -117,7 +117,7 @@ impl ChatServer {
                             .await;
                     }
                     Message::Binary(bin) => {
-                        info!("Received binary message: {:?}", String::from_utf8(bin.to_vec()).unwrap_or_default());
+                        // tracing::error!("Received binary message: {:?}", String::from_utf8(bin.to_vec()).unwrap_or_default());
                         server_clone
                             .handle_message(ChatMessage::Send {
                                 from: session_id_clone.clone(),
@@ -129,15 +129,15 @@ impl ChatServer {
                     }
                     Message::Close(close_frame) => {
                         if let Some(frame) = close_frame {
-                            info!("WebSocket closed: {:?} {:?}", frame.reason, frame.code);
+                            tracing::error!("WebSocket closed: {:?} {:?}", frame.reason, frame.code);
                             server_clone
                                 .cleanup_session(&room_id_clone, &session_id_clone, &role1)
                                 .await;
                         }
                         break;
                     }
-                    Message::Ping(bytes) => info!("Ping: {:?}", bytes),
-                    Message::Pong(bytes) => info!("Pong: {:?}", bytes),
+                    Message::Ping(bytes) => tracing::error!("Ping: {:?}", bytes),
+                    Message::Pong(bytes) => tracing::error!("Pong: {:?}", bytes),
                 }
             }
     
@@ -156,7 +156,7 @@ impl ChatServer {
                 let mut sender = ws_tx.lock().await;
                 let b = axum::body::Bytes::new();
                 if let Err(e) = sender.send(Message::Ping(b)).await {
-                    info!("WebSocket {session_id} appears disconnected. Removing from session: {e:?}");
+                    tracing::error!("WebSocket {session_id} appears disconnected. Removing from session: {e:?}");
                     drop(sender);
                     server_clone
                         .cleanup_session(&room_id, &session_id, &role2)
@@ -168,7 +168,7 @@ impl ChatServer {
     }
     
     async fn handle_message(&self, call: ChatMessage) {
-        info!("Handling Message");
+        // tracing::error!("Handling Message");
         match call {
             ChatMessage::Send {
                 from,
@@ -221,14 +221,14 @@ impl ChatServer {
                             };
     
                             if let Err(e) = send_result {
-                                info!("Failed to send message: {:?}", e);
+                                tracing::error!("Failed to send message: {:?}", e);
                             } else {
-                                info!("Message successfully sent to target session");
+                                tracing::error!("Message successfully sent to target session");
                             }
                         });
                     }
                 } else {
-                    info!("Room {} not found", room_id);
+                    tracing::error!("Room {} not found", room_id);
                 }
             }
         }
@@ -247,7 +247,7 @@ impl ChatServer {
                     if let Some(master) = &room.master {
                         if self.is_session_match(master, session_id).await {
                             room.master = None;
-                            info!(
+                            tracing::error!(
                                 "Master session {} removed from room {}",
                                 session_id, room_id
                             );
@@ -258,7 +258,7 @@ impl ChatServer {
                     if let Some(client) = &room.client {
                         if self.is_session_match(client, session_id).await {
                             room.client = None;
-                            info!(
+                            tracing::error!(
                                 "Client session {} removed from room {}",
                                 session_id, room_id
                             );
@@ -322,7 +322,7 @@ async fn websocket_handler(
         .cloned()
         .unwrap_or_else(|| "client".to_string());
 
-    info!("Client connected.\nRole: {:?}\nRoom: {:?}\nSession: {:?}", role, room_id, session_id);
+    tracing::error!("Client connected.\nRole: {:?}\nRoom: {:?}\nSession: {:?}", role, room_id, session_id);
     ws.on_upgrade(move |socket| {
         chat_server
             .clone()
