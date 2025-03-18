@@ -1,7 +1,8 @@
 use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, remote_viewer::ratagui::RataguiBackend, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database, WS_MASTER_URL};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
+use ewebsock::{Options, WsReceiver, WsSender};
 use ratatui::{buffer::Buffer, Terminal};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use surrealdb::{Action, RecordId};
@@ -184,11 +185,19 @@ pub struct SharedContext {
     pub buffer_tx: Sender<Buffer>,
     #[serde(skip)]
     pub buffer_rx: Receiver<Buffer>,
+    #[serde(skip)]
+    pub ws_sender: WsSender,
+    #[serde(skip)]
+    pub ws_receiver: WsReceiver,
 }
 
 impl SharedContext {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
+        let _url = format!(
+            "{WS_MASTER_URL}&room_id=test"
+        );
+        let (ws_sender, ws_receiver) = ewebsock::connect(_url, Options::default()).expect("Failed to connect to websocket server");
 
         let (buffer_tx, buffer_rx) = crossbeam::channel::unbounded::<Buffer>();
         
@@ -231,6 +240,8 @@ impl SharedContext {
         let terminal = Terminal::new(backend).unwrap();
 
         Self {
+            ws_receiver,
+            ws_sender,
             current_user: None,
             tasks: Vec::new(),
             store_users: Vec::new(),

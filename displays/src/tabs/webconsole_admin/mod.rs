@@ -1,4 +1,5 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
+use ratatui::buffer::Buffer;
 use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{schema::{utilities::get_connected_clients, ConnectedClient}, WS_MASTER_URL};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -17,6 +18,39 @@ use log::info;
 use super::script_editor::ScriptEditor;
 
 pub mod websockets;
+
+impl SharedContext {
+    pub fn egui_terminal(&mut self, ui: &mut Ui) {
+        let maybe_buf = &mut Buffer::default();
+        if let Some(ws_event) = self.ws_receiver.try_recv() {
+            match ws_event {
+                ewebsock::WsEvent::Message(ws_message) => {
+                    match ws_message {
+                        ewebsock::WsMessage::Text(buf_string) => {
+                            
+                            let buf = serde_json::from_str::<Buffer>(&buf_string);
+                            match buf {
+                                Ok(buffer) => {
+                                    *maybe_buf = buffer;
+                                }
+                                Err(e) => log::info!("Error: {e:?}")
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        self.terminal.draw(|f| {
+            f.buffer_mut().merge(maybe_buf);
+        }).unwrap();
+
+        CentralPanel::default().show_inside(ui, |ui| {
+            ui.add(self.terminal.backend_mut());
+        });
+    }
+}
 
 pub enum ClientUiAction {
     UndockClient(String),

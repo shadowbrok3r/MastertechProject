@@ -106,7 +106,7 @@ impl ChatServer {
             while let Some(Ok(message)) = ws_rx.next().await {
                 match message {
                     Message::Text(text) => {
-                        info!("Received text message: {}", text);
+                        // info!("Received text message: {}", text);
                         server_clone
                             .handle_message(ChatMessage::Send {
                                 from: session_id_clone.clone(),
@@ -176,10 +176,10 @@ impl ChatServer {
                 text,
                 bin,
             } => {
-                info!(
-                    "Handling message from session {} in room {}: {}",
-                    from, room_id, text
-                );
+                // info!(
+                //     "Handling message from session {} in room {}: {}",
+                //     from, room_id, text
+                // );
     
                 let rooms = self.rooms.lock().await;
                 if let Some(room) = rooms.get(&room_id) {
@@ -209,7 +209,7 @@ impl ChatServer {
                     };
     
                     if let Some(session) = target_session {
-                        info!("Relaying message to target session in room {}", room_id);
+                        // info!("Relaying message to target session in room {}", room_id);
     
                         let ws_clone = session.clone();
                         tokio::spawn(async move {
