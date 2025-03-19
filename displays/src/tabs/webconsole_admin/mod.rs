@@ -1,12 +1,12 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
-use crate::{channel_manager::ChannelManager, remote_viewer::ratagui::DiffMerge, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
+use crate::{channel_manager::ChannelManager, remote_viewer::{decode_buffer, ratagui::DiffMerge}, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{schema::{utilities::{decompress_data, get_connected_clients}, ConnectedClient}, WS_MASTER_URL};
-use ratatui::{buffer::Buffer, layout::{Position, Rect}, style::{Color, Style as TermStyle}, widgets::Paragraph};
+use ratatui::{buffer::Buffer, layout::{Position, Rect}};
 use websockets::{WebSocketClient, ClientHandler};
 use base64::{engine::general_purpose, Engine};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
-use std::collections::{BTreeMap, HashMap};
+use std::{collections::{BTreeMap, HashMap}, time::{Duration, Instant}};
 use crate::app_state::SharedContext;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Local};
@@ -36,6 +36,7 @@ pub fn decompress_buffer(input: Vec<u8>) -> anyhow::Result<Buffer, anyhow::Error
     Ok(buf)
 }
 
+
 // Helper function to resize a buffer
 fn resize_buffer(source: &Buffer, target_area: Rect) -> Buffer {
     let mut new_buffer = Buffer::empty(target_area);
@@ -57,21 +58,21 @@ fn resize_buffer(source: &Buffer, target_area: Rect) -> Buffer {
 impl SharedContext {
     #[unsafe(no_mangle)]
     pub fn egui_terminal(&mut self, ui: &mut Ui) {
-        ui.text_edit_multiline(&mut self.room_id);
-        if ui.button("Submit").clicked() {
-            let id = self.room_id.clone();
-            let _url = format!(
-                "{WS_MASTER_URL}&room_id={id}"
-            );
+        // ui.text_edit_multiline(&mut self.room_id);
+        // if ui.button("Submit").clicked() {
+        //     let id = self.room_id.clone();
+        //     let _url = format!(
+        //         "{WS_MASTER_URL}&room_id={id}"
+        //     );
             
-            let (ws_sender, ws_receiver) = ewebsock::connect(
-                _url, 
-                ewebsock::Options::default()
-            ).expect("Failed to connect to websocket server");
+        //     let (ws_sender, ws_receiver) = ewebsock::connect(
+        //         _url, 
+        //         ewebsock::Options::default()
+        //     ).expect("Failed to connect to websocket server");
 
-            self.ws_sender = ws_sender;
-            self.ws_receiver = ws_receiver;
-        }
+        //     self.ws_sender = ws_sender;
+        //     self.ws_receiver = ws_receiver;
+        // }
 
         let available_size = ui.available_size();
         let target_width = available_size.x as u16;
@@ -80,11 +81,22 @@ impl SharedContext {
 
         // Handle incoming WebSocket events
         while let Some(ws_event) = self.ws_receiver.try_recv() {
+            let receive_start = Instant::now();
             match ws_event {
                 ewebsock::WsEvent::Message(ws_message) => {
                     if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
-                        if let Ok(new_buffer) = serde_json::from_slice(&buffer_array) {
-                            self.cached_buffer = Some(new_buffer);
+                        match decode_buffer(&buffer_array) {
+                            Ok(new_buffer) => {
+                                self.cached_buffer = Some(resize_buffer(&new_buffer, target_area));
+                                self.buffer_count += 1;
+                                let receive_duration = receive_start.elapsed();
+                                log::info!(
+                                    "Buffer received and resized: {:?}, duration: {:?}",
+                                    self.cached_buffer.as_ref().unwrap().area,
+                                    receive_duration
+                                );
+                            },
+                            Err(e) => log::warn!("Error decoding message: {e:?}"),
                         }
                     }
                 }
@@ -99,35 +111,55 @@ impl SharedContext {
         //     // *buf = resize_buffer(&new_buffer, target_area);
         // }
 
-        // std::thread::scope(|s| {
-        //     s.spawn(|| {
-                self.terminal
-                .draw(|f| {
-                    let x = f.buffer_mut();
-                    // let available_area = f.area();
-                    // log::info!("available_area: {available_area:?}");
-                    // log::info!("target_area: {target_area:?}");
-                    // x.resize(target_area);
-                    
-                    // let available_area = f.area();
-                    // log::info!("NEW AVAIL AREA: {available_area:?}");
-                    // f.buffer_mut().set_style(target_area, TermStyle::default().bg(Color::Rgb(8, 8, 12)));
-                    if let Some(cached_buffer) = &mut self.cached_buffer {
-                        // log::warn!("cached_buffer.area: {:?}", cached_buffer.area);
-                        // f.buffer_mut().diff_merge(cached_buffer);
-                        *x = std::mem::take(&mut resize_buffer(&cached_buffer, target_area));
-                    }
-                    // f.render_widget(Paragraph::new("Test"), f.area());
-                })
-                .expect("Failed to draw terminal frame");
-    //         });
-    //    });
+        // Resize the terminal and draw continuously
+        // self.terminal.resize(target_area).expect("Failed to resize terminal");
+
+        
+        // Draw continuously with timing
+        let draw_start = Instant::now();
+
+
+        self.terminal
+        .draw(|f| {
+            let x = f.buffer_mut();
+            x.resize(target_area);
+            // log::info!("target_area: {target_area:?}");
+            // log::info!("x area NEW AVAIL AREA: {available_area:?}");
+            if let Some(cached_buffer) = &mut self.cached_buffer {
+                log::info!("cached_buffer.area: {:?}", cached_buffer.area);
+                log::info!("target_area: {target_area:?}");
+                log::info!("buffer area before swap: {:?}", x.area);
+                std::mem::swap(cached_buffer, x);
+                log::info!("buffer area after swap: {:?}", x.area);
+                self.frame_count += 1;
+            }
+        })
+        .expect("Failed to draw terminal frame");
+        let draw_duration = draw_start.elapsed();
+        // self.terminal.flush().expect("Failed to flush backend");
+
+        let frame_count = self.terminal.get_frame().count();
+        log::info!("Frame Count: {frame_count:?}");
 
 
         // Render the terminal in egui
         eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.add(self.terminal.backend_mut());
         });
+
+        // Periodic performance logging (e.g., every second)
+        if self.last_log.elapsed() >= Duration::from_secs(1) {
+            log::info!(
+                "Performance: buffer_count={}, frame_count={}, draw_duration={:?}",
+                self.buffer_count,
+                self.frame_count,
+                draw_duration
+            );
+            self.last_log = Instant::now();
+            // Optionally reset counters for the next interval
+            self.buffer_count = 0;
+            self.frame_count = 0;
+        }
     }
 }
 

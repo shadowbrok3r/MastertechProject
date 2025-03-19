@@ -1,6 +1,10 @@
 use crossbeam::channel::{unbounded, Receiver, TryRecvError};
-use ratatui::crossterm::event::{KeyEvent, KeyEventKind, MouseEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use futures::{FutureExt, StreamExt};
+
+use crate::terminal_mode::{systems::{communication_system::CommunicationSystem, notification_system::{Notification, NotificationType}}, tabs::Tab};
+
+use super::{widgets::HandleWidget, TerminalApp};
 
 pub mod action_handler;
 
@@ -14,6 +18,93 @@ pub enum Event {
 
 pub struct EventHandler {
     rx: Receiver<Event>,
+}
+
+impl <'a>TerminalApp<'a> {
+    pub fn handle_events(&mut self) -> bool {
+        let quit = &mut false;
+        if let Ok(events) = self.event_handler.next() {
+            let current_tab = self.menu_bar.current_tab.borrow().clone();
+            match events {
+                Event::Key(key_event) => {
+                    let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
+                    match key_event.code {
+                        KeyCode::Char('q') if ctrl_key => {
+                            log::info!("Quitting");
+                            *quit = true;
+                        }
+                        KeyCode::Char('n') if ctrl_key => { // Pressing 'n' triggers a notification
+                            let notification = Notification::new(
+                                NotificationType::Info, 
+                                "Some Shit Has Happened.", 
+                                "You pressed the notification key.", 
+                                3
+                            );
+            
+                            let x = self.data_system.send(Box::new(notification));
+                            log::info!("Result: {x:?}");
+                        }
+                        _ => {
+                            if ctrl_key {
+                                match key_event.code {
+                                    // We'll let left/right arrow change tabs
+                                    KeyCode::Right => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                        log::info!("Current tab: {current_tab:?}");
+                                        match current_tab {
+                                            Tab::TurSheet => self.menu_bar.set_active_tab(Tab::Scripts),
+                                            Tab::Scripts => self.menu_bar.set_active_tab(Tab::Tasks),
+                                            Tab::Tasks => self.menu_bar.set_active_tab(Tab::SystemInfo),
+                                            Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Logs),
+                                            Tab::Logs => self.menu_bar.set_active_tab(Tab::Login),
+                                            Tab::Login => self.menu_bar.set_active_tab(Tab::TurSheet),
+                                        };
+                                    }
+                                    KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                        match current_tab {
+                                            Tab::TurSheet => self.menu_bar.set_active_tab(Tab::Login),
+                                            Tab::Scripts => self.menu_bar.set_active_tab(Tab::TurSheet),
+                                            Tab::Tasks => self.menu_bar.set_active_tab(Tab::Scripts),
+                                            Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Tasks),
+                                            Tab::Logs => self.menu_bar.set_active_tab(Tab::SystemInfo),
+                                            Tab::Login => self.menu_bar.set_active_tab(Tab::Logs),
+                                        };
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            // Now dispatch key event to the active widget, and only one widget:
+                            let consumed = match current_tab {
+                                Tab::TurSheet => self.service_tab.borrow_mut().handle_key_event(key_event),
+                                Tab::Scripts => self.scripts_tab.borrow_mut().handle_key_event(key_event),
+                                Tab::Tasks => self.tasks_tab.borrow_mut().handle_key_event(key_event),
+                                Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
+                                Tab::Logs => self.logger.handle_key_event(key_event),
+                                Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
+                            };
+
+                            if consumed {}
+                        }
+                    };
+                },
+                Event::Mouse(mouse_event) => {
+                    self.menu_bar.handle_mouse_event(&mouse_event);
+                     match current_tab {
+                        Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
+                        Tab::Logs => {}
+                        Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                    };
+                },
+                Event::Error => log::info!("Error in event loop"),
+                Event::Tick => {}
+            }
+        }
+
+        *quit
+    }
 }
 
 impl EventHandler {
