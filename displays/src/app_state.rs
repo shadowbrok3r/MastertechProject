@@ -190,6 +190,7 @@ pub struct SharedContext {
     pub ws_sender: WsSender,
     #[serde(skip)]
     pub ws_receiver: WsReceiver,
+    pub room_id: String
 }
 
 impl SharedContext {
@@ -328,6 +329,7 @@ impl SharedContext {
             timer: None,
             filesystem,
             web_console_layout,
+            room_id: String::new(),
         }
     }
 

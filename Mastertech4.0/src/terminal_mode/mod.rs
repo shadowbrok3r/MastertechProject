@@ -3,7 +3,7 @@ use systems::{communication_system::{CommunicationSystem, Message}, data_system:
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use database::{schema::utilities::compress_data, WS_CLIENT_URL};
-use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}};
+use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::Duration};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
 use crossbeam::channel::{unbounded, Receiver, Sender};
@@ -57,15 +57,15 @@ pub struct TerminalApp<'a> {
     ctx: Arc<Mutex<TerminalContext>>,
     render_system: Arc<RenderSystem>,
     data_system: Arc<DataSystem>,
-    buffer_tx: Sender<Buffer>,
-    buffer_rx: Receiver<Buffer>,
+    buffer_tx: tokio::sync::mpsc::UnboundedSender<Buffer>,
+    buffer_rx: tokio::sync::mpsc::UnboundedReceiver<Buffer>,
     cached_buffer: Option<Buffer>, // Existing from previous solution
 }
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
         // Create the channel for Buffer messages.
-        let (buffer_tx, buffer_rx) = unbounded();
+        let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let client = Client::new();
         // Create channels explicitly for communication between Data and Render systems
@@ -199,8 +199,11 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
         })
     );
 
-    let ws_sender = start_websocket_sender(app.buffer_rx);
-    log::info!("Ws Sender: {ws_sender:?}");
+    join_handles.push(
+        tokio::spawn(async move {
+            start_websocket_sender(app.buffer_rx).await;
+        })
+    );
 
     let quit = &mut false;
     log::info!("Entering main loop");
@@ -404,18 +407,18 @@ async fn run_app<'a, B: Backend>(terminal: &mut Terminal<B>, mut app: TerminalAp
             // };
 
             let buffer_to_send = f.buffer_mut().clone();
-            if let Err(e) = app.buffer_tx.try_send(buffer_to_send) {
-                log::warn!("Failed to send buffer: {:?}", e); // Log if channel is full
-            } //else {
-            //     app.cached_buffer = Some(buffer_to_send.clone()); // Update cache only on successful send
-            // }
-            // if should_send {
-            //     // Clone only once, when necessary, and send
-
-            // }
+            let tx = app.buffer_tx.clone();
+            // log::info!("f.count(); {} \nbuffer_to_send.content().len(){}", f.count(), buffer_to_send.content().len());
+            std::thread::scope(|s| {
+                 s.spawn(|| {
+                    if let Err(e) = tx.send(buffer_to_send) {
+                        log::warn!("Failed to send buffer: {:?}", e); // Log if channel is full
+                    }
+                 });
+            });
         })?;
     }
-    
+    // terminal.get_frame().
     if *quit {
         // Signal shutdown
         shutdown_tx.send(())?;
@@ -438,48 +441,58 @@ fn center_horizontal(area: Rect, width: u16) -> Rect {
 
 /// This function spawns a thread that continuously receives a Buffer,
 /// serializes it, and sends it via WebSocket.
-fn start_websocket_sender(buffer_rx: Receiver<ratatui::buffer::Buffer>) -> anyhow::Result<()> {
-    thread::spawn(move || {
-        let connection = ewebsock::connect(
-            format!("{WS_CLIENT_URL}&room_id=test"), 
-            ewebsock::Options::default()
-        );
-        if let Ok((mut sender, receiver)) = connection {
-            loop {
-                // Use select-like behavior to handle both buffer reception and WebSocket events
-                match buffer_rx.recv() {
-                    Ok(buffer) => sender.send(ewebsock::WsMessage::Binary(encode_buffer(&buffer)?)),
-                    Err(err) => {
-                        log::info!("Buffer channel disconnected: {:?}", err);
-                        break;
-                    }
-                }
+#[unsafe(no_mangle)]
+async fn start_websocket_sender(mut buffer_rx: tokio::sync::mpsc::UnboundedReceiver<ratatui::buffer::Buffer>) -> anyhow::Result<()> {
+    let connection = ewebsock::connect(
+        format!("{WS_CLIENT_URL}&room_id=test"), 
+        ewebsock::Options::default()
+    );
+    if let Ok((mut sender, receiver)) = connection {
+        loop {
+            // Use select-like behavior to handle both buffer reception and WebSocket events
 
-                // Process incoming WebSocket events to avoid backlog
-                while let Some(event) = receiver.try_recv() {
-                    log::info!("Received event: {:?}", event);
+            match buffer_rx.recv().await {
+                Some(buffer) => {
+                    log::info!("Sending another buffer");
+                    sender.send(ewebsock::WsMessage::Binary(serde_json::to_vec(&buffer)?));
+                    tokio::time::sleep(Duration::from_secs_f32(0.5)).await;
+                },
+                None => {
+                    log::info!("Buffer channel disconnected");
+                    
+                    // break;
                 }
             }
-        } else {
-            log::error!("Failed to establish WebSocket connection");
+            // Process incoming WebSocket events to avoid backlog
+            while let Some(event) = receiver.try_recv() {
+                log::info!("Received event: {:?}", event);
+            }
         }
-        Ok::<(), anyhow::Error>(())
-    });
+    } else {
+        log::error!("Failed to establish WebSocket connection");
+    }
     Ok(())
 }
 
 
 
 /// Serialize the Buffer to JSON, compress it with Brotli, then base64 encode it and return as Vec<u8>.
+#[unsafe(no_mangle)]
 pub fn encode_buffer(buffer: &Buffer) -> anyhow::Result<Vec<u8>, anyhow::Error> {
-    // Serialize the entire buffer into JSON bytes.
-    let serialized = serde_json::to_vec(&buffer)?;
-    // Compress the JSON bytes.
-    let compressed = compress_data(&serialized)?;
-    // Base64-encode the compressed data.
-    let encoded = general_purpose::STANDARD.encode(&compressed);
+    let mut bytes: Vec<u8> = Vec::new();
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            // Base64-encode the compressed data.
+            // let encoded = general_purpose::STANDARD.encode(&serde_json::to_vec(&buffer)?);
+            // Compress the JSON bytes.
+            let compressed = compress_data(&serde_json::to_vec(&buffer)?)?;
+            bytes = compressed;
+            Ok::<(), anyhow::Error>(())
+        });
+   });
+
     // Return the base64 string as bytes.
-    Ok(encoded.into_bytes())
+    Ok(bytes)
 }
 
 

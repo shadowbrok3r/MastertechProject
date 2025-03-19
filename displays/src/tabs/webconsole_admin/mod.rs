@@ -1,7 +1,7 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use crate::{channel_manager::ChannelManager, remote_viewer::ratagui::DiffMerge, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{schema::{utilities::{decompress_data, get_connected_clients}, ConnectedClient}, WS_MASTER_URL};
-use ratatui::{buffer::Buffer, layout::{Position, Rect}, style::{Color, Style as TermStyle}};
+use ratatui::{buffer::Buffer, layout::{Position, Rect}, style::{Color, Style as TermStyle}, widgets::Paragraph};
 use websockets::{WebSocketClient, ClientHandler};
 use base64::{engine::general_purpose, Engine};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -55,69 +55,74 @@ fn resize_buffer(source: &Buffer, target_area: Rect) -> Buffer {
 }
 
 impl SharedContext {
+    #[unsafe(no_mangle)]
     pub fn egui_terminal(&mut self, ui: &mut Ui) {
+        ui.text_edit_multiline(&mut self.room_id);
+        if ui.button("Submit").clicked() {
+            let id = self.room_id.clone();
+            let _url = format!(
+                "{WS_MASTER_URL}&room_id={id}"
+            );
+            
+            let (ws_sender, ws_receiver) = ewebsock::connect(
+                _url, 
+                ewebsock::Options::default()
+            ).expect("Failed to connect to websocket server");
+
+            self.ws_sender = ws_sender;
+            self.ws_receiver = ws_receiver;
+        }
+
+        let available_size = ui.available_size();
+        let target_width = available_size.x as u16;
+        let target_height = available_size.y as u16;
+        let target_area = Rect::new(0, 0, target_width, target_height);
+
         // Handle incoming WebSocket events
         while let Some(ws_event) = self.ws_receiver.try_recv() {
             match ws_event {
                 ewebsock::WsEvent::Message(ws_message) => {
                     if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
-                        let buffer_tx = self.buffer_tx.clone(); // Clone sender for the task
-
-                        // Spawn a task to process the buffer
-                        PlatformSpawner::spawn(async move {
-                            if let Ok(new_buffer) = decompress_buffer(buffer_array) {
-                                // Send the processed buffer back to the main thread
-                                if buffer_tx.try_send(new_buffer).is_err() {
-                                    log::warn!("Failed to send processed buffer to main thread");
-                                }
-                            }
-                        });
+                        if let Ok(new_buffer) = serde_json::from_slice(&buffer_array) {
+                            self.cached_buffer = Some(new_buffer);
+                        }
                     }
                 }
                 _ => {}
             }
         }
 
-        // Get the available size from the CentralPanel
-        let available_size = ui.available_size();
-        let target_width = available_size.x as u16;
-        let target_height = available_size.y as u16;
-        let target_area = Rect::new(0, 0, target_width, target_height);
-
         // Process received buffers from the spawned task
-        while let Ok(new_buffer) = self.buffer_rx.try_recv() {
-            let resized_buffer = if new_buffer.area != target_area {
-                resize_buffer(&new_buffer, target_area)
-            } else {
-                new_buffer
-            };
+        // while let Ok(new_buffer) = self.buffer_rx.try_recv() {
+        //     // Update the cached buffer directly with the resized version
+        //     self.cached_buffer = Some(new_buffer);
+        //     // *buf = resize_buffer(&new_buffer, target_area);
+        // }
 
-            // let should_update = if let Some(ref cached) = self.cached_buffer {
-            //     !cached.diff(&resized_buffer).is_empty()
-            // } else {
-            //     true
-            // };
-
-            // if should_update {
-                log::info!("Should update");
-                log::info!("target_area: {target_area:?}");
-                log::info!("resized_buffer.area: {:?}", resized_buffer.area);
-
+        // std::thread::scope(|s| {
+        //     s.spawn(|| {
                 self.terminal
-                    .draw(|f| {
-                        let available_area = f.area();
-                        if available_area != resized_buffer.area {
-                            f.buffer_mut().resize(resized_buffer.area);
-                        }
-                        // f.buffer_mut().set_style(resized_buffer.area, TermStyle::default().bg(Color::Rgb(8, 8, 12)));
-                        f.buffer_mut().merge(&resized_buffer); // .diff_merge(&resized_buffer);
-                    })
-                    .expect("Failed to draw terminal frame");
+                .draw(|f| {
+                    let x = f.buffer_mut();
+                    // let available_area = f.area();
+                    // log::info!("available_area: {available_area:?}");
+                    // log::info!("target_area: {target_area:?}");
+                    // x.resize(target_area);
+                    
+                    // let available_area = f.area();
+                    // log::info!("NEW AVAIL AREA: {available_area:?}");
+                    // f.buffer_mut().set_style(target_area, TermStyle::default().bg(Color::Rgb(8, 8, 12)));
+                    if let Some(cached_buffer) = &mut self.cached_buffer {
+                        // log::warn!("cached_buffer.area: {:?}", cached_buffer.area);
+                        // f.buffer_mut().diff_merge(cached_buffer);
+                        *x = std::mem::take(&mut resize_buffer(&cached_buffer, target_area));
+                    }
+                    // f.render_widget(Paragraph::new("Test"), f.area());
+                })
+                .expect("Failed to draw terminal frame");
+    //         });
+    //    });
 
-                self.cached_buffer = Some(resized_buffer);
-                ui.ctx().request_repaint();
-            // }
-        }
 
         // Render the terminal in egui
         eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
