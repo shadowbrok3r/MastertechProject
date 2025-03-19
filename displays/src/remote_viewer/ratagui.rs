@@ -22,6 +22,7 @@ pub trait DiffMerge {
 }
 
 impl DiffMerge for ratatui::buffer::Buffer {
+    #[unsafe(no_mangle)]
     fn diff_merge(&mut self, new: &ratatui::buffer::Buffer) {
         // Compute diff
         let changes = self.diff(new);

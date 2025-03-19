@@ -178,10 +178,10 @@ impl ezsockets::ServerExt for ChatServer {
                     // Relay the message to the target session
                     if let Some(session) = target_session {
                         if let Some(bin) = bin {
-                            info!("Relaying binary message to session {}: {:?}", session.id, bin);
+                            info!("Relaying binary message to session {}", session.id);
                             session.binary(bin).unwrap();
                         } else {
-                            info!("Relaying text message to session {}: {}", session.id, text);
+                            info!("Relaying text message to session {}", session.id);
                             session.text(format!("{text}")).unwrap(); // "{role}-{}: {}", room_id, text
                         }
                     } else {
