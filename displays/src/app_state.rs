@@ -4,7 +4,7 @@ use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Styl
 use crossbeam::channel::{self, Receiver, Sender};
 use ewebsock::{Options, WsReceiver, WsSender};
 use ratatui::{buffer::Buffer, Terminal};
-use std::{collections::{BTreeMap, HashMap}, sync::Arc};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc, time::Instant};
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
 use anyhow::Error;
@@ -190,7 +190,11 @@ pub struct SharedContext {
     pub ws_sender: WsSender,
     #[serde(skip)]
     pub ws_receiver: WsReceiver,
-    pub room_id: String
+    pub room_id: String,
+    pub buffer_count: usize, // New: Persistent buffer count
+    pub frame_count: usize,  // New: Persistent frame count
+    #[serde(skip)]
+    pub last_log: Instant,   // New: Persistent last log time
 }
 
 impl SharedContext {
@@ -247,6 +251,9 @@ impl SharedContext {
         let terminal = Terminal::new(backend).unwrap();
 
         Self {
+            buffer_count: 0,
+            frame_count: 0,
+            last_log: Instant::now(),
             cached_buffer: None,
             ws_receiver,
             ws_sender,

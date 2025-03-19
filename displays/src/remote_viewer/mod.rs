@@ -2,6 +2,7 @@ use bincode::Options;
 use eframe::{egui::{ClippedPrimitive, Color32, FontDefinitions, Mesh, PlatformOutput, Pos2, RawInput, Rect, Shape, Stroke}, emath::History, epaint::{CircleShape, ClippedShape, CubicBezierShape, EllipseShape, Fonts, PathShape, Primitive, QuadraticBezierShape, RectShape, TessellationOptions, Tessellator, TextShape}};
 use crossbeam::channel::{Receiver, Sender};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
+use ratatui::buffer::Buffer;
 use serde::{Deserialize, Serialize};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -264,6 +265,20 @@ fn decode_message<M: serde::de::DeserializeOwned>(packet: &[u8]) -> anyhow::Resu
     let message = bincode::options()
         .deserialize(&bincoded)
         .context("bincode")?;
+
+    Ok(message)
+}
+
+pub fn encode_buffer(message: &Buffer) -> anyhow::Result<Vec<u8>> {
+    let bincoded = serde_json::to_vec(&message).context("bincode")?;
+    const ZSTD_LEVEL: i32 = 5;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL).context("zstd")?;
+    Ok(compressed.into())
+}
+
+pub fn decode_buffer(packet: &[u8]) -> anyhow::Result<Buffer> {
+    let bincoded = zstd::decode_all(packet).context("zstd")?;
+    let message = serde_json::from_slice(&bincoded).context("bincode")?;
 
     Ok(message)
 }
