@@ -7,7 +7,7 @@ impl Widget for TerminalLine {
     fn ui(self, ui: &mut Ui) -> Response {
         let galley = ui.fonts(|f| f.layout_job(self.0)); // Layout the text
         let size = galley.rect.size();
-        let (response, painter) = ui.allocate_painter(size, eframe::egui::Sense::hover()); // Allocate space
+        let (response, painter) = ui.allocate_painter(size, eframe::egui::Sense::click()); // Allocate space
         painter.galley(response.rect.min, galley, Color32::WHITE); // Paint with fallback color
         response
     }

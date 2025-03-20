@@ -1,4 +1,5 @@
 use crossbeam::channel::{unbounded, Receiver, TryRecvError};
+use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use futures::{FutureExt, StreamExt};
 
@@ -21,8 +22,81 @@ pub struct EventHandler {
 }
 
 impl <'a>TerminalApp<'a> {
-    pub fn handle_events(&mut self) -> bool {
+    pub fn handle_events(&mut self, remote_mouse_event: Option<MouseEvent>, remote_key_event: Option<KeyEvent>) -> bool {
         let quit = &mut false;
+        // Handle remote mouse event if provided
+        if let Some(mouse_event) = remote_mouse_event {
+            self.menu_bar.handle_mouse_event(&mouse_event);
+            let current_tab = self.menu_bar.current_tab.borrow().clone();
+            match current_tab {
+                Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
+                Tab::Logs => {}
+                Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+            };
+        }
+
+        if let Some(key_event) = remote_key_event {
+            let ctrl_key = key_event.modifiers.contains(KeyModifiers::CONTROL);
+            let current_tab = self.menu_bar.current_tab.borrow().clone();
+            match key_event.code {
+                KeyCode::Char('q') if ctrl_key => {
+                    log::info!("Quitting from remote key event");
+                    *quit = true;
+                }
+                KeyCode::Char('n') if ctrl_key => {
+                    let notification = Notification::new(
+                        NotificationType::Info,
+                        "Remote Key Event",
+                        "You pressed 'n' remotely.",
+                        3,
+                    );
+                    let x = self.data_system.send(Box::new(notification));
+                    log::info!("Result: {x:?}");
+                }
+                _ => {
+                    if ctrl_key {
+                        match key_event.code {
+                            KeyCode::Right => {
+                                match current_tab {
+                                    Tab::TurSheet => self.menu_bar.set_active_tab(Tab::Scripts),
+                                    Tab::Scripts => self.menu_bar.set_active_tab(Tab::Tasks),
+                                    Tab::Tasks => self.menu_bar.set_active_tab(Tab::SystemInfo),
+                                    Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Logs),
+                                    Tab::Logs => self.menu_bar.set_active_tab(Tab::Login),
+                                    Tab::Login => self.menu_bar.set_active_tab(Tab::TurSheet),
+                                };
+                            }
+                            KeyCode::Left => {
+                                match current_tab {
+                                    Tab::TurSheet => self.menu_bar.set_active_tab(Tab::Login),
+                                    Tab::Scripts => self.menu_bar.set_active_tab(Tab::TurSheet),
+                                    Tab::Tasks => self.menu_bar.set_active_tab(Tab::Scripts),
+                                    Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Tasks),
+                                    Tab::Logs => self.menu_bar.set_active_tab(Tab::SystemInfo),
+                                    Tab::Login => self.menu_bar.set_active_tab(Tab::Logs),
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let consumed = match current_tab {
+                        Tab::TurSheet => self.service_tab.borrow_mut().handle_key_event(key_event),
+                        Tab::Scripts => self.scripts_tab.borrow_mut().handle_key_event(key_event),
+                        Tab::Tasks => self.tasks_tab.borrow_mut().handle_key_event(key_event),
+                        Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
+                        Tab::Logs => self.logger.handle_key_event(key_event),
+                        Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
+                    };
+
+                    if consumed {}
+                }
+            };
+        }
+        
         if let Ok(events) = self.event_handler.next() {
             let current_tab = self.menu_bar.current_tab.borrow().clone();
             match events {

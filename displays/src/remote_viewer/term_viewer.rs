@@ -7,13 +7,15 @@ use crossbeam::channel::{unbounded, Sender, Receiver};
 use database::{schema::utilities::decompress_data, WS_MASTER_URL};
 use crate::{remote_viewer::decode_buffer, PlatformSpawner, Spawner};
 
-use super::ratagui::RataguiBackend;
+use super::ratagui::{RataguiBackend, TerminalEvent};
 
 pub struct RemoteTerminal {
     pub terminal: Terminal<RataguiBackend>,
     cached_buffer: Buffer,
     buffer_rx: Receiver<(u64, Buffer)>, // Add frame_index to buffer updates
     buffer_tx: Sender<(u64, Buffer)>,
+    event_rx: Receiver<TerminalEvent>,
+    event_tx: Sender<TerminalEvent>,
     size_tx: Sender<Rect>,
     ws_sender: WsSender,
     buffer_count: usize,
@@ -29,6 +31,7 @@ impl RemoteTerminal {
     pub fn new() -> Self {
         let (buffer_tx, buffer_rx) = unbounded();
         let (size_tx, size_rx) = unbounded();
+        let (event_tx, event_rx) = unbounded(); // New: Event channel
         let initial_area = Rect::new(0, 0, 250, 250);
         let (mut ws_sender, ws_receiver) = ewebsock::connect(
             format!("{WS_MASTER_URL}&room_id=test"), 
@@ -71,7 +74,7 @@ impl RemoteTerminal {
             }
         });
 
-        let mut backend = RataguiBackend::new(initial_area.width, initial_area.height); // Changed: Use initial_area size
+        let mut backend = RataguiBackend::new(initial_area.width, initial_area.height, event_tx.clone()); // Changed: Use initial_area size
         backend.set_frame_index(0);
         let terminal = Terminal::new(backend).unwrap();
         
@@ -82,6 +85,8 @@ impl RemoteTerminal {
             buffer_rx,
             buffer_tx,
             size_tx,
+            event_rx,
+            event_tx,
             buffer_count: 0,
             frame_count: 0,
             last_log: Instant::now(),
@@ -133,6 +138,12 @@ impl RemoteTerminal {
             }
         }
 
+        // Send events over WebSocket
+        while let Ok(event) = self.event_rx.try_recv() {
+            let serialized = serde_json::to_string(&event).expect("Failed to serialize event");
+            self.ws_sender.send(ewebsock::WsMessage::Text(serialized));
+        }
+
         if let Some((frame_index, buffer)) = latest_buffer {
             self.terminal.backend_mut().set_frame_index(frame_index as u64);
             self.terminal.backend_mut().update_buffer(buffer);
@@ -147,7 +158,7 @@ impl RemoteTerminal {
 
         let draw_start = Instant::now();
         self.terminal
-            .draw(|f| {
+            .draw(|_f| {
                 self.frame_count += 1;
             })
             .expect("Failed to draw terminal frame");

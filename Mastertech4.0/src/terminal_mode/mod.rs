@@ -1,4 +1,5 @@
-use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
+use displays::remote_viewer::ratagui::TerminalEvent;
+use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
@@ -204,18 +205,19 @@ impl <'a>TerminalApp<'a> {
 
         let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
         let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
         join_handles.push(
             tokio::spawn(async move {
-                let websocket_server = TerminalApp::start_websocket_sender(buffer_rx, start_tx.clone()).await;
+                let websocket_server = TerminalApp::start_websocket_sender(buffer_rx, start_tx.clone(), event_tx).await;
                 log::info!("websocket_server: {websocket_server:?}");
             })
         );
 
         let mut last_sent = Instant::now(); // Changed: Added to throttle sending
-        let send_interval = Duration::from_secs_f32(0.8); // Changed: ~3 FPS interval
+        let send_interval = Duration::from_secs_f32(0.5); // Changed: ~3 FPS interval
         let can_start = &mut false;
         loop {
-            if self.handle_events() { 
+            if self.handle_events(None, None) { 
                 // Signal shutdown
                 shutdown_tx.send(())?;
                 log::info!("Sent shutdown signal");
@@ -240,6 +242,35 @@ impl <'a>TerminalApp<'a> {
                     f.render_widget(&mut splash_screen2, layout[1]);
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 } else {
+                    // Process events from egui via WebSocket
+                    while let Ok(event) = event_rx.try_recv() {
+                        match event {
+                            TerminalEvent::MouseClick { x, y } => {
+                                log::info!("Received mouse click at x={}, y={}", x, y);
+                                let mouse_event = MouseEvent {
+                                    kind: MouseEventKind::Down(MouseButton::Left),
+                                    column: x,
+                                    row: y,
+                                    modifiers: KeyModifiers::NONE,
+                                };
+                                if self.handle_events(Some(mouse_event), None) {
+                                    log::info!("Quit signal received from handle_events (mouse)");
+                                }
+                            }
+                            TerminalEvent::KeyPress { code, modifiers } => {
+                                log::info!("Received key press: code={:?}, modifiers={:?}", code, modifiers);
+                                let key_event = KeyEvent {
+                                    code,
+                                    modifiers,
+                                    kind: KeyEventKind::Press,
+                                    state: KeyEventState::NONE,
+                                };
+                                if self.handle_events(None, Some(key_event)) {
+                                    log::info!("Quit signal received from handle_events (key)");
+                                }
+                            }
+                        }
+                    }
                     if let Ok(start) = start_rx.try_recv() {
                         *can_start = start;
                     }
