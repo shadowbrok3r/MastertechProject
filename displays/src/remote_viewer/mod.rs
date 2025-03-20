@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 
 pub mod ratagui;
 pub mod terminal_line;
+pub mod term_viewer;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct EguiFrame {
@@ -276,7 +277,17 @@ pub fn encode_buffer(message: &Buffer) -> anyhow::Result<Vec<u8>> {
     Ok(compressed.into())
 }
 
-pub fn decode_buffer(packet: &[u8]) -> anyhow::Result<Buffer> {
+// Helper to encode (frame_index, buffer) together
+pub fn encode_buffer_with_frame(frame_index: u64, buffer: &Buffer) -> anyhow::Result<Vec<u8>> {
+    let data = (frame_index, buffer);
+    let bincoded = serde_json::to_vec(&data).context("Failed to serialize frame and buffer")?;
+    const ZSTD_LEVEL: i32 = 5;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL)
+        .context("Failed to compress frame data")?;
+    Ok(compressed.into())
+}
+
+pub fn decode_buffer(packet: &[u8]) -> anyhow::Result<(u64, Buffer)> {
     let bincoded = zstd::decode_all(packet).context("zstd")?;
     let message = serde_json::from_slice(&bincoded).context("bincode")?;
 

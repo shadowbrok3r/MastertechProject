@@ -55,6 +55,12 @@ debug = false
 opt-level = 3
 lto = true
 
+# [patch.crates-io]
+# tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
+# socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }
+# libc = { git = "https://github.com/wasix-org/libc.git", branch = "master" }
+# getrandom = {git = "https://github.com/wasix-org/getrandom.git"}
+
 # Optimize all dependencies even in debug builds:
 # [profile.dev.package."*"]
 # opt-level = 2
