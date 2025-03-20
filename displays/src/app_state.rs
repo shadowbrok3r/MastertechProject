@@ -1,10 +1,8 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, remote_viewer::ratagui::RataguiBackend, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database, WS_MASTER_URL};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, remote_viewer::term_viewer::RemoteTerminal, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
-use ewebsock::{Options, WsReceiver, WsSender};
-use ratatui::{buffer::Buffer, layout::Rect, Terminal};
-use std::{collections::{BTreeMap, HashMap, VecDeque}, sync::Arc, time::Instant};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
 use anyhow::Error;
@@ -179,44 +177,15 @@ pub struct SharedContext {
     pub resource_mon: ResourceMonitor,
     #[serde(skip)]
     pub web_console_layout: WebConsoleLayout,
-    #[serde(skip)]
-    pub terminal: Terminal<RataguiBackend>,
-    pub cached_buffer: Buffer,
-    #[serde(skip)]
-    pub buffer_tx: Sender<Buffer>,
-    #[serde(skip)]
-    pub buffer_rx: Receiver<Buffer>,
-    #[serde(skip)]
-    pub ws_sender: WsSender,
-    #[serde(skip)]
-    pub ws_receiver: WsReceiver,
     pub room_id: String,
-    pub buffer_count: usize, // New: Persistent buffer count
-    pub frame_count: usize,  // New: Persistent frame count
     #[serde(skip)]
-    pub last_log: Instant,   // New: Persistent last log time
-    pub last_target_area: Rect, // Initial empty area
-    pub last_log_frame_count: usize, // New field to track frame count at last log
-    pub buffer_queue: VecDeque<Buffer>,
-    #[serde(skip)]
-    pub last_repaint: Instant,
+    pub terminal_viewer: RemoteTerminal
 }
 
 impl SharedContext {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
-        let _url = format!(
-            "{WS_MASTER_URL}&room_id=test"
-        );
-        let ctx = cc.egui_ctx.clone();
-        let (ws_sender, ws_receiver) = ewebsock::connect_with_wakeup(
-            _url, 
-            Options::default(),
-            move || ctx.request_repaint()
-        ).expect("Failed to connect to websocket server");
 
-        let (buffer_tx, buffer_rx) = crossbeam::channel::unbounded::<Buffer>();
-        
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
@@ -252,22 +221,8 @@ impl SharedContext {
         let web_console_layout = WebConsoleLayout::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
 
-        let backend = RataguiBackend::new(100, 100);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let initial_area = Rect::new(0, 0, 250, 250);
-        terminal.get_frame().buffer_mut().resize(initial_area);
-
         Self {
-            last_repaint: Instant::now(),
-            buffer_queue: VecDeque::new(),
-            last_log_frame_count: 0,
-            last_target_area: Rect::default(),
-            buffer_count: 0,
-            frame_count: 0,
-            last_log: Instant::now(),
-            cached_buffer: Buffer::empty(initial_area),
-            ws_receiver,
-            ws_sender,
+            terminal_viewer: RemoteTerminal::new(),
             current_user: None,
             tasks: Vec::new(),
             store_users: Vec::new(),
@@ -278,8 +233,6 @@ impl SharedContext {
             rerun_filtering_store_tasks: false,
             rerun_filtering_completed: false,
             store_selection: 76,
-
-            terminal,
 
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
@@ -314,7 +267,6 @@ impl SharedContext {
             serial_channel,
             extra_stock_channel,
             ai_thread_channel,
-            buffer_tx, buffer_rx,
             // github_releases_channel,
             // seb_channel,
             undock_client: HashMap::new(),

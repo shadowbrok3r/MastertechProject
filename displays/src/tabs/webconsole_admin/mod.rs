@@ -1,12 +1,10 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
-use crate::{channel_manager::ChannelManager, remote_viewer::{decode_buffer, ratagui::DiffMerge}, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
-use database::{schema::{utilities::{decompress_data, get_connected_clients}, ConnectedClient}, WS_MASTER_URL};
-use ratatui::{buffer::Buffer, layout::{Position, Rect}};
+use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
+use database::{schema::{utilities::get_connected_clients, ConnectedClient}, WS_MASTER_URL};
 use websockets::{WebSocketClient, ClientHandler};
-use base64::{engine::general_purpose, Engine};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
-use std::{collections::{BTreeMap, HashMap}, time::{Duration, Instant}};
+use std::collections::{BTreeMap, HashMap};
 use crate::app_state::SharedContext;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Local};
@@ -20,40 +18,7 @@ use super::script_editor::ScriptEditor;
 
 pub mod websockets;
 
-/// Decompress and decode the given Vec<u8> (which is base64-encoded compressed JSON)
-/// and deserialize it back into a Buffer.
-pub fn decompress_buffer(input: Vec<u8>) -> anyhow::Result<Buffer, anyhow::Error> {
-    // Convert the input Vec<u8> into a String.
-    let encoded_str = String::from_utf8(input)?;
-    // Base64-decode into the compressed data.
-    let compressed = general_purpose::STANDARD.decode(&encoded_str)?;
-    // Decompress the data.
-    let decompressed = decompress_data(&compressed)?;
-    // Convert decompressed bytes into a string.
-    let decompressed_string = String::from_utf8(decompressed)?;
-    // Deserialize the JSON string into a Buffer.
-    let buf = serde_json::from_str::<Buffer>(&decompressed_string)?;
-    Ok(buf)
-}
 
-
-// Helper function to resize a buffer
-fn resize_buffer(source: &Buffer, target_area: Rect) -> Buffer {
-    let mut new_buffer = Buffer::empty(target_area);
-
-    // Copy content from source to new buffer, respecting bounds
-    for y in 0..source.area.height.min(target_area.height) {
-        for x in 0..source.area.width.min(target_area.width) {
-            if let Some(source_cell) = source.cell((x, y)) {
-                if let Some(target_cell) = new_buffer.cell_mut(Position::new(x, y)) {
-                    target_cell.clone_from(source_cell);
-                }
-            }
-        }
-    }
-
-    new_buffer
-}
 
 impl SharedContext {
     #[unsafe(no_mangle)]
@@ -71,107 +36,9 @@ impl SharedContext {
         //     self.ws_sender = ws_sender;
         //     self.ws_receiver = ws_receiver;
         // }
-
-        let available_size = ui.available_size();
-        let target_width = (available_size.x as u16).min(250); // Match backend cap
-        let target_height = (available_size.y as u16).min(250);
-        let target_area = Rect::new(0, 0, target_width, target_height);
-        let target_area = Rect::new(0, 0, target_width, target_height);
-
-        let mut buffer_updated = false;
-
-        // Handle incoming WebSocket events
-        while let Some(ws_event) = self.ws_receiver.try_recv() {
-            let receive_start = Instant::now();
-            match ws_event {
-                ewebsock::WsEvent::Message(ws_message) => {
-                    if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
-                        match decode_buffer(&buffer_array) {
-                            Ok(new_buffer) => {
-                                let resized_buffer = resize_buffer(&new_buffer, target_area);
-                                self.buffer_queue.push_back(resized_buffer);
-                                self.buffer_count += 1;
-                                let receive_duration = receive_start.elapsed();
-                                log::info!(
-                                    "Buffer received and resized: {:?}, duration: {:?}",
-                                    self.buffer_queue.back().unwrap().area,
-                                    receive_duration
-                                );
-                            },
-                            Err(e) => log::warn!("Error decoding message: {e:?}"),
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        
-        // Draw continuously with timing
-        let draw_start = Instant::now();
-
-
-        self.terminal
-        .draw(|f| {
-            ui.ctx().request_repaint();
-            let x = f.buffer_mut();
-            if x.area != target_area {
-                x.resize(target_area);
-                self.cached_buffer.resize(target_area);
-                log::info!("Resized buffer to: {:?}", target_area);
-            }
-            let mut updated = false;
-            if let Some(new_buffer) = self.buffer_queue.pop_front() {
-                log::info!("new_buffer.area: {:?}", new_buffer.area);
-                log::info!("target_area: {target_area:?}");
-                log::info!("buffer area before update: {:?}", x.area);
-                // Fast update: direct assignment if changed
-                if new_buffer != self.cached_buffer {
-                    *x = new_buffer.clone();
-                    self.cached_buffer = new_buffer;
-                    updated = true;
-                }
-                log::info!("buffer area after update: {:?}", x.area);
-            }
-            // Force redraw even if no update, ensuring current buffer is shown
-            if !updated {
-                *x = self.cached_buffer.clone();
-            }
-        })
-        .expect("Failed to draw terminal frame");
-
-        let draw_duration = draw_start.elapsed();
-
-        // Render the terminal in egui
-        eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
-            let render_start = Instant::now();
-            ui.add(self.terminal.backend_mut());
-            let render_duration = render_start.elapsed();
-            let since_last_repaint = self.last_repaint.elapsed();
-            if since_last_repaint >= Duration::from_millis(16) { // 60 FPS target
-                self.frame_count += 1;
-                log::info!("Frame Count: {}", self.frame_count);
-                log::info!("Time since last repaint: {:?}", since_last_repaint);
-                log::info!("Render duration: {:?}", render_duration);
-                self.last_repaint = Instant::now();
-            }
-        });
-
-        // Performance logging
-        if self.last_log.elapsed() >= Duration::from_secs(1) {
-            log::info!(
-                "Performance: buffer_count={}, frame_count={}, draw_duration={:?}",
-                self.buffer_count,
-                self.frame_count - self.last_log_frame_count,
-                draw_duration
-            );
-            self.last_log = Instant::now();
-            self.last_log_frame_count = self.frame_count;
-            self.buffer_count = 0;
-        }
+        self.terminal_viewer.render(ui);
     }
 }
-
-
 
 pub enum ClientUiAction {
     UndockClient(String),
