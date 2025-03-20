@@ -23,7 +23,7 @@ impl <'a>TerminalApp <'a> {
                     Some(buffer) => {
                         log::info!("Sending another buffer");
                         sender.send(ewebsock::WsMessage::Binary(encode_buffer(&buffer)?));
-                        tokio::time::sleep(Duration::from_secs_f32(0.5)).await;
+                        tokio::time::sleep(Duration::from_secs_f32(0.3)).await;
                     },
                     None => {
                         log::info!("Buffer channel disconnected");
