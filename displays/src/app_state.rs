@@ -3,8 +3,8 @@ use database::{schema::{get_data::NewTicketChannel, prestashop_schema::Prestasho
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
 use ewebsock::{Options, WsReceiver, WsSender};
-use ratatui::{buffer::Buffer, Terminal};
-use std::{collections::{BTreeMap, HashMap}, sync::Arc, time::Instant};
+use ratatui::{buffer::Buffer, layout::Rect, Terminal};
+use std::{collections::{BTreeMap, HashMap, VecDeque}, sync::Arc, time::Instant};
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
 use anyhow::Error;
@@ -181,7 +181,7 @@ pub struct SharedContext {
     pub web_console_layout: WebConsoleLayout,
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
-    pub cached_buffer: Option<Buffer>, // Existing from previous solution
+    pub cached_buffer: Buffer,
     #[serde(skip)]
     pub buffer_tx: Sender<Buffer>,
     #[serde(skip)]
@@ -195,6 +195,11 @@ pub struct SharedContext {
     pub frame_count: usize,  // New: Persistent frame count
     #[serde(skip)]
     pub last_log: Instant,   // New: Persistent last log time
+    pub last_target_area: Rect, // Initial empty area
+    pub last_log_frame_count: usize, // New field to track frame count at last log
+    pub buffer_queue: VecDeque<Buffer>,
+    #[serde(skip)]
+    pub last_repaint: Instant,
 }
 
 impl SharedContext {
@@ -247,14 +252,20 @@ impl SharedContext {
         let web_console_layout = WebConsoleLayout::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
 
-        let backend = RataguiBackend::new(100,200); // Width, height
-        let terminal = Terminal::new(backend).unwrap();
+        let backend = RataguiBackend::new(100, 100);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let initial_area = Rect::new(0, 0, 250, 250);
+        terminal.get_frame().buffer_mut().resize(initial_area);
 
         Self {
+            last_repaint: Instant::now(),
+            buffer_queue: VecDeque::new(),
+            last_log_frame_count: 0,
+            last_target_area: Rect::default(),
             buffer_count: 0,
             frame_count: 0,
             last_log: Instant::now(),
-            cached_buffer: None,
+            cached_buffer: Buffer::empty(initial_area),
             ws_receiver,
             ws_sender,
             current_user: None,

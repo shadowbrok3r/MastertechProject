@@ -63,21 +63,22 @@ impl SharedContext {
         //     let id = self.room_id.clone();
         //     let _url = format!(
         //         "{WS_MASTER_URL}&room_id={id}"
-        //     );
-            
+        //     ); 
         //     let (ws_sender, ws_receiver) = ewebsock::connect(
         //         _url, 
         //         ewebsock::Options::default()
         //     ).expect("Failed to connect to websocket server");
-
         //     self.ws_sender = ws_sender;
         //     self.ws_receiver = ws_receiver;
         // }
 
         let available_size = ui.available_size();
-        let target_width = available_size.x as u16;
-        let target_height = available_size.y as u16;
+        let target_width = (available_size.x as u16).min(250); // Match backend cap
+        let target_height = (available_size.y as u16).min(250);
         let target_area = Rect::new(0, 0, target_width, target_height);
+        let target_area = Rect::new(0, 0, target_width, target_height);
+
+        let mut buffer_updated = false;
 
         // Handle incoming WebSocket events
         while let Some(ws_event) = self.ws_receiver.try_recv() {
@@ -87,12 +88,13 @@ impl SharedContext {
                     if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
                         match decode_buffer(&buffer_array) {
                             Ok(new_buffer) => {
-                                self.cached_buffer = Some(resize_buffer(&new_buffer, target_area));
+                                let resized_buffer = resize_buffer(&new_buffer, target_area);
+                                self.buffer_queue.push_back(resized_buffer);
                                 self.buffer_count += 1;
                                 let receive_duration = receive_start.elapsed();
                                 log::info!(
                                     "Buffer received and resized: {:?}, duration: {:?}",
-                                    self.cached_buffer.as_ref().unwrap().area,
+                                    self.buffer_queue.back().unwrap().area,
                                     receive_duration
                                 );
                             },
@@ -103,17 +105,6 @@ impl SharedContext {
                 _ => {}
             }
         }
-
-        // Process received buffers from the spawned task
-        // while let Ok(new_buffer) = self.buffer_rx.try_recv() {
-        //     // Update the cached buffer directly with the resized version
-        //     self.cached_buffer = Some(new_buffer);
-        //     // *buf = resize_buffer(&new_buffer, target_area);
-        // }
-
-        // Resize the terminal and draw continuously
-        // self.terminal.resize(target_area).expect("Failed to resize terminal");
-
         
         // Draw continuously with timing
         let draw_start = Instant::now();
@@ -121,44 +112,61 @@ impl SharedContext {
 
         self.terminal
         .draw(|f| {
+            ui.ctx().request_repaint();
             let x = f.buffer_mut();
-            x.resize(target_area);
-            // log::info!("target_area: {target_area:?}");
-            // log::info!("x area NEW AVAIL AREA: {available_area:?}");
-            if let Some(cached_buffer) = &mut self.cached_buffer {
-                log::info!("cached_buffer.area: {:?}", cached_buffer.area);
+            if x.area != target_area {
+                x.resize(target_area);
+                self.cached_buffer.resize(target_area);
+                log::info!("Resized buffer to: {:?}", target_area);
+            }
+            let mut updated = false;
+            if let Some(new_buffer) = self.buffer_queue.pop_front() {
+                log::info!("new_buffer.area: {:?}", new_buffer.area);
                 log::info!("target_area: {target_area:?}");
-                log::info!("buffer area before swap: {:?}", x.area);
-                std::mem::swap(cached_buffer, x);
-                log::info!("buffer area after swap: {:?}", x.area);
-                self.frame_count += 1;
+                log::info!("buffer area before update: {:?}", x.area);
+                // Fast update: direct assignment if changed
+                if new_buffer != self.cached_buffer {
+                    *x = new_buffer.clone();
+                    self.cached_buffer = new_buffer;
+                    updated = true;
+                }
+                log::info!("buffer area after update: {:?}", x.area);
+            }
+            // Force redraw even if no update, ensuring current buffer is shown
+            if !updated {
+                *x = self.cached_buffer.clone();
             }
         })
         .expect("Failed to draw terminal frame");
+
         let draw_duration = draw_start.elapsed();
-        // self.terminal.flush().expect("Failed to flush backend");
-
-        let frame_count = self.terminal.get_frame().count();
-        log::info!("Frame Count: {frame_count:?}");
-
 
         // Render the terminal in egui
         eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
+            let render_start = Instant::now();
             ui.add(self.terminal.backend_mut());
+            let render_duration = render_start.elapsed();
+            let since_last_repaint = self.last_repaint.elapsed();
+            if since_last_repaint >= Duration::from_millis(16) { // 60 FPS target
+                self.frame_count += 1;
+                log::info!("Frame Count: {}", self.frame_count);
+                log::info!("Time since last repaint: {:?}", since_last_repaint);
+                log::info!("Render duration: {:?}", render_duration);
+                self.last_repaint = Instant::now();
+            }
         });
 
-        // Periodic performance logging (e.g., every second)
+        // Performance logging
         if self.last_log.elapsed() >= Duration::from_secs(1) {
             log::info!(
                 "Performance: buffer_count={}, frame_count={}, draw_duration={:?}",
                 self.buffer_count,
-                self.frame_count,
+                self.frame_count - self.last_log_frame_count,
                 draw_duration
             );
             self.last_log = Instant::now();
-            // Optionally reset counters for the next interval
+            self.last_log_frame_count = self.frame_count;
             self.buffer_count = 0;
-            self.frame_count = 0;
         }
     }
 }

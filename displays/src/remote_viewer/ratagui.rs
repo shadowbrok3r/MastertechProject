@@ -56,6 +56,7 @@ pub struct RataguiBackend {
     timestamp: InstantWrapper,
     blinking_slow: bool,
     blinking_fast: bool,
+    cached_job: Option<LayoutJob>, // Cache the rendered buffer
 }
 
 impl Widget for &mut RataguiBackend {
@@ -85,143 +86,124 @@ impl Widget for &mut RataguiBackend {
         }
 
         let char_height = ui.fonts(|fx| fx.row_height(&self.regular_font));
-        let char_width = ui.fonts(|fx| self.get_font_width(fx));
-
-        // it is limited to this because the ratatui buffer is cast to u8 somewhere
-
+        let char_width = ui.fonts(|fx| fx.glyph_width(&self.regular_font, ' '));
         let max_width = char_width * 250.0;
         let max_height = char_height * 250.0;
 
         let av_size = ui.available_size();
+        let av_width = av_size.x.clamp(1.0, max_width);
+        let av_height = av_size.y.clamp(1.0, max_height);
+        let available_chars_width = (av_width / char_width) as u16;
+        let available_chars_height = (av_height / char_height) as u16;
 
-        let av_width = (av_size.x).clamp(1.0, max_width);
-        let av_height = (av_size.y).clamp(1.0, max_height);
-
-        // there are weird issues with high dpi displays relating to native pixels per point and zoom factor
-        let available_chars_width = (av_width / (char_width)) as u16;
-
-        let available_chars_height = (av_height / (char_height)) as u16;
-        //println!("av chars width: {:#?}",available_chars_width);
-        /*
-        if available_chars_width >55 {available_chars_width-=available_chars_width/60;}
-        if available_chars_height >40 {available_chars_height-=available_chars_height/60;}
-
-         */
-
-        let cur_size = self.size().expect("COULD NOT GET CURRENT BACKEND SIZE");
-
-        if (cur_size.width != available_chars_width) || (cur_size.height != available_chars_height)
-        {
+        let cur_size = self.size().expect("Could not get current backend size");
+        if cur_size.width != available_chars_width || cur_size.height != available_chars_height {
             self.resize(available_chars_width, available_chars_height);
         }
-        let cur_buf = self.buffer();
 
-        let singular_wrapping = TextWrapping {
-            max_width: f32::INFINITY,
-            max_rows: 1,
-            break_anywhere: false,
-            overflow_character: None,
-        };
+        // Use cached LayoutJob if available, rebuild only on buffer update
+        let job = self.cached_job.clone().unwrap_or(self.build_layout_job(ui));
+        ui.label(job.clone())
 
-        for y in 0..available_chars_height {
-            let mut job = LayoutJob {
-                text: Default::default(),
-                sections: Default::default(),
-                wrap: singular_wrapping.clone(),
-                first_row_min_height: 0.0,
-                break_on_newline: false,
-                halign: Align::LEFT,
-                justify: false,
-                round_output_to_gui: false,
-            };
-            for x in 0..available_chars_width {
-                if let Some(cur_cell) = cur_buf.cell(Position { x, y }) {
-                    let is_bold = cur_cell.modifier.contains(Modifier::BOLD);
-                    let is_italic = cur_cell.modifier.contains(Modifier::ITALIC);
-                    let is_underlined = cur_cell.modifier.contains(Modifier::UNDERLINED);
-                    let is_slowblink = cur_cell.modifier.contains(Modifier::SLOW_BLINK);
-                    let is_rapidblink = cur_cell.modifier.contains(Modifier::RAPID_BLINK);
-                    let is_reversed = cur_cell.modifier.contains(Modifier::REVERSED);
-                    let is_dim = cur_cell.modifier.contains(Modifier::DIM);
-                    let is_hidden = cur_cell.modifier.contains(Modifier::HIDDEN);
-                    let is_crossed_out = cur_cell.modifier.contains(Modifier::CROSSED_OUT);
-
-                    let tf_font = if is_bold && is_italic {
-                        self.bolditalic_font.to_owned()
-                    } else if is_bold {
-                        self.bold_font.to_owned()
-                    } else if is_italic {
-                        self.italic_font.to_owned()
-                    } else {
-                        self.regular_font.to_owned()
-                    };
-
-                    let mut tf_fg_color = RataguiBackend::rat_to_egui_color(&cur_cell.fg, true);
-                    let mut tf_bg_color = RataguiBackend::rat_to_egui_color(&cur_cell.bg, false);
-
-                    if is_slowblink {
-                        if self.blinking_slow {
-                            tf_fg_color = tf_bg_color.clone();
-                        }
-                    }
-                    if is_rapidblink {
-                        if self.blinking_fast {
-                            tf_fg_color = tf_bg_color.clone();
-                        }
-                    }
-
-                    if is_dim {
-                        tf_fg_color = tf_fg_color.gamma_multiply(0.7);
-                        tf_bg_color = tf_bg_color.gamma_multiply(0.7);
-                    }
-
-                    if is_reversed {
-                        let holder = tf_bg_color;
-                        tf_bg_color = tf_fg_color;
-                        tf_fg_color = holder;
-                    }
-                    if is_hidden {
-                        tf_fg_color = tf_bg_color.clone();
-                    }
-
-                    let tf_stroke = if is_crossed_out {
-                        Stroke::new(char_height / 8.0, tf_fg_color)
-                    } else {
-                        Stroke::NONE
-                    };
-
-                    let tf_underline = if is_underlined {
-                        Stroke::new(char_height / 3.0, tf_fg_color)
-                    } else {
-                        Stroke::NONE
-                    };
-
-                    let tf = TextFormat {
-                        font_id: tf_font,
-                        color: tf_fg_color,
-                        background: tf_bg_color,
-                        strikethrough: tf_stroke,
-                        underline: tf_underline,
-                        //     valign: egui::Align::Min,
-                        //  line_height: Some(char_height - 0.01),
-                        ..Default::default()
-                    };
-
-                    job.append(cur_cell.symbol(), 0.0, tf.clone());
-
-                    if x == (available_chars_width - 1) {
-                        let end = ui.add(TerminalLine::new(job.clone()));
-                        if y == (available_chars_height - 1) {
-                            return end;
-                        }
-                    }
-                }
-            }
-        }
-
-        let emd = Label::new("IF YOU SEE THIS  THAT IS AN ERROR");
-
-        ui.add(emd)
+        // let cur_size = self.size().expect("COULD NOT GET CURRENT BACKEND SIZE");
+        // if (cur_size.width != available_chars_width) || (cur_size.height != available_chars_height)
+        // {
+        //     self.resize(available_chars_width, available_chars_height);
+        // }
+        // let cur_buf = self.buffer();
+        // let singular_wrapping = TextWrapping {
+        //     max_width: f32::INFINITY,
+        //     max_rows: 1,
+        //     break_anywhere: false,
+        //     overflow_character: None,
+        // };
+        // for y in 0..available_chars_height {
+        //     let mut job = LayoutJob {
+        //         text: Default::default(),
+        //         sections: Default::default(),
+        //         wrap: singular_wrapping.clone(),
+        //         first_row_min_height: 0.0,
+        //         break_on_newline: false,
+        //         halign: Align::LEFT,
+        //         justify: false,
+        //         round_output_to_gui: false,
+        //     };
+        //     for x in 0..available_chars_width {
+        //         if let Some(cur_cell) = cur_buf.cell(Position { x, y }) {
+        //             let is_bold = cur_cell.modifier.contains(Modifier::BOLD);
+        //             let is_italic = cur_cell.modifier.contains(Modifier::ITALIC);
+        //             let is_underlined = cur_cell.modifier.contains(Modifier::UNDERLINED);
+        //             let is_slowblink = cur_cell.modifier.contains(Modifier::SLOW_BLINK);
+        //             let is_rapidblink = cur_cell.modifier.contains(Modifier::RAPID_BLINK);
+        //             let is_reversed = cur_cell.modifier.contains(Modifier::REVERSED);
+        //             let is_dim = cur_cell.modifier.contains(Modifier::DIM);
+        //             let is_hidden = cur_cell.modifier.contains(Modifier::HIDDEN);
+        //             let is_crossed_out = cur_cell.modifier.contains(Modifier::CROSSED_OUT);
+        //             let tf_font = if is_bold && is_italic {
+        //                 self.bolditalic_font.to_owned()
+        //             } else if is_bold {
+        //                 self.bold_font.to_owned()
+        //             } else if is_italic {
+        //                 self.italic_font.to_owned()
+        //             } else {
+        //                 self.regular_font.to_owned()
+        //             };
+        //             let mut tf_fg_color = RataguiBackend::rat_to_egui_color(&cur_cell.fg, true);
+        //             let mut tf_bg_color = RataguiBackend::rat_to_egui_color(&cur_cell.bg, false);
+        //             if is_slowblink {
+        //                 if self.blinking_slow {
+        //                     tf_fg_color = tf_bg_color.clone();
+        //                 }
+        //             }
+        //             if is_rapidblink {
+        //                 if self.blinking_fast {
+        //                     tf_fg_color = tf_bg_color.clone();
+        //                 }
+        //             }
+        //             if is_dim {
+        //                 tf_fg_color = tf_fg_color.gamma_multiply(0.7);
+        //                 tf_bg_color = tf_bg_color.gamma_multiply(0.7);
+        //             }
+        //             if is_reversed {
+        //                 let holder = tf_bg_color;
+        //                 tf_bg_color = tf_fg_color;
+        //                 tf_fg_color = holder;
+        //             }
+        //             if is_hidden {
+        //                 tf_fg_color = tf_bg_color.clone();
+        //             }
+        //             let tf_stroke = if is_crossed_out {
+        //                 Stroke::new(char_height / 8.0, tf_fg_color)
+        //             } else {
+        //                 Stroke::NONE
+        //             };
+        //             let tf_underline = if is_underlined {
+        //                 Stroke::new(char_height / 3.0, tf_fg_color)
+        //             } else {
+        //                 Stroke::NONE
+        //             };
+        //             let tf = TextFormat {
+        //                 font_id: tf_font,
+        //                 color: tf_fg_color,
+        //                 background: tf_bg_color,
+        //                 strikethrough: tf_stroke,
+        //                 underline: tf_underline,
+        //                 //     valign: egui::Align::Min,
+        //                 //  line_height: Some(char_height - 0.01),
+        //                 ..Default::default()
+        //             };
+        //             job.append(cur_cell.symbol(), 0.0, tf.clone());
+        //             if x == (available_chars_width - 1) {
+        //                 let end = ui.add(TerminalLine::new(job.clone()));
+        //                 if y == (available_chars_height - 1) {
+        //                     return end;
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+        // let emd = Label::new("IF YOU SEE THIS  THAT IS AN ERROR");
+        // ui.add(emd)
     }
 }
 
@@ -242,9 +224,10 @@ impl RataguiBackend {
             timestamp: Default::default(),
             blinking_slow: false,
             blinking_fast: false,
+            cached_job: None,
         }
     }
-    
+
     pub fn new_with_fonts(
         width: u16,
         height: u16,
@@ -267,8 +250,102 @@ impl RataguiBackend {
             timestamp: Default::default(),
             blinking_slow: false,
             blinking_fast: false,
+            cached_job: None,
         }
     }
+
+    fn build_layout_job(&self, ui: &Ui) -> LayoutJob {
+        let singular_wrapping = TextWrapping {
+            max_width: f32::INFINITY,
+            max_rows: self.height as usize,
+            break_anywhere: false,
+            overflow_character: None,
+        };
+        let mut job = LayoutJob {
+            text: String::new(),
+            sections: Vec::new(),
+            wrap: singular_wrapping,
+            first_row_min_height: 0.0,
+            break_on_newline: true,
+            halign: Align::LEFT,
+            justify: false,
+            round_output_to_gui: false,
+        };
+
+        let cur_buf = &self.buffer;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if let Some(cur_cell) = cur_buf.cell(Position { x, y }) {
+                    let is_bold = cur_cell.modifier.contains(Modifier::BOLD);
+                    let is_italic = cur_cell.modifier.contains(Modifier::ITALIC);
+                    let is_underlined = cur_cell.modifier.contains(Modifier::UNDERLINED);
+                    let is_slowblink = cur_cell.modifier.contains(Modifier::SLOW_BLINK);
+                    let is_rapidblink = cur_cell.modifier.contains(Modifier::RAPID_BLINK);
+                    let is_reversed = cur_cell.modifier.contains(Modifier::REVERSED);
+                    let is_dim = cur_cell.modifier.contains(Modifier::DIM);
+                    let is_hidden = cur_cell.modifier.contains(Modifier::HIDDEN);
+                    let is_crossed_out = cur_cell.modifier.contains(Modifier::CROSSED_OUT);
+
+                    let tf_font = if is_bold && is_italic {
+                        self.bolditalic_font.clone()
+                    } else if is_bold {
+                        self.bold_font.clone()
+                    } else if is_italic {
+                        self.italic_font.clone()
+                    } else {
+                        self.regular_font.clone()
+                    };
+
+                    let mut tf_fg_color = Self::rat_to_egui_color(&cur_cell.fg, true);
+                    let mut tf_bg_color = Self::rat_to_egui_color(&cur_cell.bg, false);
+
+                    if is_slowblink && self.blinking_slow {
+                        tf_fg_color = tf_bg_color.clone();
+                    }
+                    if is_rapidblink && self.blinking_fast {
+                        tf_fg_color = tf_bg_color.clone();
+                    }
+                    if is_dim {
+                        tf_fg_color = tf_fg_color.gamma_multiply(0.7);
+                        tf_bg_color = tf_bg_color.gamma_multiply(0.7);
+                    }
+                    if is_reversed {
+                        std::mem::swap(&mut tf_fg_color, &mut tf_bg_color);
+                    }
+                    if is_hidden {
+                        tf_fg_color = tf_bg_color.clone();
+                    }
+
+                    let tf_stroke = if is_crossed_out {
+                        Stroke::new(ui.fonts(|fx| fx.row_height(&tf_font) / 8.0), tf_fg_color)
+                    } else {
+                        Stroke::NONE
+                    };
+                    let tf_underline = if is_underlined {
+                        Stroke::new(ui.fonts(|fx| fx.row_height(&tf_font) / 3.0), tf_fg_color)
+                    } else {
+                        Stroke::NONE
+                    };
+
+                    let tf = TextFormat {
+                        font_id: tf_font,
+                        color: tf_fg_color,
+                        background: tf_bg_color,
+                        strikethrough: tf_stroke,
+                        underline: tf_underline,
+                        ..Default::default()
+                    };
+
+                    job.append(&cur_cell.symbol(), 0.0, tf);
+                }
+            }
+            if y < self.height - 1 {
+                job.append("\n", 0.0, TextFormat::default());
+            }
+        }
+        job
+    }
+
 
     pub fn get_font_size(&self) -> u16 {
         self.font_size.clone()
@@ -293,6 +370,7 @@ impl RataguiBackend {
         self.buffer.resize(Rect::new(0, 0, width, height));
         self.width = width;
         self.height = height;
+        self.cached_job = None; // Invalidate cache on resize
     }
     
     pub fn get_font_width(&self, fontiki: &Fonts) -> f32 {
@@ -342,10 +420,17 @@ impl Backend for RataguiBackend {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
+        let mut changed = false;
         for (x, y, c) in content {
             if let Some(cell) = self.buffer.cell_mut(Position { x, y }) {
-                *cell = c.clone();
+                if cell != c {
+                    *cell = c.clone();
+                    changed = true;
+                }
             }
+        }
+        if changed {
+            self.cached_job = None; // Invalidate only on actual changes
         }
         Ok(())
     }
