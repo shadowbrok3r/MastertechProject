@@ -70,7 +70,6 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
-            "Egui Terminal" => self.shared_ctx.egui_terminal(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),

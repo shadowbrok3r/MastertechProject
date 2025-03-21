@@ -1,12 +1,37 @@
+use database::WS_CLIENT_URL;
+use sysinfo::System;
+use system_info::generate_client_id;
+
 pub mod system_info;
 pub mod machine;
 
 // Wrap the Nvml instance in lazy_static
 lazy_static::lazy_static! {
-    static ref SYSINFO: std::sync::Arc<tokio::sync::Mutex<sysinfo::System>> = std::sync::Arc::new(
-        tokio::sync::Mutex::new(sysinfo::System::new_all())
+    static ref SYSINFO: std::sync::Arc<tokio::sync::Mutex<System>> = std::sync::Arc::new(
+        tokio::sync::Mutex::new(System::new_all())
     );
 }
+
+pub fn get_client_hash() -> (String, String) {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    
+    let cpu = sys.cpus()[0].brand().trim().to_string();
+    let hostname = System::host_name().unwrap_or_default();
+    
+    let client_hash = generate_client_id(hostname.clone(), cpu.trim().to_string());
+    let id = format!("{}:{}", hostname.clone(), client_hash.split_at(9).0);
+    
+    let connection_url = format!(
+        "{WS_CLIENT_URL}&room_id={}",
+        id
+    );
+
+    (client_hash, connection_url)
+}
+
+
+
 
 static MACHINE_INSTANCE: std::sync::OnceLock<std::sync::Arc<machine::Machine>> = std::sync::OnceLock::new();
 

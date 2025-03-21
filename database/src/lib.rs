@@ -89,7 +89,7 @@ pub fn get_db_url() -> String {
 }
 
 pub async fn initialize_db() -> anyhow::Result<()> {
-    DATABASE.connect::<Wss>(DB_URL_LOCAL).await?;
+    DATABASE.connect::<Ws>(DB_URL_LOCAL).await?;
     DATABASE.use_ns(NS).use_db(DB).await?;
     Ok(())
 }
@@ -113,7 +113,7 @@ pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
     Ok(Session { jwt, user })
 }
 
-pub async fn signup<T: Serialize>(signup_data: T, email: &str) -> anyhow::Result<Session> {
+pub async fn signup<T: Serialize>(signup_data: T) -> anyhow::Result<Session> {
     let jwt = DATABASE
         .signup(SurrealRec {
             namespace: NS,

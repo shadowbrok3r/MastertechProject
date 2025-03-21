@@ -1,4 +1,4 @@
-use crate::{remote_viewer::decode_buffer, PlatformSpawner, Spawner};
+use crate::{remote_viewer::{ratagui::{RataguiBackend, TerminalEvent}, decode_buffer}, PlatformSpawner, Spawner};
 use crossbeam::channel::{unbounded, Sender, Receiver};
 use database::schema::utilities::decompress_data;
 use std::time::{Duration, Instant, SystemTime};
@@ -6,8 +6,6 @@ use base64::{engine::general_purpose, Engine};
 use ewebsock::{Options, WsSender};
 use ratatui::prelude::*;
 use eframe::egui::Ui;
-
-use super::ratagui::{RataguiBackend, TerminalEvent};
 
 pub struct RemoteTerminal {
     pub terminal: Terminal<RataguiBackend>,
@@ -17,14 +15,17 @@ pub struct RemoteTerminal {
     event_rx: Receiver<TerminalEvent>,
     event_tx: Sender<TerminalEvent>,
     size_tx: Sender<Rect>,
-    ws_sender: WsSender,
+    size_rx: Receiver<Rect>,
     buffer_count: usize,
     frame_count: usize,
     last_log: Instant,
     last_repaint: Instant,
     last_log_frame_count: usize,
+    current_area: Rect,
     last_target_area: Rect,
     latest_frame_index: u64, // Track the latest rendered frame
+    msg_to_client: Sender<ewebsock::WsMessage>,
+    msg_from_client: Receiver<ewebsock::WsMessage>
 }
 
 impl RemoteTerminal {
@@ -33,82 +34,21 @@ impl RemoteTerminal {
         let (size_tx, size_rx) = unbounded();
         let (event_tx, event_rx) = unbounded(); // New: Event channel
         let initial_area = Rect::new(0, 0, 250, 250);
-        
-        let (mut ws_sender, ws_receiver) = ewebsock::connect(
-            client_url, 
-            Options::default()
-        ).expect("Failed to connect to websocket server");
-
-        let tx = buffer_tx.clone();
-
-        ws_sender.send(ewebsock::WsMessage::Text("READY".to_string()));
-
-        PlatformSpawner::spawn(async move {
-            let mut current_area = initial_area;
-            loop {
-                while let Some(ws_event) = ws_receiver.try_recv() {
-                    log::warn!("EVT");
-                    while let Ok(new_area) = size_rx.try_recv() {
-                        current_area = new_area;
-                    }
-                    let receive_start = Instant::now();
-                    match ws_event {
-                        ewebsock::WsEvent::Message(ws_message) => {
-                            if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
-                                let decode_start = Instant::now();
-                                match decode_buffer(&buffer_array) { // 
-                                    Ok(buffer_message) => {
-                                        let frame_index = buffer_message.frame_count;
-                                        let new_buffer = buffer_message.buffer;
-                                        let sent_timestamp = buffer_message.timestamp;
-                                        let encode_duration = buffer_message.encode_duration;
-
-                                        let decode_duration = decode_start.elapsed().as_millis() as u128;
-                                        let current_time = SystemTime::now()
-                                            .duration_since(SystemTime::UNIX_EPOCH)
-                                            .unwrap()
-                                            .as_millis();
-                                        let total_latency = current_time.saturating_sub(sent_timestamp);
-                                        let network_latency = total_latency.saturating_sub(encode_duration as u128 + decode_duration);
-                                        log::info!(
-                                            "Received buffer, frame_count={}, timestamp={}, current_time={}, total_latency={}ms, network_latency={}ms, encode_duration={}ms, decode_duration={}ms",
-                                            frame_index,
-                                            sent_timestamp,
-                                            current_time,
-                                            total_latency,
-                                            network_latency,
-                                            encode_duration,
-                                            decode_duration
-                                        );
-                                        let resized_buffer = resize_buffer(&new_buffer, current_area);
-                                        if tx.send((frame_index, resized_buffer)).is_err() {
-                                            log::warn!("Failed to send buffer to UI thread");
-                                            break;
-                                        }
-                                        let duration = receive_start.elapsed();
-                                        log::info!("Buffer processed: duration={:?}, frame_index={}", duration, frame_index);
-                                    }
-                                    Err(e) => log::warn!("Error decoding message: {e:?}"),
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        });
+        let (msg_to_client, msg_from_client) = unbounded();
+        msg_to_client.try_send(ewebsock::WsMessage::Text("READY".to_string()));
 
         let mut backend = RataguiBackend::new(initial_area.width, initial_area.height, event_tx.clone()); // Changed: Use initial_area size
         backend.set_frame_index(0);
         let terminal = Terminal::new(backend).unwrap();
-        
+        let initial_area = Rect::new(0, 0, 250, 250);
+
         Self {
-            ws_sender,
             terminal,
             cached_buffer: Buffer::empty(initial_area),
             buffer_rx,
             buffer_tx,
             size_tx,
+            size_rx,
             event_rx,
             event_tx,
             buffer_count: 0,
@@ -116,8 +56,10 @@ impl RemoteTerminal {
             last_log: Instant::now(),
             last_repaint: Instant::now(),
             last_log_frame_count: 0,
+            current_area: initial_area.clone(),
             last_target_area: initial_area,
             latest_frame_index: 0,
+            msg_to_client, msg_from_client,
         }
     }
 
@@ -165,7 +107,7 @@ impl RemoteTerminal {
         // Send events over WebSocket
         while let Ok(event) = self.event_rx.try_recv() {
             let serialized = serde_json::to_string(&event).expect("Failed to serialize event");
-            self.ws_sender.send(ewebsock::WsMessage::Text(serialized));
+            self.msg_to_client.try_send(ewebsock::WsMessage::Text(serialized));
         }
 
         if let Some((frame_index, buffer)) = latest_buffer {
@@ -220,6 +162,54 @@ impl RemoteTerminal {
         }
     }
 
+    pub fn receive(&mut self) {
+        // while let Ok(msg_from_client) = self.msg_from_client.try_recv() {
+        //     match msg_from_client {
+        //         ewebsock::WsMessage::Binary(items) => todo!(),
+        //         ewebsock::WsMessage::Text(_) => todo!()
+        //     }
+        // }
+
+        while let Ok(new_area) = self.size_rx.try_recv() {
+            self.current_area = new_area;
+        }
+    }
+
+    pub fn receive_buffer(&mut self, tx: Sender<(u64, Buffer)>, buffer_array: Vec<u8>) {
+        let decode_start = Instant::now();
+        match decode_buffer(&buffer_array) { // 
+            Ok(buffer_message) => {
+                let frame_index = buffer_message.frame_count;
+                let new_buffer = buffer_message.buffer;
+                let sent_timestamp = buffer_message.timestamp;
+                let encode_duration = buffer_message.encode_duration;
+
+                let decode_duration = decode_start.elapsed().as_millis() as u128;
+                let current_time = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                let total_latency = current_time.saturating_sub(sent_timestamp);
+                let network_latency = total_latency.saturating_sub(encode_duration as u128 + decode_duration);
+                log::info!(
+                    "Received buffer, frame_count={}, timestamp={}, current_time={}, total_latency={}ms, network_latency={}ms, encode_duration={}ms, decode_duration={}ms",
+                    frame_index,
+                    sent_timestamp,
+                    current_time,
+                    total_latency,
+                    network_latency,
+                    encode_duration,
+                    decode_duration
+                );
+                let resized_buffer = resize_buffer(&new_buffer, self.current_area);
+                if tx.send((frame_index, resized_buffer)).is_err() {
+                    log::warn!("Failed to send buffer to UI thread");
+                    return;
+                }
+            }
+            Err(e) => log::warn!("Error decoding message: {e:?}"),
+        }
+    }
 }
 
 /// Decompress and decode the given Vec<u8> (which is base64-encoded compressed JSON)

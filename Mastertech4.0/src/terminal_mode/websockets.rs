@@ -1,5 +1,5 @@
 use displays::remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent};
-use crate::terminal_mode::WS_CLIENT_URL;
+use crate::filesystem::get_client_hash;
 use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
 use std::time::Instant;
@@ -14,9 +14,10 @@ impl<'a> TerminalApp<'a> {
         event_tx: tokio::sync::mpsc::UnboundedSender<TerminalEvent>,
     ) -> anyhow::Result<()> {
         let connection = ewebsock::connect(
-            format!("{WS_CLIENT_URL}&room_id=test"),
+            get_client_hash().1,
             ewebsock::Options::default(),
         );
+
         if let Ok((mut sender, receiver)) = connection {
             let ready = &mut false;
 
