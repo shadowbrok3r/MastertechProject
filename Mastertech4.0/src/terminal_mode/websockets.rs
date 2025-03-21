@@ -1,9 +1,9 @@
-use displays::remote_viewer::{encode_buffer_with_frame, ratagui::TerminalEvent};
-use ewebsock::{WsEvent, WsMessage};
+use displays::remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent};
 use crate::terminal_mode::WS_CLIENT_URL;
-use std::time::Duration;
-use super::TerminalApp;
+use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
+use std::time::Instant;
+use super::TerminalApp;
 use tokio;
 
 impl<'a> TerminalApp<'a> {
@@ -47,11 +47,12 @@ impl<'a> TerminalApp<'a> {
                     tokio::select! {
                         Some((frame_count, buffer)) = buffer_rx.recv() => {
                             log::info!("Sending buffer, frame_count={}", frame_count);
-                            let serialized = encode_buffer_with_frame(frame_count as u64, &buffer)?;
+                            let send_start = Instant::now();
+                            let serialized = encode_buffer_with_timestamp(frame_count as u64, &buffer)?;
                             sender.send(WsMessage::Binary(serialized));
-                            tokio::time::sleep(Duration::from_secs_f32(0.16)).await;
+                            let send_duration = send_start.elapsed();
+                            log::info!("Buffer sent, frame_count={}, send_duration={:?}", frame_count, send_duration);
                         }
-                        // No event_rx here anymore—events come via WebSocket
                     }
                 }
             }

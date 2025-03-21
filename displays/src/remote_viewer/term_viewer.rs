@@ -2,7 +2,7 @@ use base64::{engine::general_purpose, Engine};
 use ewebsock::{Options, WsSender};
 use ratatui::prelude::*;
 use eframe::egui::Ui;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant, SystemTime};
 use crossbeam::channel::{unbounded, Sender, Receiver};
 use database::{schema::utilities::decompress_data, WS_MASTER_URL};
 use crate::{remote_viewer::decode_buffer, PlatformSpawner, Spawner};
@@ -54,8 +54,31 @@ impl RemoteTerminal {
                     match ws_event {
                         ewebsock::WsEvent::Message(ws_message) => {
                             if let ewebsock::WsMessage::Binary(buffer_array) = ws_message {
-                                match decode_buffer(&buffer_array) {
-                                    Ok((frame_index, new_buffer)) => {
+                                let decode_start = Instant::now();
+                                match decode_buffer(&buffer_array) { // 
+                                    Ok(buffer_message) => {
+                                        let frame_index = buffer_message.frame_count;
+                                        let new_buffer = buffer_message.buffer;
+                                        let sent_timestamp = buffer_message.timestamp;
+                                        let encode_duration = buffer_message.encode_duration;
+
+                                        let decode_duration = decode_start.elapsed().as_millis() as u128;
+                                        let current_time = SystemTime::now()
+                                            .duration_since(SystemTime::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_millis();
+                                        let total_latency = current_time.saturating_sub(sent_timestamp);
+                                        let network_latency = total_latency.saturating_sub(encode_duration as u128 + decode_duration);
+                                        log::info!(
+                                            "Received buffer, frame_count={}, timestamp={}, current_time={}, total_latency={}ms, network_latency={}ms, encode_duration={}ms, decode_duration={}ms",
+                                            frame_index,
+                                            sent_timestamp,
+                                            current_time,
+                                            total_latency,
+                                            network_latency,
+                                            encode_duration,
+                                            decode_duration
+                                        );
                                         let resized_buffer = resize_buffer(&new_buffer, current_area);
                                         if tx.send((frame_index, resized_buffer)).is_err() {
                                             log::warn!("Failed to send buffer to UI thread");

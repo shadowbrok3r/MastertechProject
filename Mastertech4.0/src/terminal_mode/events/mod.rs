@@ -1,9 +1,7 @@
-use crossbeam::channel::{unbounded, Receiver, TryRecvError};
-use displays::remote_viewer::ratagui::TerminalEvent;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
-use futures::{FutureExt, StreamExt};
-
 use crate::terminal_mode::{systems::{communication_system::CommunicationSystem, notification_system::{Notification, NotificationType}}, tabs::Tab};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
+use crossbeam::channel::{unbounded, Receiver, TryRecvError};
+use futures::{FutureExt, StreamExt};
 
 use super::{widgets::HandleWidget, TerminalApp};
 
@@ -96,7 +94,7 @@ impl <'a>TerminalApp<'a> {
                 }
             };
         }
-        
+
         if let Ok(events) = self.event_handler.next() {
             let current_tab = self.menu_bar.current_tab.borrow().clone();
             match events {
