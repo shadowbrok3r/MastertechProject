@@ -17,32 +17,20 @@ pub enum TerminalEvent {
     KeyPress { code: KeyCode, modifiers: KeyModifiers }
 }
 
+// New struct to wrap buffer with timestamp
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BufferMessage {
+    pub frame_count: u64,
+    pub timestamp: u128, // Milliseconds since epoch or elapsed time
+    pub buffer: Buffer, // Encoded buffer data
+    pub encode_duration: u64,
+}
 
 impl Default for InstantWrapper {
     fn default() -> Self {
         Self(Instant::now())
     }
 }
-
-pub trait DiffMerge {
-    fn diff_merge(&mut self, new: &ratatui::buffer::Buffer);
-}
-
-impl DiffMerge for ratatui::buffer::Buffer {
-    #[unsafe(no_mangle)]
-    fn diff_merge(&mut self, new: &ratatui::buffer::Buffer) {
-        // Compute diff
-        let changes = self.diff(new);
-        // Apply each change
-        for (x, y, new_cell) in changes {
-            let cell = self.cell_mut(Position { x, y });
-            if let Some(c) = cell {
-                c.clone_from(new_cell)
-            }
-        }
-    }
-}
-
 
 ///The RataguiBackend is the widget+backend itself , from which you can make a ratatui terminal ,
 /// then you can do ui.add(terminal.backend_mut()) inside an egui context    .
