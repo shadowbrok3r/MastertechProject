@@ -7,12 +7,15 @@ use axum::{
     routing::get,
     serve, Router,
 };
+use database::{initialize_db, schema::{ConnectedClient, DB, NS}, DATABASE};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
+use surrealdb::opt::auth::Database;
 use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::info;
 use uuid::Uuid;
+
 
 type SessionID = String;
 type RoomID = String;
@@ -107,9 +110,10 @@ impl ChatServer {
                         if let Some(frame) = close_frame {
                             info!("WebSocket closed: {:?} {:?}", frame.reason, frame.code);
                         }
+
                         server_clone
                             .cleanup_session(&room_id_clone, &session_id_clone, &role_clone)
-                            .await;
+                            .await?;
                         break;
                     }
                     Message::Ping(bytes) => info!("Ping: {:?}", bytes),
@@ -118,7 +122,8 @@ impl ChatServer {
             }
             server_clone
                 .cleanup_session(&room_id_clone, &session_id_clone, &role_clone)
-                .await;
+                .await?;
+            Ok::<(), anyhow::Error>(())
         });
 
         let server_clone = Arc::clone(&self);
@@ -134,10 +139,11 @@ impl ChatServer {
                     drop(sender);
                     server_clone
                         .cleanup_session(&room_id, &session_id, &role_clone)
-                        .await;
+                        .await?;
                     break;
                 }
             }
+            Ok::<(), anyhow::Error>(())
         });
     }
 
@@ -190,14 +196,22 @@ impl ChatServer {
         }
     }
 
-    async fn cleanup_session(&self, room_id: &RoomID, session_id: &SessionID, role: &str) {
+    async fn cleanup_session(&self, room_id: &RoomID, session_id: &SessionID, role: &str) -> anyhow::Result<(), anyhow::Error> {
         let mut rooms = self.rooms.lock().await;
         let mut session_map = self.session_map.lock().await;
     
         if session_map.remove(session_id).is_none() {
-            return; // Already cleaned up
+            return Ok(()); // Already cleaned up
         }
     
+        let client: Option<ConnectedClient> = DATABASE
+            .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
+            .bind(("connection_id", room_id.clone()))
+            .await?
+            .take(0)?;
+
+        log::info!("Client disconnected: {client:?}");
+
         if let Some(room) = rooms.get_mut(room_id) {
             match role {
                 "master" if room.master.is_some() => {
@@ -211,6 +225,7 @@ impl ChatServer {
                 _ => {}
             }
         }
+        Ok(())
     }
 
     async fn is_session_match(
@@ -228,6 +243,19 @@ impl ChatServer {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+    let init = initialize_db().await;
+    if init.is_ok() {    
+        let _ = DATABASE
+            .signin(Database {
+                namespace: NS,
+                database: DB,
+                username: "shadowbroker",
+                password: "toor10!9",
+            })
+            .await.unwrap();
+    } else if let Err(e) = init {
+        println!("ERR {e:?}");
+    }
 
     let chat_server = ChatServer {
         rooms: Arc::new(Mutex::new(HashMap::new())),
@@ -255,5 +283,25 @@ async fn websocket_handler(
     let role = params.get("role").cloned().unwrap_or_else(|| "client".to_string());
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
+    let res = connect_client(room_id.clone()).await;
+    println!("Res: {res:?}");
     ws.on_upgrade(move |socket| chat_server.handle_ws(socket, session_id, room_id, role))
+}
+
+pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error> {
+    let potential_client: Option<ConnectedClient> = DATABASE
+        .query("SELECT * FROM connected_client WHERE connection_string == $room_id")
+        .bind(("room_id", room_id.clone()))
+        .await?
+        .take(0)?;
+
+    if potential_client.is_some() {
+        let _: Option<ConnectedClient> = DATABASE
+            .query("UPDATE connected_client SET connected = true WHERE connection_string == $room_id")
+            .bind(("room_id", room_id.clone()))
+            .await?
+            .take(0)?;
+    }
+
+    Ok(())
 }

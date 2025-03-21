@@ -95,7 +95,6 @@ impl MasterTechApp {
                     }
                 });
 
-                // match x.poll_unpin(cx)
                 #[cfg(target_os = "windows")]
                 {
                     let cps = &mut self.context.current_antivirus.clone();
