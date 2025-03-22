@@ -492,8 +492,12 @@ impl AdminConsole {
             WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
             _ => {
                 for client in self.clients.iter() {
-                    if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string) {
-                        ws_client.show(ui);
+                    if self.undock_client.iter().any(|c| 
+                        !c.1 && c.0 == &client.connection_string
+                    ) {
+                        if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string) {
+                            ws_client.show(ui);
+                        }
                     }
                 }
             }

@@ -1,21 +1,19 @@
-use displays::remote_viewer::ratagui::TerminalEvent;
-use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
+use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
-use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
-use database::WS_CLIENT_URL;
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
+use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
-use crossbeam::channel::unbounded;
-// use base64::{engine::general_purpose, Engine as _};
+use displays::remote_viewer::ratagui::TerminalEvent;
 use fx::{effect::UniqueEffectId, EffectStage};
+use crossbeam::channel::unbounded;
 use context::TerminalContext;
-// use tachyonfx::CellFilter;
 use widgets::HandleWidget;
-// use styling::CATPPUCCIN;
 use ratatui::prelude::*;
 use reqwest::Client;
+// use styling::CATPPUCCIN;
+// use tachyonfx::CellFilter;
 
 pub mod systems;
 pub mod widgets;
@@ -57,16 +55,10 @@ pub struct TerminalApp<'a> {
     ctx: Arc<Mutex<TerminalContext>>,
     render_system: Arc<RenderSystem>,
     data_system: Arc<DataSystem>,
-    // buffer_tx: tokio::sync::mpsc::UnboundedSender<Buffer>,
-    // buffer_rx: tokio::sync::mpsc::UnboundedReceiver<Buffer>,
-    cached_buffer: Option<Buffer>, // Existing from previous solution
 }
 
 impl Default for TerminalApp <'_>{
     fn default() -> Self {
-        // Create the channel for Buffer messages.
-        // let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
-
         let client = Client::new();
         // Create channels explicitly for communication between Data and Render systems
         let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
@@ -108,9 +100,6 @@ impl Default for TerminalApp <'_>{
             render_system,
             data_system,
             tasks_tab,
-            // buffer_tx,
-            // buffer_rx,
-            cached_buffer: None,
         }
     }
 }
@@ -187,14 +176,15 @@ impl <'a>TerminalApp<'a> {
 
         let mut join_handles = Vec::new();
         let shutdown_rx_data = shutdown_tx.subscribe();
+        let shutdown_rx_websocket = shutdown_tx.subscribe();
+        let shutdown_rx_render = shutdown_tx.subscribe();
+
         // Run DataSystem in the background
         join_handles.push(
             tokio::spawn(async move {
                 data_system_bg.run(shutdown_rx_data).await;
             })
         );
-
-        let shutdown_rx_render = shutdown_tx.subscribe();
 
         // Run RenderSystem in the background
         join_handles.push(
@@ -206,15 +196,16 @@ impl <'a>TerminalApp<'a> {
         let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
         let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        
         join_handles.push(
             tokio::spawn(async move {
-                let websocket_server = TerminalApp::start_websocket_sender(buffer_rx, start_tx.clone(), event_tx).await;
+                let websocket_server = TerminalApp::start_websocket_sender(buffer_rx, start_tx.clone(), event_tx, shutdown_rx_websocket).await;
                 log::info!("websocket_server: {websocket_server:?}");
             })
         );
 
         let mut last_sent = Instant::now(); // Changed: Added to throttle sending
-        let send_interval = Duration::from_secs_f32(0.5); // Changed: ~3 FPS interval
+        let send_interval = Duration::from_secs_f32(0.4); // Changed: ~3 FPS interval
         let can_start = &mut false;
         loop {
             if self.handle_events(None, None) { 
