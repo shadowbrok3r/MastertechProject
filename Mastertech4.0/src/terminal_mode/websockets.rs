@@ -12,6 +12,7 @@ impl<'a> TerminalApp<'a> {
         mut buffer_rx: tokio::sync::mpsc::UnboundedReceiver<(usize, Buffer)>, // Changed: Receive frame count
         start_tx: tokio::sync::mpsc::UnboundedSender<bool>,
         event_tx: tokio::sync::mpsc::UnboundedSender<TerminalEvent>,
+        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>
     ) -> anyhow::Result<()> {
         let client = get_client_hash();
 
@@ -49,6 +50,11 @@ impl<'a> TerminalApp<'a> {
                             }
                         }
                     }
+                }
+
+                if let Ok(()) = shutdown_rx.try_recv() {
+                    *ready = false;
+                    break;
                 }
 
                 if *ready {

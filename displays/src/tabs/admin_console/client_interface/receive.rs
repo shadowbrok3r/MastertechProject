@@ -167,7 +167,7 @@ impl WebSocketClient {
                         self.buffer.push_str(&msg);
                         self.buffer.push('\n');
                     } else {
-                        log::error!("Message not handled: {msg:?}");
+                        // log::error!("Message not handled: {msg:?}");
                     }
                 }        
             }

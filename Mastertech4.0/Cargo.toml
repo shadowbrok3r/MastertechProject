@@ -42,7 +42,7 @@ shell-words = "1"
 sha2 = { version = "0.10", features = ["std"] }
 quickxml_to_serde = "0.6"
 linked-hash-map = "0.5"
-ewebsock = { version = "0.8", features = [ "tls" ] }
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.0", features = ["tls"]}
 hex = "0.4.3"
 ring = "0.17.8"
 rust-s3 = "0.35"
