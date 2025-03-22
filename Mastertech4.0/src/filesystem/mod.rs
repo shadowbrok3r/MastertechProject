@@ -1,4 +1,5 @@
-use database::WS_CLIENT_URL;
+use database::schema::{ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE};
+use surrealdb::RecordId;
 use sysinfo::System;
 use system_info::generate_client_id;
 
@@ -12,26 +13,35 @@ lazy_static::lazy_static! {
     );
 }
 
-pub fn get_client_hash() -> (String, String) {
+pub fn get_client_hash() -> ConnectedClient {
     let mut sys = System::new_all();
     sys.refresh_all();
     
     let cpu = sys.cpus()[0].brand().trim().to_string();
     let hostname = System::host_name().unwrap_or_default();
-    
+
     let client_hash = generate_client_id(hostname.clone(), cpu.trim().to_string());
     let id = format!("{}:{}", hostname.clone(), client_hash.split_at(9).0);
-    
-    let connection_url = format!(
-        "{WS_CLIENT_URL}&room_id={}",
-        id
+
+    let client_id = RecordId::from_table_key(
+        CONNECTED_CLIENT_TABLE.to_string(), 
+        id.clone().as_str()
     );
 
-    (client_hash, connection_url)
+    let computer_id = RecordId::from_table_key(
+        COMPUTER_TABLE.to_string(), 
+        id.clone().as_str()
+    );
+
+    ConnectedClient {
+        id: client_id.clone(),
+        client_hash,
+        connected: false,
+        connection_string: id.clone(),
+        computer: Some(computer_id.clone()),
+        ..Default::default()
+    }
 }
-
-
-
 
 static MACHINE_INSTANCE: std::sync::OnceLock<std::sync::Arc<machine::Machine>> = std::sync::OnceLock::new();
 

@@ -1,5 +1,5 @@
 use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::github_issue::GithubIssue};
-use displays::{app_state::SharedContext, channel_manager::ChannelManager, tabs::webconsole_admin::websockets::WebSocketClient};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager, tabs::admin_console::client_interface::WebSocketClient};
 use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database, WS_MASTER_URL};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::collections::{HashMap, HashSet};

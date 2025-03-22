@@ -1,73 +1,20 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
+use crate::tabs::admin_console::WebSocketClient;
 use ewebsock::WsMessage;
 use bincode::serialize;
 use core::f32;
-use log::info;
 use crate::Cmd;
 
-use super::{History, WebSocketClient};
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug)]
+pub struct History {
+    pub from: String,
+    pub message: String,
+    pub timestamp: String
+}
+
 
 impl WebSocketClient {
-    pub fn command_shell_menu(&mut self, ui: &mut Ui) {
-        if Button::new("Tuneup").ui(ui).clicked(){
-            info!("web_console -> websockets.rs -> Tuneup clicked");
-            let _ = self.send_cmd_tx.try_send(Cmd::Tuneup);
-            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
-            // self.history.push(format!("You\nCommand::Tuneup"));
-        }
-        
-        if Button::new("CPS").ui(ui).clicked(){
-            info!("web_console -> websockets.rs -> CPS clicked");
-            let _ = self.send_cmd_tx.try_send(Cmd::Cps);
-            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
-            // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
-            self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
-        }
-
-        if Button::new("SFC").ui(ui).clicked(){
-            info!("web_console -> websockets.rs -> SFC clicked");
-            let _ = self.send_cmd_tx.try_send(Cmd::SfcScan);
-            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
-            // self.history.push(format!("You\nCommand::SfcScan"));
-            self.input = "sfc /scannow".to_string();
-        }
-
-        if Button::new("Dism").ui(ui).clicked(){
-            info!("web_console -> websockets.rs -> Dism clicked");
-            let _ = self.send_cmd_tx.try_send(Cmd::DismScan);
-            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
-            // self.history.push(format!("You\nCommand::DismScan"));
-            self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
-        }
-
-        if Button::new("Chkdsk").ui(ui).clicked(){
-            info!("web_console -> websockets.rs -> Chkdsk clicked");
-            let _ = self.send_cmd_tx.try_send(Cmd::ChkDsk);
-            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
-            // self.history.push(format!("You\nCommand::ChkDsk"));
-            self.input = "chkdsk /f /x /r".to_string();
-            
-        }
-
-        if Button::new("Mbr2Gpt").ui(ui).clicked(){
-            info!("web_console -> websockets.rs -> Mbr2Gpt clicked");
-            let _ = self.send_cmd_tx.try_send(Cmd::Mbr2Gpt);
-            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
-            // self.history.push(format!("You\nCommand::Mbr2Gpt"));
-            self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
-        }
-    }
-
-    pub fn show_live_stats(&mut self, ui: &mut Ui) {
-        ui.vertical_centered(|ui| {
-            ui.vertical_centered_justified(|ui| {
-                self.resource_monitor.display(ui);
-            });
-        });
-        ui.add_space(10.0);
-    }
-
     pub fn show_shell(&mut self, ui: &mut Ui) {
         let b_panel_marg = Margin::symmetric(5, 10);
 
@@ -154,9 +101,8 @@ impl WebSocketClient {
                     message: self.input.clone(), 
                     timestamp:  chrono::Local::now().to_rfc3339()
                 });
-                if let Ok(mut sender) = self.ws_sender.try_lock() {
-                    sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
-                }
+
+                self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
 
             } else if text_edit.lost_focus() && key_press && self.interactive { 
                 text_edit.request_focus();
@@ -173,15 +119,13 @@ impl WebSocketClient {
                     timestamp:  chrono::Local::now().to_rfc3339()
                 });
 
-                if let Ok(mut sender) = self.ws_sender.try_lock() {
-                    match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
-                        Ok(bytes) => sender.send(WsMessage::Binary(bytes)),
-                        Err(e) => self.history.push(History { 
-                            from: "Client".to_string(), 
-                            message: e.to_string(), 
-                            timestamp:  chrono::Local::now().to_rfc3339()
-                        }),
-                    } 
+                match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
+                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                    Err(e) => self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: e.to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    }),
                 }
             }
         

@@ -1,6 +1,6 @@
-use displays::tabs::webconsole_admin::WebConsoleLayout;
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId};
 use std::{sync::{atomic::Ordering, Arc}, time::Duration};
+use displays::tabs::admin_console::AdminConsole;
 use crate::app_state::MasterTechApp;
 use log::info;
 
@@ -90,7 +90,7 @@ impl MasterTechApp{
                             
                             let tx = layout.ui_actions_channel.0.clone();
                             
-                            ui.horizontal(|ui| WebConsoleLayout::client_header(ui, tx, &client.clone(), undock_client.clone()));
+                            ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone()));
                             if let Some(ws_client) =
                                 layout.ws_clients.get_mut(&client.connection_string)
                             {

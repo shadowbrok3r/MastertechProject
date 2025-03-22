@@ -1,4 +1,6 @@
+use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL};
 use displays::remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent};
+use surrealdb::RecordId;
 use crate::filesystem::get_client_hash;
 use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
@@ -13,8 +15,15 @@ impl<'a> TerminalApp<'a> {
         start_tx: tokio::sync::mpsc::UnboundedSender<bool>,
         event_tx: tokio::sync::mpsc::UnboundedSender<TerminalEvent>,
     ) -> anyhow::Result<()> {
+        let client = get_client_hash();
+
+        let connection_url = format!(
+            "{WS_CLIENT_URL}&room_id={}",
+            client.connection_string
+        );
+
         let connection = ewebsock::connect(
-            get_client_hash().1,
+            connection_url,
             ewebsock::Options::default(),
         );
 
@@ -62,4 +71,41 @@ impl<'a> TerminalApp<'a> {
         }
         Ok(())
     }
+}
+
+pub async fn create_client(client: ConnectedClient) -> anyhow::Result<(), anyhow::Error> {
+    log::info!("Client: {client:?}");
+
+    let query_id = query_id::<ConnectedClient>(
+        CONNECTED_CLIENT_TABLE.to_string(), 
+        client.id.clone()
+    ).await;
+
+    log::info!("websockets -> query_id: {query_id:?}");
+
+    let check_id_existence = check_id_existence(
+        CONNECTED_CLIENT_TABLE.to_string(), 
+        client.id.clone()
+    ).await;
+    
+    log::info!("websockets -> check_id_existence: {check_id_existence:?}");
+    
+    if let Ok(Some(_)) = query_id {
+        log::info!("WE HAVE A CLIENT");
+    } else {
+        let res: Option<ConnectedClient> = DATABASE
+            .create(client.id)
+            .content(serde_json::json!({
+                "assigned_user": client.assigned_user.clone().unwrap().to_string(),
+                "client_hash": client.client_hash.clone(),
+                "connection_string": client.connection_string.clone(),
+                "connected": client.connected.clone(),
+                "computer": client.computer.clone()
+            }))
+            .await?
+            .take();
+
+        log::info!("websockets -> Upsert: {res:?}");
+    }
+    Ok(())
 }
