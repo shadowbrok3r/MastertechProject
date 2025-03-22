@@ -13,12 +13,11 @@ impl RemoteTerminal {
         buffer_array: Vec<u8>, 
         mut current_area: Rect
     ) {
-        loop {
-            while let Ok(new_area) = size_rx.try_recv() {
-                current_area = new_area;
-            }
-            let decode_start = Instant::now();
-            match decode_buffer(&buffer_array) {
+        while let Ok(new_area) = size_rx.try_recv() {
+            current_area = new_area;
+        }
+        let decode_start = Instant::now();
+        match decode_buffer(&buffer_array) {
                 Ok(buffer_message) => {
                     let new_buffer = buffer_message.buffer;
                     let frame_index = buffer_message.frame_count;
@@ -61,12 +60,11 @@ impl RemoteTerminal {
     
                     if tx.send((frame_index, resized_buffer)).is_err() {
                         log::warn!("Failed to send buffer to UI thread");
-                        break;
+                        return;
                     }
                 }
                 Err(e) => log::warn!("Error decoding message: {e:?}"),
             }
-        }
     }
 }
 

@@ -15,15 +15,16 @@ impl AdminConsole {
     pub fn handle_action(&mut self, action: ClientUiAction) {
         match action {
             ClientUiAction::UndockClient(connection_string) => {
-                if let Some(docked) = self.undock_client.get_mut(&connection_string)
-                {
+                if let Some(docked) = self.undock_client.get_mut(&connection_string) {
                     if *docked {
                         *docked = false;
                         self.wants_to_undock = false;
                     } else {
                         *docked = true;
                         self.wants_to_undock = true;
-                    };
+                    }
+                } else {
+                    self.undock_client.insert(connection_string, true);
                 }
             },
             ClientUiAction::DeleteClient(mut client) => {

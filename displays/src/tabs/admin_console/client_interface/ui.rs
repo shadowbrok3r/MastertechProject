@@ -46,6 +46,10 @@ impl WebSocketClient {
                         let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
                     }
 
+                    if Button::new(RichText::new("Mastertech TUI").color(btn_color)).ui(ui).clicked(){
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
+                    }
+
                     let notifs = if let WsDisplayState::Shell = self.state {
                         format!("Shell")
                     } else {

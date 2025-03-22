@@ -23,7 +23,6 @@ pub mod seb_lookup;
 pub mod system_information;
 pub mod tur_sheet;
 pub mod websockets;
-pub mod egui_terminal;
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -104,6 +103,7 @@ impl TabViewer for MastertechContext {
     ) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
+            "Admin Console" => self.websocket_menu(ui),
             "Websockets" => self.websocket_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),
             _ => {
