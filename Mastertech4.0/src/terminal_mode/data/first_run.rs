@@ -1,39 +1,18 @@
-use crate::{app_state::{AppState, MainPages}, filesystem::system_info::generate_client_id, pages::login_page::HASH, terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
-use database::{schema::{User, CONNECTED_CLIENT_TABLE}, Database, DATABASE, WS_CLIENT_URL};
-use surrealdb::RecordId;
+use crate::{app_state::{AppState, MainPages}, filesystem::get_client_hash, pages::login_page::HASH, terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, websockets::create_client, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
+use database::{WS_CLIENT_URL, schema::utilities::get_current_user_from_auth, Database, DATABASE};
 
 impl <'a>TerminalApp<'a> {
     pub fn first_run(&mut self) -> anyhow::Result<(), anyhow::Error> {
         if let Ok(mut ctx) = self.ctx.lock() {
-            let service_form = self.service_tab.borrow();
-            let service_data = service_form.service_data.lock();
-            if let Ok(svc_data) = service_data {
-                let computer_data = &svc_data.computer_data;
-                let client_hash = generate_client_id(
-                    computer_data.hostname.clone(), 
-                    computer_data.cpu.trim().to_string()
-                );
-        
-                let url_string = format!(
-                    "{}:{}", 
-                    computer_data.hostname.clone(), 
-                    client_hash.split_at(9).0
-                );
-        
-                ctx.client_title = url_string.clone();
 
-                ctx.url = Some(
-                    format!(
-                        "{WS_CLIENT_URL}&room_id={}",
-                        url_string.clone()
-                    )
-                );
-                
-                ctx.client_uuid = RecordId::from_table_key(
-                    CONNECTED_CLIENT_TABLE.to_string(), 
-                    url_string.clone().as_str()
-                );
-            }
+            let mut client = get_client_hash();
+
+            let connection_url = format!(
+                "{WS_CLIENT_URL}&room_id={}",
+                client.id
+            );
+
+            ctx.url = Some(connection_url.clone());
 
             let loaded_data = load_encrypted_user_data(HASH);
             let app_state_tx = ctx.app_state_tx.clone();
@@ -55,6 +34,12 @@ impl <'a>TerminalApp<'a> {
                                     data_tx.send(Box::new(
                                         DataMessage(usr.clone())
                                     ))?;
+
+                                    client.assigned_user = Some(usr.id.clone());
+
+                                    let create_client = create_client(client.clone()).await;
+                                    log::info!("Client Creation: {create_client:?}");
+
                                 }else{ 
                                     log::info!("no usr"); 
                                     let _ = DATABASE.invalidate().await;
@@ -67,11 +52,9 @@ impl <'a>TerminalApp<'a> {
                                 let check = e.to_string().contains("Already connected");
                                 log::info!("db check: {check}");
                                 if check { 
-                                    let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id")
-                                        .await?
-                                        .take(0)?;
+                                    let user = get_current_user_from_auth().await;
                                     log::info!("user: {user:?}");
-                                    if let Some(usr) = user {
+                                    if let Ok(Some(usr)) = user {
             
                                         data_tx.send(Box::new(
                                             DataMessage(usr.clone())

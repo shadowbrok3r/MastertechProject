@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, WidgetRef, Wrap}, Frame};
-use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}};
+use crate::{filesystem::get_client_hash, terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::{button::Button, ButtonType, HandleWidget, ShrinkArea}}};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::User;
 pub use scripts::*;
@@ -141,9 +141,8 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         }
 
         if title.is_empty() {
-            if let Ok(ctx) = &self.ctx.lock() {
-                *title = ctx.client_title.clone();
-            }
+            let client = get_client_hash();
+            *title = client.connection_string.clone();
         } else {
             Paragraph::new(format!("{}", &**title))
                 .block(

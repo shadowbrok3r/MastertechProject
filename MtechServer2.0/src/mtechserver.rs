@@ -1,4 +1,4 @@
-use displays::{tabs::webconsole_admin::WebConsoleLayout, ui_tools::theme_config::set_custom_style};
+use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
 use eframe::egui::{Color32, Context, Frame, Margin, Stroke, Vec2, Window};
 use crate::app_state::{AppState, MainPages, MtechServer};
 use egui_dock::DockState;
@@ -110,7 +110,7 @@ impl eframe::App for MtechServer {
                                 
                                 let tx = layout.ui_actions_channel.0.clone();
                                 
-                                ui.horizontal(|ui| WebConsoleLayout::client_header(ui, tx, &client.clone(), undock_client.clone()));
+                                ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone()));
                                 if let Some(ws_client) =
                                     layout.ws_clients.get_mut(&client.connection_string)
                                 {

@@ -1,6 +1,15 @@
 use eframe::egui::{Align, Button, Color32, Id, Layout, RichText, TopBottomPanel, Ui, Widget};
 use crate::{Cmd, FileSystemAction};
-use super::{WebSocketClient, WsDisplayState};
+use super::WebSocketClient;
+
+
+pub enum WsDisplayState {
+    LiveStats,
+    Explorer,
+    Shell,
+    ToolBox,
+    Terminal
+}
 
 impl WebSocketClient {
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)

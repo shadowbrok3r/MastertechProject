@@ -12,9 +12,9 @@ use std::sync::Arc;
 use log::info;
 use core::f32;
 
-use super::{WebConsoleLayout, WebConsolePageState};
+use super::{AdminConsole, WebConsolePageState};
 
-impl WebConsoleLayout {
+impl AdminConsole {
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         
         ui.style_mut().visuals.window_corner_radius = ui.style().visuals.window_corner_radius;

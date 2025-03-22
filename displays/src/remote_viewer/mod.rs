@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 
 pub mod ratagui;
 pub mod terminal_line;
-pub mod term_viewer;
+// pub mod term_viewer;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct EguiFrame {
@@ -305,7 +305,7 @@ pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow
     
     let bincoded = serde_json::to_vec(&message).context("Failed to serialize frame and buffer")?;
     const ZSTD_LEVEL: i32 = 5;
-    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL)
+    let _compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL)
         .context("Failed to compress frame data")?;
     
     let encode_duration = encode_start.elapsed().as_millis() as u64;
@@ -329,10 +329,7 @@ pub fn decode_buffer(packet: &[u8]) -> anyhow::Result<BufferMessage> {
     Ok(message)
 }
 
-pub fn from_clipped_net_shapes(
-    fonts: &Fonts,
-    in_shapes: Vec<NetMesh>
-) -> Vec<ClippedShape> {
+pub fn from_clipped_net_shapes(fonts: &Fonts,in_shapes: Vec<NetMesh>) -> Vec<ClippedShape> {
     in_shapes
         .into_iter()
         .map(|NetMesh(clip_rect, net_shape)| {

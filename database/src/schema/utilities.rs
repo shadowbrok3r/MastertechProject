@@ -81,6 +81,15 @@ pub trait Task {
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
 }
 
+pub async fn get_current_user_from_auth() -> Result<Option<User>, Error> {
+    let user_record: Option<User> = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take(0)?;
+
+    Ok(user_record)
+}
+
 pub async fn query_user_from_email(email: String) -> Result<User, Error> {
     let query = if email.eq("checkinshelf") || email.is_empty() {
         "RETURN (SELECT * FROM user WHERE id == $auth.id)"
@@ -122,14 +131,14 @@ pub async fn get_task_notes_from_db_with_service_number(service_number: String) 
     }
 }
 
-pub async fn query_id<T>(_table: String, id: RecordId) -> Result<Option<T>, Error>
+pub async fn query_id<T>(table: String, id: RecordId) -> Result<Option<T>, Error>
 where
     T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de>
 {
     let mut record: surrealdb::Response = DATABASE
-        .query("SELECT * FROM $id")
+        .query("SELECT * FROM $table WHERE id == $id")
         .bind(("id", id.clone()))
-        // .bind(("table", table.clone()))
+        .bind(("table", table.clone()))
         .await?;
 
     info!("schema/utilities.rs/query_id -> Record: {:?}\nSELECT * FROM ${id:?}", record);
@@ -142,9 +151,9 @@ where
 {
     let query = format!(
         r#"
-        LET $query = (SELECT * FROM $id);
-        IF $query != NULL || NONE {{ true }} ELSE {{ false }};
-    "#
+            LET $query = (SELECT * FROM $id);
+            IF $query != NULL || NONE {{ true }} ELSE {{ false }};
+        "#
     );
     let record: Option<bool> = DATABASE
         .query(query.clone())
