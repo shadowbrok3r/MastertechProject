@@ -76,14 +76,17 @@ impl WebSocketClient {
         let tx = remote_terminal.buffer_tx.clone();
 
         PlatformSpawner::spawn(async move {
-            while let Ok(msg) = msg_from_client_rx.try_recv() {
-                if let WsMessage::Binary(buffer_array) = msg {
-                    RemoteTerminal::receive_buffer(
-                        tx.clone(), 
-                        &size_rx, 
-                        buffer_array, 
-                        current_area
-                    );
+            loop {
+                while let Ok(msg) = msg_from_client_rx.try_recv() {
+                    log::info!("GOT A BUFFER");
+                    if let WsMessage::Binary(buffer_array) = msg {
+                        RemoteTerminal::receive_buffer(
+                            tx.clone(), 
+                            &size_rx, 
+                            buffer_array, 
+                            current_area
+                        );
+                    }
                 }
             }
         });
