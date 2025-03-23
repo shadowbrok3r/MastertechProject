@@ -149,7 +149,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
+        match DATABASE.connect::<Wss>(DB_URL_DEV).await {
             Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
             Err(e) => log::info!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
         }
