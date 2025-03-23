@@ -1,6 +1,6 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab};
+use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab}; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
@@ -12,6 +12,7 @@ use context::TerminalContext;
 use widgets::HandleWidget;
 use ratatui::prelude::*;
 use reqwest::Client;
+
 // use styling::CATPPUCCIN;
 // use tachyonfx::CellFilter;
 
@@ -23,7 +24,6 @@ pub mod styling;
 pub mod fx;
 pub mod data;
 pub mod context;
-pub mod ncdu;
 pub mod websockets;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
@@ -45,11 +45,12 @@ pub struct TerminalApp<'a> {
     menu_bar: MenuBar<'a>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
+    // ncdu_tab: Rc<RefCell<NcduTab>>,
     tasks_tab: Rc<RefCell<TasksTab>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     effect_stage: EffectStage<UniqueEffectId>,
-    first_run: bool,
+    // first_run: bool,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
     ctx: Arc<Mutex<TerminalContext>>,
@@ -75,8 +76,10 @@ impl Default for TerminalApp <'_>{
         let mut event_manager = EventManager::new(get_event_receiver());
         let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
         let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
+        // let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
         let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
+        let sysinfo_tab = SysinfoTab::new();
         let menu_bar = MenuBar::new(ctx.clone());
         
         // Register the ServiceFormTab with the event manager.
@@ -86,20 +89,21 @@ impl Default for TerminalApp <'_>{
         event_manager.register_handler(login_tab.clone());
 
         Self {
-            logger: Logger::new(),
+            ctx,
             menu_bar,
+            login_tab,
+            tasks_tab,
             scripts_tab,
             service_tab,
-            sysinfo_tab: SysinfoTab::new(),
-            login_tab,
-            effect_stage: EffectStage::default(),
-            event_handler: EventHandler::new(),
-            first_run: true,
-            event_manager,
-            ctx,
-            render_system,
+            sysinfo_tab,
+            // ncdu_tab,
+            // first_run: true,
             data_system,
-            tasks_tab,
+            render_system,
+            event_manager,
+            logger: Logger::new(),
+            event_handler: EventHandler::new(),
+            effect_stage: EffectStage::default(),
         }
     }
 }
@@ -161,6 +165,10 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
 
 impl <'a>TerminalApp<'a> {
     async fn ui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<(), anyhow::Error> {
+        let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
+        let send_interval = Duration::from_secs_f32(0.4); // Changed: ~3 FPS interval
+        let can_start = &mut false;
+
         // render splash screen
         let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
         let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
@@ -178,7 +186,10 @@ impl <'a>TerminalApp<'a> {
         let shutdown_rx_data = shutdown_tx.subscribe();
         let shutdown_rx_websocket = shutdown_tx.subscribe();
         let shutdown_rx_render = shutdown_tx.subscribe();
-
+        let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        
         // Run DataSystem in the background
         join_handles.push(
             tokio::spawn(async move {
@@ -193,10 +204,6 @@ impl <'a>TerminalApp<'a> {
             })
         );
 
-        let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
-        
         join_handles.push(
             tokio::spawn(async move {
                 let websocket_server = TerminalApp::start_websocket_sender(buffer_rx, start_tx.clone(), event_tx, shutdown_rx_websocket).await;
@@ -204,9 +211,6 @@ impl <'a>TerminalApp<'a> {
             })
         );
 
-        let mut last_sent = Instant::now(); // Changed: Added to throttle sending
-        let send_interval = Duration::from_secs_f32(0.4); // Changed: ~3 FPS interval
-        let can_start = &mut false;
         loop {
             if self.handle_events(None, None) { 
                 // Signal shutdown
@@ -220,18 +224,8 @@ impl <'a>TerminalApp<'a> {
                 break; 
             }
             terminal.draw(|f| {
-                // f.buffer_mut().clone();
                 if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
-                    let layout = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .margin(1)
-                    .constraints([
-                        Constraint::Percentage(50),
-                        Constraint::Percentage(50),
-                    ]).split(f.area());
-                    f.render_widget(&mut splash_screen, layout[0]);
-                    f.render_widget(&mut splash_screen2, layout[1]);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    Self::render_splash_screen(f, &mut splash_screen, &mut splash_screen2);
                 } else {
                     // Process events from egui via WebSocket
                     while let Ok(event) = event_rx.try_recv() {
@@ -262,26 +256,14 @@ impl <'a>TerminalApp<'a> {
                             }
                         }
                     }
+                    
                     if let Ok(start) = start_rx.try_recv() {
                         *can_start = start;
                     }
+
+                    self.menu_bar.check_active_tab();
                     self.event_manager.process_events();
                     self.tasks_tab.borrow_mut().check_tasks();
-                    if let Ok(mut ctx) = self.ctx.lock() {
-                        ctx.receive();
-                        match ctx.state {
-                            crate::app_state::AppState::Authenticated(_) => {
-                                if ctx.new_state {
-                                    ctx.new_state = false;
-                                    if let Ok(mut tab) = self.menu_bar.current_tab.try_borrow_mut() {
-                                        *tab = Tab::TurSheet;
-                                        self.menu_bar.login_tab.set_label("Logout".to_string());
-                                    }
-                                }
-                            },
-                            _ => {}
-                        }
-                    }
             
                     let area = f.area();
                     f.buffer_mut().set_style(area, Style::default().bg(Color::Rgb(8, 8, 12)));
@@ -303,95 +285,110 @@ impl <'a>TerminalApp<'a> {
                             Constraint::Percentage(10),
                         ]).split(outer_chunks[0]);
             
-                    let tab_area = center_horizontal(tab_layout[1], tab_layout[1].width);
-
-                    let main_content_area = outer_chunks[1];
                     
-                    if self.first_run {
-            
-                        // let effect1 = outline_selected_cells(
-                        //     &mut self.menu_bar.effect_stage, 
-                        //     main_content_area.as_size(),
-                        //     CATPPUCCIN.maroon,
-                        //     CellFilter::FgColor(CATPPUCCIN.maroon)
-                        // );
-            
-                        // self.effect_stage.add_effect(effect1);
-                        if let Ok(notifs) = notifications.lock() {
-                            if let Some(notification) = notifs.last() {
-                                let a = notification.notification_area::<B>(f);
-                                notification.render_effects(&mut self.effect_stage, a);
-                            }
-                        }
-                    }
-            
-                    self.menu_bar.draw::<B>(f, tab_area);
-            
-                    let buf = &mut Buffer::empty(Rect::ZERO);
-            
-                    // (2) Render Main content area depends on which tab is selected
-                    match *self.menu_bar.current_tab.borrow() {
-                        Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
-                        Tab::Scripts => self.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
-                        Tab::Tasks => self.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
-                        Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
-                        Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
-                        Tab::Logs => {
-                            buf.merge(f.buffer_mut());
-                            self.logger.draw::<B>(f, main_content_area);
-                        },
-                    }
-                    // Render notifications (synchronously) at top-right corner
-                    if let Ok(mut notifs) = notifications.lock() {
-                        notifs.retain(|notif| !notif.is_expired());
-                        if let Some(notification) = notifs.last() {
-                            let a = notification.notification_area::<B>(f);
-                            notification.display::<B>(f);
-                            self.effect_stage.process_effects(
-                                tachyonfx::Duration::from_millis(16), 
-                                f.buffer_mut(), 
-                                a
-                            );
-                        }
-                    }
-                    // Synchronously render other UI messages
-                    if let Ok(messages) = ui_messages.lock() {
-                        for ui_message in messages.iter() {
-                            ui_message.as_display().render_widget::<B>(f, area);
-                        }
-                    }
-            
-                    // Avoid cloning the buffer twice by reusing it
-                    // let current_buffer = f.buffer_mut(); // Borrow mutably without cloning initially
-                    // let should_send = if let Some(ref cached) = app.cached_buffer {
-                    //     !cached.diff(current_buffer).is_empty() // Compare directly with borrowed buffer
-                    // } else {
-                    //     true // No cache yet, so send
-                    // };
-
-                    let now = Instant::now(); // Changed: Throttle buffer sending
-                    if now.duration_since(last_sent) >= send_interval {
-                        if *can_start {
-                            let buffer_to_send = f.buffer_mut().clone();
-                            let tx = buffer_tx.clone();
-                            let count = f.count();
-                            std::thread::scope(|s| {
-                                s.spawn(|| {
-                                    if let Err(e) = tx.send((count, buffer_to_send)) {
-                                        log::warn!("Failed to send buffer: {:?}", e);
-                                    }
-                                });
-                            });
-                            last_sent = now;
-                        }
-                    }
+                    let _ = self.menu_bar::<B>(f, tab_layout, outer_chunks);
+                    self.render_systems::<B>(f, notifications.clone(), ui_messages.clone());
+                    Self::send_buffer(f, last_sent, send_interval, can_start, buffer_tx.clone());
                 }
             })?;
-
         }
         Ok(())
     }
+
+    fn menu_bar<B: Backend>(&mut self, f: &mut Frame, tab_layout: Rc<[Rect]>, outer_chunks: Rc<[Rect]>) -> anyhow::Result<(), anyhow::Error> {
+        let tab_area = center_horizontal(tab_layout[1], tab_layout[1].width);
+        let main_content_area = outer_chunks[1];
+        self.menu_bar.draw::<B>(f, tab_area);
+            
+        let buf = &mut Buffer::empty(Rect::ZERO);
+
+        // (2) Render Main content area depends on which tab is selected
+        match *self.menu_bar.current_tab.borrow() {
+            Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
+            Tab::Scripts => self.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
+            Tab::Tasks => self.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
+            Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
+            Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
+            Tab::Ncdu => todo!(),
+            Tab::Logs => {
+                buf.merge(f.buffer_mut());
+                self.logger.draw::<B>(f, main_content_area);
+            },
+        }
+        Ok(())
+    }
+
+    fn render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen, splash_screen2: &mut SplashScreen) {
+        let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(1)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ]).split(f.area());
+        f.render_widget(splash_screen, layout[0]);
+        f.render_widget(splash_screen2, layout[1]);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    fn _prepare_effects(&mut self, _f: &mut Frame) {
+        // if self.first_run {
+            
+            // let effect1 = outline_selected_cells(
+            //     &mut self.menu_bar.effect_stage, 
+            //     main_content_area.as_size(),
+            //     CATPPUCCIN.maroon,
+            //     CellFilter::FgColor(CATPPUCCIN.maroon)
+            // );
+
+            // self.effect_stage.add_effect(effect1);
+            // if let Ok(notifs) = notifications.lock() {
+            //     if let Some(notification) = notifs.last() {
+            //         let a = notification.notification_area::<B>(f);
+            //         notification.render_effects(&mut self.effect_stage, a);
+            //     }
+            // }
+        // }
+    }
+
+    fn render_systems<B: Backend>(
+        &mut self, 
+        f: &mut Frame,
+        notifications: Arc<Mutex<Vec<Notification>>>, 
+        ui_messages: Arc<Mutex<Vec<Box<dyn Message>>>>
+    ) {
+        let area = f.area();
+        // Render notifications (synchronously) at top-right corner
+        if let Ok(mut notifs) = notifications.lock() {
+            notifs.retain(|notif| !notif.is_expired());
+            if let Some(notification) = notifs.last() {
+                let a = notification.notification_area::<B>(f);
+                notification.display::<B>(f);
+                self.effect_stage.process_effects(
+                    tachyonfx::Duration::from_millis(16), 
+                    f.buffer_mut(), 
+                    a
+                );
+            }
+        }
+        // Synchronously render other UI messages
+        if let Ok(messages) = ui_messages.lock() {
+            for ui_message in messages.iter() {
+                ui_message.as_display().render_widget::<B>(f, area);
+            }
+        }
+    }
 }
+/*
+    fn receive(
+        &mut self, 
+        can_start: &mut bool, 
+        mut event_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalEvent>, 
+        mut start_rx: tokio::sync::mpsc::UnboundedReceiver<bool>
+    ) {
+ 
+    }
+*/
 
 fn center_horizontal(area: Rect, width: u16) -> Rect {
     let [area] = Layout::horizontal([Constraint::Length(width)])

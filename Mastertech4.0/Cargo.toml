@@ -61,6 +61,7 @@ bit-set = "0.8.0"
 tui-logger = "0.17"
 arboard = "3"
 tempfile = "3.18.0"
+strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 
 ratatui = { workspace = true }
 database = { workspace=true }
@@ -92,6 +93,7 @@ base64 = { workspace=true }
 egui_plot = { workspace = true }
 
 
+
 [dependencies.egui]
 version = "0.31"
 default-features = false
@@ -111,7 +113,7 @@ features = ["rayon", "bytemuck", "log"]
 
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = {version = "0.60", features = [
+windows = {version = "0.61", features = [
     "Win32_System",
     "Win32",
     "Win32_System_Com",
@@ -130,7 +132,7 @@ windows = {version = "0.60", features = [
     "Win32_NetworkManagement_WiFi"
 ]}
 windows-registry = "0.5"
-windows-core = "0.60"
+windows-core = "0.61"
 windows_x86_64_msvc = "0.53"
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 memmap2 = "0.9"

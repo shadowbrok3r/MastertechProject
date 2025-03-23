@@ -2,8 +2,8 @@ use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClie
 use displays::remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent};
 use crate::filesystem::get_client_hash;
 use ewebsock::{WsEvent, WsMessage};
-use ratatui::buffer::Buffer;
-use std::time::Instant;
+use ratatui::{buffer::Buffer, Frame};
+use std::time::{Duration, Instant};
 use super::TerminalApp;
 use tokio;
 
@@ -74,6 +74,31 @@ impl<'a> TerminalApp<'a> {
             log::error!("Failed to establish WebSocket connection");
         }
         Ok(())
+    }
+
+    pub fn send_buffer(
+        f: &mut Frame, 
+        last_sent: &mut Instant, 
+        send_interval: Duration, 
+        can_start: &mut bool,
+        buffer_tx: tokio::sync::mpsc::UnboundedSender<(usize, Buffer)>
+    ) {
+        let now = Instant::now(); // Changed: Throttle buffer sending
+        if now.duration_since(*last_sent) >= send_interval {
+            if *can_start {
+                let buffer_to_send = f.buffer_mut().clone();
+                let tx = buffer_tx.clone();
+                let count = f.count();
+                std::thread::scope(|s| {
+                    s.spawn(|| {
+                        if let Err(e) = tx.send((count, buffer_to_send)) {
+                            log::warn!("Failed to send buffer: {:?}", e);
+                        }
+                    });
+                });
+                *last_sent = now;
+            }
+        }
     }
 }
 
