@@ -1,10 +1,27 @@
-use crate::{tabs::{scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, StartupState}, tur_sheet::get_ticket::SendRequest}, utilities::windows::{antivirus::check_antivirus, net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}};
+use crate::tabs::{scripts::{ScheduledTask, StartupProgram, StartupState}, tur_sheet::get_ticket::SendRequest};
 use super::{checklist::Category, render::Reporter, ScriptsTab};
 use std::{path::{Path, PathBuf}, process::Command};
 use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use sysinfo::Disks;
+
+
+#[cfg(target_os="windows")]
+use crate::{
+    tabs::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram},
+    utilities::windows::{
+        antivirus::check_antivirus, 
+        net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, 
+        registry::{
+            align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, 
+            disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, 
+            disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, 
+            disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar
+        }, 
+        windows_update::install_windows_updates
+    }
+};
 
 /*
  FIGURED OUT HOW TO ******REACTIVATE****** SUPERANTISPYWARE.
@@ -27,6 +44,7 @@ impl <'a> ScriptsTab <'a> {
             self.current_script.replace(Some((category.clone(), item.text.clone())));
             log::info!("Set current script: {:?}", *self.current_script.borrow());
 
+            #[cfg(target_os="windows")]
             match category {
                 Category::Tuneup => self.handle_tuneup(item.text.as_str(), &category),
                 Category::Qc => self.handle_qc(item.text.as_str(), &category),
@@ -54,6 +72,7 @@ impl <'a> ScriptsTab <'a> {
         self.current_script.replace(None);
     }
 
+    #[cfg(target_os="windows")]
     fn remove_junkware(&mut self, item_text: Option<&str>) {
         if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
             for program in &mut *programs {
@@ -194,6 +213,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(Category::JunkwareRemoval, "WebNavigator Browser", true);
     }
 
+    #[cfg(target_os="windows")]
     // Category-specific handlers
     fn handle_tuneup(&mut self, item_text: &str, category: &Category){
         self.current_reporter.replace(Reporter::Tuneup);
@@ -212,6 +232,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn handle_qc(&mut self, item_text: &str, category: &Category){
         self.current_reporter.replace(Reporter::Qc);
         self.log_message(&format!("Running QC check: {}", item_text));
@@ -231,6 +252,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn handle_windows_updates(&mut self, item_text: &str, category: &Category){
         self.current_reporter.replace(Reporter::WindowsUpdates);
         self.log_message(&format!("Running Windows Updates script: {}", item_text));
@@ -243,6 +265,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn handle_run_prechecks(&mut self, item_text: &str, category: &Category){
         self.current_reporter.replace(Reporter::RunPrechecks);
         self.log_message(&format!("Running precheck: {}", item_text));
@@ -279,6 +302,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn handle_informational(&mut self, item_text: &str, category: &Category) {
         self.installed_programs = InstalledProgram::get_installed_programs().unwrap_or_default();
         self.antivirus_products = AntiVirusProduct::query_installed().unwrap_or_default();
@@ -298,6 +322,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn handle_junkware_removal(&mut self, item_text: &str, category: &Category){
         self.current_reporter.replace(Reporter::JunkwareRemoval);
         self.log_message(&format!("Removing junkware: {}", item_text));
@@ -338,6 +363,7 @@ impl <'a> ScriptsTab <'a> {
         self.log_message(&format!("Running custom script '{}': {} category: {:?}", name, item_text, category));
     }
 
+    #[cfg(target_os="windows")]
     // Tuneup Items
     fn disable_sleep_hibernation(&mut self, item_text: &str, category: &Category) {
         match disable_hibernation_and_sleep() {
@@ -352,7 +378,8 @@ impl <'a> ScriptsTab <'a> {
             Err(e) => self.log_message(format!("Sleep / Hibernation already disabled? {e:?}")),
         }
     }
-
+    
+    #[cfg(target_os="windows")]
     fn install_windows_updates(&mut self, item_text: &str, category: &Category) {
         self.log_message("Running Windows Updates...");
         let tx = self.update_log_tx.clone();
@@ -363,6 +390,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     fn activate_cps(&mut self, item_text: &str, category: &Category) {
         let service_number = self.service_number.clone();
         if let Ok(processes) = get_running_processes() {
@@ -404,6 +432,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     fn activate_seb(&mut self, item_text: &str, category: &Category) {
         let service_number = self.service_number.clone();
         let email = self.customer_email.clone();
@@ -424,11 +453,13 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     fn run_tron(&mut self, item_text: &str, category: &Category) {
         self.log_message("Tron script not implemented yet.");
         self.update_checklist(category.clone(), item_text, false);   
     }
 
+    #[cfg(target_os="windows")]
     fn run_webroot_scan(&mut self, item_text: &str, category: &Category) {
         for program in self.installed_programs.iter() {
             let display_name = program.display_name.clone().unwrap_or_default().to_lowercase();
@@ -449,18 +480,21 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     /// TODO: NOT YET IMPLEMENTED
     fn run_superantispyware_scan(&mut self, item_text: &str, category: &Category) {
         self.log_message("SuperAntiSpyware scan not implemented.");  
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     fn run_junkware_category(&mut self, item_text: &str, category: &Category) {
         self.remove_junkware(Some(item_text));
         self.log_message("Junkware category cleanup completed.");
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     // Qc Items
     fn data_transfer(&mut self, item_text: &str, category: &Category) {
         log::info!("Finding Data transfer candidates");
@@ -476,6 +510,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     fn install_libreoffice(&mut self, item_text: &str, category: &Category) {
         let download_url = "https://ninite.com/libreoffice/ninite.exe";
         let progress_tx = self.progress_tx.clone();
@@ -487,11 +522,13 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     fn disable_proxy_settings(&mut self, item_text: &str, category: &Category) {
         self.log_message("Proxy settings disable not implemented.");
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     fn disable_notifications(&mut self, item_text: &str, category: &Category) {
         match disable_notifications() {
             Ok(results) => self.log_message(&format!("Push Notifications => {results:#?}")),
@@ -545,12 +582,14 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     /// TODO: NOT YET IMPLEMENTED
     fn change_superantispyware_settings(&mut self, item_text: &str, category: &Category) {
         self.log_message("SuperAntiSpyware settings change not implemented.");
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     /// TODO: NOT YET IMPLEMENTED
     fn disable_startup_apps(&mut self, item_text: &str, category: &Category) {
         if let Ok(programs) = StartupProgram::get_startup_programs() {
@@ -564,6 +603,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     fn unpin_copilot(&mut self, item_text: &str, category: &Category) {
         match disable_copilot() {
             Ok(results) => {
@@ -576,6 +616,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     fn align_taskbar_left(&mut self, item_text: &str, category: &Category) {
         match align_taskbar_left() {
             Ok(messages) => for message in messages {
@@ -586,6 +627,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     // WindowsUpdates Items
     fn check_updates(&mut self, item_text: &str, category: &Category) {
         self.log_message("Checking for Windows updates...");
@@ -597,6 +639,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     // Informational Items
     fn is_supereasybackup_installed(&mut self, item_text: &str, category: &Category) {
         let mut installed = false;
@@ -616,6 +659,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, installed);
     }
 
+    #[cfg(target_os="windows")]
     fn is_webroot_installed(&mut self, item_text: &str, category: &Category) {
         let mut installed = false;
         for program in self.installed_programs.iter() {
@@ -641,6 +685,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     fn is_superantispyware_installed(&mut self, item_text: &str, category: &Category) {
         let mut installed = false;
         for program in self.installed_programs.iter() {
@@ -660,6 +705,7 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
+    #[cfg(target_os="windows")]
     fn are_scheduled_tasks_for_sas(&mut self, item_text: &str, category: &Category) {
         match ScheduledTask::list_tasks() {
             Ok(tasks) => {
@@ -679,6 +725,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn active_av_if_no_webroot_sas(&mut self, item_text: &str, category: &Category) {
         let antivirus = &self.antivirus_products;
         if !antivirus.is_empty() {
@@ -695,6 +742,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn is_windows_activated(&mut self, item_text: &str, category: &Category) {
         let activation_result  = check_windows_activation();
         match activation_result {
@@ -710,6 +758,7 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     fn is_hibernation_sleep_enabled(&mut self, item_text: &str, category: &Category) {
         match check_power_options() {
             Ok(_) => {
@@ -725,18 +774,21 @@ impl <'a> ScriptsTab <'a> {
         }
     }
 
+    #[cfg(target_os="windows")]
     /// TODO: NOT YET IMPLEMENTED
     fn recent_blue_screens(&mut self, item_text: &str, category: &Category) {
         self.log_message("BSOD check not implemented.");
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     /// TODO: NOT YET IMPLEMENTED
     fn last_service_date(&mut self, item_text: &str, category: &Category) {
         self.log_message("Service date check not implemented.");
         self.update_checklist(category.clone(), item_text, false);
     }
 
+    #[cfg(target_os="windows")]
     fn windows_version(&mut self, item_text: &str, category: &Category) {
         let win_ver = sysinfo::System::long_os_version().clone().unwrap_or_default();
         self.log_message(format!("Windows Version: {win_ver}"));
@@ -744,14 +796,23 @@ impl <'a> ScriptsTab <'a> {
     }
 
     // JunkwareRemoval Items (assuming remove_junkware handles these)
+    #[cfg(target_os="windows")]
     fn remove_onelaunch(&mut self) { self.remove_junkware(Some("OneLaunch")); }
+    #[cfg(target_os="windows")]
     fn remove_webnavigator(&mut self) { self.remove_junkware(Some("WebNavigator Browser")); }
+    #[cfg(target_os="windows")]
     fn remove_wavesor(&mut self) { self.remove_junkware(Some("Wave Browser")); }
+    #[cfg(target_os="windows")]
     fn remove_clearbrowser(&mut self) { self.remove_junkware(Some("Clear Browser")); }
+    #[cfg(target_os="windows")]
     fn remove_shiftbrowser(&mut self) { self.remove_junkware(Some("Shift Browser")); }
+    #[cfg(target_os="windows")]
     fn remove_avastbrowser(&mut self) { self.remove_junkware(Some("Avast Browser")); }
+    #[cfg(target_os="windows")]
     fn remove_mcaffeesafe(&mut self) { self.remove_junkware(Some("Mcaffee Safe")); }
+    #[cfg(target_os="windows")]
     fn remove_driversupport(&mut self) { self.remove_junkware(Some("Driver Support")); }
+    #[cfg(target_os="windows")]
     fn remove_winzip(&mut self) { self.remove_junkware(Some("Winzip")); }
 }
 
@@ -763,6 +824,8 @@ pub struct LicenseStatus {
     pub license_status: i32
 }
 
+
+#[cfg(target_os="windows")]
 pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error> {
     let script = r#"
         Get-CimInstance SoftwareLicensingProduct -Filter "Name like 'Windows%'" | 
@@ -782,6 +845,7 @@ pub fn check_windows_activation() -> anyhow::Result<LicenseStatus, anyhow::Error
     Ok(result)
 }
 
+#[cfg(target_os="windows")]
 fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
     let ps_script = r#"
         powercfg /change standby-timeout-ac 0
@@ -806,10 +870,10 @@ fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
     Ok(!stdout.unwrap_or_default().trim().is_empty())
 }
 
-use windows::Storage::{UserDataPaths, SystemDataPaths};
+#[cfg(target_os="windows")]
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, anyhow::Error> {
-    let user_data: UserDataPaths = UserDataPaths::GetDefault()?;
-    let sys_data = SystemDataPaths::GetDefault()?;
+    let user_data: windows::Storage::UserDataPaths = UserDataPaths::GetDefault()?;
+    let sys_data = windows::Storage::SystemDataPaths::GetDefault()?;
 
     log::info!(
         "User data: {:?}\n {:?}",
@@ -908,10 +972,13 @@ pub fn read_folder(mut path: PathBuf, depth: usize, read_dirs_only: bool) -> Vec
     result
 }
 
+
+#[cfg(target_os="windows")]
 fn _install_pc_health_check() -> anyhow::Result<String, anyhow::Error> {
     Ok(run_ps_script("winget install Microsoft.WindowsPCHealthCheck -h --accept-package-agreements --force")?)
 }
 
+#[cfg(target_os="windows")]
 fn _install_windbg() -> anyhow::Result<String, anyhow::Error> {
     Ok(run_ps_script("winget install Microsoft.WinDbg -h --accept-package-agreements --force")?)
 }
@@ -925,11 +992,11 @@ pub fn _prompt_for_user_pw() -> anyhow::Result<(), anyhow::Error> {
 
     Ok(())
 }
-
+#[cfg(target_os="windows")]
 pub fn _checkdisk() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("chkdsk /f/x/r C:")?) }
-
+#[cfg(target_os="windows")]
 pub fn _dism_scan() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("")?) }
-
+#[cfg(target_os="windows")]
 pub fn _sfc_scan() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("sfc /scannow")?) }
 
 pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {

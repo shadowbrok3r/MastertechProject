@@ -19,16 +19,23 @@ pub mod task_scheduler;
 pub mod taskbar;
 pub mod startup;
 pub mod processes;
+#[cfg(target_os="windows")]
 pub mod programs;
+#[cfg(target_os="windows")]
 pub mod antivirus;
 
-pub use task_scheduler::*;
-pub use taskbar::*;
-pub use startup::*;
-pub use processes::*;
-pub use programs::*;
-pub use antivirus::*;
+pub use {
+    task_scheduler::*,
+    taskbar::*,
+    startup::*,
+    processes::*,
+};
 
+#[cfg(target_os="windows")]
+pub use {
+    programs::*,
+    antivirus::*  
+};
 
 #[derive(Embed)]
 #[folder = "src/assets/superanti/"]

@@ -892,6 +892,13 @@ pub enum Node {
     File((String, String)),
 }
 
+impl Default for Node {
+    fn default() -> Self {
+        let node = Node::Folder(String::new(), HashMap::new());
+        node
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
 pub enum Store {
     #[default]
