@@ -2,7 +2,7 @@ use eframe::egui::{Button, CentralPanel, Id, SidePanel, TextEdit, Ui, Vec2, Widg
 use database::schema::User;
 use log::info;
 
-use crate::code_editor::{CodeEditor, ColorTheme, Syntax};
+use crate::file_viewer::{FileViewer, ColorTheme, Syntax};
 
 use super::ScriptEditor;
 
@@ -71,7 +71,7 @@ impl ScriptEditor {
         CentralPanel::default()
             .show_inside(ui, |ui| 
         {
-            CodeEditor::default()
+            FileViewer::default()
                 .id_source("Script Editor")
                 .with_rows(48)
                 .vscroll(true)

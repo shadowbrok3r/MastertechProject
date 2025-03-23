@@ -1,4 +1,5 @@
 use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
+use regex::Regex;
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Networks, System};
@@ -13,7 +14,7 @@ use reqwest::Client;
 use anyhow::Context;
 use super::SYSINFO;
 
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]
 pub trait ComputerInfo {

@@ -19,8 +19,8 @@ pub trait Editor: Hash {
 
 
 #[derive(Clone, Debug, PartialEq)]
-/// CodeEditor struct which stores settings for highlighting.
-pub struct CodeEditor {
+/// FileViewer struct which stores settings for highlighting.
+pub struct FileViewer {
     id: String,
     theme: ColorTheme,
     syntax: Syntax,
@@ -33,7 +33,7 @@ pub struct CodeEditor {
 }
 
 
-impl Hash for CodeEditor {
+impl Hash for FileViewer {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.theme.hash(state);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -43,9 +43,9 @@ impl Hash for CodeEditor {
 }
 
 
-impl Default for CodeEditor {
-    fn default() -> CodeEditor {
-        CodeEditor {
+impl Default for FileViewer {
+    fn default() -> FileViewer {
+        FileViewer {
             id: String::from("Code Editor"),
             theme: ColorTheme::TOKYO_DARK,
             syntax: Syntax::powershell(),
@@ -60,9 +60,9 @@ impl Default for CodeEditor {
 }
 
 
-impl CodeEditor {
+impl FileViewer {
     pub fn id_source(self, id_source: impl Into<String>) -> Self {
-        CodeEditor {
+        FileViewer {
             id: id_source.into(),
             ..self
         }
@@ -72,27 +72,27 @@ impl CodeEditor {
     ///
     /// **Default: 10**
     pub fn with_rows(self, rows: usize) -> Self {
-        CodeEditor { rows, ..self }
+        FileViewer { rows, ..self }
     }
 
     /// Use custom Color Theme
     ///
     /// **Default: Gruvbox**
     pub fn with_theme(self, theme: ColorTheme) -> Self {
-        CodeEditor { theme, ..self }
+        FileViewer { theme, ..self }
     }
 
     /// Use custom font size
     ///
     /// **Default: 10.0**
     pub fn with_fontsize(self, fontsize: f32) -> Self {
-        CodeEditor { fontsize, ..self }
+        FileViewer { fontsize, ..self }
     }
 
     
     /// Use UI font size
     pub fn with_ui_fontsize(self, ui: &mut eframe::egui::Ui) -> Self {
-        CodeEditor {
+        FileViewer {
             fontsize: eframe::egui::TextStyle::Monospace.resolve(ui.style()).size,
             ..self
         }
@@ -102,27 +102,27 @@ impl CodeEditor {
     ///
     /// **Default: true**
     pub fn with_numlines(self, numlines: bool) -> Self {
-        CodeEditor { numlines, ..self }
+        FileViewer { numlines, ..self }
     }
 
     /// Use custom syntax for highlighting
     ///
     /// **Default: Rust**
     pub fn with_syntax(self, syntax: Syntax) -> Self {
-        CodeEditor { syntax, ..self }
+        FileViewer { syntax, ..self }
     }
 
     /// Turn on/off scrolling on the vertical axis.
     ///
     /// **Default: true**
     pub fn vscroll(self, vscroll: bool) -> Self {
-        CodeEditor { vscroll, ..self }
+        FileViewer { vscroll, ..self }
     }
     /// Should the containing area shrink if the content is small?
     ///
     /// **Default: false**
     pub fn auto_shrink(self, shrink: bool) -> Self {
-        CodeEditor { shrink, ..self }
+        FileViewer { shrink, ..self }
     }
 
     /// Stick to bottom
@@ -135,7 +135,7 @@ impl CodeEditor {
     ///
     /// **Default: false**
     pub fn stick_to_bottom(self, stick_to_bottom: bool) -> Self {
-        CodeEditor {
+        FileViewer {
             stick_to_bottom,
             ..self
         }
@@ -238,7 +238,7 @@ impl CodeEditor {
 
 
 
-impl Editor for CodeEditor {
+impl Editor for FileViewer {
     fn append(&self, job: &mut LayoutJob, token: &Token) {
         job.append(token.buffer(), 0.0, self.format(token.ty()));
     }

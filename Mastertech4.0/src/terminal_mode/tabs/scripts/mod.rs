@@ -1,11 +1,17 @@
-use crate::{tabs::scripts::{AntiVirusProduct, InstalledProgram, ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}, utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
+use crate::{tabs::scripts::{ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
-use reqwest::Client;
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use checklist::{Category, Status, TodoItem, TodoList};
 use crossbeam::channel::{Receiver, Sender};
 use tui_scrollview::ScrollViewState;
 use render::{Report, Reporter};
+use reqwest::Client;
+
+#[cfg(target_os="windows")]
+use crate::{
+    utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates},
+    tabs::scripts::{AntiVirusProduct, InstalledProgram}
+};
 
 pub mod action_handler;
 pub mod render;
@@ -31,7 +37,9 @@ pub struct ScriptsTab<'a> {
 
     reports: RefCell<Vec<Report>>, 
     current_reporter: RefCell<Reporter>,
+    #[cfg(target_os="windows")]
     update_log_tx: Sender<WindowsUpdateEvent>,
+    #[cfg(target_os="windows")]
     update_log_rx: Receiver<WindowsUpdateEvent>,
     path_size_tx: Sender<Vec<(String, String)>>,
     path_size_rx: Receiver<Vec<(String, String)>>,
@@ -41,8 +49,10 @@ pub struct ScriptsTab<'a> {
     
     service_number: String,
     /// Antivirus tab
+    #[cfg(target_os="windows")]
     antivirus_products: Vec<AntiVirusProduct>,
     /// Installed Programs tab
+    #[cfg(target_os="windows")]
     installed_programs: Vec<InstalledProgram>,
     /// Startup Items tab
     startup_programs: Vec<StartupProgram>,
@@ -53,6 +63,7 @@ pub struct ScriptsTab<'a> {
     /// Multipurpose checklist
     checklists: HashMap<String, TodoList>,
     /// Stores the latest retrieved Windows Updates info
+    #[cfg(target_os="windows")]
     windows_updates: WindowsUpdates,
 
     checklist_area: RefCell<Option<Rect>>,
@@ -87,6 +98,7 @@ pub struct ScriptsTab<'a> {
 
 impl<'a> ScriptsTab<'a> {
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
+        #[cfg(target_os="windows")]
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
         let (data_transfer_progress_tx, data_transfer_progress_rx) = crossbeam::channel::unbounded();
@@ -219,8 +231,9 @@ impl<'a> ScriptsTab<'a> {
             prechecks_btn: Button::new("Run Prechecks =>", WidgetId("RunPrechecks".to_owned())).theme(CATPPUCCINTHEME),
             informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
             run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(DEEPPINK),
-
+            #[cfg(target_os="windows")]
             antivirus_products: Vec::new(),
+            #[cfg(target_os="windows")]
             installed_programs: Vec::new(),
             startup_programs: Vec::new(),
             scheduled_tasks: Vec::new(),
@@ -229,7 +242,9 @@ impl<'a> ScriptsTab<'a> {
             reports: RefCell::new(vec![]),
             current_reporter: RefCell::new(Reporter::Unknown),
             service_number: String::new(),
+            #[cfg(target_os="windows")]
             update_log_tx, 
+            #[cfg(target_os="windows")]
             update_log_rx,
             path_size_tx, 
             path_size_rx,
@@ -238,6 +253,7 @@ impl<'a> ScriptsTab<'a> {
             progress_tx, progress_rx,
 
             checklists,
+            #[cfg(target_os="windows")]
             windows_updates: WindowsUpdates::default(),
             report_scroll_state: RefCell::new(ScrollViewState::new()),
             list_state: RefCell::new(ListState::default()),
@@ -319,14 +335,17 @@ impl<'a> ScriptsTab<'a> {
             }
         }
 
-        // listen for Windows Update logs & results
-        if let Ok(event) = self.update_log_rx.try_recv() {
-            match event {
-                WindowsUpdateEvent::UpdateLogs(log) => self.log_message(&log),
-                WindowsUpdateEvent::ReturnedUpdates(windows_updates) => {
-                    self.log_message(&format!("{windows_updates:#?}"));
-                    self.windows_updates = windows_updates;
-                },
+        #[cfg(target_os="windows")]
+        {
+            // listen for Windows Update logs & results
+            if let Ok(event) = self.update_log_rx.try_recv() {
+                match event {
+                    WindowsUpdateEvent::UpdateLogs(log) => self.log_message(&log),
+                    WindowsUpdateEvent::ReturnedUpdates(windows_updates) => {
+                        self.log_message(&format!("{windows_updates:#?}"));
+                        self.windows_updates = windows_updates;
+                    },
+                }
             }
         }
     }

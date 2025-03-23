@@ -2,7 +2,7 @@ use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
-use crate::{channel_manager::ChannelManager, code_editor::{CodeEditor, ColorTheme, Syntax}, FileSystemAction, Spawner};
+use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User}; // buckets::list_buckets, 
 use futures::{StreamExt, Future};
@@ -138,6 +138,7 @@ impl Clone for FileSystem {
             current_action: self.current_action.clone(),
             file_preview_channel: self.file_preview_channel.clone(),
             previewed_file: self.previewed_file.clone(),
+            file_editor: self.file_editor.clone()
         }
     }
     
@@ -180,6 +181,7 @@ pub struct FileSystem {
     pub current_action: Option<FileSystemAction>,
     pub helper_delegate: Option<Box<dyn ClonableFileSysHelper>>,
     pub previewed_file: Option<String>,
+    pub file_editor: FileViewer
 }
 
 impl FileSystem {
@@ -188,6 +190,15 @@ impl FileSystem {
         let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
         let paths_channel = <Node>::create_unbounded_channel();
         let file_preview_channel = <String>::create_unbounded_channel();
+        let file_editor = FileViewer::default()
+            .id_source("Script Editor")
+            .with_rows(48)
+            .vscroll(true)
+            .auto_shrink(false)
+            .with_fontsize(14.0)
+            .with_theme(ColorTheme::TOKYO_DARK)
+            .with_syntax(Syntax::powershell())
+            .with_numlines(true);
 
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
@@ -207,6 +218,7 @@ impl FileSystem {
             current_action: None,
             helper_delegate: None,
             previewed_file: Default::default(),
+            file_editor,
         }
     }
 
@@ -344,16 +356,7 @@ impl FileSystem {
             SidePanel::right(Id::new("FileBrowserSidePanel"))
                 .default_width(ui.available_width()/2.0)
                 .show_inside(ui, |ui| {
-                    CodeEditor::default()
-                        .id_source("Script Editor")
-                        .with_rows(48)
-                        .vscroll(true)
-                        .auto_shrink(false)
-                        .with_fontsize(14.0)
-                        .with_theme(ColorTheme::TOKYO_DARK)
-                        .with_syntax(Syntax::powershell())
-                        .with_numlines(true)
-                        .show(ui, file);
+                    self.file_editor.show(ui, file);
             });
         }
         ui.add_space(10.0);
@@ -453,11 +456,10 @@ impl FileSystem {
                                     ui.add_space(5.0);
 
                                     if ui.button("Upload Folder").clicked(){
-                                    //     info!("Dir: {:?}", dir.clone());
-                                    //     if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                    //         #[cfg(target_os="windows")]
-                                    //         self.upload_folder(dir);
-                                    //     }
+                                        // if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                        //     #[cfg(target_os="windows")]
+                                        //     self.upload_folder(dir);
+                                        // }
                                     }
                                 }).inner;
                             });
@@ -1107,7 +1109,6 @@ impl FileSystem {
         Err(anyhow::anyhow!("Downloaded bytes do not match content length"))
     }
     
-    // #[cfg(target_arch="wasm32")]
     async fn perform_download(
         name: &String, 
         access_key: &String, 
