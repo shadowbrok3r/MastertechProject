@@ -30,9 +30,10 @@ impl <'a>TerminalApp<'a> {
                 Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
                 Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
                 Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
-                Tab::Logs => {}
                 Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                 Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                Tab::Logs => {}
+                Tab::Ncdu => {}
             };
         }
 
@@ -65,6 +66,7 @@ impl <'a>TerminalApp<'a> {
                                     Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Logs),
                                     Tab::Logs => self.menu_bar.set_active_tab(Tab::Login),
                                     Tab::Login => self.menu_bar.set_active_tab(Tab::TurSheet),
+                                    Tab::Ncdu => {},
                                 };
                             }
                             KeyCode::Left => {
@@ -75,6 +77,7 @@ impl <'a>TerminalApp<'a> {
                                     Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Tasks),
                                     Tab::Logs => self.menu_bar.set_active_tab(Tab::SystemInfo),
                                     Tab::Login => self.menu_bar.set_active_tab(Tab::Logs),
+                                    Tab::Ncdu => {},
                                 };
                             }
                             _ => {}
@@ -88,6 +91,7 @@ impl <'a>TerminalApp<'a> {
                         Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
                         Tab::Logs => self.logger.handle_key_event(key_event),
                         Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
+                        Tab::Ncdu => false,
                     };
 
                     if consumed {}
@@ -129,6 +133,7 @@ impl <'a>TerminalApp<'a> {
                                             Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Logs),
                                             Tab::Logs => self.menu_bar.set_active_tab(Tab::Login),
                                             Tab::Login => self.menu_bar.set_active_tab(Tab::TurSheet),
+                                            Tab::Ncdu => {},
                                         };
                                     }
                                     KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -139,6 +144,7 @@ impl <'a>TerminalApp<'a> {
                                             Tab::SystemInfo => self.menu_bar.set_active_tab(Tab::Tasks),
                                             Tab::Logs => self.menu_bar.set_active_tab(Tab::SystemInfo),
                                             Tab::Login => self.menu_bar.set_active_tab(Tab::Logs),
+                                            Tab::Ncdu => {},
                                         };
                                     }
                                     _ => {}
@@ -153,6 +159,7 @@ impl <'a>TerminalApp<'a> {
                                 Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
                                 Tab::Logs => self.logger.handle_key_event(key_event),
                                 Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
+                                Tab::Ncdu => false,
                             };
 
                             if consumed {}
@@ -168,6 +175,7 @@ impl <'a>TerminalApp<'a> {
                         Tab::Logs => {}
                         Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                         Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                        Tab::Ncdu => {},
                     };
                 },
                 Event::Error => log::info!("Error in event loop"),

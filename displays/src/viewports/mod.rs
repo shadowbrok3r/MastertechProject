@@ -9,7 +9,7 @@ impl SharedContext {
         let undock_clients = &ws_layout.undock_client;
 
         for (client_id, wants_to_undock) in undock_clients.iter() {
-            info!("ID: {client_id:?}\nviewport: {:?}", wants_to_undock);
+            // info!("ID: {client_id:?}\nviewport: {:?}", wants_to_undock);
             let x = Arc::new(AtomicBool::new(false));
             
             if *wants_to_undock {
