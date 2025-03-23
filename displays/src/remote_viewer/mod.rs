@@ -10,7 +10,9 @@ use parking_lot::Mutex;
 use log::{error, info};
 use bincode::Options;
 
+#[cfg(not(target_arch="wasm32"))]
 pub mod ratagui;
+#[cfg(not(target_arch="wasm32"))]
 pub mod terminal_line;
 // pub mod term_viewer;
 
