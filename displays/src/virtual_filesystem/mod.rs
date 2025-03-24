@@ -1,12 +1,12 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use zstd::zstd_safe::WriteBuf;
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
 use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User}; // buckets::list_buckets, 
 use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
 use futures::{StreamExt, Future};
+use zstd::zstd_safe::WriteBuf;
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
 use mime_guess::from_path;
@@ -1134,7 +1134,8 @@ impl FileSystem {
     
             // Report progress via the Sender
             let _ = tx.send((downloaded_bytes, content_length));
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await; // 100ms delay between chunks
+            #[cfg(not(target_arch="wasm32"))]
+            tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks
         }
     
         if downloaded_bytes == content_length {
@@ -1192,7 +1193,8 @@ impl FileSystem {
             downloaded_bytes += chunk.len() as u64;
             byte_vec.extend_from_slice(&chunk.as_slice());
             let _ = tx.send((downloaded_bytes, content_length));
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await; // 100ms delay between chunks
+            #[cfg(not(target_arch="wasm32"))]
+            tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks
         }
 
         if downloaded_bytes == content_length {

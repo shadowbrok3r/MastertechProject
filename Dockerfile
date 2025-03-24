@@ -4,15 +4,18 @@ FROM --platform=$BUILDPLATFORM rust:latest
 WORKDIR /
 RUN rustup target add wasm32-unknown-unknown
 RUN rustup target add wasm32-wasip1
+RUN rustup update
 # RUN rustup toolchain install nightly-x86_64-unknown-linux-gnu
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
+COPY .cargo .cargo
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.9/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
 # COPY rust-toolchain.toml rust-toolchain.toml
+ENV RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg getrandom_backend=\"wasm_js\""
 RUN mv trunk MtechServer2.0/trunk
 WORKDIR /MtechServer2.0
 ENTRYPOINT [ "/MtechServer2.0/trunk" ]

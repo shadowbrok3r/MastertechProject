@@ -4,15 +4,17 @@ use crate::filesystem::get_client_hash;
 use ewebsock::{WsEvent, WsMessage};
 use ratatui::{buffer::Buffer, Frame};
 use std::time::{Duration, Instant};
-use super::TerminalApp;
+use super::{data::LocalTermEvent, TerminalApp};
 use tokio;
 
 impl<'a> TerminalApp<'a> {
     pub async fn start_websocket_sender(
         mut buffer_rx: tokio::sync::mpsc::UnboundedReceiver<(usize, Buffer)>, // Changed: Receive frame count
         start_tx: tokio::sync::mpsc::UnboundedSender<bool>,
-        event_tx: tokio::sync::mpsc::UnboundedSender<TerminalEvent>,
-        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>
+        connection_state_tx: tokio::sync::mpsc::UnboundedSender<(bool, String)>,
+        event_tx: tokio::sync::mpsc::UnboundedSender<LocalTermEvent>,
+        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+        // manual_start: &mut bool,
     ) -> anyhow::Result<()> {
         let client = get_client_hash();
 
@@ -32,27 +34,41 @@ impl<'a> TerminalApp<'a> {
             loop {
                 // Handle WebSocket events (e.g., READY or TerminalEvent from egui)
                 while let Some(event) = receiver.try_recv() {
-                    log::info!("Received WebSocket event: {:?}", event);
-                    if let WsEvent::Message(WsMessage::Text(txt)) = event {
-                        if txt == "READY".to_string() {
-                            let _ = start_tx.send(true);
-                            *ready = true;
-                            log::info!("WebSocket sender marked as ready");
-                        } else if *ready {
-                            // Deserialize incoming TerminalEvent from egui and forward to rendering loop
-                            if let Ok(event) = serde_json::from_str::<TerminalEvent>(&txt) {
-                                log::info!("Received TerminalEvent from egui: {:?}", event);
-                                if event_tx.send(event).is_ok() {
-                                    log::info!("Forwarded TerminalEvent to rendering loop");
-                                } else {
-                                    log::warn!("Failed to forward TerminalEvent to rendering loop");
-                                }
+                    // log::info!("Received WebSocket event: {:?}", event);
+                    // update client to connected = false in db
+                    match event {
+                        WsEvent::Opened => { let _ = connection_state_tx.send((true, "Connected".to_string())); },
+                        WsEvent::Error(e) => { let _ = connection_state_tx.send((false, format!("{e:?}"))); },
+                        WsEvent::Closed => { let _ = connection_state_tx.send((false, "Disconnected".to_string())); },
+                        WsEvent::Message(ws_message) => {
+                            match ws_message {
+                                WsMessage::Pong(_) => { let _ = connection_state_tx.send((true, "Pong".to_string())); },
+                                WsMessage::Text(txt) => {
+                                    if txt == "READY".to_string() {
+                                        let _ = start_tx.send(true);
+                                        *ready = true;
+                                        log::info!("WebSocket sender marked as ready");
+                                    } else if *ready {
+                                        // Deserialize incoming TerminalEvent from egui and forward to rendering loop
+                                        if let Ok(event) = serde_json::from_str::<TerminalEvent>(&txt) {
+                                            log::info!("Received TerminalEvent from egui: {:?}", event);
+                                            if event_tx.send(event.into()).is_ok() {
+                                                log::info!("Forwarded TerminalEvent to rendering loop");
+                                            } else {
+                                                log::warn!("Failed to forward TerminalEvent to rendering loop");
+                                            }
+                                        }
+                                    }
+                                },
+                                _ => {}
                             }
-                        }
+                        },
                     }
                 }
 
+
                 if let Ok(()) = shutdown_rx.try_recv() {
+                    // update client to connected = false in db
                     *ready = false;
                     break;
                 }

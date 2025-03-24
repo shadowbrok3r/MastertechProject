@@ -76,6 +76,7 @@ impl WebSocketClient {
         let tx = remote_terminal.buffer_tx.clone();
 
         PlatformSpawner::spawn(async move {
+            log::info!("Checking for messages from client");
             loop {
                 while let Ok(msg) = msg_from_client_rx.try_recv() {
                     log::info!("GOT A BUFFER");

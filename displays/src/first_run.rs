@@ -98,7 +98,7 @@ impl SharedContext {
         }
     }
 
-    pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
+    pub fn receive(&mut self, frame: &mut eframe::Frame, _ctx: &Context) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
             // Indicate that filtering needs to be rerun
             self.rerun_filtering_store_tasks = true;

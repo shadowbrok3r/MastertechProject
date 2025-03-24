@@ -33,12 +33,21 @@
 # RUN cargo build --release --target x86_64-unknown-linux-musl
 # RUN ls -las /server/target/x86_64-unknown-linux-musl/release/
 
+ENV COMPOSE_BAKE=true
+FROM rust:latest AS builder
+WORKDIR /app
+COPY Cargo.toml .
+COPY database/ ./database/
+COPY websocket_server2/ ./websocket_server2/
+RUN rustup update
+RUN rustup target add x86_64-unknown-linux-gnu
+RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
+RUN update-ca-certificates 
+RUN cargo build --release --target x86_64-unknown-linux-gnu --package websocket_server2
+RUN ls -la /app/target/x86_64-unknown-linux-gnu/release/
 
-FROM --platform=$BUILDPLATFORM rust:latest 
-COPY . .
-RUN cargo build --release --target x86_64-unknown-linux-musl
-# COPY --from=builder /server/target/x86_64-unknown-linux-musl/release/websocket_server2 /websocket_server2
-COPY /target/release/x86_64-unknown-linux-musl/websocket_server2 /websocket_server2
+FROM rust:latest
+COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/websocket_server2 /websocket_server2
 EXPOSE 8081
 ENTRYPOINT ["/websocket_server2"]
 # RUN echo output.log

@@ -1,5 +1,5 @@
 use crate::{app_state::SharedContext, modals::{task_modal::ModalAction, ModalType, ModalWindow}};
-use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId};
+use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId, Window};
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use log::info;
 
@@ -16,7 +16,7 @@ impl SharedContext {
                 x.store(true, Ordering::Relaxed);
             }
 
-            if x.load(Ordering::Relaxed) {
+            if x.load(Ordering::Relaxed) && cfg!(not(target_arch="wasm32")) {
                 let viewport_id = ViewportId::from_hash_of(client_id);
                 let viewport_builder = ViewportBuilder::default()
                     .with_taskbar(true)
@@ -39,6 +39,18 @@ impl SharedContext {
                     if ctx.input(|i| i.viewport().close_requested()) {
                         x.store(false, Ordering::Relaxed); // Handle viewport close
                     }
+                });
+            } else if x.load(Ordering::Relaxed) {
+                Window::new(client_id)
+                    .min_size([1100., 950.])
+                    .show(ctx, |ui| 
+                {
+                    CentralPanel::default().show_inside(ui, |ui| {
+                        ui.set_min_size([1100., 950.].into());
+                        if let Some(ws_client) = ws_layout.ws_clients.get_mut(client_id) {
+                            ws_client.show(ui);
+                        }
+                    });
                 });
             }
         }

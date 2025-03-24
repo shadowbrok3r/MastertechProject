@@ -621,7 +621,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         } else {
             let total = self.filesystem.total_size;
             let progress = self.filesystem.progress;
-            log::info!("PROGRESS: {:?} TOTAL: {:?}", progress, total);
+            // log::info!("PROGRESS: {:?} TOTAL: {:?}", progress, total);
             if total != u64::MAX as f32 && total > 0.0 { // Handle known total size
                 let ratio = if total > 0.0 {
                     (progress / total).clamp(0.0, 1.0)

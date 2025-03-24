@@ -21,7 +21,6 @@ rpc-router = "0.1"
 schemars = "0.8"
 derivative = "2"
 ratatui = { version = "0.29", default-features = false, features = ["serde", "unstable-widget-ref"]}
-syntect = {version = "5.2.0", features = ["dump-load"]}
 
 base64 = { workspace=true }
 egui_plot = { workspace = true }

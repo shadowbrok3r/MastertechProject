@@ -2,7 +2,7 @@ use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
 use crossbeam::channel::{unbounded, Sender, Receiver};
 use database::schema::utilities::decompress_data;
 use base64::{engine::general_purpose, Engine};
-use std::time::Instant;
+use web_time::Instant;
 use ratatui::prelude::*;
 
 pub mod ui;
