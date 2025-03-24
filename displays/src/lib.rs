@@ -1,4 +1,4 @@
-use database::schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User};
+use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, DATABASE};
 use eframe::egui::{Modifiers, Response, Ui};
 use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,27 @@ mod platform {
 }
 
 
+pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Error> {
+    let (tx, rx) = crossbeam::channel::bounded(1);
+
+    PlatformSpawner::spawn(async move {
+        let query = DATABASE
+            .query("SELECT * FROM user WHERE id == $auth.id")
+            .await;
+
+        if let Ok(mut user_result) = query {
+            let user = user_result.take::<Option<User>>(0);
+            match user {
+                Ok(usr) => { let _ = tx.send(usr); },
+                Err(e) => log::info!("Error getting user: {e:?}"),
+            }
+        }
+    });
+
+    Ok(rx.recv()?)
+}
+
+
 #[derive(Debug, Clone)]
 pub enum TaskUiActions {
     OpenTaskModal(TaskPayload),
@@ -102,27 +123,6 @@ pub enum TaskUiActions {
     OpenViewport(TaskPayload),
     None,
 }
-
-/* 
-// In your crate with `egui`
-pub trait EguiRenderable {
-    fn render(&self, ui: &mut egui::Ui) -> egui::Response;
-}
-
-// In your `database::schema` crate
-use crate::egui::EguiRenderable;
-
-impl EguiRenderable for Notification {
-    fn render(&self, ui: &mut egui::Ui) -> egui::Response {
-        ui.label(self.notification_description)
-    }
-}
-impl Widget for &mut Notification {
-    fn ui(self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
-        ui.label(self.notification_description)
-    }
-} 
-*/
 
 
 pub trait Displayable {

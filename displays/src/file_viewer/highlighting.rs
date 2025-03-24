@@ -35,14 +35,14 @@ impl Token {
                 token = self.drain(self.ty);
                 TokenType::Whitespace(c)
             }
-            '"' => {
-                if self.ty == TokenType::Str('"') {
+            '"' | '\'' => { // Add single quote handling
+                if self.ty == TokenType::Str(c) {
                     // Closing quote
-                    token = self.drain(TokenType::Str('"'));
+                    token = self.drain(TokenType::Str(c));
                     TokenType::Unknown
                 } else {
                     // Starting quote
-                    TokenType::Str('"')
+                    TokenType::Str(c)
                 }
             }
             '$' => {
@@ -59,7 +59,7 @@ impl Token {
     
         token
     }
-    
+
     fn drain(&mut self, ty: TokenType) -> Option<Self> {
         let mut token = None;
         if !self.buffer().is_empty() {
@@ -113,7 +113,6 @@ impl Token {
     fn automata(&mut self, c: char, syntax: &Syntax) -> Vec<Self> {
         use TokenType as Ty;
         let mut tokens = vec![];
-    
         match (self.ty, Ty::from(c)) {
             (Ty::Comment(false), Ty::Whitespace('\n')) => {
                 self.buffer.push(c);
@@ -144,7 +143,7 @@ impl Token {
                 self.buffer.push(c);
             }
             (Ty::Literal, _) => match c {
-                '(' => {
+                c if c == '(' => {
                     self.ty = Ty::Function;
                     tokens.extend(self.drain(Ty::Punctuation(c)));
                     tokens.extend(self.push_drain(c, Ty::Unknown));
@@ -160,20 +159,22 @@ impl Token {
                 }
                 _ => {
                     self.buffer.push(c);
-                    self.ty = if self.buffer.starts_with(syntax.comment) {
-                        Ty::Comment(false)
-                    } else if self.buffer.starts_with(syntax.comment_multiline[0]) {
-                        Ty::Comment(true)
-                    } else if syntax.is_hyperlink(&self.buffer) {
-                        Ty::Hyperlink
-                    } else if syntax.is_keyword(&self.buffer) {
-                        Ty::Keyword
-                    } else if syntax.is_type(&self.buffer) {
-                        Ty::Type
-                    } else if syntax.is_special(&self.buffer) {
-                        Ty::Special
-                    } else {
-                        Ty::Literal
+                    self.ty = {
+                        if self.buffer.starts_with(syntax.comment) {
+                            Ty::Comment(false)
+                        } else if self.buffer.starts_with(syntax.comment_multiline[0]) {
+                            Ty::Comment(true)
+                        } else if syntax.is_hyperlink(&self.buffer) {
+                            Ty::Hyperlink
+                        } else if syntax.is_keyword(&self.buffer) {
+                            Ty::Keyword
+                        } else if syntax.is_type(&self.buffer) {
+                            Ty::Type
+                        } else if syntax.is_special(&self.buffer) {
+                            Ty::Special
+                        } else {
+                            Ty::Literal
+                        }
                     };
                 }
             },
@@ -213,51 +214,15 @@ impl Token {
                     }
                 }
             }
-            // Handle strings
             (Ty::Str(q), _) => {
-                if self.buffer.ends_with('`') {
-                    // Handle escape sequences
-                    self.buffer.push(c); // Preserve the escaped character
-                } else if c == q {
-                    // Handle closing quote
-                    self.buffer.push(c);
-                    tokens.extend(self.drain(Ty::Str(q))); // Emit the string token
-                } else if c == '$' {
-                    // Start embedded syntax
-                    tokens.extend(self.drain(Ty::Str(q))); // Emit current string segment
-                    tokens.push(Token {
-                        ty: Ty::Symbol,                   // Emit `$` as a symbol
-                        buffer: "$".to_string(),
-                    });
-                    self.ty = Ty::Embedded;               // Switch state to Embedded
-                } else {
-                    // Regular character inside the string
-                    self.buffer.push(c);
+                let control = self.buffer.ends_with('\\');
+                self.buffer.push(c);
+                if c == q && !control {
+                    tokens.extend(self.drain(Ty::Unknown));
                 }
-            }
-            // Handle embedded syntax within strings
-            (Ty::Embedded, _) if c.is_alphanumeric() || c == '_' || c == '.' => {
-                self.buffer.push(c);
-                self.ty = Ty::Variable; // Switch to Variable for identifiers
-            }
-            (Ty::Embedded, _) if c == '(' => {
-                self.buffer.push(c);
-                tokens.extend(self.drain(Ty::Punctuation('('))); // Start of embedded expression
-            }
-            (Ty::Embedded, _) => {
-                tokens.extend(self.drain(Ty::Embedded)); // End embedded syntax
-                tokens.extend(self.first(c, syntax));   // Process the next character
-            }
-            // Handle variables starting with `$`
-            (Ty::Variable, _) if !c.is_alphanumeric() && c != '_' && c != '.' => {
-                tokens.extend(self.drain(Ty::Variable)); // Emit variable token
-                tokens.extend(self.first(c, syntax));   // Process the next token
             }
             (Ty::Whitespace(_) | Ty::Unknown, _) => {
                 tokens.extend(self.first(c, syntax));
-            }
-            (Ty::Special, _) if self.buffer.ends_with("@{") => {
-                tokens.extend(self.drain(Ty::Special));
             }
             // Keyword, Type, Special
             (_reserved, Ty::Literal | Ty::Numeric(_)) => {
@@ -272,10 +237,6 @@ impl Token {
                     Ty::Literal
                 };
             }
-            (Ty::Symbol, _) if c.is_alphanumeric() || c == '_' => {
-                tokens.extend(self.drain(Ty::Variable)); // Emit the variable name after `$`
-                self.buffer.push(c);
-            }
             (reserved, _) => {
                 self.ty = reserved;
                 tokens.extend(self.drain(self.ty));
@@ -284,7 +245,6 @@ impl Token {
         }
         tokens
     }
-    
 }
 
 

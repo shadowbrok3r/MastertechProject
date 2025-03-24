@@ -6,7 +6,7 @@ use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, // {local::{SurrealKv, Db}, }
+    engine::remote::ws::{Client as WsClient, Wss}, // {local::{SurrealKv, Db}, }
     opt::{
         auth::{Jwt, Record as SurrealRec},
         capabilities::Capabilities,
@@ -89,7 +89,7 @@ pub fn get_db_url() -> String {
 }
 
 pub async fn initialize_db() -> anyhow::Result<()> {
-    DATABASE.connect::<Ws>(DB_URL_LOCAL).await?;
+    DATABASE.connect::<Wss>(DB_URL_DEV).await?;
     DATABASE.use_ns(NS).use_db(DB).await?;
     Ok(())
 }
@@ -150,8 +150,8 @@ impl Database {
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
         match DATABASE.connect::<Wss>(DB_URL_DEV).await {
-            Ok(_) => log::info!("Connected to {DB_URL_LOCAL:?}"),
-            Err(e) => log::info!("Failed connecting to: {DB_URL_LOCAL:?}\n{e:?}"),
+            Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+            Err(e) => log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
         }
         match DATABASE.use_ns(NS).use_db(DB).await {
             Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),

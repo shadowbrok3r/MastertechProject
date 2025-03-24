@@ -375,7 +375,7 @@ impl AdminConsole {
                             &friendly_name,
                             0.0,
                             TextFormat {
-                                font_id: FontId::new(12.0, FontFamily::Proportional),
+                                font_id: FontId::new(13., FontFamily::Proportional),
                                 color: Color32::from_rgb(51, 255, 189), // Set the color for the first part
                                 valign: Align::Min,
                                 ..Default::default()
@@ -390,7 +390,7 @@ impl AdminConsole {
                                 &text,
                                 0.0,
                                 TextFormat {
-                                    font_id: FontId::new(12.0, FontFamily::Proportional),
+                                    font_id: FontId::new(13., FontFamily::Proportional),
                                     color: Color32::from_rgb(51, 255, 189), // Set the color for the first part
                                     valign: Align::Min,
                                     ..Default::default()
@@ -400,7 +400,7 @@ impl AdminConsole {
                                 txt.1,
                                 0.0,
                                 TextFormat {
-                                    font_id: FontId::new(12.0, FontFamily::Proportional),
+                                    font_id: FontId::new(13., FontFamily::Proportional),
                                     color: Color32::from_rgb(199, 202, 245),
                                     valign: Align::Min,
                                     ..Default::default()
@@ -424,9 +424,9 @@ impl AdminConsole {
 
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let button = Button::new(RichText::new("⮫").color(Color32::LIGHT_RED))
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30.0, 25.))
+                    let button = Button::new(RichText::new("🡆").strong().color(ui.style().visuals.warn_fg_color))
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(30.0, 30.))
                         .ui(ui);
 
                     if button.clicked() {
@@ -437,23 +437,23 @@ impl AdminConsole {
                     let txt = if let Some(docked) =
                         undock_client.get(client.connection_string.as_str())
                     {
-                        if !*docked { "🔓" } 
+                        if *docked { "🗝️" } 
                         else { "🔒" }
                     } 
-                    else { "🔒" };
+                    else { "🗝️" };
 
-                    let undock = Button::new(RichText::new(txt).color(Color32::LIGHT_RED))
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30., 25.))
+                    let undock = Button::new(RichText::new(txt).strong().color(Color32::LIGHT_RED))
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(30., 30.))
                         .ui(ui);
 
                     if undock.clicked() {
                         let _ = tx.try_send(ClientUiAction::UndockClient(client.connection_string.clone()));
                     }
 
-                    let button = Button::new(RichText::new("✖").color(Color32::LIGHT_RED))
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30., 25.))
+                    let button = Button::new(RichText::new("✖").strong().color(ui.style().visuals.error_fg_color))
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(30., 30.))
                         .ui(ui);
 
                     if button.clicked() {

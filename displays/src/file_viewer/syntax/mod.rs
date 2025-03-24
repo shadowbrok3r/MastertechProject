@@ -13,23 +13,27 @@ type Float = bool;
 
 #[derive(Default, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, serde::Deserialize, serde::Serialize)]
 pub enum TokenType {
-    Comment(bool),
-    Function,
-    Keyword,
-    Literal,
-    Hyperlink,
-    Numeric(bool),
-    Punctuation(char),
-    Special,
-    Str(char),
-    Embedded, // For interpolated syntax in strings
-    Type,
-    Variable,
-    Symbol,
-    Whitespace(char),
     #[default]
     Unknown,
+    Type,
+    Symbol,
+    Keyword,
+    Literal,
+    Special,
+    Function,
+    Variable,
+    Hyperlink,
+    Str(char),
+    Comment(bool),
+    Numeric(bool),
+    Embedded(char), // For interpolated syntax in strings
+    Whitespace(char),
+    Punctuation(char),
+    Subexpression(char),       // $(expression) in a string, char is the quote
+    EmbeddedVariable(char),    // $variable in a string, char is the quote
+    AfterDollarInString(char), // After $ in a string, awaiting next char
 }
+
 
 
 
@@ -38,48 +42,52 @@ impl std::fmt::Debug for TokenType {
         let mut name = String::new();
         match &self {
             TokenType::Comment(multiline) => {
-                name.push_str("Comment");
-                {
-                    if *multiline {
-                        name.push_str(" MultiLine");
-                    } else {
-                        name.push_str(" SingleLine");
+                        name.push_str("Comment");
+                        if *multiline {
+                            name.push_str(" MultiLine");
+                        } else {
+                            name.push_str(" SingleLine");
+                        }
                     }
-                }
-            }
             TokenType::Function => name.push_str("Function"),
             TokenType::Keyword => name.push_str("Keyword"),
             TokenType::Literal => name.push_str("Literal"),
             TokenType::Hyperlink => name.push_str("Hyperlink"),
             TokenType::Numeric(float) => {
-                name.push_str("Numeric");
-                if *float {
-                    name.push_str(" Float");
-                } else {
-                    name.push_str(" Integer");
-                }
-            }
+                        name.push_str("Numeric");
+                        if *float {
+                            name.push_str(" Float");
+                        } else {
+                            name.push_str(" Integer");
+                        }
+                    }
             TokenType::Punctuation(_) => name.push_str("Punctuation"),
             TokenType::Special => name.push_str("Special"),
             TokenType::Str(quote) => {
-                name.push_str("Str ");
-                name.push(*quote);
-            }
+                        name.push_str("Str ");
+                        name.push(*quote);
+                    }
             TokenType::Type => name.push_str("Type"),
             TokenType::Whitespace(c) => {
-                name.push_str("Whitespace");
-                match c {
-                    ' ' => name.push_str(" Space"),
-                    '\t' => name.push_str(" Tab"),
-                    '\n' => name.push_str(" New Line"),
-                    _ => (),
-                };
-            }
+                        name.push_str("Whitespace");
+                        match c {
+                            ' ' => name.push_str(" Space"),
+                            '\t' => name.push_str(" Tab"),
+                            '\n' => name.push_str(" New Line"),
+                            _ => (),
+                        }
+                    }
             TokenType::Unknown => name.push_str("Unknown"),
             TokenType::Variable => name.push_str("Variable"),
             TokenType::Symbol => name.push_str("Symbol"),
-            TokenType::Embedded => name.push_str("Embedded"),
-        };
+            TokenType::Embedded(q) => {
+                        name.push_str("Embedded ");
+                        name.push(*q);
+                    }
+            TokenType::Subexpression(_) => name.push_str("Subexpression"),
+            TokenType::EmbeddedVariable(_) => name.push_str("EmbeddedVariable"),
+            TokenType::AfterDollarInString(_) => name.push_str("AfterDollarInString"),
+        }
         write!(f, "{name}")
     }
 }

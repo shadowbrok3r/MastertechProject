@@ -1,4 +1,6 @@
 use crate::{tabs::scripts::{ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use database::schema::Node;
+use displays::virtual_filesystem::FileSystem;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use checklist::{Category, Status, TodoItem, TodoList};
@@ -24,10 +26,11 @@ pub mod script_checks;
 // SCRIPTS TAB with Buttons
 ////////////////////////////////
 /// Let's say we have a subcomponent called ScriptsTab
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct ScriptsTab<'a> {
     service_number_field: InputField<'a>,
     tuneup_btn: Button<'a>,
+    user_scripts_btn: Button<'a>,
     qc_btn: Button<'a>,
     updates_btn: Button<'a>,
     prechecks_btn: Button<'a>,
@@ -91,9 +94,12 @@ pub struct ScriptsTab<'a> {
     
     has_scrolled_manually: RefCell<bool>,
     init: RefCell<bool>,
+    check_for_scripts: bool,
     client: Client,
     customer_email: String,
     ctx: Arc<Mutex<TerminalContext>>,
+    filesystem: FileSystem,
+    user_scripts_to_run: Vec<String>
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -226,6 +232,7 @@ impl<'a> ScriptsTab<'a> {
         Self {
             service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
             tuneup_btn: Button::new("Tuneup =>", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
+            user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
             qc_btn: Button::new("Quality Check =>", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
             updates_btn: Button::new("Windows Updates =>", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),
             prechecks_btn: Button::new("Run Prechecks =>", WidgetId("RunPrechecks".to_owned())).theme(CATPPUCCINTHEME),
@@ -275,9 +282,12 @@ impl<'a> ScriptsTab<'a> {
             progress: RefCell::new(None),
             has_scrolled_manually: RefCell::new(false),
             init: RefCell::new(true),
+            check_for_scripts: false,
             client,
             customer_email: String::new(),
             ctx,
+            filesystem: FileSystem::new(),
+            user_scripts_to_run: Vec::new()
         }
     }
 
@@ -302,6 +312,13 @@ impl<'a> ScriptsTab<'a> {
     }
 
     pub fn receive(&mut self) {
+        let preview = self.filesystem.previewed_file.clone();
+        if let Some(file_contents) = preview {
+            self.log_message(file_contents.clone());
+            self.user_scripts_to_run.push(file_contents);
+            self.filesystem.previewed_file = None;
+        }
+
         if let Ok(progress) = self.progress_rx.try_recv() {
             self.progress.replace(Some(progress));
         }
@@ -358,6 +375,59 @@ impl<'a> ScriptsTab<'a> {
                 items.iter().filter(|item| item.status == Status::Completed).cloned()
             })
             .collect()
+    }
+
+    pub fn insert_user_scripts(&mut self) {
+        if self.check_for_scripts {
+            let current_folder = self.filesystem.get_current_folder();
+            if let Some(node) = current_folder {
+                match node {
+                    database::schema::Node::Folder(_, children) => {
+                        if !children.is_empty() {
+                            // log::info!("Children of {path}: {:?}", children);
+                            let todo_items: Vec<TodoItem> = children
+                            .values()
+                            .flat_map(|node| {
+                                match node {
+                                    Node::Folder(name, child) => {
+                                        log::info!("Folder => NAME: {name} CHILD: {child:?}");
+                                        child
+                                            .iter()
+                                            .filter_map(|(_, node)| {
+                                                if let Node::File((full_path, name)) = node {
+                                                    Some(TodoItem::new(name, Category::UserScripts(full_path.to_string())))
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }
+                                    _ => vec![TodoItem::default()],
+                                }
+                            })
+                            .collect();
+
+                            self.checklists.insert("User Scripts".to_string(), 
+                                TodoList {
+                                    name: "User Scripts".to_string(),
+                                    state: ListState::default(),
+                                    items: todo_items.clone()
+                                }
+                            );
+                            self.popup_items.borrow_mut().insert(
+                                "UserScripts".to_string(),
+                                todo_items
+                            );
+                            self.check_for_scripts = false;
+                        }
+                        // todo_items.push(value);
+                    },
+                    database::schema::Node::File(file) => {
+                        log::info!("file: {:?}", file);
+                    },
+                }
+            }
+        }
     }
 
     fn remove_button(&mut self, id: &str) {

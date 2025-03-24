@@ -109,7 +109,7 @@ pub enum Category {
     JunkwareRemoval, // For "Junkware Removal" checklist
     WindowsUpdates,
     RunPrechecks,
-    Custom(String), // For flexibility
+    UserScripts(String), // For flexibility
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -121,7 +121,7 @@ impl<'a> ScriptsTab<'a> {
             Category::JunkwareRemoval => "Junkware Removal",
             Category::WindowsUpdates => "WindowsUpdates",
             Category::RunPrechecks => "RunPrechecks",
-            Category::Custom(ref name) => name,
+            Category::UserScripts(ref name) => name,
         };
 
         if let Some(todo_list) = self.checklists.get_mut(category_str) {
