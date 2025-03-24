@@ -17,7 +17,10 @@ impl MtechServer {
                         self.context.first_run = true;
                         self.first_run(frame);
                         self.state = AppState::NoAuth("No user detected".to_string());
-                    } 
+                    } else {
+                        self.state = AppState::Authenticated(MainPages::Tasks);
+                    }
+                    
                     if let Some(token) = db.jwt.clone() {
                         self
                         .context

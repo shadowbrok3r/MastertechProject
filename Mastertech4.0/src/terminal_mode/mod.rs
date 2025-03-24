@@ -1,20 +1,16 @@
-use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Flex, Layout}};
+use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, Tab}; // ncdu::NcduTab
+use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, menu_bar::Tab}; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
-use displays::remote_viewer::ratagui::TerminalEvent;
 use fx::{effect::UniqueEffectId, EffectStage};
 use crossbeam::channel::unbounded;
 use context::TerminalContext;
 use widgets::HandleWidget;
 use ratatui::prelude::*;
 use reqwest::Client;
-
-// use styling::CATPPUCCIN;
-// use tachyonfx::CellFilter;
 
 pub mod systems;
 pub mod widgets;
@@ -42,7 +38,7 @@ static SPLASH_CONFIG2: SplashConfig = SplashConfig {
 
 pub struct TerminalApp<'a> {
     logger: Logger,
-    menu_bar: MenuBar<'a>,
+    menu_bar: Rc<RefCell<MenuBar<'a>>>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
     // ncdu_tab: Rc<RefCell<NcduTab>>,
@@ -56,6 +52,7 @@ pub struct TerminalApp<'a> {
     ctx: Arc<Mutex<TerminalContext>>,
     render_system: Arc<RenderSystem>,
     data_system: Arc<DataSystem>,
+    manual_connect_rx: tokio::sync::mpsc::UnboundedReceiver<bool>
 }
 
 impl Default for TerminalApp <'_>{
@@ -64,6 +61,7 @@ impl Default for TerminalApp <'_>{
         // Create channels explicitly for communication between Data and Render systems
         let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
         let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
+        let (manual_connect_tx, manual_connect_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Global App Context, passed through most widgets / event handlers / 'Systems' via Arc 
         let ctx = Arc::new(Mutex::new(TerminalContext::new(render_to_data_tx.clone(), data_to_render_tx.clone())));
@@ -80,13 +78,15 @@ impl Default for TerminalApp <'_>{
         let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
         let sysinfo_tab = SysinfoTab::new();
-        let menu_bar = MenuBar::new(ctx.clone());
+
+        let menu_bar = Rc::new(RefCell::new(MenuBar::new(ctx.clone(), manual_connect_tx)));
         
         // Register the ServiceFormTab with the event manager.
         // Here we clone the Rc so both ServiceTab and the EventManager share it.
         event_manager.register_handler(service_tab.clone());
         event_manager.register_handler(scripts_tab.clone());
         event_manager.register_handler(login_tab.clone());
+        event_manager.register_handler(menu_bar.clone());
 
         Self {
             ctx,
@@ -104,6 +104,7 @@ impl Default for TerminalApp <'_>{
             logger: Logger::new(),
             event_handler: EventHandler::new(),
             effect_stage: EffectStage::default(),
+            manual_connect_rx
         }
     }
 }
@@ -168,6 +169,7 @@ impl <'a>TerminalApp<'a> {
         let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
         let send_interval = Duration::from_secs_f32(0.4); // Changed: ~3 FPS interval
         let can_start = &mut false;
+        // let manual_start = &mut false;
 
         // render splash screen
         let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
@@ -189,6 +191,7 @@ impl <'a>TerminalApp<'a> {
         let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
         let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (connection_state_tx, mut connection_state_rx) = tokio::sync::mpsc::unbounded_channel();
         
         // Run DataSystem in the background
         join_handles.push(
@@ -206,7 +209,14 @@ impl <'a>TerminalApp<'a> {
 
         join_handles.push(
             tokio::spawn(async move {
-                let websocket_server = TerminalApp::start_websocket_sender(buffer_rx, start_tx.clone(), event_tx, shutdown_rx_websocket).await;
+                let websocket_server = TerminalApp::start_websocket_sender(
+                    buffer_rx, 
+                    start_tx.clone(),
+                    connection_state_tx,
+                    event_tx, 
+                    shutdown_rx_websocket,
+                    // manual_start,
+                ).await;
                 log::info!("websocket_server: {websocket_server:?}");
             })
         );
@@ -229,30 +239,13 @@ impl <'a>TerminalApp<'a> {
                 } else {
                     // Process events from egui via WebSocket
                     while let Ok(event) = event_rx.try_recv() {
-                        match event {
-                            TerminalEvent::MouseClick { x, y } => {
-                                log::info!("Received mouse click at x={}, y={}", x, y);
-                                let mouse_event = MouseEvent {
-                                    kind: MouseEventKind::Down(MouseButton::Left),
-                                    column: x,
-                                    row: y,
-                                    modifiers: KeyModifiers::NONE,
-                                };
-                                if self.handle_events(Some(mouse_event), None) {
-                                    log::info!("Quit signal received from handle_events (mouse)");
-                                }
+                        if let Ok(mouse) = TryFrom::try_from(event.clone()) {
+                            if self.handle_events(Some(mouse), None) {
+                                log::info!("Quit signal received from handle_events (mouse)");
                             }
-                            TerminalEvent::KeyPress { code, modifiers } => {
-                                log::info!("Received key press: code={:?}, modifiers={:?}", code, modifiers);
-                                let key_event = KeyEvent {
-                                    code,
-                                    modifiers,
-                                    kind: KeyEventKind::Press,
-                                    state: KeyEventState::NONE,
-                                };
-                                if self.handle_events(None, Some(key_event)) {
-                                    log::info!("Quit signal received from handle_events (key)");
-                                }
+                        } else if let Ok(key) = TryFrom::try_from(event) {
+                            if self.handle_events(None, Some(key)) {
+                                log::info!("Quit signal received from handle_events (key)");
                             }
                         }
                     }
@@ -261,7 +254,21 @@ impl <'a>TerminalApp<'a> {
                         *can_start = start;
                     }
 
-                    self.menu_bar.check_active_tab();
+                    if let Ok(start) = self.manual_connect_rx.try_recv() {
+                        *can_start = start;
+                        // *manual_start = start;
+                    }
+
+                    if let Ok(connection_state) = connection_state_rx.try_recv() {
+                        if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
+                            menu.set_connection_state(connection_state);
+                        }
+                    }
+
+                    if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
+                        menu.check_active_tab();
+                    }
+
                     self.event_manager.process_events();
                     self.tasks_tab.borrow_mut().check_tasks();
             
@@ -271,7 +278,7 @@ impl <'a>TerminalApp<'a> {
                     let layout = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
-                            Constraint::Percentage(8), // for tabs
+                            Constraint::Length(4), // for tabs
                             Constraint::Percentage(92),// rest of content
                         ]);
             
@@ -280,9 +287,7 @@ impl <'a>TerminalApp<'a> {
                     let tab_layout = Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([
-                            Constraint::Percentage(10),
-                            Constraint::Percentage(80),
-                            Constraint::Percentage(10),
+                            Constraint::Percentage(100),
                         ]).split(outer_chunks[0]);
             
                     
@@ -296,24 +301,28 @@ impl <'a>TerminalApp<'a> {
     }
 
     fn menu_bar<B: Backend>(&mut self, f: &mut Frame, tab_layout: Rc<[Rect]>, outer_chunks: Rc<[Rect]>) -> anyhow::Result<(), anyhow::Error> {
-        let tab_area = center_horizontal(tab_layout[1], tab_layout[1].width);
+        let tab_area = tab_layout[0]; // center_horizontal(tab_layout[1], tab_layout[1].width);
         let main_content_area = outer_chunks[1];
-        self.menu_bar.draw::<B>(f, tab_area);
-            
-        let buf = &mut Buffer::empty(Rect::ZERO);
+        let menu_bar = self.menu_bar.try_borrow_mut();
 
-        // (2) Render Main content area depends on which tab is selected
-        match *self.menu_bar.current_tab.borrow() {
-            Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
-            Tab::Scripts => self.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
-            Tab::Tasks => self.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
-            Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
-            Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
-            Tab::Ncdu => todo!(),
-            Tab::Logs => {
-                buf.merge(f.buffer_mut());
-                self.logger.draw::<B>(f, main_content_area);
-            },
+        if let Ok(mut menu_bar) = menu_bar {
+            menu_bar.draw::<B>(f, tab_area);
+                
+            let buf = &mut Buffer::empty(Rect::ZERO);
+
+            // (2) Render Main content area depends on which tab is selected
+            match *menu_bar.current_tab.borrow() {
+                Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Scripts => self.scripts_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Tasks => self.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
+                Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Ncdu => {},
+                Tab::Logs => {
+                    buf.merge(f.buffer_mut());
+                    self.logger.draw::<B>(f, main_content_area);
+                },
+            }
         }
         Ok(())
     }
@@ -329,26 +338,6 @@ impl <'a>TerminalApp<'a> {
         f.render_widget(splash_screen, layout[0]);
         f.render_widget(splash_screen2, layout[1]);
         std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-
-    fn _prepare_effects(&mut self, _f: &mut Frame) {
-        // if self.first_run {
-            
-            // let effect1 = outline_selected_cells(
-            //     &mut self.menu_bar.effect_stage, 
-            //     main_content_area.as_size(),
-            //     CATPPUCCIN.maroon,
-            //     CellFilter::FgColor(CATPPUCCIN.maroon)
-            // );
-
-            // self.effect_stage.add_effect(effect1);
-            // if let Ok(notifs) = notifications.lock() {
-            //     if let Some(notification) = notifs.last() {
-            //         let a = notification.notification_area::<B>(f);
-            //         notification.render_effects(&mut self.effect_stage, a);
-            //     }
-            // }
-        // }
     }
 
     fn render_systems<B: Backend>(
@@ -378,21 +367,31 @@ impl <'a>TerminalApp<'a> {
             }
         }
     }
-}
-/*
-    fn receive(
-        &mut self, 
-        can_start: &mut bool, 
-        mut event_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalEvent>, 
-        mut start_rx: tokio::sync::mpsc::UnboundedReceiver<bool>
-    ) {
- 
-    }
-*/
 
-fn center_horizontal(area: Rect, width: u16) -> Rect {
-    let [area] = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .areas(area);
-    area
+    fn _prepare_effects(&mut self, _f: &mut Frame) {
+        // if self.first_run {
+            
+            // let effect1 = outline_selected_cells(
+            //     &mut self.menu_bar.effect_stage, 
+            //     main_content_area.as_size(),
+            //     CATPPUCCIN.maroon,
+            //     CellFilter::FgColor(CATPPUCCIN.maroon)
+            // );
+
+            // self.effect_stage.add_effect(effect1);
+            // if let Ok(notifs) = notifications.lock() {
+            //     if let Some(notification) = notifs.last() {
+            //         let a = notification.notification_area::<B>(f);
+            //         notification.render_effects(&mut self.effect_stage, a);
+            //     }
+            // }
+        // }
+    }
 }
+
+// fn center_horizontal(area: Rect, width: u16) -> Rect {
+//     let [area] = Layout::horizontal([Constraint::Length(width)])
+//         .flex(Flex::Center)
+//         .areas(area);
+//     area
+// }

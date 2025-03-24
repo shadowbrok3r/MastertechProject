@@ -424,7 +424,7 @@ impl AdminConsole {
 
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let button = Button::new(RichText::new("🡆").strong().color(ui.style().visuals.warn_fg_color))
+                    let button = Button::new(RichText::new("⬈").strong().color(ui.style().visuals.warn_fg_color))
                         .fill(ui.style().visuals.window_fill)
                         .min_size(Vec2::new(30.0, 30.))
                         .ui(ui);
@@ -437,10 +437,10 @@ impl AdminConsole {
                     let txt = if let Some(docked) =
                         undock_client.get(client.connection_string.as_str())
                     {
-                        if *docked { "🗝️" } 
+                        if *docked { "🔓" } 
                         else { "🔒" }
                     } 
-                    else { "🗝️" };
+                    else { "🔓" };
 
                     let undock = Button::new(RichText::new(txt).strong().color(Color32::LIGHT_RED))
                         .fill(ui.style().visuals.window_fill)

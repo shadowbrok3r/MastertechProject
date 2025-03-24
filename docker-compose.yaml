@@ -1,6 +1,5 @@
 services:
   mtechserver:
-
     image: shadowbrok3r/mtechserver:beta
     build:
       context: .
@@ -23,6 +22,20 @@ services:
       - 8080
     # volumes:
     #   - "${PWD}:${PWD}"
+
+  websocketserver:
+    image: shadowbrok3r/websocket_server:beta
+    build:
+      context: .
+      dockerfile: ./websocket_server2/Dockerfile
+    restart: always
+    networks:
+      - web
+    ports:
+      - 8081:8081
+    expose:
+      - 8081
+
 
 networks:
   web:

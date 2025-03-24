@@ -204,13 +204,13 @@ impl ChatServer {
             return Ok(()); // Already cleaned up
         }
     
-        let client: Option<ConnectedClient> = DATABASE
-            .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
-            .bind(("connection_id", room_id.clone()))
-            .await?
-            .take(0)?;
+        // let client: Option<ConnectedClient> = DATABASE
+        //     .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
+        //     .bind(("connection_id", room_id.clone()))
+        //     .await?
+        //     .take(0)?;
 
-        log::info!("Client disconnected: {client:?}");
+        log::info!("Client disconnected");
 
         if let Some(room) = rooms.get_mut(room_id) {
             match role {
@@ -243,19 +243,19 @@ impl ChatServer {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    let init = initialize_db().await;
-    if init.is_ok() {    
-        let _ = DATABASE
-            .signin(Database {
-                namespace: NS,
-                database: DB,
-                username: "shadowbroker",
-                password: "toor10!9",
-            })
-            .await.unwrap();
-    } else if let Err(e) = init {
-        println!("ERR {e:?}");
-    }
+    // let init = initialize_db().await;
+    // if init.is_ok() {    
+    //     let _ = DATABASE
+    //         .signin(Database {
+    //             namespace: NS,
+    //             database: DB,
+    //             username: "shadowbroker",
+    //             password: "toor10!9",
+    //         })
+    //         .await.unwrap();
+    // } else if let Err(e) = init {
+    //     println!("ERR {e:?}");
+    // }
 
     let chat_server = ChatServer {
         rooms: Arc::new(Mutex::new(HashMap::new())),
@@ -269,8 +269,9 @@ async fn main() {
     let address = SocketAddr::from(([0, 0, 0, 0], 8081));
     let listener = tokio::net::TcpListener::bind(address).await.unwrap();
     info!("Listening on {}", address);
-
-    serve(listener, app).await.unwrap();
+    tokio::spawn(async move {
+        serve(listener, app).await.unwrap();
+    });
 }
 
 async fn websocket_handler(
@@ -283,8 +284,8 @@ async fn websocket_handler(
     let role = params.get("role").cloned().unwrap_or_else(|| "client".to_string());
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
-    let res = connect_client(room_id.clone()).await;
-    println!("Res: {res:?}");
+    // let res = connect_client(room_id.clone()).await;
+    // println!("Res: {res:?}");
     ws.on_upgrade(move |socket| chat_server.handle_ws(socket, session_id, room_id, role))
 }
 
@@ -295,12 +296,14 @@ pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error
         .await?
         .take(0)?;
 
-    if potential_client.is_some() {
-        let _: Option<ConnectedClient> = DATABASE
-            .query("UPDATE connected_client SET connected = true WHERE connection_string == $room_id")
-            .bind(("room_id", room_id.clone()))
-            .await?
-            .take(0)?;
+    if let Some(client) = potential_client {
+        if client.connected == false {
+            let _: Option<ConnectedClient> = DATABASE
+                .query("UPDATE connected_client SET connected = true WHERE connection_string == $room_id")
+                .bind(("room_id", room_id.clone()))
+                .await?
+                .take(0)?;
+        }
     }
 
     Ok(())

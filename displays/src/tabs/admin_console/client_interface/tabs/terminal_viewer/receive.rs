@@ -1,6 +1,6 @@
 
 use crate::remote_viewer::decode_buffer;
-use std::time::{Instant, SystemTime};
+use web_time::{Instant, SystemTime};
 use crossbeam::channel::{Receiver, Sender};
 use ratatui::prelude::*;
 

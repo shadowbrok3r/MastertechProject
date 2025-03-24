@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 use ratatui::prelude::*;
 use eframe::egui::Ui;
 
@@ -20,7 +20,7 @@ impl RemoteTerminal {
             self.terminal.backend_mut().resize(target_width, target_height);
             self.cached_buffer.resize(target_area);
             self.last_target_area = target_area;
-            log::info!("Target area updated: {:?}", target_area);
+            log::debug!("Target area updated: {:?}", target_area);
             needs_repaint = true;
         }
 
@@ -31,14 +31,14 @@ impl RemoteTerminal {
             if is_first_frame || frame_index_usize > latest_frame_usize {
                 if new_buffer.area != self.last_target_area {
                     new_buffer.resize(self.last_target_area);
-                    log::info!("Resized incoming buffer to: {:?}", self.last_target_area);
+                    log::debug!("Resized incoming buffer to: {:?}", self.last_target_area);
                 }
 
                 latest_buffer = Some((frame_index_usize, new_buffer));
                 self.buffer_count += 1;
 
                 if is_first_frame {
-                    log::info!("Accepted first frame: frame_index={}", frame_index_usize);
+                    log::debug!("Accepted first frame: frame_index={}", frame_index_usize);
                     is_first_frame = false; // Only accept first frame once
                 }
             } else {
@@ -61,10 +61,10 @@ impl RemoteTerminal {
             self.terminal.backend_mut().update_buffer(buffer);
             self.latest_frame_index = frame_index as u64;
             needs_repaint = true;
-            // log::info!(
-            //     "Received pre-processed buffer: frame_index={frame_index}, area={:?}",
-            //     self.terminal.backend().buffer().area
-            // );
+            log::debug!(
+                "Received pre-processed buffer: frame_index={frame_index}, area={:?}",
+                self.terminal.backend().buffer().area
+            );
         }
 
         let draw_start = Instant::now();
@@ -75,7 +75,7 @@ impl RemoteTerminal {
             .expect("Failed to draw terminal frame");
 
         let draw_duration = draw_start.elapsed();
-        // log::info!("Draw duration: {:?}", draw_duration);
+        log::debug!("Draw duration: {:?}", draw_duration);
 
         eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
             let render_start = Instant::now();
@@ -86,9 +86,9 @@ impl RemoteTerminal {
             let since_last_repaint = self.last_repaint.elapsed();
 
             if since_last_repaint >= Duration::from_millis(16) {
-                // log::info!("Frame Count: {}", self.frame_count);
-                // log::info!("Time since last repaint: {:?}", since_last_repaint);
-                // log::info!("Render duration: {:?}", render_duration);
+                log::debug!("Frame Count: {}", self.frame_count);
+                log::debug!("Time since last repaint: {:?}", since_last_repaint);
+                log::debug!("Render duration: {:?}", render_duration);
                 self.last_repaint = Instant::now();
             }
         });
@@ -96,11 +96,11 @@ impl RemoteTerminal {
         if needs_repaint { ui.ctx().request_repaint(); }
 
         if self.last_log.elapsed() >= Duration::from_secs(1) {
-            // log::info!(
-            //     "Performance: buffer_count={}, frame_count={}, last_draw_duration={draw_duration:?}",
-            //     self.buffer_count,
-            //     self.frame_count - self.last_log_frame_count,
-            // );
+            log::debug!(
+                "Performance: buffer_count={}, frame_count={}, last_draw_duration={draw_duration:?}",
+                self.buffer_count,
+                self.frame_count - self.last_log_frame_count,
+            );
             self.last_log = Instant::now();
             self.last_log_frame_count = self.frame_count;
             self.buffer_count = 0;
