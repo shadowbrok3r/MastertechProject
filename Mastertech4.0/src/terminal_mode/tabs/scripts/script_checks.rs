@@ -9,7 +9,7 @@ use sysinfo::Disks;
 
 #[cfg(target_os="windows")]
 use crate::{
-    tabs::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram},
+    tabs::scripts::{install_program, install_sas, install_supereasybackup, install_webroot, run_ps_script, AntiVirusProduct, InstalledProgram},
     utilities::windows::{
         antivirus::check_antivirus, 
         net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, 
@@ -52,7 +52,7 @@ impl <'a> ScriptsTab <'a> {
                 Category::RunPrechecks => self.handle_run_prechecks(item.text.as_str(), &category),
                 Category::Informational => self.handle_informational(item.text.as_str(), &category),
                 Category::JunkwareRemoval => self.handle_junkware_removal(item.text.as_str(), &category),
-                Category::Custom(ref name) => self.handle_custom(&name, item.text.as_str(), &category),
+                Category::UserScripts(ref script) => self.handle_custom(&script, item.text.as_str(), &category),
             }
 
             self.current_reporter.replace(match category {
@@ -62,7 +62,7 @@ impl <'a> ScriptsTab <'a> {
                 Category::RunPrechecks => Reporter::RunPrechecks,
                 Category::Informational => Reporter::Informational,
                 Category::JunkwareRemoval => Reporter::JunkwareRemoval,
-                Category::Custom(_) => Reporter::Unknown,
+                Category::UserScripts(_) => Reporter::UserScript,
             });
 
             
@@ -358,9 +358,12 @@ impl <'a> ScriptsTab <'a> {
     }
 
     /// TODO: NOT YET IMPLEMENTED
-    fn handle_custom(&mut self, name: &str, item_text: &str, category: &Category){
-        self.current_reporter.replace(Reporter::Unknown);
-        self.log_message(&format!("Running custom script '{}': {} category: {:?}", name, item_text, category));
+    fn handle_custom(&mut self, full_path: &str, item_text: &str, category: &Category){
+        self.current_reporter.replace(Reporter::UserScript);
+        self.log_message(&format!("Running custom script '{}': {} category: {:?}", full_path, item_text, category));
+        self.filesystem.preview_selection(full_path.to_string());
+        // self.check_for_script = true;
+    
     }
 
     #[cfg(target_os="windows")]
@@ -872,7 +875,7 @@ fn disable_hibernation_and_sleep() -> anyhow::Result<bool, anyhow::Error> {
 
 #[cfg(target_os="windows")]
 pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, anyhow::Error> {
-    let user_data: windows::Storage::UserDataPaths = UserDataPaths::GetDefault()?;
+    let user_data = windows::Storage::UserDataPaths::GetDefault()?;
     let sys_data = windows::Storage::SystemDataPaths::GetDefault()?;
 
     log::info!(

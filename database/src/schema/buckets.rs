@@ -142,11 +142,13 @@ impl Node {
                     Node::Folder(_, children) => {
                         for (key, node) in new_map {
                             let clean_key = key.trim_end_matches('/').to_string(); // Trim trailing slashes
-                            children.insert(clean_key.clone(), node);
-                            info!(
-                                "Inserted '{}'. Current children of '{}': {:?}",
-                                clean_key, normalized_prefix, children.keys().collect::<Vec<_>>()
-                            );
+                            if !clean_key.is_empty() {
+                                children.insert(clean_key.clone(), node);
+                                info!(
+                                    "Inserted '{}'. Current children of '{}': {:?}",
+                                    clean_key, normalized_prefix, children.keys().collect::<Vec<_>>()
+                                );
+                            }
                         }
                         Ok(())
                     }

@@ -46,6 +46,9 @@ pub struct ColorTheme {
     pub variable: &'static str,
     pub symbol: &'static str,
     pub embedded: &'static str,
+    pub subexpression: &'static str,
+    pub embeddedvariable: &'static str,
+    pub afterdollarinstring: &'static str,
 }
 
 impl Default for ColorTheme {
@@ -97,11 +100,14 @@ impl ColorTheme {
             TokenType::Punctuation(_) => self.punctuation,
             TokenType::Special => self.special,
             TokenType::Str(_) => self.strs,
-            TokenType::Embedded => self.embedded, // Highlight embedded syntax in strings
+            TokenType::Embedded(_) => self.embedded,
             TokenType::Type => self.types,
             TokenType::Variable => self.variable,
             TokenType::Symbol => self.symbol,
             TokenType::Whitespace(_) | TokenType::Unknown => self.comments,
+            TokenType::Subexpression(_) => self.subexpression,
+            TokenType::EmbeddedVariable(_) => self.embeddedvariable,
+            TokenType::AfterDollarInString(_) => self.afterdollarinstring,
         }
     }
     
@@ -119,10 +125,13 @@ impl ColorTheme {
             TokenType::Special => color_from_hex(self.special),
             TokenType::Str(_) => color_from_hex(self.strs),
             TokenType::Type => color_from_hex(self.types),
-            TokenType::Variable => color_from_hex(self.variable), // Highlight variables
+            TokenType::Variable => color_from_hex(self.variable),
             TokenType::Whitespace(_) | TokenType::Unknown => color_from_hex(self.comments),
             TokenType::Symbol => color_from_hex(self.symbol),
-            TokenType::Embedded => color_from_hex(self.embedded),
+            TokenType::Embedded(_) => color_from_hex(self.embedded),
+            TokenType::Subexpression(_) => color_from_hex(self.subexpression),
+            TokenType::EmbeddedVariable(_) => color_from_hex(self.embeddedvariable),
+            TokenType::AfterDollarInString(_) => color_from_hex(self.afterdollarinstring),
         }
         .unwrap_or(ERROR_COLOR)
     }
@@ -153,6 +162,42 @@ impl ColorTheme {
             variable: fg,
             symbol: fg,
             embedded: fg,
+            subexpression: fg,
+            embeddedvariable: fg,
+            afterdollarinstring: fg,
         }
+    }
+
+    pub fn color_for_scope(&self, scope: &str) -> Option<Color32> {
+        // Match the most specific scope first
+        if scope.contains("keyword.control.powershell") {
+            Color32::from_hex(self.keywords).ok()
+        } else if scope.contains("comment") {
+            Color32::from_hex(self.comments).ok()
+        } else if scope.contains("entity.name.function.powershell") {
+            Color32::from_hex(self.functions).ok()
+        } else if scope.contains("variable.other.powershell") {
+            Color32::from_hex(self.variable).ok()
+        } else if scope.contains("variable.parameter.powershell") {
+            Color32::from_hex(self.variable).ok()
+        } else if scope.contains("constant.numeric.powershell") {
+            Color32::from_hex(self.numerics).ok()
+        } else if scope.contains("string.quoted") {
+            Color32::from_hex(self.strs).ok()
+        } else if scope.contains("punctuation") {
+            Color32::from_hex(self.punctuation).ok()
+        } else if scope.contains("source.powershell.embedded") {
+            Color32::from_hex(self.subexpression).ok()
+        } else {
+            None
+        }
+    }
+
+    pub fn fg(&self) -> Color32 {
+        Color32::from_hex(self.literals).unwrap_or(Color32::WHITE)
+    }
+    
+    pub fn bg_for_scope(&self, _scope: &str) -> Option<Color32> {
+        None // Add background colors per scope if needed
     }
 }

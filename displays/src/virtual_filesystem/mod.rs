@@ -1,10 +1,11 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use std::{cell::RefCell, collections::{HashMap, HashSet}};
-use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
+use zstd::zstd_safe::WriteBuf;
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
-use crossbeam::channel::{Receiver, Sender};
 use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User}; // buckets::list_buckets, 
+use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
+use std::{cell::RefCell, collections::{HashMap, HashSet}};
+use crossbeam::channel::{Receiver, Sender};
 use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
@@ -50,7 +51,6 @@ impl S3Fetcher {
     }
 
 }
-
 
 pub trait FileSysHelper {
     fn handle_filesystem_action(&mut self, action: &FileSystemAction);
@@ -154,9 +154,9 @@ pub struct FileSystem {
     /// The Entire Hierarchy of Folders/Files
     pub root: Node,
     /// Sending progress of downloads/uploads to progress bar
-    bytes_tx: Sender<(Vec<u8>, u64)>,
+    bytes_tx: Sender<(u64, u64)>,
     /// Receiving progress of downloads/uploads to progress bar
-    pub bytes_rx: Receiver<(Vec<u8>, u64)>,
+    pub bytes_rx: Receiver<(u64, u64)>,
     /// Receive / Send FileSystemAction's from the UI
     pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
     pub paths_channel: (Sender<Node>, Receiver<Node>),
@@ -166,9 +166,9 @@ pub struct FileSystem {
     /// All of our paths
     pub paths: Vec<String>,
     /// Total size of download/upload
-    total_size: f32,
+    pub total_size: f32,
     /// Progress bar for file/folder download/upload
-    progress: f32,
+    pub progress: f32,
     /// File to execute on Mastertech
     pub execute_file: String,
     /// Credentials for API calls to Minio
@@ -222,10 +222,21 @@ impl FileSystem {
         }
     }
 
-    pub fn receive(&mut self, ctx: &Context) {
+    pub fn receive(&mut self) { // , ctx: &Context
         if let Ok(new_node) = self.paths_channel.1.try_recv() {
             info!("Filesystem received a new node");
             let _ = self.insert_node(new_node);
+        }
+
+        while let Ok(x) = self.bytes_rx.try_recv() {
+            self.progress = x.0 as f32;
+            self.total_size = x.1 as f32;
+
+            log::info!("X: {x:?}");
+            if self.progress > 0.0 && self.progress >= self.total_size {
+                self.progress = 0.0;
+                self.total_size = 0.0;
+            }
         }
 
         if let Ok(action) = self.fs_actions_channel.1.try_recv() {
@@ -238,16 +249,16 @@ impl FileSystem {
             }
             
             self.current_action = Some(action);
-            ctx.request_repaint();
+            // ctx.request_repaint();
         }
 
         if let Ok(file_contents) = self.file_preview_channel.1.try_recv() {
             self.previewed_file = Some(file_contents);
         }
     
-        if self.selected_items.borrow().is_empty() {
-            self.previewed_file = None;
-        }
+        // if self.selected_items.borrow().is_empty() {
+        //     self.previewed_file = None;
+        // }
     }
     
     pub fn set_user(&mut self, user: User) -> &mut Self {
@@ -311,35 +322,46 @@ impl FileSystem {
         TopBottomPanel::top("FileBrowserTop")
             .frame(top_panel_frame)
             // .show_separator_line(false)
-            .exact_height(35.)
+            .exact_height(50.)
             .show_inside(ui, |ui| 
         {
-            ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
+            ui.vertical_centered(|ui| {
                 let pre_modified_path = self.current_prefix.clone();
                 let response = TextEdit::singleline(&mut self.current_prefix)
-                .desired_width(ui.available_width()/1.2)
-                .ui(ui);
+                    .desired_width(size.x/1.2)
+                    .ui(ui);
 
                 if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
                     info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
                     let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
                 }
-                let force_refresh = ui.button("⟲").on_hover_text("Refresh Current Directory Contents");
-                if force_refresh.clicked() {
-                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
-                }
 
-                let home_res = ui.button("🏠").on_hover_text("Home");
-                if home_res.clicked(){
-                    info!("Home clicked. root: {:?}", self.root);
-                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
-                }
+                ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                    ui.add_space(5.);
 
-                let parent_res = ui.button("⬆").on_hover_text("Parent Folder");
-                if parent_res.clicked() {
-                    let navigate_up = self.navigate_up();
-                    info!("Navigating up: {navigate_up:?}");
-                }
+                    let force_refresh = ui.button(RichText::new("⟲").heading()).on_hover_text("Refresh Current Directory Contents");
+                    if force_refresh.clicked() {
+                        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
+                    }
+
+                    ui.add_space(5.);
+    
+                    let home_res = ui.button(RichText::new("🏠").heading()).on_hover_text("Home");
+                    if home_res.clicked(){
+                        info!("Home clicked. root: {:?}", self.root);
+                        let send = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
+                        info!("Sending FS Action: {send:?}");
+                    }
+    
+                    ui.add_space(5.);
+
+                    let parent_res = ui.button(RichText::new("⬆").heading()).on_hover_text("Parent Folder");
+                    if parent_res.clicked() {
+                        let navigate_up = self.navigate_up();
+                        info!("Navigating up: {navigate_up:?}");
+                    }
+                    ui.add_space(5.);
+                });
             });
         });
 
@@ -352,14 +374,28 @@ impl FileSystem {
                 )
             );
 
-        if let Some(file) = self.previewed_file.as_mut(){
-            SidePanel::right(Id::new("FileBrowserSidePanel"))
-                .default_width(ui.available_width()/2.0)
-                .show_inside(ui, |ui| {
-                    self.file_editor.show(ui, file);
-            });
+        if self.selected_items.borrow().is_empty() {
+            self.previewed_file = None;
         }
-        ui.add_space(10.0);
+
+        if let Some(file) = self.previewed_file.as_mut() {
+            if size.x > 1000. {
+                SidePanel::right(Id::new("FileBrowserSidePanel"))
+                    .default_width(ui.available_width()/2.0)
+                    .show_inside(ui, |ui| 
+                {
+                    self.file_editor.show(ui, file);
+                });
+            } else {
+                TopBottomPanel::bottom(Id::new("FileBrowserBottomPanel"))
+                    .default_height(ui.available_height()/2.0)
+                    .show_inside(ui, |ui| 
+                {
+                    self.file_editor.show(ui, file);
+                });
+            }
+        }
+        ui.add_space(5.0);
 
         CentralPanel::default().frame(panel_frame)
             .show_inside(ui, |ui| 
@@ -570,7 +606,7 @@ impl FileSystem {
             let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
             let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
             match s3_fetcher.request_bucket_contents(&folder_pref).await {
-                Ok(node) => { let _ = tx.try_send(node); },
+                Ok(node) => { let _ = tx.send(node); },
                 Err(e) => log::warn!("Error getting node: {e:?}"),
             }
         });
@@ -697,16 +733,13 @@ impl FileSystem {
     }
 
     pub fn show_progress(&mut self, ui: &mut Ui) {
-        while let Ok(x) = self.bytes_rx.try_recv() {
-            self.total_size = x.1 as f32;
-            for y in x.0 {
-                self.progress += y as f32;
-            }
-        }
-        if self.progress == self.total_size {
+        if self.progress.round() == self.total_size.round()
+            // || (self.progress / self.total_size).round() == 1.0
+        {
             self.progress = 0.0;
             self.total_size = 0.0;
         }
+
         if self.progress > 0. {
             ProgressBar::new(self.progress / self.total_size)
                 .show_percentage()
@@ -778,7 +811,7 @@ impl FileSystem {
         });
     }
 
-    fn preview_selection(&self, path: String) {
+    pub fn preview_selection(&self, path: String) {
         let tx = self.bytes_tx.clone();
         let preview_tx = self.file_preview_channel.0.clone();
         let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
@@ -796,13 +829,14 @@ impl FileSystem {
             ).await;
 
             match result {
-                Ok(file) => { let _ = preview_tx.try_send(file); },
+                Ok(file) => { let _ = preview_tx.send(file); },
                 Err(e) => log::warn!("Error getting file to preview: {e:?}"),
             }
         });
     }
 
     fn delete_selection(&self, path: String) {
+        // let tx = self.bytes_tx.clone();
         let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
         let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.clone();
@@ -843,6 +877,7 @@ impl FileSystem {
                 Err(err) => {log::warn!("Error deleting '{path}': {}", err);}
             }
         });
+        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
     }
 
     async fn perform_upload(
@@ -939,17 +974,24 @@ impl FileSystem {
         let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
 
+        let new_name = if file_name.contains(' ') {
+            file_name.replace(' ', "_")
+        } else {
+            file_name
+        };
+
         PlatformSpawner::spawn(async move {
             let result = Self::perform_upload_script(
                 &parsed.clone(),
                 &access_key.clone(),
                 &secret_key.clone(),
                 bytes,
-                &file_name.clone(),
+                &new_name.clone(),
             ).await;
 
             info!("Result: {result:?}");
         });
+        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
     }
 
     pub async fn perform_upload_script(
@@ -959,7 +1001,7 @@ impl FileSystem {
         bytes: Bytes,
         file_name: &String
     ) -> Result<(), Error> {
-        let path = format!("Scripts/{file_name}.ps1");
+        let path = format!("Scripts/{file_name}");
         let name = name.clone();
         let region = "us-west";
         let client = Client::new();
@@ -1049,7 +1091,7 @@ impl FileSystem {
     }
     
     async fn preview_file(
-        tx: Sender<(Vec<u8>, u64)>, // Sender for progress reporting
+        tx: Sender<(u64, u64)>, // Sender for progress reporting
         name: &String, 
         access_key: &String, 
         secret_key: &String, 
@@ -1091,7 +1133,8 @@ impl FileSystem {
             byte_vec.extend_from_slice(&chunk);
     
             // Report progress via the Sender
-            let _ = tx.try_send((chunk.to_vec(), content_length));
+            let _ = tx.send((downloaded_bytes, content_length));
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await; // 100ms delay between chunks
         }
     
         if downloaded_bytes == content_length {
@@ -1099,6 +1142,7 @@ impl FileSystem {
     
             // Attempt to convert the bytes into a UTF-8 string
             let content = String::from_utf8(byte_vec.clone()).map_err(|e| {
+                log::error!("E: {e:?}");
                 anyhow::anyhow!(format!("Failed to decode bytes as UTF-8: {}", e))
             })?;
     
@@ -1113,7 +1157,7 @@ impl FileSystem {
         name: &String, 
         access_key: &String, 
         secret_key: &String, 
-        tx: Sender<(Vec<u8>, u64)>,
+        tx: Sender<(u64, u64)>,
         path: &String,
         filename: &String,
         task: impl Future<Output = Option<FileHandle>>
@@ -1143,18 +1187,19 @@ impl FileSystem {
         let mut byte_vec = Vec::new();
 
         while let Some(item) = byte_stream.next().await{
-            let chunk = item?.clone();
+            let chunk = item?;
             // _bytes = _bytes + chunk.clone();
-            byte_vec.push(chunk.to_vec());
-            let _ = tx.try_send((chunk.to_vec(), content_length));
             downloaded_bytes += chunk.len() as u64;
+            byte_vec.extend_from_slice(&chunk.as_slice());
+            let _ = tx.send((downloaded_bytes, content_length));
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await; // 100ms delay between chunks
         }
 
         if downloaded_bytes == content_length {
             info!("Downloaded: {downloaded_bytes}");
-            let x = byte_vec.concat();
+            // let x = byte_vec.concat();
             if let Some(ref file) = file {
-                file.write(x.as_slice()).await?;
+                file.write(&byte_vec.as_slice()).await?;
             }
         }
         Ok(())

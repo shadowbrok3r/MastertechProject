@@ -1,3 +1,4 @@
+use displays::get_current_user_from_auth;
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
@@ -16,6 +17,7 @@ pub enum Reporter {
     RunPrechecks,
     Informational,
     JunkwareRemoval,
+    UserScript,
     Unknown
 }
 
@@ -311,7 +313,7 @@ impl<'a> ScriptsTab<'a> {
         }
     }
 
-    fn render_context_menu(&self, f: &mut Frame) {
+    fn draw_context_menu(&self, f: &mut Frame) {
         if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
             let items = self.popup_items.borrow();
             let items = items.get(&widget_id.0);
@@ -506,13 +508,31 @@ impl<'a> ScriptsTab<'a> {
 impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         self.receive();
-        // let mut init = self.init.borrow_mut();
-        // if *init {
-        //     for txt in TEST_TEXT.iter() {   
-        //         self.log_message(txt);
-        //     }
-        //     *init = false;
-        // }
+        self.filesystem.receive();
+        self.insert_user_scripts();
+
+        let mut init = self.init.borrow_mut();
+        if *init {
+            if self.filesystem.user.name.len() > 0 {
+                log::info!("We have a user, requesting contents");
+                log::info!("request: {:?}", self.filesystem.request_contents("Scripts"));
+                log::info!("Contents: {:?}", self.filesystem.root);
+            } else {
+                log::info!("We need a user");
+                let user = get_current_user_from_auth();
+                match user {
+                    Ok(Some(usr)) => {
+                        let _ = self.filesystem.set_user(usr);
+                        let _ = self.filesystem.request_contents("Scripts");
+                        log::info!("insert_user_scripts");
+                        self.check_for_scripts = true;
+                    },
+                    Ok(None) => log::info!("Could not retrieve user."),
+                    Err(e) => log::info!("Error retrieving user: {e:?}"),
+                };
+            }
+            *init = false;
+        }
         let mut frame_area = self.frame_area.borrow_mut();
         if frame_area.is_none() {
             *frame_area = Some(f.area());
@@ -547,7 +567,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         // Create grid layout for buttons
         let button_grid = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Ratio(1, 8); 9])
+            .constraints(vec![Constraint::Ratio(1, 9); 10])
             .split(left_side_chunks[1]);
         
         let layout = Layout::default()
@@ -564,7 +584,10 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         f.render_widget(&self.updates_btn, button_grid[2].shrink(4, 1));
         f.render_widget(&self.prechecks_btn, button_grid[3].shrink(4, 1));
         f.render_widget(&self.informational_btn, button_grid[4].shrink(4, 1));
-        self.service_number_field.render_ref(button_grid[5].shrink(4, 2), f.buffer_mut());
+
+        f.render_widget(&self.user_scripts_btn, button_grid[5].shrink(4, 1));
+
+        self.service_number_field.render_ref(button_grid[6].shrink(4, 2), f.buffer_mut());
         
 
         let current_script = self.current_script.borrow().clone();
@@ -581,7 +604,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .style(Style::default().fg(CATPPUCCIN.sky))
             );
             
-        f.render_widget(script_textarea, button_grid[6].shrink(4, 1));
+        f.render_widget(script_textarea, button_grid[7].shrink(4, 1));
 
         let mut progress_mut = self.progress.borrow_mut();
         if let Some(progress) = *progress_mut {
@@ -595,6 +618,24 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             if progress.0 == progress.1 {
                 *progress_mut = None;
             }
+        } else {
+            let total = self.filesystem.total_size;
+            let progress = self.filesystem.progress;
+            log::info!("PROGRESS: {:?} TOTAL: {:?}", progress, total);
+            if total != u64::MAX as f32 && total > 0.0 { // Handle known total size
+                let ratio = if total > 0.0 {
+                    (progress / total).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+            
+                let gauge = Gauge::default()
+                    .block(Block::bordered().title(format!("{script_name} Progress")))
+                    .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
+                    .ratio(ratio as f64);
+            
+                f.render_widget(&gauge, button_grid[7].shrink(2, 1));
+            }
         }
         f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
 
@@ -605,7 +646,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         self.draw_checklist::<B>(f, layout[0]);
 
         // Render popup if active
-        self.render_context_menu(f);
+        self.draw_context_menu(f);
 
         // Check if data_path_buttons has items and draw popup
         let is_open = *self.is_popup_open.borrow();
@@ -960,6 +1001,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     self.updates_btn.handle_mouse_event(&mouse_event);
                     self.informational_btn.handle_mouse_event(&mouse_event);
                     self.run_btn.handle_mouse_event(&mouse_event);
+                    self.user_scripts_btn.handle_mouse_event(&mouse_event);
                 } else {
                     for btn in self.data_path_buttons.iter() {
                         btn.handle_mouse_event(&mouse_event);

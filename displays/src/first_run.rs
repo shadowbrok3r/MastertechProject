@@ -28,7 +28,7 @@ impl SharedContext {
             if self.web_console_layout.filesystem.paths.is_empty() {
                 self.web_console_layout.filesystem.set_user(user.clone());
                 let _ = self.web_console_layout.filesystem.request_contents("");
-                self.web_console_layout.set_filesystem(self.filesystem.clone());
+                // self.web_console_layout.set_filesystem(self.filesystem.clone());
             }
 
             if self.tasks.is_empty() || self.store_users.is_empty() {
@@ -169,7 +169,7 @@ impl SharedContext {
             self.ai_playground.set_threads(thread_map);
         }
 
-        self.filesystem.receive(ctx);
+        self.filesystem.receive();
         self.task_audit_table.receive(self.current_user.clone().unwrap_or_default(), self.store_users.clone(), frame);
     }
 }

@@ -7,7 +7,7 @@ use super::{deserializer, ui::WsDisplayState, History, WebSocketClient};
 
 impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
-        self.explorer.receive(ctx);
+        self.explorer.receive();
 
         if let Ok(msg) = self.msg_to_client_rx.try_recv() {
             self.ws_sender.send(msg);

@@ -74,14 +74,14 @@ impl AdminConsole {
         }
     }
 
-    pub fn set_filesystem(&mut self, filesystem: FileSystem) -> &mut Self {
-        self.filesystem = filesystem.clone();
-        self.script_editor.set_filesystem(filesystem);
-        self
-    }
+    // pub fn set_filesystem(&mut self, filesystem: FileSystem) -> &mut Self {
+    //     self.filesystem = filesystem.clone();
+    //     self.script_editor.set_filesystem(filesystem);
+    //     self
+    // }
 
     pub fn receive(&mut self, ctx: &Context) {
-        self.filesystem.receive(ctx);
+        self.filesystem.receive();
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             self.handle_action(action);
             ctx.request_repaint();

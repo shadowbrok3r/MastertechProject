@@ -1,10 +1,14 @@
 pub mod highlighting;
 mod syntax;
 mod themes;
+// pub mod syntect;
 
 use eframe::egui::text::LayoutJob;
 use eframe::egui::widgets::text_edit::TextEditOutput;
+// use eframe::egui::{FontId, TextFormat};
+// use syntect::Editor;
 use highlighting::highlight;
+// use syntect::{highlight};
 pub use highlighting::Token;
 use std::hash::{Hash, Hasher};
 pub use syntax::{Syntax, TokenType};
@@ -224,6 +228,7 @@ impl FileViewer {
             });
         };
         if self.vscroll {
+            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
             eframe::egui::ScrollArea::vertical()
                 .id_salt(format!("{}_outer_scroll", self.id))
                 .stick_to_bottom(self.stick_to_bottom)
@@ -236,8 +241,6 @@ impl FileViewer {
     }
 }
 
-
-
 impl Editor for FileViewer {
     fn append(&self, job: &mut LayoutJob, token: &Token) {
         job.append(token.buffer(), 0.0, self.format(token.ty()));
@@ -247,3 +250,31 @@ impl Editor for FileViewer {
         &self.syntax
     }
 }
+
+// impl Editor for FileViewer {
+//     fn syntax(&self) -> &str {
+//         self.syntax.language()
+//     }
+
+//     fn theme(&self) -> &ColorTheme {
+//         &self.theme
+//     }
+
+//     fn font_id(&self) -> FontId {
+//         FontId::monospace(self.fontsize)
+//     }
+
+//     fn append(&self, job: &mut LayoutJob, text: &str, scope: &str) {
+//         let mut text_format = TextFormat::simple(self.font_id(), self.theme.fg());
+//         if let Some(color) = self.theme.color_for_scope(scope) {
+//             text_format.color = color;
+//         }
+//         if let Some(bg_color) = self.theme.bg_for_scope(scope) {
+//             text_format.background = bg_color;
+//         }
+//         job.append(text, 0.0, text_format);
+//     }
+// }
+
+// // Ensure FileViewer is Sync for caching
+// unsafe impl Sync for FileViewer {}

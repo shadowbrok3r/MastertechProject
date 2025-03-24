@@ -18,8 +18,11 @@ impl ColorTheme {
         strs: "#a5d6ff",        // scale.blue.1
         types: "#ffa657",       // scale.orange.2
         special: "#a5d6ff",     // scale.blue.1
-        variable: "#a5d6ff",
-        symbol: "#03fcba",
-        embedded: "#03fcba",
+        variable: "#a5d6ff",    // scale.blue.1
+        symbol: "#03fcba",      // Bright teal for symbols
+        embedded: "#03fcba",    // Match embedded content to symbol
+        afterdollarinstring: "#03fcba",  // $ symbol matches symbol color
+        embeddedvariable: "#a5d6ff",     // Matches variable color
+        subexpression: "#03fcba",        // Matches embedded content
     };
 }

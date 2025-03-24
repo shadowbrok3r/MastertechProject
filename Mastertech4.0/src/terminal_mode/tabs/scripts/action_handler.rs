@@ -32,6 +32,10 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "WindowsUpdates" => Some(&self.updates_btn),
                     "RunPrechecks" => Some(&self.prechecks_btn),
                     "Informational" => Some(&self.informational_btn),
+                    "UserScripts" => {
+                        self.check_for_scripts = true;
+                        Some(&self.user_scripts_btn)
+                    },
                     _ => None,
                 };
 
@@ -76,6 +80,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "WindowsUpdates" => {}
                     "RunPrechecks" => {}
                     "Informational" => {}
+                    "UserScripts" => {}
                     _ => {
                         if WidgetButton::Right == *button {
                             // Collect the ID to remove (assuming single match for simplicity)
