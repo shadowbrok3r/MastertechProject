@@ -11,6 +11,8 @@ use {
 impl MasterTechApp {
     pub fn receive_prestashop(&mut self) {
         if let Ok(data) = self.context.prestashop_api_rx.try_recv() {
+            let service_details = data.order.associations.order_service;
+            self.context.service_details = service_details.clone();
             let customer = &mut self.context.customer_data; // self.context.shared_ctx.tur.
             let ticket = &mut self.context.ticket_data;
             let task = &mut self.context.task_data;
@@ -21,6 +23,10 @@ impl MasterTechApp {
             let ram_test = format!("{:?}", &self.context.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
 
+            if ticket.service_number.is_empty() {
+                ticket.service_number = data.order.id;
+            }
+            
             task.id = RecordId::from_table_key(
                 TASK_TABLE, 
                 Uuid::new_v4()
@@ -30,7 +36,7 @@ impl MasterTechApp {
                     .concat()
             );
 
-            let service_details = data.order.associations.order_service;
+            
             let mut owned_computers: Vec<RecordId> = Vec::new();
             let mut services: Vec<RecordId> = Vec::new();
 

@@ -20,7 +20,8 @@ impl SharedContext {
                                     task.task_note.clone(),
                                     usr,
                                     self.store_users.clone(),
-                                    Some(task.id.clone())
+                                    Some(task.id.clone()),
+                                    task.service_number.clone()
                                 ),
                                 task.clone()
                             )
@@ -30,7 +31,8 @@ impl SharedContext {
                                 task.task_note.clone(),
                                 usr,
                                 self.store_users.clone(),
-                                Some(task.id.clone())
+                                Some(task.id.clone()),
+                                task.service_number.clone()
                             );
                             task_modal.task = task.clone();
                             task_modal
@@ -67,7 +69,7 @@ impl SharedContext {
 
                     let note_payload = pld.clone();
                     PlatformSpawner::spawn(async move {
-                        match get_or_insert_notes(note_payload).await {
+                        match get_or_insert_notes((note_payload.0, note_payload.1)).await {
                             Ok(_) => info!("receive_ui_action -> get_or_insert_notes ran ok"),
                             Err(e) => info!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
                         }
@@ -77,7 +79,8 @@ impl SharedContext {
                             pld.1.to_owned(),
                             current_user.clone(), // Some(pld.0.clone()),
                             self.store_users.clone(),
-                            Some(pld.0.clone())
+                            Some(pld.0.clone()),
+                            note_payload.2
                         );
                         let task = self
                             .tasks
@@ -110,7 +113,8 @@ impl SharedContext {
                             task.task_note.clone(),
                             self.current_user.clone().unwrap_or_default(),
                             self.store_users.clone(),
-                            Some(task.id.clone())
+                            Some(task.id.clone()),
+                            task.service_number.clone()
                         ),
                         task.clone(),
                     );

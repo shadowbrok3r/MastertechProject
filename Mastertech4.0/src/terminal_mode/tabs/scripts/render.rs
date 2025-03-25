@@ -567,7 +567,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         // Create grid layout for buttons
         let button_grid = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Ratio(1, 9); 10])
+            .constraints(vec![Constraint::Length(4); 10])
             .split(left_side_chunks[1]);
         
         let layout = Layout::default()
@@ -587,8 +587,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         f.render_widget(&self.user_scripts_btn, button_grid[5].shrink(4, 1));
 
-        self.service_number_field.render_ref(button_grid[6].shrink(4, 2), f.buffer_mut());
-        
+        self.service_number_field.render_ref(button_grid[6].shrink(4, 1), f.buffer_mut());
 
         let current_script = self.current_script.borrow().clone();
         let script_name = &mut String::new();
@@ -637,6 +636,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 f.render_widget(&gauge, button_grid[7].shrink(2, 1));
             }
         }
+        
         f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
 
         // Render log section

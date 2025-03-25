@@ -1,7 +1,7 @@
 
 use database::{schema::{helper_traits::UserHelper, utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
 use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
-use crate::{app_state::default_tree, tabs::github::self_updater::run};
+use crate::{app_state::{default_tree, MainPages}, tabs::github::{get_github_releases, self_updater::run}};
 use crate::app_state::{AppState, MasterTechApp};
 use displays::ui_tools::show_notification;
 use std::collections::BTreeSet;
@@ -78,37 +78,51 @@ impl MasterTechApp {
                                         let _ = run(client, tx.clone()).await;
                                     });
                                 }
+
+                                if Button::new(
+                                    RichText::new("Terminal Mode")
+                                        .monospace()
+                                        .font(FontId::proportional(14.0)),
+                                )
+                                .stroke(Stroke::new(0.5, Color32::MAGENTA))
+                                .min_size(Vec2::new(36.0, 20.0))
+                                .ui(ui)
+                                .clicked()
+                                {
+                                    let restart_in_terminal_mode = restart_in_terminal_mode();
+                                    log::info!("restart_in_terminal_mode: {restart_in_terminal_mode:?}");
+                                    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+                                }
                     
-                                // if ui.add(Button::new("Downloads")).clicked() {
-                                //     self.state = AppState::Authenticated(MainPages::Downloads);
-                                    
-                                //     let github_releases_tx = self.context.github_releases_channel.0.clone();
-                                //     let client = self.context.client.clone();
-                                //     spawn(async move {
-                                //         let get_releases = get_github_releases(github_releases_tx, client).await;
-                                //         info!("get_releases: {get_releases:?}");
-                                //     });
+                                if ui.add(Button::new("Downloads")).clicked() {
+                                    self.state = AppState::Authenticated(MainPages::Downloads);
+                                    let github_releases_tx = self.context.github_releases_channel.0.clone();
+                                    let client = self.context.client.clone();
+                                    spawn(async move {
+                                        let get_releases = get_github_releases(github_releases_tx, client).await;
+                                        info!("get_releases: {get_releases:?}");
+                                    });
                     
-                                //     match self
-                                //         .context
-                                //         .app_state_tx
-                                //         .try_send(AppState::Authenticated(MainPages::Downloads))
-                                //     {
-                                //         Ok(_) => info!("Switching to Downloads Page"),
-                                //         Err(e) => error!("Error: {e:?}"),
-                                //     }
-                                // }
+                                    match self
+                                        .context
+                                        .app_state_tx
+                                        .try_send(AppState::Authenticated(MainPages::Downloads))
+                                    {
+                                        Ok(_) => info!("Switching to Downloads Page"),
+                                        Err(e) => error!("Error: {e:?}"),
+                                    }
+                                }
                     
-                                // if ui.add(Button::new("Account Settings")).clicked() {
-                                //     self.state =
-                                //         AppState::Authenticated(MainPages::AccountSettings);
-                                //     match self.context.app_state_tx.try_send(
-                                //         AppState::Authenticated(MainPages::AccountSettings),
-                                //     ) {
-                                //         Ok(_) => info!("Switching to AccountSettings Page"),
-                                //         Err(e) => error!("Error: {e:?}"),
-                                //     }
-                                // }
+                                if ui.add(Button::new("Account Settings")).clicked() {
+                                    self.state =
+                                        AppState::Authenticated(MainPages::AccountSettings);
+                                    match self.context.app_state_tx.try_send(
+                                        AppState::Authenticated(MainPages::AccountSettings),
+                                    ) {
+                                        Ok(_) => info!("Switching to AccountSettings Page"),
+                                        Err(e) => error!("Error: {e:?}"),
+                                    }
+                                }
                     
                                 if ui.add(Button::new("Modify Theme")).clicked() {
                                     self.context.shared_ctx.modify_theme = true;
@@ -397,4 +411,27 @@ impl MasterTechApp {
             })
         });
     }
+}
+
+
+pub fn restart_in_terminal_mode() -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg(&std::env::current_exe()?)
+            .arg("-t")
+            .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
+            .creation_flags(0x00000008) // DETACHED_PROCESS flag
+            .spawn()?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new(&current_exe)
+            .arg("-t")
+            .spawn()?;
+        // On Unix-like systems, the process is detached by default when the parent exits
+    }
+    Ok(())
 }

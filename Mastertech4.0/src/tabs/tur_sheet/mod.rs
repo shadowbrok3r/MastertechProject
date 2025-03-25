@@ -1,13 +1,14 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
-use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TicketData};
+use database::schema::{CarboniteResponse, CustomerData, GetKeysResponse, LiveTaskPayload, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
-use get_ticket::{request_seb_info, SendRequest};
+use get_ticket::SendRequest;
 use egui_extras::{*, DatePickerButton};
-use std::collections::BTreeSet;
+use reqwest::header::CONTENT_TYPE;
+use std::collections::{BTreeSet, HashMap};
 use egui_file::FileDialog;
 use std::path::PathBuf; 
-use log::{debug, error, info};
+use log::{debug, info};
 use tokio::spawn;
 
 pub mod get_ticket;
@@ -24,9 +25,9 @@ impl MastertechContext {
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
         ui.vertical(|ui|{ui.add_space(8.0);});
-        
+        ui.set_max_width(ui.available_size_before_wrap().x);
         ui.with_layout(
-            Layout::left_to_right(Align::Center),|ui|
+            Layout::top_down_justified(Align::Center),|ui|
         {     
             ui.horizontal(|ui| {ui.add_space(8.0);});
             StripBuilder::new(ui)
@@ -43,6 +44,8 @@ impl MastertechContext {
                     .size(Size::exact(290.0)) // allocates ticket info from left -> right
                     .size(Size::exact(8.0)) // allocates empty space between HW tests and ticket info
                     .size(Size::exact(290.0)) // allocates HW tests from left -> right
+                    .size(Size::exact(10.0))
+                    .size(Size::exact(290.0))
                     .horizontal(|mut strip|
                     { 
                         strip
@@ -56,17 +59,25 @@ impl MastertechContext {
                                 strip
                                 .cell(|ui| // get_ticket button
                                 {
-                                    let check = !self.ticket_data.service_number.is_empty();
+                                    let enabled = if !self.ticket_data.service_number.is_empty() {
+                                        true
+                                    } else if !self.customer_data.phone_number.is_empty()
+                                        && self.ticket_data.service_number.is_empty() {
+                                        true
+                                    } else {
+                                        false
+                                    };
+
                                     let style = ui.style().clone();
                                     ui.vertical_centered(|ui|{                                    
                                         if ui.add_enabled(
-                                            check, 
+                                            enabled, 
                                             Button::new( 
                                                 RichText::new("Get PrestaShop Order")
                                                 .color(style.visuals.warn_fg_color) 
                                             )
                                             .stroke(style.visuals.window_stroke)
-                                            .min_size(Vec2::new(145.0, 25.0))
+                                            .min_size(Vec2::new(160.0, 25.0))
                                         ).clicked() {
                                             let service_num = self.ticket_data.service_number.clone();
                                             self.presta_api();
@@ -146,6 +157,14 @@ impl MastertechContext {
                                                     
                                                     ui.end_row();
 
+                                                    TextEdit::singleline(&mut self.customer_data.email)
+                                                        .hint_text("Customer email")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                        .ui(ui);
+
+                                                    ui.end_row();
                                                                         /*     ROW 3     */
                                                     let mut inputs = BTreeSet::new();
 
@@ -213,17 +232,31 @@ impl MastertechContext {
                                                     
                                                     if ui.add_enabled(!self.ticket_data.service_number.is_empty(), Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
-                                                        let client = self.client.clone();
                                                         let email = self.customer_data.email.clone();
-                                                        spawn(async move {
-                                                            let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, Some(email)).await;
-                                                            match seb_data{
-                                                                Ok(seb) => {
-                                                                    info!("SEB: {seb:?}");
-                                                                },
-                                                                Err(e) => error!("Error getting SEB data: {e:?}"),
-                                                            }
-                                                        });
+                                                        let client = self.client.clone();
+                                                        let tx = self.seb_channel.0.clone();
+                                                        if !email.is_empty() {
+                                                            tokio::spawn(async move {
+                                                                let mut params: HashMap<&str, &str> = HashMap::new();
+                                                                params.insert("user_email", "logan.lees@pclaptops.com");
+                                                                params.insert("user_password", "Poolparty1");
+                                                                params.insert("application", "carbonite");
+                                                                params.insert("action", "search");
+                                                                params.insert("search", &email);
+                            
+                                                                let response = client
+                                                                    .post("https://scaffold.pclaptops.com/api/index")
+                                                                    .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+                                                                    .form(&params)
+                                                                    .send()
+                                                                    .await?;
+                            
+                                                                let response_json: Vec<CarboniteResponse> = response.json().await?;
+                                                                log::info!("SEB Response: {:?}", response_json);
+                                                                tx.try_send(response_json)?;
+                                                                Ok::<(), anyhow::Error>(())
+                                                            });
+                                                        }
                                                     }
                         
                                                     ui.end_row();
@@ -422,6 +455,133 @@ impl MastertechContext {
                                 }); // horizontal_top
                             }); // vertical center
                         }); // cell
+                        strip.empty();
+                        strip.cell(|ui| {
+                            ui.vertical(|ui| ui.add_space(30.0));
+                            ui.horizontal_centered(|ui| {
+                                ui.group(|ui| {
+                                    Grid::new("SEB Info Grid")
+                                    .spacing(vec2(4.0, 7.0))
+                                    .min_col_width(self.widget_size * 2.0)
+                                    .max_col_width(self.widget_size * 2.1)
+                                    .num_columns(1)
+                                    .show(ui, |ui| 
+                                    {
+                    
+                                        let service_details = &self.service_details;
+                                        let mut device = service_details.get(0).cloned().unwrap_or_default();
+                                        let seb_info = &self.seb_info;
+                                        let mut seb_details = seb_info.get(0).cloned().unwrap_or_default();
+                    
+                                                            /*     ROW 1     */
+                                        TextEdit::singleline(&mut device.device_name)
+                                            .hint_text("Device Name")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0)).ui(ui);
+                    
+                                        ui.end_row();
+
+                                        TextEdit::singleline(&mut device.device_mfg)
+                                            .hint_text("Device Mfg")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                    
+                                        ui.end_row();
+                                                            /*     ROW 2     */
+                                        TextEdit::singleline(&mut device.device_model)
+                                            .hint_text("Device Model")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0)).ui(ui);
+                    
+                                        ui.end_row();
+
+                                        TextEdit::singleline(&mut device.device_serial)
+                                            .hint_text("Device Serial")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                                        
+                                        ui.end_row();
+                    
+                                                            /*     ROW 3     */
+                                        TextEdit::singleline(&mut device.device_password)
+                                            .hint_text("Device Password")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+
+                                        ui.end_row();
+
+                                        TextEdit::singleline(&mut device.device_power_supply)
+                                            .hint_text("Device Power Supply")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                    
+                                        ui.end_row();
+
+                                        ui.label(RichText::new("SEB Info").strong().heading());
+
+                                        ui.end_row();
+                                        
+                                                            /*     ROW 4     */
+                                        TextEdit::singleline(&mut seb_details.device_name)
+                                            .hint_text("Carbonite Device Name")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+
+                                        ui.end_row();
+
+                                        TextEdit::singleline(&mut seb_details.device_id)
+                                            .hint_text("Device ID")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                    
+                                        ui.end_row();
+                                        
+                                                            /*     ROW 5     */
+                                        TextEdit::singleline(&mut seb_details.activated)
+                                            .hint_text("Activation Code")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                    
+                                        ui.end_row();
+
+                                        TextEdit::singleline(&mut seb_details.id_recurly_account)
+                                            .hint_text("Recurly Id")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                    
+                                        ui.end_row();
+                    
+                                        TextEdit::singleline(&mut seb_details.usage_gb)
+                                            .hint_text("Usage (Gb)")
+                                            .vertical_align(Align::Center)
+                                            .margin(vec2(4.0, 4.0))
+                                            .min_size(vec2(self.widget_size+6.0,14.0))
+                                            .ui(ui);
+                    
+                                        ui.end_row();
+                    
+                                    }); // grid
+                                });
+                            });
+                        });
                     }); // strip.strip builder
                 }); // strip.strip
 
@@ -431,7 +591,7 @@ impl MastertechContext {
                 {
                     builder
                     .size(Size::exact(300.0)) // allocates checkinNotes info from left -> right
-                    .size(Size::exact(-5.0)) // allocates empty space between checkin notes and recommendations
+                    .size(Size::exact(5.0)) // allocates empty space between checkin notes and recommendations
                     .size(Size::exact(300.0)) // allocates recommendations from left -> right
                     .horizontal(|mut strip|
                     {
@@ -471,7 +631,7 @@ impl MastertechContext {
                     }); // strip builder
                 }); // strip.strip
             }); //strip builder
-        }); // UI layout
+        });
     }
 
 }

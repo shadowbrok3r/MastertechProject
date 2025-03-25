@@ -207,18 +207,18 @@ pub trait TaskNotePayloadHelper: Send {
     /// Creates a task note in the Prestashop system.
     ///
     /// # Returns
-    /// - `Ok(Response)` on successful creation.
+    /// - `Ok(PrestaResourceResponse)` on successful creation.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    async fn create_customer_message(&mut self) -> Result<Response, anyhow::Error>
+    async fn create_customer_message(&mut self) -> Result<PrestaResourceResponse, anyhow::Error>
     where
         anyhow::Error: Send;
 
     /// Creates a customer thread in Prestashop so we can create messages for it.
     ///
     /// # Returns
-    /// - `Ok(Response)` on successful creation.
+    /// - `Ok(PrestaResourceResponse)` on successful creation.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    async fn create_customer_thread(&mut self) -> Result<Response, Error>
+    async fn create_customer_thread(&mut self) -> Result<PrestaResourceResponse, Error>
     where
         anyhow::Error: Send;
     /// Checks if a user is tagged in a note and updates the note if necessary.
@@ -358,7 +358,7 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the modification is successful.
     /// - `Err(Error)` if an error occurs during modification.
-    async fn modify_prestashop_note(&mut self) -> Result<Response, Error>;
+    async fn modify_prestashop_note(&mut self) -> Result<PrestaResourceResponse, Error>;
 
     /// Deletes a note from the system.
     ///
@@ -382,7 +382,6 @@ pub trait TaskNotePayloadHelper: Send {
 }
 
 impl TaskNotePayloadHelper for TaskNotePayload {
-
     async fn handle_note_creation(&mut self) -> Result<(), anyhow::Error> {
         if self.created_at.is_empty() {
             self.update_task_note_with_current_time().await?;
@@ -437,16 +436,54 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
             self.update_username_if_needed().await?;
 
-        } else if id_customer_thread.is_empty() && !self.service_number.is_empty() {
-
+        } else if id_customer_thread.is_empty() && self.service_number.is_some() {
             let create_thread_response = self.create_customer_thread().await?;
             info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
-            self.id_customer_thread = Some(create_thread_response.id);
+            self.id_customer_thread = Some(create_thread_response.id.clone());
             self.created_at = create_thread_response.date_add;
+            if self.id_customer_message.is_none()
+                && !create_thread_response.id.is_empty()
+                && self.id_employee.is_some()
+            {
+                // Is this sent from the website or mastertech?
+                info!("helper_traits -> Sent from website, {:?} - {:?}", self.id_customer_thread, self.id_employee);
+                let response = self.create_customer_message().await?;
+                info!("helper_traits -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
+                // Update task note with Prestashop details
+                let id = if self.id.key().to_string().is_empty() {
+                    let task_note_default = TaskNotePayload::default();
+                    info!("helper_traits -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
+                    task_note_default.id
+                } else {
+                    if !response.id.to_string().is_empty() {
+                        let id = RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone()));
+                        info!("helper_traits -> handle_note_creation -> id is not empty, creating with cust message id: {id:?}");
+                        id
+                    } else {
+                        let task_note_default = TaskNotePayload::default();
+                        info!("helper_traits -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
+                        task_note_default.id
+                    }
+                };
 
-        } else if id_customer_thread.is_empty() && self.service_number.is_empty() {
+                let updated_value = TaskNotePayload {
+                    id,
+                    id_customer_message: Some(response.id.to_string().clone()),
+                    id_customer_thread: self.id_customer_thread.clone(),
+                    ..self.clone() // Keep other fields the same
+                };
 
-            info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT a service number. creating a regular task note. {:?}", self.clone());
+                let diffs = self.diff(&updated_value);
+                self.apply_mut(diffs);
+
+                info!("helper_traits -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
+
+                self.create_task_note_in_db().await?;
+
+                self.update_username_if_needed().await?;
+            }
+        } else if id_customer_thread.is_empty() && self.service_number.is_none() {
+            info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT have a service number. creating a regular task note. {:?}", self.clone());
             if self.task_id.is_none() {
 
             }
@@ -561,26 +598,28 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(())
     }
 
-    async fn create_customer_thread(&mut self) -> Result<Response, Error> {
-        if self.service_number.is_empty() {
+    async fn create_customer_thread(&mut self) -> Result<PrestaResourceResponse, Error> {
+        if self.service_number.is_none() {
             return Err(anyhow::anyhow!("service number is empty")).into();
         };
+        
         let presta_api = Prestashop::default();
+
         let order: prestashop_schema::Order = presta_api
-            .request_subresources_by_id_wasm("orders", "order", &self.service_number)
+            .request_subresources_by_id_wasm("orders", "order", &self.service_number.clone().unwrap_or_default())
             .await?;
 
         let id_customer = order.id_customer;
 
         Ok(
             presta_api.create_customer_thread(
-                &self.service_number, 
+                &self.service_number.clone().unwrap_or_default(), 
                 &id_customer
             ).await?
         )
     }
 
-    async fn create_customer_message(&mut self) -> Result<Response, Error> {
+    async fn create_customer_message(&mut self) -> Result<PrestaResourceResponse, Error> {
         let thread_id = self.get_thread_id_from_order().await?;
         let id_employee = self.id_employee.as_deref().unwrap_or("");
 
@@ -642,7 +681,15 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     .request_resources_wasm("customer_threads", query.clone())
                     .await?;
                 
-                info!("helper_traits -> Got customer threads: {customer_threads:?}");
+                info!("helper_traits -> get_thread_id_from_order -> Got customer threads: {customer_threads:?}");
+                if customer_threads.is_empty() && self.id_customer_thread.is_none() && self.service_number.is_some() {
+
+                    let create_thread_response = self.create_customer_thread().await?;
+                    info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
+                    self.id_customer_thread = Some(create_thread_response.id);
+                    self.created_at = create_thread_response.date_add;
+                }
+
                 for thread in customer_threads {
                     for msg in thread.associations.customer_messages.iter() {
                         info!("helper_traits -> Checking if msg ID exists in database: {:?}", &msg);
@@ -685,7 +732,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 username: parse_email_user(&employee.email).to_string(),
                                 everest_initials: employee.initials,
                                 user,
-                                service_number: service_number.to_string()
+                                service_number: Some(service_number.to_string())
                             };
                             info!("helper_traits -> Creating a new task_note: {task_note:?}");
 
@@ -733,7 +780,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 .request_resources_wasm("customer_threads", query.clone())
                 .await?;
             
-            info!("helper_traits -> Got customer threads: {customer_threads:?}");
+            info!("helper_traits -> get_notes_from_service_number -> Got customer threads: {customer_threads:?}");
             for thread in customer_threads {
                 for msg in thread.associations.customer_messages.iter() {
                     info!("helper_traits -> Checking if msg ID exists in database: {:?}", &msg);
@@ -774,7 +821,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                             note: customer_message.message,
                             username: parse_email_user(&employee.email).to_string(),
                             everest_initials: employee.initials,
-                            service_number: service_number.to_string(),
+                            service_number: Some(service_number.to_string()),
                             user,
                         };
                         info!("helper_traits -> Creating a new task_note: {task_note:?}");
@@ -833,7 +880,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(None)
     }
 
-    async fn modify_prestashop_note(&mut self) -> Result<Response, Error> {
+    async fn modify_prestashop_note(&mut self) -> Result<PrestaResourceResponse, Error> {
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
@@ -1381,7 +1428,7 @@ impl ComputerDataHelper for ComputerData {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Response {
+pub struct PrestaResourceResponse {
     pub date_add: String,
     pub id: String,
     pub date_upd: String,

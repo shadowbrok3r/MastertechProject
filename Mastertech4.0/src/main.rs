@@ -8,10 +8,7 @@ use log::{error, info};
 #[cfg(target_os = "windows")]
 extern crate winapi;
 
-
-
 mod terminal_mode;
-
 pub mod app_state;
 mod filesystem;
 pub mod pages;
@@ -57,7 +54,7 @@ impl eframe::App for MasterTechApp {
         }
         
         self.context.shared_ctx.receive_ui_action();
-        self.context.shared_ctx.receive_prestashop();
+        self.receive_prestashop();
         self.context.shared_ctx.receive_task();
         self.context.shared_ctx.receive_ticket();
         self.context.shared_ctx.receive_notes();

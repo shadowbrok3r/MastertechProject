@@ -312,7 +312,7 @@ impl<'a> Prestashop<'a> {
         service_number: &str, 
         id_customer: &str
     ) 
-        -> anyhow::Result<super::helper_traits::Response, anyhow::Error> 
+        -> anyhow::Result<super::helper_traits::PrestaResourceResponse, anyhow::Error> 
     {
         // Prepare the XML payload
         let payload = format!(
@@ -359,7 +359,7 @@ impl<'a> Prestashop<'a> {
             .and_then(|s| s.split("]]></date_upd>").next())
             .unwrap_or(""); // Optional field, so we handle it accordingly
 
-        Ok(super::helper_traits::Response {
+        Ok(super::helper_traits::PrestaResourceResponse {
             date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
             id: id.to_string(),
             date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
@@ -371,7 +371,7 @@ impl<'a> Prestashop<'a> {
         id_employee: &str,
         id_customer_thread: &str,
         note: &str
-    ) -> anyhow::Result<super::helper_traits::Response, anyhow::Error> {
+    ) -> anyhow::Result<super::helper_traits::PrestaResourceResponse, anyhow::Error> {
         // Prepare the XML payload
         let payload = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
@@ -418,7 +418,7 @@ impl<'a> Prestashop<'a> {
             .and_then(|s| s.split("]]></date_upd>").next())
             .unwrap_or(""); // Optional field, so we handle it accordingly
 
-        Ok(super::helper_traits::Response {
+        Ok(super::helper_traits::PrestaResourceResponse {
             date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
             id: id.to_string(),
             date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
@@ -431,7 +431,7 @@ impl<'a> Prestashop<'a> {
         id_employee: &str,
         id_customer_thread: &str,
         note: &str
-    ) -> anyhow::Result<super::helper_traits::Response, anyhow::Error> {
+    ) -> anyhow::Result<super::helper_traits::PrestaResourceResponse, anyhow::Error> {
         // Prepare the XML payload
         let payload = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
@@ -478,7 +478,7 @@ impl<'a> Prestashop<'a> {
             .and_then(|s| s.split("]]></date_upd>").next())
             .unwrap_or(""); // Optional field, so we handle it accordingly
 
-        Ok(super::helper_traits::Response {
+        Ok(super::helper_traits::PrestaResourceResponse {
             date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
             id: id.to_string(),
             date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),

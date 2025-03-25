@@ -1,7 +1,7 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, Notification, TaskNotePayload, TaskPayload, TicketData, CONNECTED_CLIENT_TABLE
+        prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketData, CONNECTED_CLIENT_TABLE
     },
     Database,
 };
@@ -91,7 +91,7 @@ pub struct MastertechContext {
     pub scaffold_request: SendRequest,
 
     pub current_antivirus: String,
-    pub seb_info: Option<LocalSebData>,
+    pub seb_info: Vec<CarboniteResponse>,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
     pub mention_handler: MentionHandler,
@@ -139,6 +139,7 @@ pub struct MastertechContext {
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
+    pub service_details: Vec<database::schema::prestashop_schema::ServiceOrder>,
     // pub computer_data_test: Arc<Mutex<ComputerData>>,
 
     pub client_uuid: RecordId,
@@ -223,8 +224,9 @@ impl MasterTechApp {
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
-
-            seb_info: None,
+            service_details: Vec::new(),
+            
+            seb_info: Vec::new(),
 
             disks: Value::Array(vec![]),
             disk_num: 0,

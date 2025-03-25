@@ -48,7 +48,7 @@ impl MastertechContext{
 
             let mut _specs = String::new();
             let cps = self.current_antivirus.clone();
-            let seb_info = self.seb_info.clone().unwrap_or_default();
+            let seb_info = self.seb_info.clone();
 
             
 
@@ -245,13 +245,13 @@ impl MastertechContext{
                 let tx = self.scaffold_request.tx.clone();
                 let client = self.client.clone();
                 tokio::spawn(async move {
-                    let _ = SendRequest::send_ticket_request(
+                    let submit_tur_response = SendRequest::send_ticket_request(
                         tx, 
                         client, 
                         task,
                         date,
-                    ).await.unwrap();
-                    info!("After tokio spawn in send_ticket_request");
+                    ).await;
+                    info!("tur_sheet -> submit_tur -> submit_tur_response: {submit_tur_response:?}");
                 });
 
 

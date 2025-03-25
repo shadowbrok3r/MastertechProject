@@ -536,7 +536,7 @@ impl TaskAuditViewer {
             info!("Got notes: {notes:?}");
             if self.services_viewer.selected.is_some() {
                 info!("Creating chat view");
-                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users, None);
+                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users, None, None);
             }
         }
 
