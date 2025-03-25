@@ -232,6 +232,8 @@ impl MasterTechApp {
 
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
             self.context.json_editor.set_value(seb.clone()).unwrap();
+            self.context.seb_info = seb;
+
             ctx.request_repaint();
         }
     }

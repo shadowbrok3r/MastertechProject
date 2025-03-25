@@ -1,9 +1,9 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
-use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, TaskNotePayload, User}};
+use database::{live_data::handle_live_delete, schema::{helper_traits::{parse_email_user, TaskNotePayloadHelper}, TaskNotePayload, User}};
 use surrealdb::RecordId;
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use crate::{PlatformSpawner, Spawner};
+use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use chrono::{DateTime, Local, Utc};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
@@ -21,7 +21,8 @@ pub struct ChatView{
     pub users: BTreeSet<String>,
     pub edit_text: HashMap<String, TaskNotePayload>,
     pub allow_edit: HashSet<String>,
-    pub task_id: Option<RecordId>
+    pub task_id: Option<RecordId>,
+    pub service_number: Option<String>
 }
 
 impl Default for ChatView{
@@ -35,13 +36,20 @@ impl Default for ChatView{
             users: BTreeSet::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
-            task_id: None
+            task_id: None,
+            service_number: None,
         }
     }
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, users: Vec<User>, task_id: Option<RecordId>) -> Self {
+    pub fn new(
+        messages: Vec<TaskNotePayload>, 
+        current_user: User, 
+        users: Vec<User>, 
+        task_id: Option<RecordId>,
+        service_number: Option<String>
+    ) -> Self {
         // info!("chats/mod.rs -> Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
         for user in users {
@@ -56,8 +64,18 @@ impl ChatView {
             note_ids.insert(message.id.to_string(), message.clone());
         }
 
+        let user = if current_user.name.is_empty() {
+            if let Ok(Some(user)) = get_current_user_from_auth() {
+                user
+            } else {
+                current_user
+            }
+        } else {
+            current_user
+        };
+
         ChatView {
-            current_user: Some(current_user),
+            current_user: Some(user),
             messages,
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::new(),
@@ -65,7 +83,8 @@ impl ChatView {
             users: users_set,
             edit_text: note_ids,
             allow_edit: HashSet::new(),
-            task_id
+            task_id,
+            service_number
         }
     }
 
@@ -130,7 +149,7 @@ impl ChatView {
                     new_msg = Some(txt.clone());
 
                     if let Some(usr) = self.current_user.clone(){
-                        let username = usr.email.split_once('@').map_or_else(String::new, |(name, _)| name.to_string());
+                        let username = parse_email_user(&usr.email).to_string();
 
                         // Extract the first customer thread ID if available
                         let id_customer_thread = self
@@ -150,24 +169,15 @@ impl ChatView {
                             user: Some(usr.id),
                             id_employee,
                             id_customer_thread,
+                            service_number: self.service_number.clone(),
                             ..Default::default() 
                         };
 
                         // We only need a single thread ID
                         new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
 
-                        // If there is a thread, its definitely associated to a Service
-                        // otherwise, it could be a regular task with no associated Service
-                        // if let Some(thread) = &new_note.id_customer_thread {
-                        //     if !thread.is_empty() {
-
-                        //     }
-                        // } else {
-
-                        // }
-
                         info!("chats/mod.rs -> new_note: {new_note:?}");
-
+                        
                         PlatformSpawner::spawn(async move {
                             if let Err(e) = new_note.handle_note_creation().await {
                                 error!("Failed to create task note: {:?}", e);
@@ -187,26 +197,27 @@ impl ChatView {
             ScrollArea::vertical()
                 .animated(true)
                 .max_height(ui.available_height())
-                .max_width(255.)
+                .max_width(ui.available_width())
                 .auto_shrink(false)
                 .stick_to_bottom(true)
                 .show(ui, |ui| 
             {
 
-                let max_msg_width = ui.available_width() / 2.5;
+                let max_msg_width = ui.available_width()/2.5;
                 let fixed_height = 50.;
                 let min_width = 200.;
                 let other = min_width - 30.;
+                
                 self.messages.sort_by_key(|message| 
                     DateTime::parse_from_rfc3339(&message.created_at.clone())
                         .unwrap_or_default()
                         .with_timezone(&Utc)
-                    );
+                );
+
                 for item in self.messages.iter_mut(){
                     let mut is_message_from_myself = false;
-                    if let Some(user) = &self.current_user{
-                        let email = user.email.split_once('@').clone();
-                        let username = email.unwrap_or_default().0.to_string();
+                    if let Some(user) = &self.current_user {
+                        let username = parse_email_user(&user.email);
                         is_message_from_myself = if item.username == username {
                             true
                         } else { false };
@@ -226,7 +237,7 @@ impl ChatView {
                     };
 
                     ui.with_layout(layout, |ui| {
-                        ui.set_max_width(max_msg_width);
+                        ui.set_width(max_msg_width);
 
                         let rounding = 8.;
                         let margin = 8.;
@@ -426,8 +437,7 @@ impl ChatView {
                             ]
                         };
 
-                        ui.painter()
-                            .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
+                        ui.painter().add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
 
                     });
                 };

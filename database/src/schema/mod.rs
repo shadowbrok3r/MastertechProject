@@ -1,25 +1,21 @@
-use anyhow::Error;
-use async_trait::async_trait;
 use helper_traits::GetAssociatedDataFromId;
-use reqwest::Client;
-// use prestashop_schema::PrestashopPayload;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
-use surrealdb::{
-    // opt::Resource::RecordId,
-    sql::Uuid, RecordId
-};
-
+// use deserializer::deserialize_to_string;
+use surrealdb::{sql::Uuid, RecordId};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use async_trait::async_trait;
+use serde_json::Value;
+use reqwest::Client;
 use crate::DATABASE;
+use anyhow::Error;
 
-pub mod buckets;
-pub mod deserializer;
-pub mod get_data;
-pub mod helper_traits;
 pub mod prestashop_schema;
+pub mod helper_traits;
+pub mod deserializer;
 pub mod utilities;
+pub mod get_data;
+pub mod buckets;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -554,7 +550,8 @@ pub struct TaskNotePayload {
     pub id_customer_message: Option<String>,
     pub id_employee: Option<String>,
     pub user: Option<RecordId>,
-    pub service_number: String
+    // #[serde(deserialize_with = "deserialize_to_string")]
+    pub service_number: Option<String>
 }
 
 impl Default for TaskNotePayload {

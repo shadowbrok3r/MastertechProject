@@ -9,8 +9,8 @@ impl SharedContext {
             info!("receive_notes -> New note: {:?}", note_payload);
             self.new_note = true;
             
-            for (title, modal) in self.opened_modals.iter_mut() {
-                info!("receive_notes -> {}-{:?}", title, modal);
+            for (_title, modal) in self.opened_modals.iter_mut() {
+                // info!("receive_notes -> {}-{:?}", title, modal);
                 if let Some(ref note_task_id) = note_payload.1.task_id {
                     if let ModalType::TaskModal(task_modal) = modal {
                         handle_live_notes(note_payload.clone(), &mut task_modal.task).unwrap_or(());

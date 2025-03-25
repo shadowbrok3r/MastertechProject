@@ -231,6 +231,7 @@ impl Displayable for TaskPayload {
                                                     TaskUiActions::OpenChatModal((
                                                         self.id.clone(),
                                                         self.task_note.clone(),
+                                                        self.service_number.clone()
                                                     )),
                                                 );
                                             }

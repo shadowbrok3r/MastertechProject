@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.3.3"
+version = "4.4.0"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -44,7 +44,7 @@ quickxml_to_serde = "0.6"
 linked-hash-map = "0.5"
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.0", features = ["tls"]}
 hex = "0.4.3"
-ring = "0.17.8"
+ring = "0.17.14"
 rust-s3 = "0.35"
 semver = "1.0.23"
 nvml-wrapper = { version = "0.10.0", features = ["serde"] }
@@ -60,7 +60,7 @@ unicode-width = "=0.2.0"
 bit-set = "0.8.0"
 tui-logger = "0.17"
 arboard = "3"
-tempfile = "3.18.0"
+tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 
 ratatui = { workspace = true }

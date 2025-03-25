@@ -83,8 +83,6 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                     tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
                                     Ok::<(), anyhow::Error>(())
                                 });
-                                
-
                             }
                         }
                     },

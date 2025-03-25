@@ -20,6 +20,9 @@ addresses = ["0.0.0.0"]
 # The port to serve on.
 port = 8080
 
+[tools] # Default wasm-opt version to download.
+wasm_opt = "version_122"
+
 # [serve.headers]
 # see ./assets/_headers for more documentation
 # "cross-origin-embedder-policy"= "require-corp"

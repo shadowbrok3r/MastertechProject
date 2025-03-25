@@ -116,7 +116,7 @@ pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Erro
 pub enum TaskUiActions {
     OpenTaskModal(TaskPayload),
     CreateTaskModal,
-    OpenChatModal((RecordId, Vec<TaskNotePayload>)),
+    OpenChatModal((RecordId, Vec<TaskNotePayload>, Option<String>)),
     Response(Response),
     Editing(RecordId),
     CommitChanges(RecordId),

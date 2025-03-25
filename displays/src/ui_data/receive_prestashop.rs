@@ -7,7 +7,7 @@ impl SharedContext {
     pub fn receive_prestashop(&mut self) {
         if let Ok(presta_data) = self.tur_channel.1.try_recv() {
             self.tur.data = presta_data.clone();
-            info!("{:?}", self.tur.data.clone());
+            info!("SharedContext -> receive_prestashop -> {:?}", self.tur.data.clone());
             let customer = &mut self.tur.customer_data;
             let ticket = &mut self.tur.ticket_data;
             let task = &mut self.tur.task_data;
