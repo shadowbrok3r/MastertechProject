@@ -13,6 +13,25 @@ use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
 
+pub const TABS: [&str; 16] = [
+    "Lil menu",
+    "My Tools",
+    "Store Tasks",
+    "My Tasks",
+    "Ai",
+    "Admin Console",
+    "Completed Tasks",
+    "Bug Report",
+    "Logs",
+    "Query Builder",
+    "Json Viewer",
+    "Store Stock",
+    "SEB Lookup",
+    "Task Audit",
+    "Company Stock",
+    "Customers",
+];
+
 impl TabViewer for MtechServerContext {
     type Tab = String;
 
@@ -34,7 +53,6 @@ impl TabViewer for MtechServerContext {
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             "Customers" => self.shared_ctx.customer_view(ui),
-            // "Terminal" => self.shared_ctx.egui_terminal(ui),
             _ => {}
         }
     }
@@ -66,34 +84,22 @@ impl TabViewer for MtechServerContext {
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
+        // for tab in TABS {
+        //     if !self.open_tabs.contains(tab) {
+        //         self.open_tabs.insert(tab.to_string());
+        //         break;
+        //     }
+        // }
     }
 
     fn add_popup(&mut self, ui: &mut Ui, surface_index: SurfaceIndex, node_index: NodeIndex) {
         ui.set_width(100.0);
-        let tabs = &[
-            &"Bug Report".to_string(),
-            &"Terminal".to_string(),
-            &"My Tools".to_string(),
-            &"Admin Console".to_string(),
-            &"Store Tasks".to_string(),
-            &"My Tasks".to_string(),
-            &"Ai".to_string(),
-            &"Completed Tasks".to_string(),
-            &"Customers".to_string(),
-            &"Logs".to_string(),
-            &"Json Viewer".to_string(),
-            &"Query Builder".to_string(),
-            &"Store Stock".to_string(),
-            &"Task Audit".to_string(),
-            &"SEB Lookup".to_string(),
-        ];
-
-        for tab in tabs {
+        for tab in TABS {
             if ui
-                .selectable_label(self.open_tabs.contains(*tab), *tab)
+                .selectable_label(self.open_tabs.contains(tab), tab)
                 .clicked()
             {
-                if !self.open_tabs.contains(*tab) {
+                if !self.open_tabs.contains(tab) {
                     self.on_add(surface_index, node_index);
                 }
             }
@@ -173,8 +179,7 @@ impl TabViewer for MtechServerContext {
                     
                 },
                 _ => {}
-            }
-            
+            }   
         }
     }
 
