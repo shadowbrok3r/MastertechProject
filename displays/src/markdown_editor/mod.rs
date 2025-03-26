@@ -91,9 +91,6 @@ impl EasyMarkEditor {
         } = self;
 
         let response = if self.highlight_editor {
-            // if inputs.iter().any(|i| i == &message) {
-            //     ui.style_mut().
-            // }
 
             let mut layouter = |ui: &Ui, easymark: &str, wrap_width: f32| {
                 let mut layout_job = highlighter.highlight(ui.style(), easymark);
@@ -111,30 +108,17 @@ impl EasyMarkEditor {
                         .desired_width(f32::INFINITY)
                         .font(FontId::proportional(12.0))
                         .frame(true)
-                        .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
-                        .desired_rows(6)
+                        .desired_rows(10)
                         .code_editor()
                 })
                 .ui(ui)
-            // if self.show_example{
-            //     ui.add(
-            //         TextEdit::multiline(&mut self.default_msg)
-            //             .desired_width(f32::INFINITY)
-            //             .return_key(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter))
-            //             .font(TextStyle::Monospace) // for cursor height
-            //             .layouter(&mut layouter),
-            //     )
-            // } else{
-            //
-            // ui.add(
-            //     TextEdit::multiline(message)
-            //         .desired_width(f32::INFINITY)
-            //         .font(TextStyle::Monospace)
-            //         .layouter(&mut layouter),
-            // )
-            // }
         } else {
-            ui.add(TextEdit::multiline(message).margin(Margin::symmetric(6, 3)).desired_rows(ui.available_height() as usize).desired_width(f32::INFINITY))
+            ui.add(
+                TextEdit::multiline(message)
+                .margin(Margin::symmetric(6, 3))
+                .desired_rows(10)
+                .desired_width(f32::INFINITY)
+            )
         };
 
         if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {

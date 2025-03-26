@@ -1,6 +1,6 @@
 use eframe::egui::{Color32, Context, Margin, Stroke};
 use egui_dock::{DockArea, Style as DockStyle};
-use crate::MtechServer;
+use crate::{tabs::TABS, MtechServer};
 
 impl MtechServer{
     pub fn main_page(&mut self, ctx: &Context){
@@ -25,5 +25,9 @@ impl MtechServer{
             .show_add_popup(true)
             .draggable_tabs(true)
             .show(ctx, &mut self.context);
+
+        // self.context.added_nodes.drain(..).for_each(|(surface_idx, node_idx)| {
+        //     self.tree.
+        // });
     }
 }

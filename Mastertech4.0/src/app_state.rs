@@ -104,7 +104,6 @@ pub struct MastertechContext {
     pub database: Option<Database>,
     pub rx: Receiver<String>,
     pub ctx: Context,
-    pub widget_size: f32,
     pub open_tabs: HashSet<String>,
 
     pub date: Option<DateTime<Utc>>,
@@ -257,7 +256,6 @@ impl MasterTechApp {
             //////////////////////////////////////////
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             ctx: Context::default(),
-            widget_size: 135.0,
             open_tabs: tree.1,
 
             date: None,

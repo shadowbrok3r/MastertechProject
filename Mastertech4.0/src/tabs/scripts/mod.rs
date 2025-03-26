@@ -92,7 +92,7 @@ impl MastertechContext {
         //     ui.checkbox(&mut false, script)
         // }
         Grid::new("scripts")
-            .min_col_width(self.widget_size)
+            .min_col_width(135.)
             .num_columns(1)
             .min_row_height(8.0)
             .spacing([10.0, 8.0])
