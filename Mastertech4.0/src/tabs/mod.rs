@@ -24,6 +24,26 @@ pub mod system_information;
 pub mod tur_sheet;
 pub mod websockets;
 
+// pub const TABS: [&str; 16] = [
+//     "Lil menu",
+//     "My Tools",
+//     "Store Tasks",
+//     "My Tasks",
+//     "Ai",
+//     "Admin Console",
+//     "Completed Tasks",
+//     "Bug Report",
+//     "Logs",
+//     "Query Builder",
+//     "Json Viewer",
+//     "Store Stock",
+//     "SEB Lookup",
+//     "Task Audit",
+//     "Company Stock",
+//     "Customers",
+// ];
+
+
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
         ui.label("Secret menu... -.-");
@@ -85,6 +105,7 @@ impl TabViewer for MastertechContext {
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
             "SEB Lookup" => self.seb_lookup(ui),
+            "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Store Stock" => self.shared_ctx.stock_viewer(ui),
             "Logs" => logger_ui().show(ui),
             "Resource Monitor" => self.show_resource_monitor(ui),

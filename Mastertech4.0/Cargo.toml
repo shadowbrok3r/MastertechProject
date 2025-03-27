@@ -63,6 +63,7 @@ arboard = "3"
 tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 
+egui-data-table = { workspace = true }
 ratatui = { workspace = true }
 database = { workspace=true }
 surrealdb = { workspace=true }

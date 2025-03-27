@@ -1,0 +1,341 @@
+use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use crossbeam::channel::Sender;
+use egui_data_table::DataTable;
+use chrono::{SecondsFormat, Utc};
+use itertools::Itertools;
+use surrealdb::RecordId;
+
+use crate::{chats::ChatView, PlatformSpawner, Spawner};
+
+use super::{row_viewer::TaskRowViewer, TaskAudit, TaskAuditViewer};
+
+impl TaskAuditViewer {
+    pub fn get_services(
+        selected: TaskAudit, 
+        current_user: Option<User>, 
+        order_tx: Sender<prestashop_schema::PrestashopPayload>, 
+        current_orders: Vec<String>,
+        start_idx: i32
+    ) {
+        let time = web_time::Instant::now();
+        let usr = current_user.clone().unwrap_or_default();
+        let id = usr.id_prestashop.unwrap_or_default();
+        let mut employee = Employee::default();
+        employee.id = format!("{id}");
+        employee.id_store = usr.id_store.unwrap_or_default();
+        match selected {
+            TaskAudit::CheckinShelf => {
+                PlatformSpawner::spawn(async move {
+                    // Fetch services within the range
+                    let orders = employee
+                        .get_services_by_status("29", start_idx, start_idx+30)
+                        .await;
+
+                    // Handle the fetched services
+                    match orders {
+                        Ok(svcs) => {
+                            for order_num in svcs.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
+                    };
+                });
+            },
+            TaskAudit::MyInRepair => {
+                PlatformSpawner::spawn(async move {
+                    // Fetch services within the range            
+                    let orders = employee
+                        .get_my_services_in_repair()
+                        .await;
+
+                    // Handle the fetched services
+                    match orders {
+                        Ok(svcs) => {
+                            for order_num in svcs.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
+                    };
+                });
+            },
+            TaskAudit::InRepair => {
+                PlatformSpawner::spawn(async move {
+                    // Fetch services within the range
+                    let orders = employee
+                        .get_services_by_status("30", start_idx, start_idx+30)
+                        .await;
+
+                    // Handle the fetched services
+                    match orders {
+                        Ok(svcs) => {
+                            for order_num in svcs.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting inrepair services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error getting in repair shelf services: {:?}", e)
+                    };
+                });
+            },
+            TaskAudit::DoneShelf => {
+                PlatformSpawner::spawn(async move {
+                    // Fetch services within the range
+                    let orders = employee
+                        .get_services_by_status("40", start_idx, start_idx+30)
+                        .await;
+
+                    // Handle the fetched services
+                    match orders {
+                        Ok(svcs) => {
+                            for order_num in svcs.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error with get_services_by_status 40: : {:?}", e)
+                    };
+                });
+            },
+            TaskAudit::AllServices => {
+                PlatformSpawner::spawn(async move {
+                    // Fetch services within the range
+                    let orders = employee
+                        .get_all_my_services()
+                        .await;
+
+                    // Handle the fetched services
+                    match orders {
+                        Ok(svcs) => {
+                            for order_num in svcs.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error with get_all_services_in_my_store: {:?}", e)
+                    };
+                });
+            },
+            TaskAudit::MyServices => {
+                PlatformSpawner::spawn(async move {
+                    // Fetch services within the range
+                    let orders = employee
+                        .get_all_my_services()
+                        .await;
+
+                    // Handle the fetched services
+                    match orders {
+                        Ok(svcs) => {
+                            for order_num in svcs.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error with get_my_services_in_repair: {:?}", e)
+                    };
+                });
+            },
+        }
+        let elapsed = time.elapsed();
+        log::info!("Time elapsed: {elapsed:?}");
+    }
+
+    pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
+        if let Ok(order) = self.order_channel.1.try_recv() {
+            self.loading = true;
+            let key = self.audit_selection.clone().as_str();
+
+            self
+                .service_map
+                .entry(key.clone())
+                .or_insert(DataTable::default());
+
+            
+            if let Some(k) = self.service_map.get_mut(&key) {
+                if !k.iter().contains(&order) {
+                    log::info!("Order: {order:?}");
+                    k.push(order);
+                }
+            }
+
+
+            // if let self.time.el {
+                // self.loading = false;
+                // if let Some(storage) = frame.storage_mut() {
+                //     match serde_json::to_string(&self.service_map) {
+                //         Ok(service_map) => storage.set_string("service_data", service_map),
+                //         Err(e) => log::info!("error converting service_data to string: {e:?}"),
+                //     }
+                // }
+            // }
+        }
+    
+        if let Ok(notes) = self.services_viewer.notes_channel.1.try_recv() {
+            log::info!("Got notes: {notes:?}");
+            if self.services_viewer.selected.is_some() {
+                log::info!("Creating chat view");
+                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users, None, None);
+            }
+        }
+
+        if let Ok(order_data) = self.services_viewer.tur_channel.1.try_recv() {
+            log::info!("Got order_data: {order_data:?}");
+            // if self.services_viewer.selected.is_some() {
+            //     self.services_viewer.chat_view = ChatView::new(order_data, current_user, store_users);
+            // }
+        }
+
+    }
+
+}
+
+
+impl TaskRowViewer {
+    pub async fn get_order_notes(service_number: String) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
+        let existing_notes = get_task_notes_from_db_with_service_number(service_number.clone()).await?;
+        if !existing_notes.is_empty() {
+            log::info!("We already have notes");
+            Ok(existing_notes)
+        } else {
+            let mut note = TaskNotePayload::default();
+            let notes = note.get_notes_from_service_number(&service_number).await?;
+            log::info!("notes: {notes:?}");
+            Ok(notes)
+        }
+    }
+
+    pub async fn get_prestashop_order(service_number: String) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+        log::info!("Did not have a task, creating");
+        let value = get_prestashop_payload(&service_number).await?;
+        let mut customer = CustomerData::default();
+        let mut ticket = TicketPayload::default();
+        let mut task: TaskPayload = TaskPayload::default();
+        let mut task_notes = Vec::new();
+
+        let service_details = value.order.associations.order_service.clone();
+        let mut services: Vec<RecordId> = Vec::new();
+
+        let sales_rep = value.sales_rep.clone().unwrap_or_default();
+        let split_rep = value.split_rep.clone().unwrap_or_default();
+        let email = parse_email_user(&sales_rep.email);
+        let email_split_rep = parse_email_user(&split_rep.email);
+
+        customer.id = value.customer.id.clone();
+        customer.cust_code = value.customer.cust_code.clone();
+        customer.email = value.customer.email.clone();
+        customer.name = value.customer.name.clone();
+        customer.phone_number = value.customer.phone_number.clone();
+        ticket.salesman = email_split_rep.to_string();
+        ticket.sales_rep = email.to_string();
+        ticket.tech = email.to_string();
+        log::info!(
+            "Salesman: {:?}\nTech: {:?}",
+            ticket.salesman.clone(),
+            ticket.tech.clone()
+        );
+        ticket.customer = Some(customer.clone());
+        ticket.checkin_rep = email.to_string();
+        ticket.terms = value.order.payment.clone();
+        ticket.ticket_total = value.order.total_products_wt.clone();
+        ticket.doc_alias = value.order.order_type.clone();
+        ticket.service_number = value.order.id.clone();
+        ticket.id = RecordId::from((
+            TICKET_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+        task.id = RecordId::from((
+            TASK_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+
+        for msg in value.customer_messages.iter() {
+            task_notes.push(TaskNotePayload {
+                everest_initials: msg.id_employee.clone(),
+                note: msg.message.clone(),
+                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
+                task_id: Some(task.id.clone()),
+                // created_at: msg.date_add.clone(),
+                id_customer_thread: Some(msg.id_customer_thread.clone()),
+                id_customer_message: Some(msg.id.clone()),
+                id_employee: Some(msg.id_employee.clone()),
+                ..Default::default()
+            })
+        }
+        task.task_note = task_notes.clone();
+        // Get the current time in UTC
+        let now = Utc::now();
+
+        // Format the date in the desired format
+        let formatted_date = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+        
+        task.due_date = formatted_date;
+        services.push(ticket.id.clone());
+        let mut computer_data = ComputerData::default();
+        if !service_details.is_empty() {
+            if service_details.len() == 1 {
+                let svc = service_details.get(0);
+                if let Some(service) = svc {
+                    ticket.checkin_notes = service.check_in_notes.clone();
+                    computer_data.device_name = Some(service.device_name.clone());
+                    computer_data.device_mfg = Some(service.device_mfg.clone());
+                    computer_data.device_model = Some(service.device_model.clone());
+                    computer_data.device_serial = Some(service.device_serial.clone());
+                }
+            } else {
+                log::info!("Theres a couple.... {:?}", service_details);
+            }
+        }
+
+        task.service_ticket = Some(ticket.clone());
+
+        task.task_name = format!(
+            "{} - {}",
+            &customer.name,
+            ticket.service_number.clone()
+        );
+
+        create_full_task_payload(
+            ticket.into(), 
+            customer, 
+            computer_data, 
+            task.clone().into(), 
+            task.clone().task_note, 
+            false
+        ).await?;
+
+        Ok(value)
+    }
+}

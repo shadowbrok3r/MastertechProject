@@ -35,6 +35,7 @@ impl MasterTechApp {
                             &"Admin Console".to_string(),
                             &"My Tools".to_string(),
                             &"Store Stock".to_string(),
+                            &"Task Audit".to_string(),
                             &"Company Stock".to_string(),
                             &"Downloads".to_string(),
                             &"Logs".to_string(),
