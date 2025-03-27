@@ -115,144 +115,112 @@ pub struct SpecialPartOrder {
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
         let avail_size = Vec2::new(680.0, 620.0);
+        ui.vertical_centered(|ui| {
+            ui.horizontal(|ui| {
+                let delete_btn = Button::new(
+                    RichText::new("Delete Task").color(Color32::LIGHT_RED),
+                )
+                .ui(ui)
+                .on_hover_text("Double Click To Delete Task");
 
-        StripBuilder::new(ui)
-            .cell_layout(Layout::top_down_justified(Align::Center))
-            .size(Size::exact(30.0))
-            .size(Size::exact(10.0))
-            .size(Size::relative(0.8))
-            .vertical(|mut strip| {
-                strip.strip(|strip| {
-                    strip.size(Size::remainder()).horizontal(|mut strip| {
-                        strip.cell(|ui| {
-                            ui.horizontal(|ui| {
-                                let delete_btn = Button::new(
-                                    RichText::new("Delete Task").color(Color32::LIGHT_RED),
-                                )
-                                .ui(ui)
-                                .on_hover_text("Double Click To Delete Task");
-
-                                if delete_btn.double_clicked() {
-                                    let task_id = self.task.id.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        match delete_task(task_id).await {
-                                            Ok(_) => info!("Deleted task"),
-                                            Err(e) => info!("Error: {e:?}"),
-                                        }
-                                    });
-                                    self.current_page_state = ModalAction::Close;
-                                }
-
-                                ui.add_space(200.0);
-
-                                if self.task.service_ticket.is_some() {
-                                    if ui
-                                        .selectable_label(self.current_page_state == ModalAction::TicketInfoPage, RichText::new("🖹").heading())
-                                        .clicked()
-                                    {
-                                        self.current_page_state = ModalAction::TicketInfoPage;
-                                    };
-                                    if ui
-                                        .selectable_label(
-                                            self.current_page_state == ModalAction::ComputerInfoPage,
-                                            RichText::new("🖥").heading(),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.current_page_state = ModalAction::ComputerInfoPage;
-                                    };
-                                    if ui
-                                        .selectable_label(
-                                            self.current_page_state == ModalAction::PartOrderPage,
-                                            RichText::new("🔫").heading(),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.current_page_state = ModalAction::PartOrderPage;
-                                    };
-                                } else {
-                                    if ui
-                                        .selectable_label(self.current_page_state == ModalAction::TaskPage, RichText::new("🖹").heading())
-                                        .clicked()
-                                    {
-                                        self.current_page_state = ModalAction::TaskPage;
-                                    };
-                                }
-                                if ui
-                                    .selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
-                                    .clicked()
-                                {
-                                    self.current_page_state = ModalAction::TaskNotePage;
-                                };
-                            });
-                        });
+                if delete_btn.double_clicked() {
+                    let task_id = self.task.id.clone();
+                    PlatformSpawner::spawn(async move {
+                        match delete_task(task_id).await {
+                            Ok(_) => info!("Deleted task"),
+                            Err(e) => info!("Error: {e:?}"),
+                        }
                     });
-                });
-                strip.empty();
-                strip.strip(|strip| {
-                    strip
-                        .size(Size::exact(avail_size.y))
-                        .horizontal(|mut strip| {
-                            strip.strip(|s| {
-                                s.size(Size::exact(15.0))
-                                    .size(Size::exact(avail_size.x))
-                                    .size(Size::exact(15.0))
-                                    .cell_layout(Layout::top_down(Align::Center))
-                                    .cell_layout(Layout::top_down(Align::Center))
-                                    .cell_layout(Layout::top_down(Align::Center))
-                                    .vertical(|mut s| {
-                                        s.empty();
-                                        s.cell(|ui| {
-                                            ui.horizontal_centered(|ui| {
-                                                ui.style_mut().override_font_id =
-                                                    Some(FontId::proportional(13.0));
-                                                match self.current_page_state {
-                                                    ModalAction::TicketInfoPage => {
-                                                        display_ticket_page(
-                                                            ui,
-                                                            &mut self.task,
-                                                            avail_size,
-                                                        )
-                                                    }
-                                                    ModalAction::ComputerInfoPage => {
-                                                        display_computer_page(
-                                                            ui,
-                                                            &mut self.task,
-                                                            avail_size,
-                                                        )
-                                                    }
-                                                    ModalAction::PartOrderPage => {
-                                                        self.spo.display_part_order_page(
-                                                            ui,
-                                                            avail_size,
-                                                            self.chat_view
-                                                                .current_user
-                                                                .clone()
-                                                                .unwrap_or_default()
-                                                                .store,
-                                                        )
-                                                    }
-                                                    ModalAction::TaskNotePage => {
-                                                        ui.set_width(avail_size.x);
-                                                        if let Some(_new_message) =
-                                                            self.chat_view.ui(ui)
-                                                        {
-                                                            // self.task.update_task_notes(new_message);
-                                                        }
-                                                    }
-                                                    ModalAction::TaskPage => {
-                                                        display_task_page(ui, &mut self.task)
-                                                    }
-                                                    _ => {}
-                                                };
-                                            });
-                                        });
-                                        s.empty();
-                                    });
-                            });
-                        });
-                });
+                    self.current_page_state = ModalAction::Close;
+                }
+
+                ui.add_space(200.0);
+
+                if self.task.service_ticket.is_some() {
+                    if ui
+                        .selectable_label(self.current_page_state == ModalAction::TicketInfoPage, RichText::new("🖹").heading())
+                        .clicked()
+                    {
+                        self.current_page_state = ModalAction::TicketInfoPage;
+                    };
+                    if ui
+                        .selectable_label(
+                            self.current_page_state == ModalAction::ComputerInfoPage,
+                            RichText::new("🖥").heading(),
+                        )
+                        .clicked()
+                    {
+                        self.current_page_state = ModalAction::ComputerInfoPage;
+                    };
+                    if ui
+                        .selectable_label(
+                            self.current_page_state == ModalAction::PartOrderPage,
+                            RichText::new("🔫").heading(),
+                        )
+                        .clicked()
+                    {
+                        self.current_page_state = ModalAction::PartOrderPage;
+                    };
+                } else {
+                    if ui
+                        .selectable_label(self.current_page_state == ModalAction::TaskPage, RichText::new("🖹").heading())
+                        .clicked()
+                    {
+                        self.current_page_state = ModalAction::TaskPage;
+                    };
+                }
+                if ui
+                    .selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
+                    .clicked()
+                {
+                    self.current_page_state = ModalAction::TaskNotePage;
+                };
             });
+            ui.horizontal_centered(|ui| {
+                ui.style_mut().override_font_id =
+                    Some(FontId::proportional(13.0));
+                match self.current_page_state {
+                    ModalAction::TicketInfoPage => {
+                        display_ticket_page(
+                            ui,
+                            &mut self.task,
+                            avail_size,
+                        )
+                    }
+                    ModalAction::ComputerInfoPage => {
+                        display_computer_page(
+                            ui,
+                            &mut self.task,
+                            avail_size,
+                        )
+                    }
+                    ModalAction::PartOrderPage => {
+                        self.spo.display_part_order_page(
+                            ui,
+                            avail_size,
+                            self.chat_view
+                                .current_user
+                                .clone()
+                                .unwrap_or_default()
+                                .store,
+                        )
+                    }
+                    ModalAction::TaskNotePage => {
+                        ui.set_width(avail_size.x);
+                        if let Some(_new_message) =
+                            self.chat_view.ui(ui)
+                        {
+                            // self.task.update_task_notes(new_message);
+                        }
+                    }
+                    ModalAction::TaskPage => {
+                        display_task_page(ui, &mut self.task)
+                    }
+                    _ => {}
+                };
+            });
+        });
+
         if self.current_page_state == ModalAction::Close {
             action_handler(ModalAction::Close);
         }
