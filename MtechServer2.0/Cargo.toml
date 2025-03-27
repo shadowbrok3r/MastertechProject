@@ -46,7 +46,7 @@ crossbeam = { workspace=true }
 futures = { workspace=true }
 rfd = { workspace=true }
 gloo-console = { workspace=true }
-
+egui-data-table = { workspace=true }
 
 [dependencies.uuid]
 version = "1.13"

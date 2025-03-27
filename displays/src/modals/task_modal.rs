@@ -1,22 +1,17 @@
+use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, Store, TaskPayload};
 use crate::{chats::ChatView, DisplayModal, PlatformSpawner, Spawner};
-use bytes::Bytes;
-use chrono::{DateTime, Utc};
-use core::f32;
-use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, Store, TaskPayload};
-use eframe::egui::{
-    scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid,
-    Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget
-};
-use egui_extras::{Size, StripBuilder};
-use log::info; // error, 
-use reqwest::{
-    header::{ACCEPT, CONTENT_TYPE},
-    Client,
-};
+use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
-use serde::Serialize;
+use egui_extras::{Size, StripBuilder};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
+use serde::Serialize;
 use std::sync::Arc;
+use bytes::Bytes;
+use core::f32;
+use log::info; // error, 
+
 #[cfg(target_arch="wasm32")]
 use std::sync::Mutex;
 
@@ -115,7 +110,10 @@ pub struct SpecialPartOrder {
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
         let avail_size = Vec2::new(680.0, 620.0);
+        ui.set_min_size(avail_size);
+        
         ui.vertical_centered(|ui| {
+            
             ui.horizontal(|ui| {
                 let delete_btn = Button::new(
                     RichText::new("Delete Task").color(Color32::LIGHT_RED),
@@ -176,6 +174,9 @@ impl DisplayModal for TaskModal {
                     self.current_page_state = ModalAction::TaskNotePage;
                 };
             });
+
+            ui.add_space(20.);
+
             ui.horizontal_centered(|ui| {
                 ui.style_mut().override_font_id =
                     Some(FontId::proportional(13.0));
@@ -372,221 +373,215 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
     // ui.set_max_width(612.);
     let ticket = task.service_ticket.as_ref().unwrap();
     let computer = ticket.computer.as_ref();
+    let computer = if let Some(computer) = computer { computer } else { &ComputerData::default() };
 
-    if let Some(computer) = computer {
-        let seb_info = computer.seb_info.as_ref();
-        ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
+    let seb_info = computer.seb_info.as_ref();
+    ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
 
-        StripBuilder::new(ui)
-            .cell_layout(Layout::from_main_dir_and_cross_align(
-                Direction::TopDown,
-                Align::Center,
-            ))
-            .size(Size::exact(avail_size.y - 15.0))
-            .vertical(|mut s| {
-                s.strip(|s| {
-                    s.cell_layout(Layout::centered_and_justified(Direction::TopDown))
-                        .size(Size::exact(660.))
-                        .horizontal(|mut s| {
-                                s.cell(|ui|
-                                {
-                                    ui.vertical_centered(|ui|{
-                                        ui.group(|ui| {
-                                            Grid::new("group2").max_col_width(avail_size.x / 2.15).min_col_width(avail_size.x / 2.15).with_row_color(|num, style| return_colors(num, style))
-                                            .show(ui, |ui| {
-                                                ui.colored_label(Color32::LIGHT_RED, "Hostname");
-                                                ui.label(&computer.hostname);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "Operating System");
-                                                ui.label(&computer.operating_system);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "CPU");
-                                                ui.label(&computer.cpu);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "GPU");
-                                                ui.label(&computer.gpu);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "RAM");
-                                                ui.label(format!("{} Gb", &computer.ram));
-                                                ui.end_row();
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
-                                                if let Some(antivirus) = ticket.current_antivirus.as_ref() {
-                                                    if antivirus.len() == 0 {
-                                                        ui.end_row();
-                                                    }
+    ScrollArea::vertical()
+        .max_height(f32::INFINITY)
+        .max_width(680.0)
+        .auto_shrink(Vec2b::new(false, false))
+        .show(ui, |ui|
+    {
+        ui.vertical_centered(|ui| {
+            ui.group(|ui| {
+                Grid::new(format!("{} grid", computer.cpu))
+                .max_col_width(avail_size.x / 2.15)
+                .min_col_width(avail_size.x / 2.15)
+                .with_row_color(|num, style| return_colors(num, style))
+                .show(ui, |ui| {
+                    ui.colored_label(Color32::LIGHT_RED, "Hostname");
+                    ui.label(&computer.hostname);
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "Operating System");
+                    ui.label(&computer.operating_system);
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "CPU");
+                    ui.label(&computer.cpu);
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "GPU");
+                    ui.label(&computer.gpu);
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "RAM");
+                    ui.label(format!("{} Gb", &computer.ram));
+                    ui.colored_label(Color32::LIGHT_RED, "Device Name");
+                    ui.label(&format!("{:?}", computer.device_name));
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "Device Mfg");
+                    ui.label(&format!("{:?}", computer.device_mfg));
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "Device Model");
+                    ui.label(&format!("{:?}", computer.device_model));
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "Device Serial");
+                    ui.label(&format!("{:?}", computer.device_serial));
 
-                                                    for antivirus in antivirus.iter() {
-                                                        ui.label(antivirus);
-                                                        ui.end_row();
-                                                    }
-                                                } else {
-                                                    ui.end_row();
-                                                }
+                    ui.end_row();
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
+                    if let Some(antivirus) = ticket.current_antivirus.as_ref() {
+                        if antivirus.len() == 0 {
+                            ui.end_row();
+                        }
 
-                                                ui.colored_label(Color32::LIGHT_RED, "HDD Test:");
-                                                ui.label(&ticket.hardware_test_results.hdd_test);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "SSD Test:");
-                                                ui.label(&ticket.hardware_test_results.ssd_test);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "RAM Test:");
-                                                ui.label(&ticket.hardware_test_results.ram_test);
-                                                ui.end_row();
+                        for antivirus in antivirus.iter() {
+                            ui.label(antivirus);
+                            ui.end_row();
+                        }
+                    } else {
+                        ui.end_row();
+                    }
 
-                                            });
-                                        });
+                    ui.colored_label(Color32::LIGHT_RED, "HDD Test:");
+                    ui.label(&ticket.hardware_test_results.hdd_test);
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "SSD Test:");
+                    ui.label(&ticket.hardware_test_results.ssd_test);
+                    ui.end_row();
+                    ui.colored_label(Color32::LIGHT_RED, "RAM Test:");
+                    ui.label(&ticket.hardware_test_results.ram_test);
+                    ui.end_row();
 
-                                        ui.group(|ui| {
-                                            Grid::new("group1").max_col_width(avail_size.x / 3.2 - 2.).min_col_width(avail_size.x / 3.2-2.).with_row_color(|num, style| return_colors(num, style))
-                                            .show(ui, |ui| {
-                                                ui.colored_label(Color32::LIGHT_RED, "Letter");
-                                                ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
-                                                ui.colored_label(Color32::LIGHT_RED, "Type");
-                                                ui.end_row();
-
-                                                for drive_data in &computer.drives{
-                                                    ui.colored_label(Color32::LIGHT_RED, &drive_data.drive_letter);
-                                                    ui.label(format!("{} Gb / {} Gb", &drive_data.space_left, &drive_data.total_size));
-                                                    ui.label(&drive_data.drive_type);
-                                                    ui.end_row();
-                                                }
-                                            });
-                                        });
-                                    });
-                                    ui.vertical_centered(|ui|{
-                                        ui.scope(|ui| {
-                                            ui.add_space(8.0);
-                                            Separator::default().shrink(150.0).ui(ui);
-                                            ui.add_space(8.0);
-                                            ui.heading("SEB Information");
-                                            ui.add_space(8.0);
-                                            Separator::default().shrink(150.0).ui(ui);
-                                            ui.add_space(8.0);
-                                        });
-                                        ScrollArea::vertical()
-                                            .max_height(f32::INFINITY)
-                                            .max_width(540.0)
-                                            .auto_shrink(Vec2b::new(false, false))
-                                            .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
-                                            .show(ui, |ui|
-                                        {
-                                            ui.group(|ui| {
-                                                if let Some(seb_info) = seb_info{
-
-                                                    // ui.colored_label(Color32::LIGHT_RED, "Order Details");
-                                                    Grid::new("group3").spacing(Vec2::new(0.0, 6.0))
-                                                    .max_col_width(avail_size.x / 2.15)
-                                                    .min_col_width(avail_size.x / 2.15)
-                                                    .with_row_color(|num, style| return_colors(num, style))
-                                                    .show(ui, |ui| {
-                                                        ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
-                                                        ui.label(&seb_info.InstalledDeviceId);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "InstallInstanceId:");
-                                                        ui.label(&seb_info.InstallInstanceId);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "HasIssues:");
-                                                        ui.label(&seb_info.HasIssues);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "InstallationStage:");
-                                                        ui.label(&seb_info.InstallationStage);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "ReasonCode:");
-                                                        ui.label(&seb_info.ReasonCode);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "ActivationCode:");
-                                                        ui.label(&seb_info.ActivationCode);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "InstallVersion:");
-                                                        ui.label(&seb_info.InstallVersion);
-                                                        ui.end_row();
-                                                        ui.colored_label(Color32::LIGHT_RED, "MachineName:");
-                                                        ui.label(&seb_info.MachineName);
-                                                        ui.end_row();
-                                                    });
-                                                }else{
-                                                    ui.colored_label(Color32::LIGHT_RED, "No SEB information was sent with ticket.");
-                                                }
-                                            });
-                                            if let Some(seb_info) = seb_info{
-                                                ui.add_space(10.0);
-                                                if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
-                                                    ui.group(|ui| {
-                                                        // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
-                                                        Grid::new("customer_data").max_col_width(avail_size.x / 2.15).min_col_width(avail_size.x / 2.15).with_row_color(|num, style| return_colors(num, style))
-                                                        .show(ui, |ui| {
-                                                            ui.colored_label(Color32::LIGHT_RED, "email:");
-                                                            ui.label(&extended_seb.email);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "phone:");
-                                                            ui.label(&extended_seb.phone);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "device_name:");
-                                                            ui.label(&extended_seb.device_name);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "device_id:");
-                                                            ui.label(&extended_seb.device_id);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "state:");
-                                                            ui.label(&extended_seb.state);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "usage_gb:");
-                                                            ui.label(&extended_seb.usage_gb);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "date_device_created:");
-                                                            ui.label(&extended_seb.date_device_created);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "activated:");
-                                                            ui.label(&extended_seb.activated);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "activation_code:");
-                                                            ui.label(&extended_seb.activation_code);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "last_complete_backup:");
-                                                            ui.label(&extended_seb.last_complete_backup);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "last_client_status_update:");
-                                                            ui.label(&extended_seb.last_client_status_update);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "id_recurly_account:");
-                                                            ui.label(&extended_seb.id_recurly_account);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "date_last_scan:");
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "current_period_ends_at:");
-                                                            ui.label(&extended_seb.current_period_ends_at);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "date_modified:");
-                                                            ui.label(&extended_seb.date_modified);
-                                                            ui.end_row();
-                                                            ui.colored_label(Color32::LIGHT_RED, "date_created:");
-                                                            ui.label(&extended_seb.date_created);
-                                                            ui.end_row();
-                                                        });
-                                                    });
-                                                }else{
-                                                    ui.vertical_centered(|ui|{
-                                                        ui.set_max_width(avail_size.x / 2.0);
-                                                        ui.colored_label(Color32::LIGHT_RED, "SEB information was sent with ticket, but we didnt get the extended SEB info");
-                                                    });
-                                                }
-                                            }
-                                        });
-                                    });
-                                });
-                        });
                 });
             });
-    } else {
-        ui.vertical_centered(|ui| {
-            ui.set_max_width(avail_size.x / 2.0);
-            ui.colored_label(
-                Color32::LIGHT_RED,
-                "Computer information was not sent with ticket",
-            );
+
+            ui.add_space(15.);
+
+            ui.group(|ui| {
+                Grid::new("group1").max_col_width(avail_size.x / 3.2 - 2.).min_col_width(avail_size.x / 3.2-2.).with_row_color(|num, style| return_colors(num, style))
+                .show(ui, |ui| {
+                    ui.colored_label(Color32::LIGHT_RED, "Letter");
+                    ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
+                    ui.colored_label(Color32::LIGHT_RED, "Type");
+                    ui.end_row();
+
+                    for drive_data in &computer.drives{
+                        ui.colored_label(Color32::LIGHT_RED, &drive_data.drive_letter);
+                        ui.label(format!("{} Gb / {} Gb", &drive_data.space_left, &drive_data.total_size));
+                        ui.label(&drive_data.drive_type);
+                        ui.end_row();
+                    }
+                });
+            });
+
+            ui.add_space(15.);
+
+            ui.scope(|ui| {
+                ui.add_space(8.0);
+                Separator::default().shrink(150.0).ui(ui);
+                ui.add_space(8.0);
+                ui.heading("SEB Information");
+                ui.add_space(8.0);
+                Separator::default().shrink(150.0).ui(ui);
+                ui.add_space(8.0);
+            });
+
+            ui.group(|ui| {
+                if let Some(seb_info) = seb_info{
+
+                    // ui.colored_label(Color32::LIGHT_RED, "Order Details");
+                    Grid::new("group3").spacing(Vec2::new(0.0, 6.0))
+                    .max_col_width(avail_size.x / 2.15)
+                    .min_col_width(avail_size.x / 2.15)
+                    .with_row_color(|num, style| return_colors(num, style))
+                    .show(ui, |ui| {
+                        ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
+                        ui.label(&seb_info.InstalledDeviceId);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "InstallInstanceId:");
+                        ui.label(&seb_info.InstallInstanceId);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "HasIssues:");
+                        ui.label(&seb_info.HasIssues);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "InstallationStage:");
+                        ui.label(&seb_info.InstallationStage);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "ReasonCode:");
+                        ui.label(&seb_info.ReasonCode);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "ActivationCode:");
+                        ui.label(&seb_info.ActivationCode);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "InstallVersion:");
+                        ui.label(&seb_info.InstallVersion);
+                        ui.end_row();
+                        ui.colored_label(Color32::LIGHT_RED, "MachineName:");
+                        ui.label(&seb_info.MachineName);
+                        ui.end_row();
+                    });
+                }else{
+                    ui.colored_label(Color32::LIGHT_RED, "No SEB information was sent with ticket.");
+                }
+            });
+
+            if let Some(seb_info) = seb_info{
+                ui.add_space(10.0);
+                if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
+                    ui.group(|ui| {
+                        // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
+                        Grid::new("customer_data").max_col_width(avail_size.x / 2.15).min_col_width(avail_size.x / 2.15).with_row_color(|num, style| return_colors(num, style))
+                        .show(ui, |ui| {
+                            ui.colored_label(Color32::LIGHT_RED, "email:");
+                            ui.label(&extended_seb.email);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "phone:");
+                            ui.label(&extended_seb.phone);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "device_name:");
+                            ui.label(&extended_seb.device_name);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "device_id:");
+                            ui.label(&extended_seb.device_id);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "state:");
+                            ui.label(&extended_seb.state);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "usage_gb:");
+                            ui.label(&extended_seb.usage_gb);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "date_device_created:");
+                            ui.label(&extended_seb.date_device_created);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "activated:");
+                            ui.label(&extended_seb.activated);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "activation_code:");
+                            ui.label(&extended_seb.activation_code);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "last_complete_backup:");
+                            ui.label(&extended_seb.last_complete_backup);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "last_client_status_update:");
+                            ui.label(&extended_seb.last_client_status_update);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "id_recurly_account:");
+                            ui.label(&extended_seb.id_recurly_account);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "date_last_scan:");
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "current_period_ends_at:");
+                            ui.label(&extended_seb.current_period_ends_at);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "date_modified:");
+                            ui.label(&extended_seb.date_modified);
+                            ui.end_row();
+                            ui.colored_label(Color32::LIGHT_RED, "date_created:");
+                            ui.label(&extended_seb.date_created);
+                            ui.end_row();
+                        });
+                    });
+                }else{
+                    ui.vertical_centered(|ui|{
+                        ui.set_max_width(avail_size.x / 2.0);
+                        ui.colored_label(Color32::LIGHT_RED, "SEB information was sent with ticket, but we didnt get the extended SEB info");
+                    });
+                }
+            }
         });
-    }
+    });
+    
 }
 
 impl Default for SpecialPartOrder {

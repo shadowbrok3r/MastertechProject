@@ -1,9 +1,10 @@
+use displays::{tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use database::{schema::prestashop_schema::PrestashopPayload, DATABASE};
 use crate::app_state::{AppState, MtechServer};
-use displays::{egui_data_table::DataTable, tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use wasm_bindgen_futures::spawn_local;
+use egui_data_table::DataTable;
 use std::collections::HashMap;
 use log::{info, debug, error};
-use database::{schema::prestashop_schema::PrestashopPayload, DATABASE};
 use eframe::Frame;
 
 #[cfg(target_arch="wasm32")]
@@ -27,11 +28,11 @@ impl MtechServer {
                 self.context.shared_ctx.ai_playground.set_threads(chat_threads);
             }
 
-            if let Some(service_map) = storage.get_string("service_data") {
-                match serde_json::from_str::<HashMap<String, DataTable<PrestashopPayload>>>(&service_map) {
-                    Ok(map) => self.context.shared_ctx.task_audit_table.service_map = map,
-                    Err(e) => info!("Error converting service_map: {e:?}"),
-                }
+            if let Some(_service_map) = storage.get_string("service_data") {
+                // match serde_json::from_str::<HashMap<String, DataTable<PrestashopPayload>>>(&service_map) {
+                //     Ok(map) => self.context.shared_ctx.task_audit_table.service_map = map,
+                //     Err(e) => info!("Error converting service_map: {e:?}"),
+                // }
             }
 
             if let Some(version) = storage.get_string("version") {
