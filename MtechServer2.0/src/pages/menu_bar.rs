@@ -66,6 +66,7 @@ impl MtechServer {
                                     text_edit
                                         .hint_text("  Search for task")
                                         .desired_width(150.0)
+                                        .desired_rows(1)
                                         .font(FontId::proportional(12.0))
                                         .frame(true)
                                 })

@@ -84,10 +84,12 @@ impl TabViewer for MtechServerContext {
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
-        // for tab in TABS {
-        //     if !self.open_tabs.contains(tab) {
-        //         self.open_tabs.insert(tab.to_string());
-        //         break;
+        // for tab in TABS{
+        //     if let Some(index) = self.tree.find_tab(&tab.to_string()) {
+        //         self.tree.remove_tab(index);
+        //         self.context.open_tabs.remove(*tab);
+        //     } else {
+        //         self.tree.push_to_focused_leaf(tab.to_string());
         //     }
         // }
     }
@@ -101,6 +103,9 @@ impl TabViewer for MtechServerContext {
             {
                 if !self.open_tabs.contains(tab) {
                     self.on_add(surface_index, node_index);
+                    /*
+                    self.tree.push_to_focused_leaf(tab.to_string());
+                     */
                 }
             }
         }
