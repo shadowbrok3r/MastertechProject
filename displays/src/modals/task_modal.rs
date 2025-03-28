@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, Store, TaskPayload};
+use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, Record, Store, TaskPayload}, DATABASE};
 use crate::{chats::ChatView, DisplayModal, PlatformSpawner, Spawner};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
@@ -254,11 +254,10 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
 
     ui.add_space(15.0);
 
-    let ticket = task.service_ticket.as_ref();
-    let Some(ticket) = ticket else { return; };
-    let customer = ticket.customer.as_ref();
-    let Some(customer) = customer else { return; };
     ui.vertical_centered(|ui| {
+        let Some(ticket) = task.service_ticket.as_mut() else { return; };
+        let Some(customer) = ticket.customer.as_mut() else { return; };
+
         ui.group(|ui| {
             Grid::new("group2")
                 .spacing(Vec2::new(4., 6.))
@@ -314,7 +313,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
 
         ui.add_space(30.);
         ui.group(|ui| {
-            Grid::new("customer_data")
+            Grid::new("Checkin Notes and Recommendations")
             .spacing(Vec2::new(5., 6.0))
             .max_col_width(300.0)
             .min_col_width(300.0)
@@ -323,18 +322,35 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                 ui.vertical_centered_justified(|ui| {
                     ui.label(
                         RichText::new("Recommendations:")
-                            .font(FontId::proportional(15.0)),
+                            .font(FontId::proportional(15.0))
                     );
 
                     ui.add_space(10.);
 
-                    TextEdit::multiline(
-                        &mut task.task_description.to_string(),
-                    )
-                    .margin(Margin::symmetric(10, 3))
-                    .desired_rows(15)
-                    .desired_width(ui.available_width())
-                    .ui(ui);
+                    let res = TextEdit::multiline(&mut task.task_description)
+                        .margin(Margin::symmetric(10, 3))
+                        .desired_rows(15)
+                        .desired_width(ui.available_width())
+                        .ui(ui);
+
+                    if res.lost_focus() {
+                        let task_description = task.task_description.clone();
+                        let task_id = task.id.clone();
+                        PlatformSpawner::spawn(async move {
+                            // let _result = task.update_task_description().await;
+                            match DATABASE
+                            .query("UPDATE $id SET task_description=$description")
+                            .bind(("id", task_id))
+                            .bind(("description", task_description.clone()))
+                            .await {
+                                Ok(mut r) => { 
+                                    let res = r.take::<Option<Record>>(0);
+                                    log::info!("updating description: {res:?}");
+                                 },
+                                Err(e) => log::info!("Error updating description: {e:?}"),
+                            };
+                        });
+                    }
                 });
 
                 ui.vertical_centered_justified(|ui| {
@@ -345,9 +361,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
 
                     ui.add_space(10.);
 
-                    TextEdit::multiline(
-                        &mut ticket.checkin_notes.to_string(),
-                    )
+                    TextEdit::multiline(&mut ticket.checkin_notes)
                     .margin(Margin::symmetric(10, 3))
                     .desired_rows(15)
                     .desired_width(ui.available_width())
@@ -405,6 +419,7 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "RAM");
                     ui.label(format!("{} Gb", &computer.ram));
+                    ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Name");
                     ui.label(&format!("{:?}", computer.device_name));
                     ui.end_row();

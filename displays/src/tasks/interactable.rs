@@ -1,13 +1,12 @@
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+
+use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
-use eframe::egui::{
-    Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget
-};
+use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use log::info;
 
 use super::task_cards::date_colors;
-use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
@@ -15,7 +14,7 @@ impl Interaction for TaskPayload {
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
         // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
-            .desired_width(ui.available_width() -10.)
+            .desired_width(325.)
             .margin(Margin::symmetric(6, 3))
             .horizontal_align(Align::Min)
             .vertical_align(Align::Center)
@@ -36,11 +35,11 @@ impl Interaction for TaskPayload {
         ui.style_mut().visuals.widgets.inactive.bg_stroke =
             Stroke::new(2.0, Color32::from_additive_luminance(80));
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-        let default = &mut TicketPayload::default();
-        let ticket = self.service_ticket.as_mut().unwrap_or(default);
+        let mut default = TicketPayload::default();
+        let ticket = self.service_ticket.as_mut().unwrap_or(&mut default);
         let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
             .desired_rows(5)
-            .desired_width(ui.available_width())
+            .desired_width(445.)
             .margin(Margin::symmetric(6, 3))
             .horizontal_align(Align::Center)
             .ui(ui);
@@ -67,14 +66,14 @@ impl Interaction for TaskPayload {
         let text_edit = TextEdit::multiline(&mut self.task_description)
             .desired_rows(6)
             .margin(Margin::symmetric(6, 3))
-            .desired_width(ui.available_width())
+            .desired_width(445.)
             .horizontal_align(Align::Center)
             .ui(ui);
 
         if text_edit.lost_focus() {
             let task = self.clone(); 
             PlatformSpawner::spawn(async move { 
-                let update = task.update_task_description(task.task_description.clone()).await;
+                let update = task.update_task_description().await;
                 info!("Update: {update:?}"); 
             });
         }
@@ -125,8 +124,7 @@ impl Interaction for TaskPayload {
             let stroke = Stroke::new(0.7, color_complete);
             return Button::new(hover_txt)
                 .stroke(stroke)
-                .small()
-                .min_size(Vec2::new(20.0, 20.0))
+                .min_size(Vec2::new(25.0, 20.0))
                 .ui(ui);
         } else {
             let hover_txt = "✖";
@@ -134,8 +132,7 @@ impl Interaction for TaskPayload {
             let stroke = Stroke::new(0.7, color_incomplete);
             return Button::new(hover_txt)
                 .stroke(stroke)
-                .small()
-                .min_size(Vec2::new(20.0, 20.0))
+                .min_size(Vec2::new(25.0, 20.0))
                 .ui(ui);
         }
     }
@@ -143,7 +140,7 @@ impl Interaction for TaskPayload {
     fn interact_status(&mut self, ui: &mut Ui) -> Response {
         ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
-            .width(ui.available_width() - 15.0)
+            .width(80.)
             .height(ui.available_height())
             .show_ui(ui, |ui| {
                 for status in Status::VALUES {
@@ -164,8 +161,8 @@ impl Interaction for TaskPayload {
     fn interact_priority(&mut self, ui: &mut Ui) -> Response {
         ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
-            .width(ui.available_width() - 15.0)
-            .height(ui.available_height() - 2.0)
+            .width(80.)
+            .height(ui.available_height())
             .show_ui(ui, |ui| {
                 for priority in Priority::VALUES {
                     let priority_change = ui.selectable_value(
@@ -186,10 +183,10 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
+        ComboBox::from_id_salt(Id::new(&self.id.clone().key().to_string()))
             .selected_text(&self.everest_initials)
-            .width(ui.available_width() / 1.3)
-            .height(ui.available_height() - 2.0)
+            .width(70.)
+            .height(ui.available_height())
             .show_ui(ui, |ui| {
                 for user in *&store_users {
                     let assignee_selection = ui.selectable_value(

@@ -147,7 +147,7 @@ pub trait Updatable {
     async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error>;
     async fn update_dep(&self, store: Store) -> anyhow::Result<(), anyhow::Error>;
     async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error>;
-    async fn update_task_description(&self, description: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_task_description(&self) -> anyhow::Result<(), anyhow::Error>;
     async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> anyhow::Result<(), anyhow::Error>;
     async fn update_task_notes(&self, new_msg: String) -> anyhow::Result<(), anyhow::Error>;
 }
