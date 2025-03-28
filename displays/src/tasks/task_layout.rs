@@ -294,7 +294,7 @@ impl TaskLayout {
                                             .min_size(Vec2::new(30.0, 15.0))
                                             .ui(ui);
 
-                                        if create_task_button.clicked(){
+                                        if create_task_button.clicked() {
                                             let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
                                         }
 
@@ -309,7 +309,7 @@ impl TaskLayout {
                                         //     .ui(ui);
 
                                         let accepted_by_keyboard = ui.ctx().input_mut(|i| i.key_pressed(eframe::egui::Key::Enter));
-                                        TextEdit::singleline(&mut self.new_status).show(ui);
+                                        TextEdit::singleline(&mut self.new_status).hint_text("Create new status").show(ui);
 
                                         if accepted_by_keyboard && !self.new_status.is_empty() {
                                             info!("Got a new status: {}", self.new_status);
@@ -389,10 +389,10 @@ impl TaskLayout {
 
                     column_frame.show(&mut ui[i], |ui| {
                         ui.set_width(450.);
-                        let row_height = 150.;
+                        let row_height = 110.;
                         let total_rows = tasks.len(); 
                         let scroll_area = ScrollArea::vertical().max_width(430.).auto_shrink(false);
-                        ui.ctx().options_mut(|o| o.line_scroll_speed = 50.0);
+                        ui.ctx().options_mut(|o| o.line_scroll_speed = 80.0);
                         scroll_area.id_salt(format!("{}-{i}-scroll", name)).show_rows(ui, row_height, total_rows, |ui, row_range| {
                             // ui.scroll_with_delta(Vec2::new(0.0, 300.));
                             // Retrieve search input for the current context, or default to an empty string.
