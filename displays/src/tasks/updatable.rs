@@ -112,11 +112,11 @@ impl Updatable for TaskPayload {
         Ok(())
     }
 
-    async fn update_task_description(&self, description: String) -> anyhow::Result<(), anyhow::Error> {
+    async fn update_task_description(&self) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET task_description=$description")
             .bind(("id", self.id.clone()))
-            .bind(("description", description))
+            .bind(("description", self.task_description.clone()))
             .await?
             .take(0)?;
         
