@@ -38,7 +38,9 @@ pub enum ModalAction {
     #[default]
     TicketInfoPage,
     PartOrderPage,
+    SoftwareInfoPage,
     ComputerInfoPage,
+    JobBuilderPage,
     TaskNotePage,
     ImportTask,
     Close,
@@ -142,22 +144,16 @@ impl DisplayModal for TaskModal {
                         self.current_page_state = ModalAction::TicketInfoPage;
                     };
                     if ui
-                        .selectable_label(
-                            self.current_page_state == ModalAction::ComputerInfoPage,
-                            RichText::new("🖥").heading(),
-                        )
+                        .selectable_label(self.current_page_state == ModalAction::ComputerInfoPage,RichText::new("🖥").heading())
                         .clicked()
                     {
                         self.current_page_state = ModalAction::ComputerInfoPage;
                     };
                     if ui
-                        .selectable_label(
-                            self.current_page_state == ModalAction::PartOrderPage,
-                            RichText::new("🔫").heading(),
-                        )
+                        .selectable_label(self.current_page_state == ModalAction::SoftwareInfoPage,RichText::new("💾").heading())
                         .clicked()
                     {
-                        self.current_page_state = ModalAction::PartOrderPage;
+                        self.current_page_state = ModalAction::SoftwareInfoPage;
                     };
                 } else {
                     if ui
@@ -167,6 +163,13 @@ impl DisplayModal for TaskModal {
                         self.current_page_state = ModalAction::TaskPage;
                     };
                 }
+
+                if ui
+                    .selectable_label(self.current_page_state == ModalAction::JobBuilderPage, RichText::new("📝").heading())
+                    .clicked()
+                {
+                    self.current_page_state = ModalAction::JobBuilderPage;
+                };
                 if ui
                     .selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
                     .clicked()
@@ -178,45 +181,15 @@ impl DisplayModal for TaskModal {
             ui.add_space(20.);
 
             ui.horizontal_centered(|ui| {
-                ui.style_mut().override_font_id =
-                    Some(FontId::proportional(13.0));
+                ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
+
                 match self.current_page_state {
-                    ModalAction::TicketInfoPage => {
-                        display_ticket_page(
-                            ui,
-                            &mut self.task,
-                            avail_size,
-                        )
-                    }
-                    ModalAction::ComputerInfoPage => {
-                        display_computer_page(
-                            ui,
-                            &mut self.task,
-                            avail_size,
-                        )
-                    }
-                    ModalAction::PartOrderPage => {
-                        self.spo.display_part_order_page(
-                            ui,
-                            avail_size,
-                            self.chat_view
-                                .current_user
-                                .clone()
-                                .unwrap_or_default()
-                                .store,
-                        )
-                    }
-                    ModalAction::TaskNotePage => {
-                        ui.set_width(avail_size.x);
-                        if let Some(_new_message) =
-                            self.chat_view.ui(ui)
-                        {
-                            // self.task.update_task_notes(new_message);
-                        }
-                    }
-                    ModalAction::TaskPage => {
-                        display_task_page(ui, &mut self.task)
-                    }
+                    ModalAction::TicketInfoPage => display_ticket_page(ui, &mut self.task, avail_size),
+                    ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
+                    ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
+                    ModalAction::JobBuilderPage => display_job_builder_page(ui),
+                    ModalAction::TaskNotePage => { let _ = self.chat_view.ui(ui); },
+                    ModalAction::TaskPage => display_task_page(ui, &mut self.task),
                     _ => {}
                 };
             });
@@ -230,28 +203,17 @@ impl DisplayModal for TaskModal {
 }
 
 pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload) {
-    ui.add_space(ui.available_width() * 0.2 - 15.0);
-    ui.vertical_centered_justified(|ui| {
+    ui.vertical_centered(|ui| {
         ui.label(RichText::new("Task Description:").font(FontId::proportional(15.0)));
         TextEdit::multiline(&mut task.task_description.to_string())
             .margin(Margin::same(5))
             .desired_rows(8)
-            .desired_width(ui.available_width() / 1.4)
+            .desired_width(400.)
             .ui(ui);
     });
 }
 
 pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2) {
-    fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
-        let mut _col = Color32::from_rgb(30, 30, 38);
-        if num % 2 == 0 {
-            _col = Color32::from_rgb(15, 15, 22);
-        } else {
-            _col = Color32::from_rgb(30, 30, 38);
-        }
-        Some(_col)
-    }
-
     ui.add_space(15.0);
 
     ui.vertical_centered(|ui| {
@@ -374,22 +336,9 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
 }
 
 fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
-    fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
-        let mut _col = Color32::from_rgb(30, 30, 38);
-        if num % 2 == 0 {
-            _col = Color32::from_rgb(15, 15, 22);
-        } else {
-            _col = Color32::from_rgb(30, 30, 38);
-        }
-        Some(_col)
-    }
-    // ui.set_width(612.);
-    // ui.set_max_width(612.);
-    let ticket = task.service_ticket.as_ref().unwrap();
-    let computer = ticket.computer.as_ref();
-    let computer = if let Some(computer) = computer { computer } else { &ComputerData::default() };
+    let Some(ticket) = task.service_ticket.as_ref() else { return; };
+    let computer = if let Some(computer) = ticket.computer.as_ref() { computer } else { &ComputerData::default() };
 
-    let seb_info = computer.seb_info.as_ref();
     ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
 
     ScrollArea::vertical()
@@ -434,19 +383,6 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
 
                     ui.end_row();
                     ui.end_row();
-                    ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
-                    if let Some(antivirus) = ticket.current_antivirus.as_ref() {
-                        if antivirus.len() == 0 {
-                            ui.end_row();
-                        }
-
-                        for antivirus in antivirus.iter() {
-                            ui.label(antivirus);
-                            ui.end_row();
-                        }
-                    } else {
-                        ui.end_row();
-                    }
 
                     ui.colored_label(Color32::LIGHT_RED, "HDD Test:");
                     ui.label(&ticket.hardware_test_results.hdd_test);
@@ -481,7 +417,25 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
             });
 
             ui.add_space(15.);
+        });
+    });
+    
+}
 
+fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
+    let Some(ticket) = task.service_ticket.as_ref() else { return; };
+    let computer = if let Some(computer) = ticket.computer.as_ref() { computer } else { &ComputerData::default() };
+
+    let seb_info = computer.seb_info.as_ref();
+    ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
+
+    ScrollArea::vertical()
+        .max_height(f32::INFINITY)
+        .max_width(680.0)
+        .auto_shrink(Vec2b::new(false, false))
+        .show(ui, |ui|
+    {
+        ui.vertical_centered(|ui| {
             ui.scope(|ui| {
                 ui.add_space(8.0);
                 Separator::default().shrink(150.0).ui(ui);
@@ -594,9 +548,90 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                     });
                 }
             }
+        
+            ui.scope(|ui| {
+                ui.add_space(8.0);
+                Separator::default().shrink(150.0).ui(ui);
+                ui.add_space(8.0);
+                ui.heading("Other software");
+                ui.add_space(8.0);
+                Separator::default().shrink(150.0).ui(ui);
+                ui.add_space(8.0);
+            });
+            ui.group(|ui: &mut Ui| {
+                Grid::new("other_software_grid").spacing(Vec2::new(0.0, 6.0))
+                .max_col_width(avail_size.x / 2.15)
+                .min_col_width(avail_size.x / 2.15)
+                .with_row_color(|num, style| return_colors(num, style))
+                .show(ui, |ui| {
+                    ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
+                    if let Some(antivirus) = ticket.current_antivirus.as_ref() {
+                        if antivirus.len() == 0 {
+                            ui.end_row();
+                        }
+        
+                        for antivirus in antivirus.iter() {
+                            ui.label(antivirus);
+                            ui.end_row();
+                        }
+                    } else {
+                        ui.end_row();
+                    }
+
+                    ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
+
+                });
+            });
+
+
         });
     });
-    
+}
+
+fn display_job_builder_page(ui: &mut Ui) {
+    ui.add_space(15.0);
+    ScrollArea::vertical()
+        .max_height(f32::INFINITY)
+        .max_width(680.0)
+        .auto_shrink(Vec2b::new(false, false))
+        .show(ui, |ui|
+    {
+        ui.vertical_centered(|ui| {
+            ui.label("Job Builder");
+            ui.group(|ui| {
+                Grid::new("job builder grid")
+                    .spacing(Vec2::new(4., 6.))
+                    .min_col_width(150.)
+                    .max_col_width(150.)
+                    .with_row_color(|num, style| return_colors(num, style))
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        ui.colored_label(Color32::LIGHT_RED, "Libre Office");
+                        ui.checkbox(&mut false, "");
+                        ui.end_row();
+
+                        ui.colored_label(Color32::LIGHT_RED, "SEB");
+                        ui.checkbox(&mut false, "");
+                        ui.end_row();
+
+                        ui.colored_label(Color32::LIGHT_RED, "CPS");
+                        ui.checkbox(&mut false, "");
+                        ui.end_row();
+                        
+                    });
+            });
+        });
+    });
+}
+
+fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
+    let mut _col = Color32::from_rgb(30, 30, 38);
+    if num % 2 == 0 {
+        _col = Color32::from_rgb(15, 15, 22);
+    } else {
+        _col = Color32::from_rgb(30, 30, 38);
+    }
+    Some(_col)
 }
 
 impl Default for SpecialPartOrder {

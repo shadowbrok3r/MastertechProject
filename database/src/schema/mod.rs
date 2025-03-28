@@ -168,6 +168,7 @@ pub struct TicketPayload {
     pub doc_alias: String, // type of order (service,sales,transfer)
     pub current_antivirus: Option<Vec<String>>,
     pub hardware_test_results: HardwareTests,
+    pub jobs: Option<Vec<Job>>
 }
 
 impl Default for TicketPayload {
@@ -188,7 +189,8 @@ impl Default for TicketPayload {
             doc_alias: Default::default(),
             current_antivirus: Default::default(),
             hardware_test_results: Default::default(),
-            service_ticket: Default::default()
+            service_ticket: Default::default(),
+            jobs: Default::default()
         }
     }
 }
@@ -213,6 +215,7 @@ pub struct TicketData {
     pub doc_alias: String, // type of order (service,sales,transfer)
     pub current_antivirus: Option<Vec<String>>,
     pub hardware_test_results: HardwareTests,
+    pub jobs: Option<Vec<Job>>
 }
 
 impl Default for TicketData {
@@ -233,6 +236,7 @@ impl Default for TicketData {
             doc_alias: Default::default(),
             current_antivirus: Default::default(),
             hardware_test_results: Default::default(),
+            jobs: Default::default(),
         }
     }
 }
@@ -294,6 +298,7 @@ impl From<TicketPayload> for TicketData {
             hardware_test_results: ticket.hardware_test_results,
             customer: Some(ticket.customer.unwrap_or_default().id),
             computer: Some(ticket.computer.unwrap_or_default().id),
+            jobs: ticket.jobs,
         }
     }
 }
@@ -344,8 +349,14 @@ pub struct ComputerData {
     pub device_mfg: Option<String>,
     pub device_model: Option<String>,
     pub device_serial: Option<String>,
+    pub windows_active: Option<bool>,
+    pub installed_programs: Option<Vec<Value>>
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
+pub struct Job {
+    computer: RecordId
+}
 
 impl Default for ComputerData {
     fn default() -> Self {
@@ -363,6 +374,8 @@ impl Default for ComputerData {
             device_mfg: Default::default(),
             device_model: Default::default(),
             device_serial: Default::default(),
+            installed_programs: Default::default(),
+            windows_active: Default::default(),
         }
     }
 }

@@ -388,7 +388,17 @@ impl MastertechContext {
 
             ui.label("");
             ui.end_row();
-            ui.label("");
+            if ui.add_enabled(
+                false, 
+                Button::new( 
+                    RichText::new("Complete QC"))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
+                    .min_size(Vec2::new(140., 20.0)
+                )
+            ).clicked() {
+                
+            }
+
             ui.end_row();
         }); // grid
     }

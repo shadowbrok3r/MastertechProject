@@ -224,6 +224,15 @@ pub fn update_or_insert_layout(
     Ok(())
 }
 
+
+// pub async fn listen_custom_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin>(tx: Sender<(Action, T)>, resource: &str) 
+//     -> anyhow::Result<(), anyhow::Error> 
+// {
+//     let data_stream: Stream<Vec<T>> = DATABASE.select(resource).live().await?;
+//     handle_streams(data_stream, tx).await?;
+//     Ok(())
+// }
+
 pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin>(tx: Sender<(Action, T)>, resource: &str) 
     -> anyhow::Result<(), anyhow::Error> 
 {
