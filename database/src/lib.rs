@@ -1,66 +1,13 @@
-use self::schema::Record;
-use lazy_static::lazy_static;
-use log::info;
+use surrealdb::{engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Error, Surreal};
+use serde::{de::DeserializeOwned, Serialize};
 use once_cell::sync::Lazy;
+use self::schema::Record;
+use std::fmt::Debug;
 use schema::User;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt::Debug, sync::RwLock};
-use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss}, // {local::{SurrealKv, Db}, }
-    opt::{
-        auth::{Jwt, Record as SurrealRec},
-        capabilities::Capabilities,
-        Config,
-    },
-    Error, Surreal,
-};
+use log::info;
+
 pub mod live_data;
 pub mod schema;
-
-#[derive(Clone, Debug, Default)]
-pub struct Database {
-    // pub database: Surreal<WsClient>,
-    pub jwt: Option<Jwt>,
-    pub user: Option<User>,
-}
-#[derive(Serialize, Deserialize)]
-pub struct DataSuccess {
-    success: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Data {
-    import_path: Option<String>,
-    export_path: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct DataResult {
-    pub result: Result<DataSuccess, Error>,
-}
-
-#[derive(Serialize)]
-pub struct Auth {
-    pub email: String,
-    pub password: String,
-}
-
-#[derive(Debug, Default, PartialEq, Serialize, Clone)]
-pub enum DatabaseSelection {
-    #[default]
-    Stable,
-    Beta,
-}
-
-#[derive(Clone, Debug)]
-pub struct Session {
-    pub jwt: Jwt,
-    pub user: User,
-}
-
-lazy_static! {
-    pub static ref DB_SELECTION: RwLock<DatabaseSelection> = RwLock::new(DatabaseSelection::Beta);
-}
 
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
@@ -75,17 +22,24 @@ pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
 pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
 
-pub fn set_db_selection(selection: DatabaseSelection) {
-    let mut db_selection = DB_SELECTION.write().unwrap();
-    *db_selection = selection;
+
+#[derive(Clone, Debug, Default)]
+pub struct Database {
+    pub jwt: Option<Jwt>,
+    pub user: Option<User>,
 }
 
-pub fn get_db_url() -> String {
-    let db_selection = DB_SELECTION.read();
-    match *db_selection.unwrap() {
-        DatabaseSelection::Stable => DB_URL.to_string(),
-        DatabaseSelection::Beta => DB_URL_DEV.to_string(),
-    }
+
+#[derive(Serialize)]
+pub struct Auth {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Session {
+    pub jwt: Jwt,
+    pub user: User,
 }
 
 pub async fn initialize_db() -> anyhow::Result<()> {
@@ -149,7 +103,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Wss>(DB_URL_DEV).await {
+        match DATABASE.connect::<Wss>(DB_URL_LOCAL).await {
             Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
             Err(e) => log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
         }
@@ -194,7 +148,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Wss>((DB_URL_DEV, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Ws>((DB_URL_DEV, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE

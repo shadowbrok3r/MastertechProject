@@ -50,6 +50,7 @@ impl Displayable for TaskPayload {
                 if Button::new(txt)
                     .min_size(Vec2::new(25.0, 20.0))
                     .ui(ui)
+                    .on_disabled_hover_text("Open Task Notes")
                     .clicked()
                 {
                     let _ = tx.try_send(
@@ -63,7 +64,8 @@ impl Displayable for TaskPayload {
 
                 let button = Button::new("⮫")
                     .min_size(Vec2::new(25.0, 20.0))
-                    .ui(ui);
+                    .ui(ui)
+                    .on_hover_text("Open Task Modal");
                     
                 if button.clicked() {
                     let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
