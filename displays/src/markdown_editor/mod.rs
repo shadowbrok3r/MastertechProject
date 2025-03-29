@@ -1,4 +1,4 @@
-use crate::ui_tools::autocomplete::AutoCompleteTextEdit;
+// use crate::ui_tools::autocomplete::AutoCompleteTextEdit;
 use core::f32;
 use eframe::egui::{text::CCursorRange, *};
 use std::collections::BTreeSet;
@@ -86,7 +86,7 @@ impl EasyMarkEditor {
         let Self {
             message,
             highlighter,
-            inputs,
+            inputs: _inputs,
             ..
         } = self;
 
@@ -98,27 +98,33 @@ impl EasyMarkEditor {
                 ui.fonts(|f| f.layout_job(layout_job))
             };
 
-            AutoCompleteTextEdit::new(message, &inputs.to_owned())
-                .set_filter(|s| s.contains('@'))
-                .highlight_matches(true)
-                .max_suggestions(10)
-                .layouter(&mut layouter)
-                .set_text_edit_properties(|text_edit: TextEdit<'_>| {
-                    text_edit
-                        .desired_width(f32::INFINITY)
-                        .font(FontId::proportional(12.0))
-                        .frame(true)
-                        .desired_rows(10)
-                        .code_editor()
-                })
-                .ui(ui)
-        } else {
-            ui.add(
-                TextEdit::multiline(message)
+            TextEdit::multiline(message)
                 .margin(Margin::symmetric(6, 3))
                 .desired_rows(10)
                 .desired_width(f32::INFINITY)
-            )
+                .layouter(&mut layouter)
+                .ui(ui)
+
+            // AutoCompleteTextEdit::new(message, &inputs.to_owned())
+            //     .set_filter(|s| s.contains('@'))
+            //     .highlight_matches(true)
+            //     .max_suggestions(10)
+            //     .layouter(&mut layouter)
+            //     .set_text_edit_properties(|text_edit: TextEdit<'_>| {
+            //         text_edit
+            //             .desired_width(f32::INFINITY)
+            //             .font(FontId::proportional(12.0))
+            //             .frame(true)
+            //             .desired_rows(10)
+            //             .code_editor()
+            //     })
+            //     .ui(ui)
+        } else {
+            TextEdit::multiline(message)
+                .margin(Margin::symmetric(6, 3))
+                .desired_rows(10)
+                .desired_width(f32::INFINITY)
+                .ui(ui)
         };
 
         if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {

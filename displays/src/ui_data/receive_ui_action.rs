@@ -153,7 +153,15 @@ async fn get_or_insert_notes(note_payload: (surrealdb::RecordId, Vec<TaskNotePay
 
     if let Some(note) = existing_note {
         match note.get_thread_id_from_order().await {
-            Ok(thread_id) => info!("receive_ui_action -> Thread ID: {thread_id:?}"),
+            Ok(thread_id) => {
+                if thread_id.is_empty() {
+                    return Err(anyhow::anyhow!("Thread ID is empty"));
+                } else {
+                    info!("receive_ui_action -> Thread ID: {thread_id:?}");
+                    return Ok(());
+                }
+                
+            },
             Err(e) => info!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
         }
     } else {
@@ -161,7 +169,14 @@ async fn get_or_insert_notes(note_payload: (surrealdb::RecordId, Vec<TaskNotePay
         let mut tmp_note = TaskNotePayload::default();
         tmp_note.task_id = Some(task_id);
         match tmp_note.get_thread_id_from_order().await {
-            Ok(thread_id) => info!("receive_ui_action -> Thread ID: {thread_id:?}"),
+            Ok(thread_id) => {
+                if thread_id.is_empty() {
+                    return Err(anyhow::anyhow!("Thread ID is empty"));
+                } else {
+                    info!("receive_ui_action -> Thread ID: {thread_id:?}");
+                    return Ok(());
+                }
+            },
             Err(e) => info!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
         }
     }
