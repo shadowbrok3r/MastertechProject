@@ -1,9 +1,16 @@
 [package]
 name = "MasterTech"
-version = "4.4.0"
+version = "4.4.1"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
+
+[package.metadata.winres]
+ProductName = "Mastertech" 
+OriginalFilename = "Mastertech.EXE"
+LegalCopyright = "Copyright © 2024"
+ProductVersion = "4.4.1"
+FileDescription = "Mastertech"
 
 [features]
 default = [ "inline" ] # "term", "gui"
@@ -18,9 +25,9 @@ inline = []
 eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "wgpu", "x11"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
-yeehaw = "0.1.0"
+# yeehaw = "0.1.0"
 tui-textarea = { version = "0.7"}
-sysinfo = "0.33"
+sysinfo = {version = "0.34", features = ["serde", "multithread"]}
 console-subscriber = "0.4"
 futures-util = "0.3"
 walkdir = "2.5"
@@ -42,7 +49,7 @@ shell-words = "1"
 sha2 = { version = "0.10", features = ["std"] }
 quickxml_to_serde = "0.6"
 linked-hash-map = "0.5"
-ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.0", features = ["tls"]}
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]} # , 
 hex = "0.4.3"
 ring = "0.17.14"
 rust-s3 = "0.35"
@@ -99,6 +106,10 @@ version = "0.31"
 default-features = false
 features = ["rayon", "bytemuck", "log"]
 
+[dependencies.crossterm]
+version = "0.28.1"
+features = ["event-stream"]
+
 # gfx-hal = { version = "0.9.0", features = ["serde"] }
 # egui_tracing = "0.2.2"
 # portable-pty = "0.8.1"
@@ -131,11 +142,11 @@ windows-core = "0.61"
 windows_x86_64_msvc = "0.53"
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 memmap2 = "0.9"
-breakpad-symbols = { version = "0.22" }
-minidump = { version = "0.22" }
-minidump-common = { version = "0.22" }
-minidump-processor = { version = "0.22", features = ["http"] }
-minidump-unwind = "0.22"
+breakpad-symbols = { version = "0.25.0" }
+minidump = { version = "0.25.0" }
+minidump-common = { version = "0.25.0" }
+minidump-processor = { version = "0.25.0", features = ["http"] }
+minidump-unwind = "0.25.0"
 wmi = "0.15.0"
 evtx = "0.8"
 
@@ -163,9 +174,4 @@ winres = "0.1"
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
 resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
-[package.metadata.winres]
-ProductName = "Mastertech" 
-OriginalFilename = "Mastertech.EXE"
-LegalCopyright = "Copyright © 2024"
-ProductVersion = "4.2.1"
-FileDescription = "Mastertech"
+

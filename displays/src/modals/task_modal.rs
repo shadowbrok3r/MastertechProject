@@ -618,6 +618,13 @@ fn display_job_builder_page(ui: &mut Ui) {
                         ui.checkbox(&mut false, "");
                         ui.end_row();
                         
+                        ui.colored_label(Color32::LIGHT_RED, "Data Transfer");
+                        ui.checkbox(&mut false, "");
+                        ui.end_row();
+                        
+                        ui.colored_label(Color32::LIGHT_RED, "Data Transfer");
+                        ui.checkbox(&mut false, "");
+                        ui.end_row();
                     });
             });
         });

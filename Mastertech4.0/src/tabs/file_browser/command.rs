@@ -3,7 +3,7 @@ use tokio::{fs, io::{AsyncBufReadExt, BufReader}};
 use crossbeam::channel::Sender;
 use fs_extra::dir::get_size;
 use log::{debug, error};
-use sysinfo::System;
+// use sysinfo::System;
 use tracing::info;
 
 use crate::tabs::file_browser::{io::MetaData, read_folder};
@@ -225,7 +225,7 @@ pub async fn run_robocopy(
         .arg("/ZB")
         .arg("/bytes")
         .arg("/np")
-        .arg(format!("/MT:{}", System::new().physical_core_count().unwrap()))
+        .arg(format!("/MT:{}", sysinfo::System::physical_core_count().unwrap_or(4)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;

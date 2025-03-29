@@ -5,7 +5,7 @@ use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instan
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
-use fx::{effect::UniqueEffectId, EffectStage};
+// use fx::{effect::UniqueEffectId, EffectStage};
 use crossbeam::channel::unbounded;
 use context::TerminalContext;
 use widgets::HandleWidget;
@@ -45,7 +45,7 @@ pub struct TerminalApp<'a> {
     tasks_tab: Rc<RefCell<TasksTab>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
-    effect_stage: EffectStage<UniqueEffectId>,
+    // effect_stage: EffectStage<UniqueEffectId>,
     // first_run: bool,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
@@ -103,14 +103,14 @@ impl Default for TerminalApp <'_>{
             event_manager,
             logger: Logger::new(),
             event_handler: EventHandler::new(),
-            effect_stage: EffectStage::default(),
+            // effect_stage: EffectStage::default(),
             manual_connect_rx
         }
     }
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
-    // // Set max_log_level to Trace
+    // Set max_log_level to Trace
     // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
     // // Set default level for unknown targets to Trace
     // tui_logger::set_default_level(log::LevelFilter::Info);
@@ -351,13 +351,13 @@ impl <'a>TerminalApp<'a> {
         if let Ok(mut notifs) = notifications.lock() {
             notifs.retain(|notif| !notif.is_expired());
             if let Some(notification) = notifs.last() {
-                let a = notification.notification_area::<B>(f);
+                // let a = notification.notification_area::<B>(f);
                 notification.display::<B>(f);
-                self.effect_stage.process_effects(
-                    tachyonfx::Duration::from_millis(16), 
-                    f.buffer_mut(), 
-                    a
-                );
+                // self.effect_stage.process_effects(
+                //     tachyonfx::Duration::from_millis(16), 
+                //     f.buffer_mut(), 
+                //     a
+                // );
             }
         }
         // Synchronously render other UI messages

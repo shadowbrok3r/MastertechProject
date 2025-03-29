@@ -6,6 +6,7 @@ pub trait ClientHandler {
     fn connect(&mut self);
     fn export_logs(&mut self, history: Vec<History>);
     fn delete_client(&mut self);
+    fn disconnect_client(&mut self);
 }
 
 impl ClientHandler for ConnectedClient {
@@ -31,6 +32,18 @@ impl ClientHandler for ConnectedClient {
         PlatformSpawner::spawn(async move {
             let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE
                 .delete((CONNECTED_CLIENT_TABLE, id.key().to_string()))
+                .await;
+
+            log::info!("History: {update_history:#?}");
+        });
+     }
+
+    fn disconnect_client(&mut self) {
+        let id = self.id.clone();
+        PlatformSpawner::spawn(async move {
+            let update_history: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                .query("UPDATE $id SET connected = false")
+                .bind(("id", id))
                 .await;
 
             log::info!("History: {update_history:#?}");

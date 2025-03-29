@@ -84,11 +84,11 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
             self.connect_ws_btn.render_ref(row[8].shrink(3, 1), f.buffer_mut());
         }
 
-        self.effect_stage.process_effects(
-            tachyonfx::Duration::from_millis(16), 
-            f.buffer_mut(), 
-            area
-        );
+        // self.effect_stage.process_effects(
+        //     tachyonfx::Duration::from_millis(16), 
+        //     f.buffer_mut(), 
+        //     area
+        // );
     }
     
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {

@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Error, Surreal};
+use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Error, Surreal};
 use serde::{de::DeserializeOwned, Serialize};
 use once_cell::sync::Lazy;
 use self::schema::Record;

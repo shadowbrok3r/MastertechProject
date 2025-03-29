@@ -139,14 +139,14 @@ async fn main() -> eframe::Result<()> {
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else {
-        // displays::tabs::logger::logging::builder().init().unwrap();
-        let log_level = log::LevelFilter::Info;
-        let log_file = std::fs::File::create("output.log").unwrap();
-        simplelog::WriteLogger::init(
-            log_level,
-            simplelog::Config::default(),
-            log_file
-        ).unwrap();
+        displays::tabs::logger::logging::builder().init().unwrap();
+        // let log_level = log::LevelFilter::Info;
+        // let log_file = std::fs::File::create("output.log").unwrap();
+        // simplelog::WriteLogger::init(
+        //     log_level,
+        //     simplelog::Config::default(),
+        //     log_file
+        // ).unwrap();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {
