@@ -1,4 +1,4 @@
-use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::CATPPUCCINTHEME, widgets::button::Button};
+use crate::terminal_mode::{styling::CATPPUCCINTHEME, widgets::button::Button};
 use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CYAN, DARKORANGE, DEEPPINK, SPRINGGREEN}};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 
@@ -15,7 +15,6 @@ pub use tabs::Tab;
 // #[derive(Clone)]
 pub struct MenuBar<'a> {
     pub current_tab: RefCell<Tab>,
-    pub effect_stage: EffectStage<UniqueEffectId>,
     // pub tabs: HashMap<Tab, Button<'a>>,
     ticket_tab: Button<'a>,
     connect_ws_btn: Button<'a>,
@@ -48,7 +47,7 @@ impl<'a> MenuBar<'a> {
             manual_start_tx,
             // tabs,
             client_title: String::new(),
-            effect_stage: EffectStage::default(),
+            // effect_stage: EffectStage::default(),
             current_tab: RefCell::new(Tab::TurSheet),
             ticket_tab: Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME),
             scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN),

@@ -10,7 +10,6 @@ wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
 parking_lot = "0.12"
-ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.0" }
 zstd = "0.13"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 rfd = "0.15"
@@ -49,9 +48,12 @@ ratatui = { workspace = true }
 async-openai = { workspace = true}
 tokio = { workspace=true, optional = true }
 rusty-s3 = { workspace=true }
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}# "tls"
+# tokio-tungstenite = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 async-openai-wasm = { workspace = true}
 rusty-s3 = { workspace=true, features = ["wasm_bindgen"]}
 web-time = { workspace=true, optional = true }
 wasm-bindgen-futures = { workspace=true, optional = true }
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]} # "tls"
