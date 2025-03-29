@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, Layout, RichText, TextEdit, Vec2, Widget};
-use database::{schema::Store, DatabaseSelection, DATABASE};
+use database::{schema::Store, DATABASE};
 use crate::app_state::{AppState, MainPages, MtechServer};
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
@@ -14,7 +14,6 @@ pub struct AccountMod {
     password: String,
     retyped_password: String,
     store: Store,
-    database: DatabaseSelection,
 }
 
 impl AccountMod{

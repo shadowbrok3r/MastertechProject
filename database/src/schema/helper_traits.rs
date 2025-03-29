@@ -485,7 +485,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         } else if id_customer_thread.is_empty() && self.service_number.is_none() {
             info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT have a service number. creating a regular task note. {:?}", self.clone());
             if self.task_id.is_none() {
-
+                return Err(anyhow::anyhow!("Task ID is empty"));
             }
             self.create_task_note_in_db().await?
 
@@ -654,10 +654,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 .bind(("task_id", id.clone()))
                 .await?
                 .take(0)?;
-            info!(
-                "Order number pulled from task_id: {service_number:?} using task id: {:?}",
-                id
-            );
+            info!("Order number pulled from service_number: {service_number:?} using task id: {id:?}");
             Ok(service_number.unwrap_or_default())
         } else {
             info!("helper_traits -> No order number found");
@@ -748,9 +745,11 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 }
             } else {
                 info!("helper_traits -> Service number is empty. not querying Presta {service_number:?}");
+                // return Err(anyhow::anyhow!("service number is empty")).into();
             }
         } else {
             info!("helper_traits -> Error getting order number from task id\nIs there a task ID??");
+            return Err(anyhow::anyhow!("helper_traits -> Error getting order number from task id\nIs there a task ID??")).into();
         }
 
         // Extract the first customer thread ID if available

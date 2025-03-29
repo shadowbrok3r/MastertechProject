@@ -103,7 +103,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Wss>(DB_URL_LOCAL).await {
+        match DATABASE.connect::<Ws>(DB_URL_DEV).await {
             Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
             Err(e) => log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
         }
@@ -117,7 +117,6 @@ impl Database {
                 info!("Have a JWT, attempting token auth");
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                // info!("Returned Auth: {user:?}");
                 Ok( Self { jwt: Some(jwt.into()), user } )
             }
             None => {
@@ -134,7 +133,6 @@ impl Database {
                     .await?;
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                // info!("Returned Auth: {user:?}");
                 Ok( Self { jwt: Some(jwt), user } )
             }
         }
@@ -148,7 +146,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Ws>((DB_URL_DEV, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Wss>((DB_URL_DEV, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE
