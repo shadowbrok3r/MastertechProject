@@ -14,6 +14,7 @@ impl<'a> ActionHandler for MenuBar<'a> {
                     "System" => { *current_tab = Tab::SystemInfo; }
                     "Ncdu" => { *current_tab = Tab::Ncdu; }
                     "Tasks" => { *current_tab = Tab::Tasks; }
+                    "Webconsole" => { *current_tab = Tab::Webconsole; }
                     "Logs" => { *current_tab = Tab::Logs; }
                     "Login" => { *current_tab = Tab::Login; }
                     "Connect" => { let _ = self.manual_start_tx.send(true); }

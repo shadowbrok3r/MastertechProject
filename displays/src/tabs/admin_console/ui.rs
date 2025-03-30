@@ -434,13 +434,10 @@ impl AdminConsole {
                         let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
                     }
 
-                    let txt = if let Some(docked) =
-                        undock_client.get(client.connection_string.as_str())
-                    {
-                        if *docked { "🔓" } 
-                        else { "🔒" }
-                    } 
-                    else { "🔓" };
+                    let txt = if let Some(docked) = undock_client.get(client.connection_string.as_str()) {
+                        if *docked { "🔒" } // Docked = locked
+                        else { "🔓" }       // Undocked = unlocked
+                    } else { "🔓" };        // Default to undocked
 
                     let undock = Button::new(RichText::new(txt).strong().color(Color32::LIGHT_RED))
                         .fill(ui.style().visuals.window_fill)

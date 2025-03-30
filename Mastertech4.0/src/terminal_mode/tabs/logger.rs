@@ -5,6 +5,8 @@ use tui_logger::*;
 use log::*;
 pub use ratatui::crossterm::event::KeyCode as Key;
 
+use crate::terminal_mode::widgets::HandleWidget;
+
 pub struct Logger {
     mode: LoggerMode,
     states: RefCell<Vec<TuiWidgetState>>,
@@ -80,45 +82,17 @@ impl Logger {
         }
     }
 
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
-        debug!(target: "Logger", "Handling UI event: {:?}", key_event);
-        let mut states = self.states.borrow_mut();
-        let Some(state) = states.get_mut(self.selected_tab) else {return false;};
-
-        match key_event.code.into() {
-            Key::Char('q') => self.mode = LoggerMode::Quit,
-            // Key::Char('\t') => self.next_tab(),
-            // Key::Tab => self.next_tab(),
-            Key::Char(' ') => state.transition(TuiWidgetEvent::SpaceKey),
-            Key::Esc => state.transition(TuiWidgetEvent::EscapeKey),
-            Key::PageUp => state.transition(TuiWidgetEvent::PrevPageKey),
-            Key::PageDown => state.transition(TuiWidgetEvent::NextPageKey),
-            Key::Up => state.transition(TuiWidgetEvent::UpKey),
-            Key::Down => state.transition(TuiWidgetEvent::DownKey),
-            Key::Left => state.transition(TuiWidgetEvent::LeftKey),
-            Key::Right => state.transition(TuiWidgetEvent::RightKey),
-            Key::Char('+') => state.transition(TuiWidgetEvent::PlusKey),
-            Key::Char('-') => state.transition(TuiWidgetEvent::MinusKey),
-            Key::Char('h') => state.transition(TuiWidgetEvent::HideKey),
-            Key::Char('f') => state.transition(TuiWidgetEvent::FocusKey),
-            _ => (),
-        }
-        false
-    }
-
-
     fn _next_tab(&mut self) {
         self.selected_tab = (self.selected_tab + 1) % self.tab_names.len();
-    }
-
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {     
-        self.render(area, f.buffer_mut());
     }
 }
 
 
-impl WidgetRef for &mut Logger {
-    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
+
+
+impl <'a>HandleWidget<'a> for Logger {
+    fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        let buf = f.buffer_mut();
         let progress_height = if self.progress_counter.is_some() {
             3
         } else {
@@ -208,6 +182,43 @@ impl WidgetRef for &mut Logger {
             .style(Color::Gray)
             .centered()
             .render(help_area, buf);
+        }
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
+        debug!(target: "Logger", "Handling UI event: {:?}", key_event);
+        let mut states = self.states.borrow_mut();
+        let Some(state) = states.get_mut(self.selected_tab) else {return false;};
+
+        match key_event.code.into() {
+            Key::Char('q') => self.mode = LoggerMode::Quit,
+            // Key::Char('\t') => self.next_tab(),
+            // Key::Tab => self.next_tab(),
+            Key::Char(' ') => state.transition(TuiWidgetEvent::SpaceKey),
+            Key::Esc => state.transition(TuiWidgetEvent::EscapeKey),
+            Key::PageUp => state.transition(TuiWidgetEvent::PrevPageKey),
+            Key::PageDown => state.transition(TuiWidgetEvent::NextPageKey),
+            Key::Up => state.transition(TuiWidgetEvent::UpKey),
+            Key::Down => state.transition(TuiWidgetEvent::DownKey),
+            Key::Left => state.transition(TuiWidgetEvent::LeftKey),
+            Key::Right => state.transition(TuiWidgetEvent::RightKey),
+            Key::Char('+') => state.transition(TuiWidgetEvent::PlusKey),
+            Key::Char('-') => state.transition(TuiWidgetEvent::MinusKey),
+            Key::Char('h') => state.transition(TuiWidgetEvent::HideKey),
+            Key::Char('f') => state.transition(TuiWidgetEvent::FocusKey),
+            _ => (),
+        }
+        false
+    }
+    
+    fn handle_mouse_event(&self, mouse_event: &crossterm::event::MouseEvent) { 
+        let mut states = self.states.borrow_mut();
+        let Some(state) = states.get_mut(self.selected_tab) else {return;};
+
+        match mouse_event.kind {
+            crossterm::event::MouseEventKind::ScrollUp => state.transition(TuiWidgetEvent::PrevPageKey),
+            crossterm::event::MouseEventKind::ScrollDown => state.transition(TuiWidgetEvent::NextPageKey),
+            _ => {}
         }
     }
 }
