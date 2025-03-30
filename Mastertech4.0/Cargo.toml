@@ -98,6 +98,7 @@ egui_json_tree = { workspace = true }
 brotli = { workspace=true }
 base64 = { workspace=true }
 egui_plot = { workspace = true }
+self-replace = "1.5.0"
 
 
 

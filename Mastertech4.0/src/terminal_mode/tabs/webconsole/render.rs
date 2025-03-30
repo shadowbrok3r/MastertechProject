@@ -1,5 +1,6 @@
-use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, WidgetRef}, Frame};
-use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{ButtonType, ShrinkArea}};
+use displays::remote_viewer::ratagui::TerminalEvent;
+use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Clear, Paragraph, WidgetRef}, Frame};
+use crate::terminal_mode::{data::LocalTermEvent, styling::CATPPUCCIN, widgets::{ButtonType, ShrinkArea}};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 use super::{PageState, WebconsoleTab};
 
@@ -16,18 +17,24 @@ impl <'a> WebconsoleTab <'a> {
             },
             PageState::RemoteTerminal(connection_string) => {
                 // Poll buffer_rx for new frames
-                if let Some(ref mut buffer_rx) = self.buffer_rx {
-                    while let Ok((frame_count, buffer)) = buffer_rx.try_recv() {
-                        log::info!("Rendering remote buffer, frame_count={}", frame_count);
-                        self.remote_buffer = Some(buffer);
-                    }
-                }
+                // if let Some(ref mut buffer_rx) = self.buffer_rx {
+                //     while let Ok((frame_count, buffer)) = buffer_rx.try_recv() {
+                //         log::info!("Rendering remote buffer, frame_count={}", frame_count);
+                //         self.remote_buffer = Some(buffer);
+                //     }
+                // }
+
                 if let Some(buffer) = &self.remote_buffer {
+                    self.client_area = area;
                     // Draw a background block
                     f.render_widget(
-                        Block::default().bg(CATPPUCCIN.base),
+                        Block::default()
+                        .bg(CATPPUCCIN.base)
+                        .border_type(ratatui::widgets::BorderType::QuadrantOutside),
                         area,
                     );
+                    // f.render_widget(Clear, area);
+                    // f.buffer_mut().merge(buffer);
                     // Resize and copy buffer contents into the frame
                     let inner_area = area.inner(Margin { horizontal: 1, vertical: 1 });
                     for (i, cell) in buffer.content().iter().enumerate() {
@@ -45,6 +52,12 @@ impl <'a> WebconsoleTab <'a> {
                 }
             },
         }
+    }
+
+    // Helper to get inner_area (could be cached or passed differently)
+    fn get_inner_area(&self) -> Rect {
+        // let full_area = Rect::new(0, 0, 100, 50); // Replace with actual area from draw
+        self.client_area.inner(Margin { horizontal: 1, vertical: 1 })
     }
 }
 /// Implement the HandleWidget trait for ServiceFormTab.
@@ -100,6 +113,29 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        let c = mouse_event.column;
+        let r = mouse_event.row;
+        let mouse_position = Position::new(c, r);
+
+        
+        match mouse_event.kind {
+            crossterm::event::MouseEventKind::Down(_) => {
+                if let (Some(_), PageState::RemoteTerminal(_)) = (&self.remote_buffer, &self.page_state) {
+                    // let event = TerminalEvent::MouseClick { x: c, y: r };
+                    // let _ = self.event_tx.try_send(event);
+                    let inner_area = self.get_inner_area(); // Calculate dynamically if needed
+                    if inner_area.contains(mouse_position) {
+                        let adjusted_x = c - inner_area.x;
+                        let adjusted_y = r - inner_area.y;
+                        let event = TerminalEvent::MouseClick { x: adjusted_x, y: adjusted_y };
+                        log::info!("Sent mouse event: {:?}", event);
+                        let _ = self.event_tx.try_send(event);
+                    }
+                }
+            },
+            _ => {}
+        }
+
         self.get_clients_btn.handle_mouse_event(mouse_event);
         for (_, btn) in self.ws_clients.iter() {
             btn.handle_mouse_event(mouse_event);
@@ -107,7 +143,13 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
-        // match key_event.code {}
+        if let Some(_) = &self.remote_buffer {
+            let local_term_event = LocalTermEvent::try_from(key_event);
+            if let Ok(evt) = local_term_event {
+                let _ = self.event_tx.try_send(evt.0);
+            }
+        }
+
         false
     }
 }

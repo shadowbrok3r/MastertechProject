@@ -6,7 +6,7 @@ use crate::{filesystem::system_info::ComputerInfo, tabs::scripts::InstalledProgr
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::sync::{Arc, Condvar, Mutex};
 use surrealdb::RecordId;
-use egui::Key;
+use egui::{Key, Modifiers};
 // use reqwest::Client;
 
 use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
@@ -341,6 +341,133 @@ impl TryFrom<LocalTermEvent> for KeyEvent {
     }
 }
 
+impl TryFrom<KeyEvent> for LocalTermEvent {
+    type Error = anyhow::Error;
+
+    fn try_from(value: KeyEvent) -> Result<Self, Self::Error> {
+        let modifiers = match value.modifiers {
+            KeyModifiers::ALT => Modifiers::ALT,
+            KeyModifiers::CONTROL => Modifiers::CTRL,
+            KeyModifiers::SHIFT => Modifiers::SHIFT,
+            _ =>  Modifiers::NONE
+        };
+        
+        let code = match value.code {
+            KeyCode::Enter => Key::Enter,
+            KeyCode::Tab => Key::Tab,
+            KeyCode::Backspace => Key::Backspace,
+            KeyCode::Esc => Key::Escape,
+            KeyCode::Delete => Key::Delete,
+            KeyCode::Left => Key::ArrowLeft,
+            KeyCode::Right => Key::ArrowRight,
+            KeyCode::Up => Key::ArrowUp,
+            KeyCode::Down => Key::ArrowDown,
+            KeyCode::Insert => Key::Insert,
+            KeyCode::Home => Key::Home,
+            KeyCode::End => Key::End,
+            KeyCode::PageUp => Key::PageUp,
+            KeyCode::PageDown => Key::PageDown,
+            KeyCode::Char(' ') => Key::Space,
+            KeyCode::Char('a') => Key::A,
+            KeyCode::Char('b') => Key::B,
+            KeyCode::Char('c') => Key::C,
+            KeyCode::Char('d') => Key::D,
+            KeyCode::Char('e') => Key::E,
+            KeyCode::Char('f') => Key::F,
+            KeyCode::Char('g') => Key::G,
+            KeyCode::Char('h') => Key::H,
+            KeyCode::Char('i') => Key::I,
+            KeyCode::Char('j') => Key::J,
+            KeyCode::Char('k') => Key::K,
+            KeyCode::Char('l') => Key::L,
+            KeyCode::Char('m') => Key::M,
+            KeyCode::Char('n') => Key::N,
+            KeyCode::Char('o') => Key::O,
+            KeyCode::Char('p') => Key::P,
+            KeyCode::Char('q') => Key::Q,
+            KeyCode::Char('r') => Key::R,
+            KeyCode::Char('s') => Key::S,
+            KeyCode::Char('t') => Key::T,
+            KeyCode::Char('u') => Key::U,
+            KeyCode::Char('v') => Key::V,
+            KeyCode::Char('w') => Key::W,
+            KeyCode::Char('x') => Key::X,
+            KeyCode::Char('y') => Key::Y,
+            KeyCode::Char('z') => Key::Z,
+            KeyCode::Char(':') => Key::Colon,
+            KeyCode::Char(',') => Key::Comma,
+            KeyCode::Char('\\') => Key::Backslash,
+            KeyCode::Char('/') => Key::Slash,
+            KeyCode::Char('|') => Key::Pipe,
+            KeyCode::Char('?') => Key::Questionmark,
+            KeyCode::Char('!') => Key::Exclamationmark,
+            KeyCode::Char('[') => Key::OpenBracket,
+            KeyCode::Char(']') => Key::CloseBracket,
+            KeyCode::Char('{') => Key::OpenCurlyBracket,
+            KeyCode::Char('}') => Key::CloseCurlyBracket,
+            KeyCode::Char('`') => Key::Backtick,
+            KeyCode::Char('-') => Key::Minus,
+            KeyCode::Char('.') => Key::Period,
+            KeyCode::Char('+') => Key::Plus,
+            KeyCode::Char('=') => Key::Equals,
+            KeyCode::Char(';') => Key::Semicolon,
+            KeyCode::Char('\'') => Key::Quote,
+            KeyCode::Char('0') => Key::Num0,
+            KeyCode::Char('1') => Key::Num1,
+            KeyCode::Char('2') => Key::Num2,
+            KeyCode::Char('3') => Key::Num3,
+            KeyCode::Char('4') => Key::Num4,
+            KeyCode::Char('5') => Key::Num5,
+            KeyCode::Char('6') => Key::Num6,
+            KeyCode::Char('7') => Key::Num7,
+            KeyCode::Char('8') => Key::Num8,
+            KeyCode::Char('9') => Key::Num9,
+            KeyCode::F(1) => Key::F1,
+            KeyCode::F(2) => Key::F2,
+            KeyCode::F(3) => Key::F3,
+            KeyCode::F(4) => Key::F4,
+            KeyCode::F(5) => Key::F5,
+            KeyCode::F(6) => Key::F6,
+            KeyCode::F(7) => Key::F7,
+            KeyCode::F(8) => Key::F8,
+            KeyCode::F(9) => Key::F9,
+            KeyCode::F(10) => Key::F10,
+            KeyCode::F(11) => Key::F11,
+            KeyCode::F(12) => Key::F12,
+            KeyCode::F(13) => Key::F13,
+            KeyCode::F(14) => Key::F14,
+            KeyCode::F(15) => Key::F15,
+            KeyCode::F(16) => Key::F16,
+            KeyCode::F(17) => Key::F17,
+            KeyCode::F(18) => Key::F18,
+            KeyCode::F(19) => Key::F19,
+            KeyCode::F(20) => Key::F20,
+            KeyCode::F(21) => Key::F21,
+            KeyCode::F(22) => Key::F22,
+            KeyCode::F(23) => Key::F23,
+            KeyCode::F(24) => Key::F24,
+            KeyCode::F(25) => Key::F25,
+            KeyCode::F(26) => Key::F26,
+            KeyCode::F(27) => Key::F27,
+            KeyCode::F(28) => Key::F28,
+            KeyCode::F(29) => Key::F29,
+            KeyCode::F(30) => Key::F30,
+            KeyCode::F(31) => Key::F31,
+            KeyCode::F(32) => Key::F32,
+            KeyCode::F(33) => Key::F33,
+            KeyCode::F(34) => Key::F34,
+            KeyCode::F(35) => Key::F35,
+            _ => Key::Space,
+        };
+
+        Ok(
+            LocalTermEvent(
+                TerminalEvent::KeyPress { code, modifiers }
+            )
+        )
+    }
+}
+
 impl TryFrom<LocalTermEvent> for MouseEvent {
     type Error = anyhow::Error;
     
@@ -359,7 +486,6 @@ impl TryFrom<LocalTermEvent> for MouseEvent {
         }
     }
 }
-
 
 impl Into<TerminalEvent> for LocalTermEvent {
     fn into(self) -> TerminalEvent {

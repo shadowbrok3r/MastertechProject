@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+
 use app_state::{AppState, MainPages, MasterTechApp};
 use displays::ui_tools::theme_config::set_custom_style;
 use eframe::egui::{Context, IconData, Window};
@@ -100,6 +102,8 @@ impl eframe::App for MasterTechApp {
             _ => {}
         }
     }
+
+    // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {}
 }
 
 #[tokio::main]
@@ -113,7 +117,24 @@ async fn main() -> eframe::Result<()> {
             SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
         }
     }
+    let res = std::thread::spawn(move || {
+        let old_exe = std::env::current_dir().unwrap().join("MasterTech.exe");
+        let current_exe = std::env::current_exe();
+        let current_exe_name = current_exe.as_ref().unwrap().file_name();
+        if current_exe_name == Some(OsStr::new("git-MasterTech.exe")) && old_exe.exists() {
+            match std::fs::remove_file(old_exe) {
+                Ok(_) => {
+                    log::info!("Removed old exe");
+                    if let Ok(_) = std::fs::rename(std::env::current_exe().unwrap(), "Mastertech.exe") {
+                        log::info!("Renamed exe");
+                    }
+                },
+                Err(e) => log::info!("Error removing old exe: {e:?}"),
+            }
+        }
+    }).join();
 
+    log::info!("Res: {res:?}");
     // console_subscriber::init(); // for tokio console
     let matches = clap::Command::new("Mastertech 4")
         .version(env!("CARGO_PKG_VERSION"))
