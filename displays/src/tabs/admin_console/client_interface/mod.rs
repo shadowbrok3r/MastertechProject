@@ -13,7 +13,6 @@ use super::client_interface::tabs::command_shell::History;
 pub mod receive;
 pub mod tabs;
 pub mod ui;
-pub mod client_handler;
 pub mod filesystem_helper;
 
 pub enum ClientConnection{

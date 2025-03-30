@@ -26,7 +26,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
             Constraint::Length(20), Constraint::Length(20),
             Constraint::Length(20), Constraint::Length(20),
             Constraint::Length(20), Constraint::Length(20),
-            Constraint::Length(25),
+            Constraint::Length(20), Constraint::Length(25),
         ])
         .split(area);
 
@@ -35,9 +35,9 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         self.system_tab.render_ref(row[2].shrink(3, 1), f.buffer_mut());
         self.ncdu_tab.render_ref(row[3].shrink(3, 1), f.buffer_mut());
         self.tasks_tab.render_ref(row[4].shrink(3, 1), f.buffer_mut());
-        self.logs_tab.render_ref(row[5].shrink(3, 1), f.buffer_mut());
-        self.login_tab.render_ref(row[6].shrink(3, 1), f.buffer_mut());
-
+        self.webconsole_tab.render_ref(row[5].shrink(3, 1), f.buffer_mut());
+        self.logs_tab.render_ref(row[6].shrink(3, 1), f.buffer_mut());
+        self.login_tab.render_ref(row[7].shrink(3, 1), f.buffer_mut());
         let title = &mut self.client_title;
         let user = &mut User::default();
 
@@ -63,7 +63,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                 )
                 .right_aligned()
                 .wrap(Wrap{ trim: false})
-                .render_ref(row[7], f.buffer_mut());
+                .render_ref(row[8], f.buffer_mut());
         }
 
         let state = &self.connection_state;
@@ -79,9 +79,9 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
             )
             .right_aligned()
             .wrap(Wrap{ trim: false})
-            .render_ref(row[8], f.buffer_mut());
+            .render_ref(row[9], f.buffer_mut());
         } else {
-            self.connect_ws_btn.render_ref(row[8].shrink(3, 1), f.buffer_mut());
+            self.connect_ws_btn.render_ref(row[9].shrink(3, 1), f.buffer_mut());
         }
 
         // self.effect_stage.process_effects(
@@ -99,6 +99,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         self.ncdu_tab.handle_mouse_event(&mouse_event);
         self.logs_tab.handle_mouse_event(&mouse_event);
         self.login_tab.handle_mouse_event(&mouse_event);
+        self.webconsole_tab.handle_mouse_event(&mouse_event);
         self.connect_ws_btn.handle_mouse_event(&mouse_event);
     }
 }

@@ -1,8 +1,8 @@
-use database::{WS_MASTER_URL, schema::ConnectedClient};
+use super::{client_interface::tabs::command_shell::History, AdminConsole};
+use database::{schema::{Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use crate::tabs::admin_console::client_interface::WebSocketClient;
-
-use super::{client_interface::client_handler::ClientHandler, AdminConsole};
-
+use database::{WS_MASTER_URL, schema::ConnectedClient};
+use crate::{PlatformSpawner, Spawner};
 
 pub enum ClientUiAction {
     UndockClient(String),
@@ -16,15 +16,11 @@ impl AdminConsole {
         match action {
             ClientUiAction::UndockClient(connection_string) => {
                 if let Some(docked) = self.undock_client.get_mut(&connection_string) {
-                    if *docked {
-                        *docked = false;
-                        self.wants_to_undock = false;
-                    } else {
-                        *docked = true;
-                        self.wants_to_undock = true;
-                    }
+                    *docked = !*docked; // Toggle the state
+                    self.wants_to_undock = false; // Reset intent after toggle
                 } else {
-                    self.undock_client.insert(connection_string, true);
+                    self.undock_client.insert(connection_string, false); // New client starts undocked
+                    self.wants_to_undock = false; // No intent to undock yet
                 }
             },
             ClientUiAction::DeleteClient(mut client) => {
@@ -34,7 +30,7 @@ impl AdminConsole {
                     client.connection_string.clone()
                 );
                 client.connected = false;
-                client.delete_client();
+                client.disconnect_client();
                 if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string)
                 {
                     ws_client.ws_sender.close();
@@ -79,4 +75,53 @@ impl AdminConsole {
         }
     
     }
+}
+
+pub trait ClientHandler { 
+    fn connect(&mut self);
+    fn export_logs(&mut self, history: Vec<History>);
+    fn delete_client(&mut self);
+    fn disconnect_client(&mut self);
+}
+
+impl ClientHandler for ConnectedClient {
+    fn connect(&mut self) { }
+
+    fn export_logs(&mut self, history: Vec<History>) {
+        let id = self.id.clone();
+        PlatformSpawner::spawn(async move {
+            DATABASE.set("id", id).await.unwrap();
+            DATABASE.set("history", Some(history.clone())).await.unwrap();
+            let query = "UPDATE $id SET command_history += $history";
+            let update_history: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                .query(query)
+                .await;
+
+            log::info!("History Response: {update_history:?}");
+            log::info!("History: {:#?}", history.clone());
+        });
+     }
+
+    fn delete_client(&mut self) {
+        let id = self.id.clone();
+        PlatformSpawner::spawn(async move {
+            let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE
+                .delete((CONNECTED_CLIENT_TABLE, id.key().to_string()))
+                .await;
+
+            log::info!("History: {update_history:#?}");
+        });
+     }
+
+    fn disconnect_client(&mut self) {
+        let id = self.id.clone();
+        PlatformSpawner::spawn(async move {
+            let update_history: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                .query("UPDATE $id SET connected = false")
+                .bind(("id", id))
+                .await;
+
+            log::info!("History: {update_history:#?}");
+        });
+     }
 }

@@ -1,6 +1,7 @@
+use data::LocalTermEvent;
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, menu_bar::Tab};
+use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, ScriptsTab, SysinfoTab};
 use websockets::TerminalWebsocketClient;
 // use websockets::TerminalWebsocketClient; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
@@ -47,6 +48,7 @@ pub struct TerminalApp<'a> {
     tasks_tab: Rc<RefCell<TasksTab>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
+    webconsole_tab: Rc<RefCell<WebconsoleTab<'a>>>,
     // effect_stage: EffectStage<UniqueEffectId>,
     // first_run: bool,
     event_handler: EventHandler,
@@ -55,61 +57,6 @@ pub struct TerminalApp<'a> {
     render_system: Arc<RenderSystem>,
     data_system: Arc<DataSystem>,
     manual_connect_rx: tokio::sync::mpsc::UnboundedReceiver<bool>
-}
-
-impl Default for TerminalApp <'_>{
-    fn default() -> Self {
-        let client = Client::new();
-        // Create channels explicitly for communication between Data and Render systems
-        let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
-        let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
-        let (manual_connect_tx, manual_connect_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        // Global App Context, passed through most widgets / event handlers / 'Systems' via Arc 
-        let ctx = Arc::new(Mutex::new(TerminalContext::new(render_to_data_tx.clone(), data_to_render_tx.clone())));
-
-        // Create systems separately
-        let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx, data_to_render_rx, ctx.clone()));
-        let data_system: Arc<DataSystem> = Arc::new(DataSystem::new(data_to_render_tx, render_to_data_rx));
-
-        // Create a global event channel.
-        let mut event_manager = EventManager::new(get_event_receiver());
-        let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
-        let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
-        // let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
-        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
-        let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
-        let sysinfo_tab = SysinfoTab::new();
-
-        let menu_bar = Rc::new(RefCell::new(MenuBar::new(ctx.clone(), manual_connect_tx)));
-        
-        // Register the ServiceFormTab with the event manager.
-        // Here we clone the Rc so both ServiceTab and the EventManager share it.
-        event_manager.register_handler(service_tab.clone());
-        event_manager.register_handler(scripts_tab.clone());
-        event_manager.register_handler(login_tab.clone());
-        event_manager.register_handler(menu_bar.clone());
-
-        Self {
-            ctx,
-            menu_bar,
-            login_tab,
-            tasks_tab,
-            scripts_tab,
-            service_tab,
-            sysinfo_tab,
-            // ncdu_tab,
-            // first_run: true,
-            data_system,
-            render_system,
-            event_manager,
-            logger: Logger::new(),
-            event_handler: EventHandler::new(),
-            // effect_stage: EffectStage::default(),
-            manual_connect_rx,
-            // terminal_ws_client: TerminalWebsocketClient::new()
-        }
-    }
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
@@ -167,6 +114,64 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
+impl Default for TerminalApp <'_>{
+    fn default() -> Self {
+        let client = Client::new();
+        // Create channels explicitly for communication between Data and Render systems
+        let (data_to_render_tx, data_to_render_rx) = unbounded::<Box<dyn Message>>();
+        let (render_to_data_tx, render_to_data_rx) = unbounded::<Box<dyn Message>>();
+        let (manual_connect_tx, manual_connect_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Global App Context, passed through most widgets / event handlers / 'Systems' via Arc 
+        let ctx = Arc::new(Mutex::new(TerminalContext::new(render_to_data_tx.clone(), data_to_render_tx.clone())));
+
+        // Create systems separately
+        let render_system: Arc<RenderSystem> = Arc::new(RenderSystem::new(render_to_data_tx, data_to_render_rx, ctx.clone()));
+        let data_system: Arc<DataSystem> = Arc::new(DataSystem::new(data_to_render_tx, render_to_data_rx));
+
+        // Create a global event channel.
+        let mut event_manager = EventManager::new(get_event_receiver());
+        let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
+        let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
+        // let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
+        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
+        let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
+        let webconsole_tab = Rc::new(RefCell::new(WebconsoleTab::new(client.clone(), ctx.clone())));
+
+        let sysinfo_tab = SysinfoTab::new();
+        let menu_bar = Rc::new(RefCell::new(MenuBar::new(ctx.clone(), manual_connect_tx)));
+        
+        // Register the ServiceFormTab with the event manager.
+        // Here we clone the Rc so both ServiceTab and the EventManager share it.
+        event_manager.register_handler(service_tab.clone());
+        event_manager.register_handler(scripts_tab.clone());
+        event_manager.register_handler(login_tab.clone());
+        event_manager.register_handler(webconsole_tab.clone());
+        event_manager.register_handler(menu_bar.clone());
+
+        Self {
+            ctx,
+            menu_bar,
+            login_tab,
+            tasks_tab,
+            scripts_tab,
+            service_tab,
+            sysinfo_tab,
+            webconsole_tab,
+            // ncdu_tab,
+            // first_run: true,
+            data_system,
+            render_system,
+            event_manager,
+            logger: Logger::new(),
+            event_handler: EventHandler::new(),
+            // effect_stage: EffectStage::default(),
+            manual_connect_rx,
+            // terminal_ws_client: TerminalWebsocketClient::new()
+        }
+    }
+}
+
 impl <'a>TerminalApp<'a> {
     async fn ui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<(), anyhow::Error> {
         let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
@@ -193,7 +198,7 @@ impl <'a>TerminalApp<'a> {
         let shutdown_rx_render = shutdown_tx.subscribe();
         let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
         let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<LocalTermEvent>();
         let (connection_state_tx, mut connection_state_rx) = tokio::sync::mpsc::unbounded_channel();
         
         // Run DataSystem in the background
@@ -228,7 +233,6 @@ impl <'a>TerminalApp<'a> {
                 log::info!("websocket_server: {websocket_server:?}");
             })
         );
-
         loop {
             if self.handle_events(None, None) { 
                 // Signal shutdown
@@ -240,6 +244,14 @@ impl <'a>TerminalApp<'a> {
                     handle.abort();
                 }
                 break; 
+            }
+            if let Ok(start) = start_rx.try_recv() {
+                *can_start = start;
+            }
+
+            if let Ok(start) = self.manual_connect_rx.try_recv() {
+                *can_start = start;
+                // *manual_start = start;
             }
             terminal.draw(|f| {
                 if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
@@ -258,14 +270,7 @@ impl <'a>TerminalApp<'a> {
                         }
                     }
                     
-                    if let Ok(start) = start_rx.try_recv() {
-                        *can_start = start;
-                    }
 
-                    if let Ok(start) = self.manual_connect_rx.try_recv() {
-                        *can_start = start;
-                        // *manual_start = start;
-                    }
 
                     if let Ok(connection_state) = connection_state_rx.try_recv() {
                         if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
@@ -273,11 +278,23 @@ impl <'a>TerminalApp<'a> {
                         }
                     }
 
+                    let page_state = &mut Tab::default();
                     if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
                         menu.check_active_tab();
+                        *page_state = menu.current_tab.borrow().clone();
                     }
 
-                    self.event_manager.process_events();
+                    match *page_state {
+                        Tab::TurSheet => self.event_manager.process_events(),
+                        Tab::Scripts => self.event_manager.process_events(),
+                        Tab::Tasks => self.event_manager.process_events(),
+                        Tab::Ncdu => self.event_manager.process_events(),
+                        Tab::SystemInfo => self.event_manager.process_events(),
+                        Tab::Logs => self.event_manager.process_events(),
+                        Tab::Login => self.event_manager.process_events(),
+                        Tab::Webconsole => self.event_manager.process_events(),
+                    }
+
                     self.tasks_tab.borrow_mut().check_tasks();
             
                     let area = f.area();
@@ -325,6 +342,7 @@ impl <'a>TerminalApp<'a> {
                 Tab::Tasks => self.tasks_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
                 Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
+                Tab::Webconsole => self.webconsole_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Ncdu => {},
                 Tab::Logs => {
                     buf.merge(f.buffer_mut());
@@ -396,10 +414,3 @@ impl <'a>TerminalApp<'a> {
         // }
     }
 }
-
-// fn center_horizontal(area: Rect, width: u16) -> Rect {
-//     let [area] = Layout::horizontal([Constraint::Length(width)])
-//         .flex(Flex::Center)
-//         .areas(area);
-//     area
-// }

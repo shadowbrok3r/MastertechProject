@@ -83,7 +83,8 @@ impl <'a>TerminalApp<'a> {
                     Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
                     Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                     Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                    Tab::Logs => {}
+                    Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                    Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
                     Tab::Ncdu => {}
                 };
             }
@@ -114,7 +115,8 @@ impl <'a>TerminalApp<'a> {
                                         Tab::TurSheet => menu_bar.set_active_tab(Tab::Scripts),
                                         Tab::Scripts => menu_bar.set_active_tab(Tab::Tasks),
                                         Tab::Tasks => menu_bar.set_active_tab(Tab::SystemInfo),
-                                        Tab::SystemInfo => menu_bar.set_active_tab(Tab::Logs),
+                                        Tab::SystemInfo => menu_bar.set_active_tab(Tab::Webconsole),
+                                        Tab::Webconsole => menu_bar.set_active_tab(Tab::Logs),
                                         Tab::Logs => menu_bar.set_active_tab(Tab::Login),
                                         Tab::Login => menu_bar.set_active_tab(Tab::TurSheet),
                                         Tab::Ncdu => {},
@@ -126,7 +128,8 @@ impl <'a>TerminalApp<'a> {
                                         Tab::Scripts => menu_bar.set_active_tab(Tab::TurSheet),
                                         Tab::Tasks => menu_bar.set_active_tab(Tab::Scripts),
                                         Tab::SystemInfo => menu_bar.set_active_tab(Tab::Tasks),
-                                        Tab::Logs => menu_bar.set_active_tab(Tab::SystemInfo),
+                                        Tab::Webconsole => menu_bar.set_active_tab(Tab::SystemInfo),
+                                        Tab::Logs => menu_bar.set_active_tab(Tab::Webconsole),
                                         Tab::Login => menu_bar.set_active_tab(Tab::Logs),
                                         Tab::Ncdu => {},
                                     };
@@ -142,6 +145,7 @@ impl <'a>TerminalApp<'a> {
                             Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
                             Tab::Logs => self.logger.handle_key_event(key_event),
                             Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
+                            Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_key_event(key_event),
                             Tab::Ncdu => false,
                         };
 
@@ -181,7 +185,8 @@ impl <'a>TerminalApp<'a> {
                                                 Tab::TurSheet => menu_bar.set_active_tab(Tab::Scripts),
                                                 Tab::Scripts => menu_bar.set_active_tab(Tab::Tasks),
                                                 Tab::Tasks => menu_bar.set_active_tab(Tab::SystemInfo),
-                                                Tab::SystemInfo => menu_bar.set_active_tab(Tab::Logs),
+                                                Tab::SystemInfo => menu_bar.set_active_tab(Tab::Webconsole),
+                                                Tab::Webconsole => menu_bar.set_active_tab(Tab::Logs),
                                                 Tab::Logs => menu_bar.set_active_tab(Tab::Login),
                                                 Tab::Login => menu_bar.set_active_tab(Tab::TurSheet),
                                                 Tab::Ncdu => {},
@@ -193,7 +198,8 @@ impl <'a>TerminalApp<'a> {
                                                 Tab::Scripts => menu_bar.set_active_tab(Tab::TurSheet),
                                                 Tab::Tasks => menu_bar.set_active_tab(Tab::Scripts),
                                                 Tab::SystemInfo => menu_bar.set_active_tab(Tab::Tasks),
-                                                Tab::Logs => menu_bar.set_active_tab(Tab::SystemInfo),
+                                                Tab::Webconsole => menu_bar.set_active_tab(Tab::SystemInfo),
+                                                Tab::Logs => menu_bar.set_active_tab(Tab::Webconsole),
                                                 Tab::Login => menu_bar.set_active_tab(Tab::Logs),
                                                 Tab::Ncdu => {},
                                             };
@@ -210,6 +216,7 @@ impl <'a>TerminalApp<'a> {
                                     Tab::SystemInfo => self.sysinfo_tab.handle_key_event(key_event),
                                     Tab::Logs => self.logger.handle_key_event(key_event),
                                     Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
+                                    Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_key_event(key_event),
                                     Tab::Ncdu => false,
                                 };
 
@@ -223,10 +230,11 @@ impl <'a>TerminalApp<'a> {
                             Tab::TurSheet => self.service_tab.borrow_mut().handle_mouse_event(&mouse_event),
                             Tab::Scripts => self.scripts_tab.borrow_mut().handle_mouse_event(&mouse_event),
                             Tab::SystemInfo => self.sysinfo_tab.handle_mouse_event(&mouse_event),
-                            Tab::Logs => {}
                             Tab::Login => self.login_tab.borrow_mut().handle_mouse_event(&mouse_event),
                             Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
-                            Tab::Ncdu => {},
+                            Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
+                            Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
+                            Tab::Ncdu => {}
                         };
                     },
                     Event::Error => log::info!("Error in event loop"),

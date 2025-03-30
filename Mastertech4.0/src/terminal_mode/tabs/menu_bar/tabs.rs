@@ -13,6 +13,7 @@ pub enum Tab {
     SystemInfo,
     Logs,
     Login,
+    Webconsole
 }
 
 impl Tab {

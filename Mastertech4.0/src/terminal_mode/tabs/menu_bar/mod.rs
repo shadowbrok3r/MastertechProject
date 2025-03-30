@@ -22,6 +22,7 @@ pub struct MenuBar<'a> {
     tasks_tab: Button<'a>,
     system_tab: Button<'a>,
     ncdu_tab: Button<'a>,
+    webconsole_tab: Button<'a>,
     logs_tab: Button<'a>,
     pub login_tab: Button<'a>,
     ctx: Arc<Mutex<TerminalContext>>,
@@ -53,9 +54,10 @@ impl<'a> MenuBar<'a> {
             scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN),
             system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK),
             ncdu_tab: Button::new("NCDU", WidgetId("Ncdu".to_owned())).theme(DARKORANGE),
-            tasks_tab: Button::new("Tasks", WidgetId("Tasks".to_owned())).theme(CATPPUCCINTHEME),
-            logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(CYAN),
-            login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(DEEPPINK),
+            webconsole_tab: Button::new("Webconsole", WidgetId("Webconsole".to_owned())).theme(CATPPUCCINTHEME),
+            tasks_tab: Button::new("Tasks", WidgetId("Tasks".to_owned())).theme(CYAN),
+            logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DEEPPINK),
+            login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(DARKORANGE),
             connect_ws_btn: Button::new("Connect WS", WidgetId("Connect".to_owned())).theme(SPRINGGREEN),
         }
     }
