@@ -8,22 +8,6 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id , button} => {
-                if let Ok(ctx) = &mut self.ctx.lock() {
-                    let cust_email = ctx.service_data.customer_data.email.clone();
-                    let so_num = ctx.service_data.ticket_data.service_number.clone();
-                    if !cust_email.is_empty() && !so_num.is_empty(){
-                        self.service_number = so_num;
-                        self.customer_email = cust_email;
-                    } else {
-                        let text_area_input = self.service_number_field.input.borrow().clone();
-                        let user_input = &text_area_input.lines()[0];
-                        ctx.service_data.ticket_data.service_number = user_input.to_string();
-                        // ctx.service_data.get_ticket();
-                        self.service_number = user_input.clone();
-                        log::info!("input: {user_input}");
-                    }
-                }
-
                 log::info!("Button: {button:?}\nwidget: {widget_id:?}");
                 // Show popup to the right of the clicked button
                 let widget_button = match widget_id.0.as_str() {
@@ -74,7 +58,27 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 }
                 let id = widget_id.0.as_str();
                 match id {
-                    "Run" => self.run_selected_scripts(),
+                    "Run" => {
+                        if let Ok(ctx) = &mut self.ctx.lock() {
+                            let cust_email = ctx.service_data.customer_data.email.clone();
+                            let so_num = ctx.service_data.ticket_data.service_number.clone();
+                            
+                            self.log_message(format!("so_num and cust_email: {so_num} and {cust_email}"));
+                            if !cust_email.is_empty() && !so_num.is_empty(){
+                                self.service_number = so_num;
+                                self.customer_email = cust_email;
+                                self.log_message(format!("both empty, assigned"));
+                            } else {
+                                let text_area_input = self.service_number_field.input.borrow().clone();
+                                let user_input = &text_area_input.lines()[0];
+                                ctx.service_data.ticket_data.service_number = user_input.to_string();
+                                // ctx.service_data.get_ticket();
+                                self.service_number = user_input.clone();
+                                self.log_message(format!("User input: {user_input:?}"));
+                            }
+                        }
+                        self.run_selected_scripts();
+                    },
                     "Tuneup" => {}
                     "Qc" => {}
                     "WindowsUpdates" => {}

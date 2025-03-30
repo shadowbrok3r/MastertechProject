@@ -110,7 +110,7 @@ pub trait ClonableFileSysHelper: FileSysHelper {
 
 impl<T> ClonableFileSysHelper for T
 where
-    T: 'static + FileSysHelper + Clone,
+    T: 'static + FileSysHelper + Clone, // + Send,
 {
     fn clone_box(&self) -> Box<dyn ClonableFileSysHelper> {
         Box::new(self.clone())
