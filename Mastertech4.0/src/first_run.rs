@@ -179,18 +179,22 @@ impl MasterTechApp {
                 self.context.progress = (0.0, 0.0);
                 self.context.output_text += "\nFinished";
                 let current_exe = std::env::current_dir().unwrap().join("git-MasterTech.exe");
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::process::CommandExt;
-                    std::process::Command::new("cmd")
-                        .arg("/C")
-                        .arg(&current_exe)
-                        .arg("-t")
-                        .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
-                        .creation_flags(0x00000008) // DETACHED_PROCESS flag
-                        .spawn()
-                        .unwrap();
-                }
+                // #[cfg(target_os = "windows")]
+                // {
+                //     use std::os::windows::process::CommandExt;
+                //     std::process::Command::new("cmd")
+                //         .arg("/C")
+                //         .arg(&current_exe)
+                //         .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
+                //         .creation_flags(0x00000008) // DETACHED_PROCESS flag
+                //         .spawn()
+                //         .unwrap();
+                // }
+                let replacement = self_replace::self_replace(&current_exe);
+                log::info!("Replacement: {replacement:?}");
+                let rm = std::fs::remove_file(&current_exe);
+                log::info!("Removal: {rm:?}");
+
                 ctx.send_viewport_cmd(ViewportCommand::Close);
                 // else if mtech_linux_path.exists() {
                 //     let mut mtech_cmd = std::process::Command::new(mtech_linux_path);
