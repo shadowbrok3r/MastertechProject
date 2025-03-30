@@ -33,6 +33,7 @@ pub struct Asset {
 }
 
 pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
+    // tokio::spawn(async move {});
     let mut downloaded_bytes: u64 = 0;
 
     let response: Value = client

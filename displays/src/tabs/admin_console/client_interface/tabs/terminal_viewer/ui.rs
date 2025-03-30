@@ -52,6 +52,9 @@ impl RemoteTerminal {
 
         // Send events over WebSocket
         while let Ok(event) = self.event_rx.try_recv() {
+            // let serialized = serde_json::to_string(&event).expect("Failed to serialize event");
+            // let _ = self.msg_to_client.try_send(ewebsock::WsMessage::Text(serialized));
+
             let serialized = serde_json::to_vec(&event).expect("Failed to serialize event");
             let _ = self.msg_to_client.try_send(ewebsock::WsMessage::Binary(serialized));
         }

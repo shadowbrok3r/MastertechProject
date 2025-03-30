@@ -1,6 +1,8 @@
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, menu_bar::Tab}; // ncdu::NcduTab
+use tabs::{logger::Logger, login::LoginTab, service_form::ServiceFormTab, tasks::TasksTab, MenuBar, ScriptsTab, SysinfoTab, menu_bar::Tab};
+use websockets::TerminalWebsocketClient;
+// use websockets::TerminalWebsocketClient; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
@@ -104,24 +106,25 @@ impl Default for TerminalApp <'_>{
             logger: Logger::new(),
             event_handler: EventHandler::new(),
             // effect_stage: EffectStage::default(),
-            manual_connect_rx
+            manual_connect_rx,
+            // terminal_ws_client: TerminalWebsocketClient::new()
         }
     }
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     // Set max_log_level to Trace
-    // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
-    // // Set default level for unknown targets to Trace
-    // tui_logger::set_default_level(log::LevelFilter::Info);
+    tui_logger::init_logger(log::LevelFilter::Info).unwrap();
+    // Set default level for unknown targets to Trace
+    tui_logger::set_default_level(log::LevelFilter::Info);
 
-    let log_level = log::LevelFilter::Info;
-    let log_file = std::fs::File::create("terminal_output.log").unwrap();
-    simplelog::WriteLogger::init(
-        log_level,
-        simplelog::Config::default(),
-        log_file
-    ).unwrap();
+    // let log_level = log::LevelFilter::Info;
+    // let log_file = std::fs::File::create("terminal_output.log").unwrap();
+    // simplelog::WriteLogger::init(
+    //     log_level,
+    //     simplelog::Config::default(),
+    //     log_file
+    // ).unwrap();
 
     log::info!("STARTING TERM MODE");
     enable_raw_mode()?;
@@ -209,7 +212,12 @@ impl <'a>TerminalApp<'a> {
 
         join_handles.push(
             tokio::spawn(async move {
-                let websocket_server = TerminalApp::start_websocket_sender(
+                // let client = get_client_hash(); // Initialize client hash
+                // let connection_url = format!("{WS_CLIENT_URL}&room_id={}", client.connection_string);
+                // let connection = ewebsock::connect(connection_url, ewebsock::Options::default());
+
+                let websocket_server = // 
+                TerminalWebsocketClient::new().start_websocket_sender(
                     buffer_rx, 
                     start_tx.clone(),
                     connection_state_tx,

@@ -225,7 +225,7 @@ impl WebConsoleFrontend {
             }
         }
         
-        while let Ok(cmd_output) = &mut self.command_rx.try_recv(){
+        while let Ok(cmd_output) = &mut self.command_rx.try_recv() {
             self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
         }
 
@@ -818,7 +818,7 @@ async fn handle_windows_cmd_interactive(
 //     }
 // }
 
-async fn handle_linux_cmd(
+pub async fn handle_linux_cmd(
     command_payload: String, 
     tx: Sender<Vec<u8>>
 ) -> Result<tokio::sync::mpsc::Sender<String>, Error> {

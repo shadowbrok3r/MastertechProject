@@ -1,6 +1,6 @@
 use eframe::egui::{Color32, Context, Margin, Stroke};
 use egui_dock::{DockArea, Style as DockStyle};
-use crate::{tabs::TABS, MtechServer};
+use crate::MtechServer;
 
 impl MtechServer{
     pub fn main_page(&mut self, ctx: &Context){

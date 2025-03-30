@@ -178,19 +178,20 @@ impl MasterTechApp {
             if res.0 == res.1 {
                 self.context.progress = (0.0, 0.0);
                 self.context.output_text += "\nFinished";
-                let current_path = std::env::current_dir().unwrap();
-                // let linux_path = std::env::current_dir().unwrap();
-                let mtech_path = current_path.join("git-MasterTech.exe");
-                // let mtech_linux_path = linux_path.join("git-MasterTech");
-
-                if mtech_path.exists() {
-                    info!("Mastertech does exist at {:?}", mtech_path);
-                    let mut mtech_cmd = std::process::Command::new(mtech_path);
-                    if mtech_cmd.status().is_ok() {
-                        info!("Mtech opened, closing current window");
-                        ctx.send_viewport_cmd(ViewportCommand::Close);
-                    }
+                let current_exe = std::env::current_dir().unwrap().join("git-MasterTech.exe");
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    std::process::Command::new("cmd")
+                        .arg("/C")
+                        .arg(&current_exe)
+                        .arg("-t")
+                        .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
+                        .creation_flags(0x00000008) // DETACHED_PROCESS flag
+                        .spawn()
+                        .unwrap();
                 }
+                ctx.send_viewport_cmd(ViewportCommand::Close);
                 // else if mtech_linux_path.exists() {
                 //     let mut mtech_cmd = std::process::Command::new(mtech_linux_path);
                 //     if mtech_cmd.status().is_ok() {

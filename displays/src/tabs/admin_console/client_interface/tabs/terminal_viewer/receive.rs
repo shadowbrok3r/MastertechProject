@@ -16,55 +16,57 @@ impl RemoteTerminal {
         while let Ok(new_area) = size_rx.try_recv() {
             current_area = new_area;
         }
+
         let decode_start = Instant::now();
+        
         match decode_buffer(&buffer_array) {
-                Ok(buffer_message) => {
-                    let new_buffer = buffer_message.buffer;
-                    let frame_index = buffer_message.frame_count;
-                    let sent_timestamp = buffer_message.timestamp;
-                    let encode_duration = buffer_message.encode_duration;
-                    let decode_duration = decode_start.elapsed().as_millis() as u128;
-    
-                    let current_time = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis();
-    
-                    let total_latency = current_time.saturating_sub(sent_timestamp);
-                    let network_latency = total_latency.saturating_sub(encode_duration as u128 + decode_duration);
-    
-                    log::info!(
-                        r#"
-                        Received buffer, 
-                        frame_count={}, 
-                        timestamp={}, 
-                        current_time={}, 
-                        total_latency={}ms, 
-                        network_latency={}ms, 
-                        encode_duration={}ms, 
-                        decode_duration={}ms
-                        "#,
-                        frame_index,
-                        sent_timestamp,
-                        current_time,
-                        total_latency,
-                        network_latency,
-                        encode_duration,
-                        decode_duration
-                    );
-    
-                    let resized_buffer = resize_buffer(
-                        &new_buffer, 
-                        current_area
-                    );
-    
-                    if tx.send((frame_index, resized_buffer)).is_err() {
-                        log::warn!("Failed to send buffer to UI thread");
-                        return;
-                    }
+            Ok(buffer_message) => {
+                let new_buffer = buffer_message.buffer;
+                let frame_index = buffer_message.frame_count;
+                let sent_timestamp = buffer_message.timestamp;
+                let encode_duration = buffer_message.encode_duration;
+                let decode_duration = decode_start.elapsed().as_millis() as u128;
+
+                let current_time = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+
+                let total_latency = current_time.saturating_sub(sent_timestamp);
+                let network_latency = total_latency.saturating_sub(encode_duration as u128 + decode_duration);
+
+                log::info!(
+                    r#"
+                    Received buffer, 
+                    frame_count={}, 
+                    timestamp={}, 
+                    current_time={}, 
+                    total_latency={}ms, 
+                    network_latency={}ms, 
+                    encode_duration={}ms, 
+                    decode_duration={}ms
+                    "#,
+                    frame_index,
+                    sent_timestamp,
+                    current_time,
+                    total_latency,
+                    network_latency,
+                    encode_duration,
+                    decode_duration
+                );
+
+                let resized_buffer = resize_buffer(
+                    &new_buffer, 
+                    current_area
+                );
+
+                if tx.send((frame_index, resized_buffer)).is_err() {
+                    log::warn!("Failed to send buffer to UI thread");
+                    return;
                 }
-                Err(e) => log::warn!("Error decoding message: {e:?}"),
             }
+            Err(e) => log::warn!("Error decoding message: {e:?}"),
+        }
     }
 }
 
