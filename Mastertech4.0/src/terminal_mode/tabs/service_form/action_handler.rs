@@ -1,17 +1,52 @@
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent}
+    terminal_mode::events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent, WidgetId}
 };
-use std::collections::HashMap;
 
 use database::schema::{
     prestashop_schema::ServiceOrder, utilities::PhoneNumberFormatter, CarboniteResponse, GetKeysResponse
 };
-use reqwest::header::CONTENT_TYPE;
+
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 
 use super::ServiceFormTab;
 
 impl <'a> ActionHandler for ServiceFormTab <'a> {
+    fn widget_id(&self) -> WidgetId {
+        WidgetId("ServiceFormTab".to_string()) // Unique ID for the tab
+    }
+    
+    fn managed_widget_ids(&self) -> Vec<WidgetId> {
+        vec![
+            WidgetId("ServiceNumber".to_string()),
+            WidgetId("SubmitTur".to_string()),
+            WidgetId("GetKeys".to_string()),
+            WidgetId("CopyWebroot".to_string()),
+            WidgetId("CopySuperAnti".to_string()),
+            WidgetId("CheckSeb".to_string()),
+            WidgetId("GetTicket".to_string()),
+            WidgetId("CustomerName".to_string()),
+            WidgetId("CustomerPhone".to_string()),
+            WidgetId("SalesmanName".to_string()),
+            WidgetId("TechnicianName".to_string()),
+            WidgetId("CheckInNotes".to_string()),
+            WidgetId("Recommendations".to_string()),
+            WidgetId("CustomerEmail".to_string()),
+            WidgetId("DeviceName".to_string()),
+            WidgetId("DeviceMfg".to_string()),
+            WidgetId("DeviceModel".to_string()),
+            WidgetId("DeviceSerial".to_string()),
+            WidgetId("DevicePassword".to_string()),
+            WidgetId("DevicePowerSupply".to_string()),
+            WidgetId("CarboniteDeviceName".to_string()),
+            WidgetId("CarboniteDeviceId".to_string()),
+            WidgetId("ActivationCode".to_string()),
+            WidgetId("RecurlyId".to_string()),
+            WidgetId("UsageGb".to_string()),
+            // Add any other widget IDs handled by this tab
+        ]
+    }
+
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id, button } => {
@@ -26,7 +61,11 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                             let cps_tx = tx.clone();
                             let service_num = self.order_number.input.borrow().clone();
                             svc_data.ticket_data.service_number = service_num.lines()[0].to_string();
-                            let cps_request = SendRequest::get_cps(service_num.lines()[0].to_string(), self.client.clone());
+                            
+                            let cps_request = SendRequest::get_cps(
+                                service_num.lines()[0].to_string(), 
+                                self.client.clone()
+                            );
 
                             tokio::spawn(async move{
                                 let req =  cps_request.await.unwrap_or_default();
@@ -61,21 +100,34 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                             }
                             let cust_email = svc_data.customer_data.email.clone();
                             if !cust_email.is_empty() {
+                                log::info!("Customer email: {cust_email:?}");
                                 let client = self.client.clone();
                                 tokio::spawn(async move {
-                                    let mut params: HashMap<&str, &str> = HashMap::new();
-                                    params.insert("user_email", "logan.lees@pclaptops.com");
-                                    params.insert("user_password", "Poolparty1");
-                                    params.insert("application", "carbonite");
-                                    params.insert("action", "search");
-                                    params.insert("search", &cust_email);
+                                    // let mut params: HashMap<&str, &str> = HashMap::new();
+                                    // params.insert("user_email", "logan.lees@pclaptops.com");
+                                    // params.insert("user_password", "Poolparty1");
+                                    // params.insert("application", "carbonite");
+                                    // params.insert("action", "search");
+                                    // params.insert("search", &cust_email);
+
+                                    let json = serde_json::json!({
+                                        "user_email": "logan.lees@pclaptops.com",
+                                        "user_password": "Poolparty1",
+                                        "application": "carbonite",
+                                        "action": "search",
+                                        "search": &cust_email
+                                    });
 
                                     let response = client
                                         .post("https://scaffold.pclaptops.com/api/index")
                                         .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                                        .form(&params)
+                                        .header(ACCEPT, "application/json")
+                                        .json(&json)
+                                        // .form(&params)
                                         .send()
                                         .await?;
+
+                                    log::info!("response: {response:?}");
 
                                     let response_json: Vec<CarboniteResponse> = response.json().await?;
                                     log::info!("SEB Response: {:?}", response_json);
@@ -83,6 +135,8 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                     tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
                                     Ok::<(), anyhow::Error>(())
                                 });
+                            } else {
+                                log::info!("Customer email is empty, cannot check SEB.");
                             }
                         }
                     },

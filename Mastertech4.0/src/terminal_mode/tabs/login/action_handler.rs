@@ -2,6 +2,18 @@ use crate::{pages::login_page::Login, terminal_mode::events::action_handler::{Ac
 use super::LoginTab;
 
 impl <'a> ActionHandler for LoginTab <'a> {
+    fn widget_id(&self) -> WidgetId {
+        WidgetId("LoginTab".to_string()) // Unique ID for the tab
+    }
+
+    fn managed_widget_ids(&self) -> Vec<WidgetId> {
+        vec![
+            WidgetId("Username".to_string()),
+            WidgetId("Password".to_string()),
+            WidgetId("LoginSubmit".to_string()),
+        ]
+    }
+
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::Active { widget_id } => {

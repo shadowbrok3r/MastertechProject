@@ -99,7 +99,8 @@ pub struct ScriptsTab<'a> {
     customer_email: String,
     ctx: Arc<Mutex<TerminalContext>>,
     filesystem: FileSystem,
-    user_scripts_to_run: Vec<String>
+    user_scripts_to_run: Vec<String>,
+    scripts_waiting_for_data: Vec<TodoItem>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -287,7 +288,8 @@ impl<'a> ScriptsTab<'a> {
             customer_email: String::new(),
             ctx,
             filesystem: FileSystem::new(),
-            user_scripts_to_run: Vec::new()
+            user_scripts_to_run: Vec::new(),
+            scripts_waiting_for_data: Vec::new(),
         }
     }
 
@@ -375,6 +377,18 @@ impl<'a> ScriptsTab<'a> {
                 items.iter().filter(|item| item.status == Status::Completed).cloned()
             })
             .collect()
+    }
+
+    fn clear_selected_scripts(&self) {
+        let mut popup_items = self.popup_items.borrow_mut();
+
+        for items in popup_items.values_mut() {
+            for todo_item in items {
+                if todo_item.status == Status::Completed {
+                    todo_item.status = Status::Todo;
+                }
+            }
+        }
     }
 
     pub fn insert_user_scripts(&mut self) {

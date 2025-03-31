@@ -37,35 +37,33 @@ struct License {
     key: String,
 }
 
+
 impl SendRequest {
     pub async fn get_cps(
         so_number: String,
         client: reqwest::Client,
     ) -> anyhow::Result<GetKeysResponse, anyhow::Error> {
-        let mut params: HashMap<&str, &str> = HashMap::new();
-        params.insert("user_email", "logan.lees@pclaptops.com");
-        params.insert("user_password", "Poolparty1");
-        params.insert("application", "software_license_fetch");
-        params.insert("id_order", &so_number);
-        params.insert("action", "fetch_keys");
-        params.insert(
-            "company",
-            if so_number.len() == 8 {
-                "pcl"
-            } else {
-                "prestashop"
-            },
-        );
+        let json = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com",
+            "user_password": "Poolparty1",
+            "application": "software_license_fetch",
+            "action": "fetch_keys",
+            "id_order": &so_number,
+            "company": if so_number.len() == 8 { "pcl" } else { "prestashop" }
+        });
 
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-            .header(CONTENT_TYPE, "application/json")
+            .post("https://scaffold.pclaptops.com/api/index")
+            .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
             .header(ACCEPT, "application/json")
-            .form(&params)
+            .json(&json)
+            // .form(&params)
             .send()
             .await?;
 
         let response_text: Vec<License> = response.json().await?;
+
+        log::info!("Response: {:?}", response_text);
 
         let mut _webroot_key = "";
         let mut _superanti_key = "";
@@ -216,16 +214,22 @@ where
     params.insert("action", "search");
 
     if let Some(customer_email) = customer_email {
-        params.insert("search", &customer_email);
+        // let mut params: HashMap<&str, &str> = HashMap::new();
+        let json = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com",
+            "user_password": "Poolparty1",
+            "application": "carbonite",
+            "action": "search",
+            "search": &customer_email
+        });
 
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-            .header(CONTENT_TYPE, "application/json")
-            // .header(ACCEPT, "application/json")
-            .form(&params)
-            .send()
-            .await
-            .unwrap();
+        .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .json(&json)
+        .send()
+        .await?;
 
         // info!("response: {:?}", response.text().await?);
 

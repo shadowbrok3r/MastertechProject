@@ -1,9 +1,27 @@
 
-use crate::terminal_mode::events::action_handler::{ActionHandler, WidgetEvent};
+use crate::terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId};
 
 use super::{MenuBar, Tab};
 
 impl<'a> ActionHandler for MenuBar<'a> {
+    fn widget_id(&self) -> WidgetId {
+        WidgetId("MenuBar".to_string()) // Unique ID for the tab
+    }
+
+    fn managed_widget_ids(&self) -> Vec<WidgetId> {
+        vec![
+            WidgetId("Ticket".to_string()),
+            WidgetId("Scripts".to_string()),
+            WidgetId("System".to_string()),
+            WidgetId("Ncdu".to_string()),
+            WidgetId("Tasks".to_string()),
+            WidgetId("Webconsole".to_string()),
+            WidgetId("Logs".to_string()),
+            WidgetId("Login".to_string()),
+            WidgetId("Connect".to_string()),
+        ]
+    }
+
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id , button: _} => {

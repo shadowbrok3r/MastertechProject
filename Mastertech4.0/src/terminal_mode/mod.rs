@@ -175,7 +175,7 @@ impl Default for TerminalApp <'_>{
 impl <'a>TerminalApp<'a> {
     async fn ui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<(), anyhow::Error> {
         let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
-        let send_interval = Duration::from_secs_f32(0.4); // Changed: ~3 FPS interval
+        let send_interval = Duration::from_secs_f32(0.3); // Changed: ~3 FPS interval
         let can_start = &mut false;
         // let manual_start = &mut false;
 
@@ -245,6 +245,7 @@ impl <'a>TerminalApp<'a> {
                 }
                 break; 
             }
+            
             if let Ok(start) = start_rx.try_recv() {
                 *can_start = start;
             }
@@ -253,6 +254,7 @@ impl <'a>TerminalApp<'a> {
                 *can_start = start;
                 // *manual_start = start;
             }
+            
             terminal.draw(|f| {
                 if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
                     Self::render_splash_screen(f, &mut splash_screen, &mut splash_screen2);
@@ -269,8 +271,6 @@ impl <'a>TerminalApp<'a> {
                             }
                         }
                     }
-                    
-
 
                     if let Ok(connection_state) = connection_state_rx.try_recv() {
                         if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
@@ -279,6 +279,7 @@ impl <'a>TerminalApp<'a> {
                     }
 
                     let page_state = &mut Tab::default();
+                    
                     if let Ok(mut menu) = self.menu_bar.try_borrow_mut() {
                         menu.check_active_tab();
                         *page_state = menu.current_tab.borrow().clone();
@@ -298,6 +299,7 @@ impl <'a>TerminalApp<'a> {
                     self.tasks_tab.borrow_mut().check_tasks();
             
                     let area = f.area();
+
                     f.buffer_mut().set_style(area, Style::default().bg(Color::Rgb(8, 8, 12)));
             
                     let layout = Layout::default()
@@ -311,11 +313,9 @@ impl <'a>TerminalApp<'a> {
             
                     let tab_layout = Layout::default()
                         .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Percentage(100),
-                        ]).split(outer_chunks[0]);
+                        .constraints([Constraint::Percentage(100)])
+                        .split(outer_chunks[0]);
             
-                    
                     let _ = self.menu_bar::<B>(f, tab_layout, outer_chunks);
                     self.render_systems::<B>(f, notifications.clone(), ui_messages.clone());
                     Self::send_buffer(f, last_sent, send_interval, can_start, buffer_tx.clone());
