@@ -1,10 +1,28 @@
-use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent}, widgets::ButtonType}};
+use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent, WidgetId}, widgets::ButtonType}};
 use ratatui::layout::Rect;
 use std::path::PathBuf;
 
 use super::ScriptsTab;
 
 impl<'a> ActionHandler for ScriptsTab<'a> {
+    fn widget_id(&self) -> WidgetId {
+        WidgetId("ScriptsTab".to_string()) // Unique ID for the tab
+    }
+
+    fn managed_widget_ids(&self) -> Vec<WidgetId> {
+        vec![
+            WidgetId("Run".to_string()),
+            WidgetId("Tuneup".to_string()),
+            WidgetId("Qc".to_string()),
+            WidgetId("WindowsUpdates".to_string()),
+            WidgetId("RunPrechecks".to_string()),
+            WidgetId("Informational".to_string()),
+            WidgetId("UserScripts".to_string()),
+            WidgetId("ServiceNumberScriptsPage".to_string()),
+            // Add any other widget IDs handled by this tab
+        ]
+    }
+
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id , button} => {
@@ -43,14 +61,14 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         let adjusted_x = popup_x.min(frame_area.width.saturating_sub(popup_width));
                         let adjusted_y = popup_y.min(frame_area.height.saturating_sub(popup_height));
                         let popup_area = Rect::new(adjusted_x, adjusted_y, popup_width, popup_height);
-                        log::info!(
-                            "Opening popup for {}: {} items, width: {}, height: {}, area: {:?}",
-                            widget_id.0,
-                            item_count,
-                            popup_width,
-                            popup_height,
-                            popup_area
-                        );
+                        // log::info!(
+                        //     "Opening popup for {}: {} items, width: {}, height: {}, area: {:?}",
+                        //     widget_id.0,
+                        //     item_count,
+                        //     popup_width,
+                        //     popup_height,
+                        //     popup_area
+                        // );
                         self.active_popup.replace(Some((widget_id.clone(), popup_area)));
                         self.list_state.borrow_mut().select(None);
                         self.popup_list_state.borrow_mut().select(None);
@@ -59,25 +77,33 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 let id = widget_id.0.as_str();
                 match id {
                     "Run" => {
-                        if let Ok(ctx) = &mut self.ctx.lock() {
-                            let cust_email = ctx.service_data.customer_data.email.clone();
-                            let so_num = ctx.service_data.ticket_data.service_number.clone();
-                            
-                            self.log_message(format!("so_num and cust_email: {so_num} and {cust_email}"));
-                            if !cust_email.is_empty() && !so_num.is_empty(){
-                                self.service_number = so_num;
-                                self.customer_email = cust_email;
-                                self.log_message(format!("both empty, assigned"));
-                            } else {
-                                let text_area_input = self.service_number_field.input.borrow().clone();
-                                let user_input = &text_area_input.lines()[0];
-                                ctx.service_data.ticket_data.service_number = user_input.to_string();
+                        let text_area_input = self.service_number_field.input.borrow().clone();
+                        let user_input = &text_area_input.lines()[0];
+                        self.service_number = user_input.clone();
+                        
+                        if !self.service_number.is_empty() {
+                            if let Ok(ctx) = &mut self.ctx.lock() {
                                 // ctx.service_data.get_ticket();
-                                self.service_number = user_input.clone();
-                                self.log_message(format!("User input: {user_input:?}"));
+    
+                                let cust_email = ctx.service_data.customer_data.email.clone();
+                                let so_num = ctx.service_data.ticket_data.service_number.clone();
+                                
+                                self.log_message(format!("so_num and cust_email: {so_num} and {cust_email}"));
+
+                                if !cust_email.is_empty() && !so_num.is_empty() {
+                                    self.service_number = so_num;
+                                    self.customer_email = cust_email;
+                                    self.log_message(format!("both empty, assigned"));
+                                } else {
+                                    ctx.service_data.ticket_data.service_number = self.service_number.clone();
+                                    self.log_message(format!("Pulling ticket info: {:?}", self.service_number.clone()));
+                                    ctx.service_data.get_ticket();
+                                }
                             }
                         }
-                        self.run_selected_scripts();
+
+
+                        self.run_selected_scripts(false);
                     },
                     "Tuneup" => {}
                     "Qc" => {}
@@ -158,6 +184,8 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 match api_event {
                     ApiEvent::GetTicketResponse(presta_data) => {
                         self.customer_email = presta_data.customer.email.clone();
+                        self.log_message(format!("self.customer_email: {:?}", self.customer_email));
+                        self.run_selected_scripts(true);
                     }
                     ApiEvent::GetSebResponse(_carbonite_response) => {
                         

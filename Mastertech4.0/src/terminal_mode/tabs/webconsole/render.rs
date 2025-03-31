@@ -1,5 +1,5 @@
 use displays::remote_viewer::ratagui::TerminalEvent;
-use ratatui::{buffer::Buffer, layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Clear, Paragraph, WidgetRef}, Frame};
+use ratatui::{layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, WidgetRef}, Frame};
 use crate::terminal_mode::{data::LocalTermEvent, styling::CATPPUCCIN, widgets::{ButtonType, ShrinkArea}};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 use super::{PageState, WebconsoleTab};
@@ -15,7 +15,7 @@ impl <'a> WebconsoleTab <'a> {
                     .centered();
                 placeholder.render_ref(area, f.buffer_mut());
             },
-            PageState::RemoteTerminal(connection_string) => {
+            PageState::RemoteTerminal(_connection_string) => {
                 // Poll buffer_rx for new frames
                 // if let Some(ref mut buffer_rx) = self.buffer_rx {
                 //     while let Ok((frame_count, buffer)) = buffer_rx.try_recv() {
@@ -101,12 +101,10 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
                 ])
             .split(left_side_chunks[1]);
         
-        if self.ws_clients.is_empty() {
-            f.render_widget(&self.get_clients_btn, button_grid[0].shrink(4, 1));
-        } else {
-            for (i, (_, btn)) in self.ws_clients.iter().enumerate() {
-                f.render_widget(btn, button_grid[i].shrink(4, 1));
-            }
+        f.render_widget(&self.get_clients_btn, button_grid[0].shrink(4, 1));
+
+        for (i, (_, btn)) in self.ws_clients.iter().enumerate() {
+            f.render_widget(btn, button_grid[i].shrink(4, 1));
         }
 
         self.draw_page(f, right_half);
@@ -117,7 +115,6 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
         let r = mouse_event.row;
         let mouse_position = Position::new(c, r);
 
-        
         match mouse_event.kind {
             crossterm::event::MouseEventKind::Down(_) => {
                 if let (Some(_), PageState::RemoteTerminal(_)) = (&self.remote_buffer, &self.page_state) {

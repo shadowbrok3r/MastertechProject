@@ -294,19 +294,33 @@ pub async fn install_supereasybackup(
             let activation_code = &carbonite_entry.activation_code;
             #[cfg(target_os = "windows")]
             {
+                let cmd_string = format!(
+                    "msiexec /i \"{}\" /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}",
+                    seb_path, activation_code
+                );
+
+                info!("cmd_string: {:?}", cmd_string);
+                
+                let cmd_stdout = Command::new("powershell")
+                    .arg("-Command") // Tells PowerShell to execute the following string as a command
+                    .arg(cmd_string)
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW flag
+                    .spawn()?;
+
                 // msiexec /i SuperEasyBackup.msi /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}
-                let cmd_stdout = Command::new("msiexec")
-                    .arg("/i ")
-                    .arg(seb_path)
-                    .arg("/qn")
-                    .arg("Silent=1")
-                    .arg("ActivationURL=https://blue.mysecuredatavault.com")
-                    .arg(format!("ActivationCode={}", activation_code))
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .spawn()?
-                    .stdout;
+                // let cmd_stdout = Command::new("msiexec")
+                //     .arg("/i")
+                //     .arg(seb_path)
+                //     .arg("/qn")
+                //     .arg("Silent=1")
+                //     .arg("ActivationURL=https://blue.mysecuredatavault.com")
+                //     .arg(format!("ActivationCode={}", activation_code))
+                //     .creation_flags(CREATE_NO_WINDOW)
+                //     .spawn()?;
     
-                info!("cmd_stdout: {:?}", cmd_stdout);
+                info!("cmd_stderr: {:?}", cmd_stdout.stderr);
+                info!("cmd_stdin: {:?}", cmd_stdout.stdin);
+                info!("cmd_stdout: {:?}", cmd_stdout.stdout);
             }
         }
     }

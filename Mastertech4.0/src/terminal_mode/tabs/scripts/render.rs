@@ -322,8 +322,8 @@ impl<'a> ScriptsTab<'a> {
                 |items| {
                     items.iter().map(|item| {
                         let prefix = match item.status {
-                            Status::Todo => "☐",
-                            Status::Completed => "☒",
+                            Status::Todo => "[ ]",
+                            Status::Completed => "[X]",
                         };
                         ListItem::new(Line::from(format!("{} {}", prefix, item.text)))
                     }).collect()

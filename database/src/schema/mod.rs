@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
 use serde_json::Value;
-use reqwest::Client;
+use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use crate::DATABASE;
 use anyhow::Error;
 
@@ -493,17 +493,21 @@ pub struct CarboniteResponse {
 
 impl CarboniteResponse {
     pub async fn from_customer_email(&self, customer_email: String, client: Client) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let mut params: HashMap<&str, &str> = HashMap::new();
-        params.insert("user_email", "logan.lees@pclaptops.com");
-        params.insert("user_password", "Poolparty1");
-        params.insert("application", "carbonite");
-        params.insert("action", "search");
-        params.insert("search", &customer_email);
+        // let mut params: HashMap<&str, &str> = HashMap::new();
+        let json = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com",
+            "user_password": "Poolparty1",
+            "application": "carbonite",
+            "action": "search",
+            "search": &customer_email
+        });
 
         let response = client
             .post("https://scaffold.pclaptops.com/api/index")
-            .header(reqwest::header::CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-            .form(&params)
+            .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+            .header(ACCEPT, "application/json")
+            .json(&json)
+            // .form(&params)
             .send()
             .await?;
 

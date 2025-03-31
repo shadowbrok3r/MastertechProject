@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button};
+use crate::{filesystem::get_client_hash, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button}};
 use crossbeam::channel::{Receiver, Sender};
 use database::{WS_MASTER_URL, schema::ConnectedClient};
 use displays::remote_viewer::{decode_buffer, ratagui::TerminalEvent};
@@ -16,7 +16,7 @@ pub struct WebconsoleTab <'a> {
     // pub _current_client: Option<ConnectedClient>,
     pub _client: Client,
     pub page_state: PageState,
-    pub ctx: Arc<Mutex<TerminalContext>>,
+    pub _ctx: Arc<Mutex<TerminalContext>>,
     pub remote_buffer: Option<Buffer>, // Store the latest received buffer
     pub buffer_rx: Option<tokio::sync::mpsc::UnboundedReceiver<(u64, Buffer)>>, // Receive remote buffers
     pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
@@ -34,7 +34,7 @@ pub enum PageState {
 }
 
 impl <'a> WebconsoleTab <'a> {
-    pub fn new(_client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
+    pub fn new(_client: Client, _ctx: Arc<Mutex<TerminalContext>>) -> Self {
         let (connected_clients_tx, connected_clients_rx) = crossbeam::channel::unbounded();
         let (event_tx, event_rx) = crossbeam::channel::unbounded();
         Self {
@@ -42,7 +42,7 @@ impl <'a> WebconsoleTab <'a> {
             ws_clients: HashMap::new(),
             // current_client: None,
             _client,
-            ctx,
+            _ctx,
             page_state: PageState::None,
             remote_buffer: None,
             buffer_rx: None,
@@ -57,7 +57,7 @@ impl <'a> WebconsoleTab <'a> {
     pub fn receive(&mut self) {
         if let Ok(clients) = self.connected_clients_rx.try_recv() {
             for client in clients.iter() {
-                if client.connected {
+                if client.connected && client.connection_string != get_client_hash().connection_string {
                     self.ws_clients.insert(
                         client.connection_string.clone(),
                         Button::new(&client.connection_string, WidgetId(client.connection_string.clone())).theme(CATPPUCCINTHEME),
@@ -84,7 +84,7 @@ impl <'a> WebconsoleTab <'a> {
         // self.event_tx = Some(event_tx);
 
         let connection_url = format!("{WS_MASTER_URL}&room_id={}", connection_string);
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
+        let (_shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
         let rx = self.event_rx.clone();
         tokio::spawn(async move {
             let connection = ewebsock::connect(connection_url, ewebsock::Options::default());
@@ -96,6 +96,7 @@ impl <'a> WebconsoleTab <'a> {
 
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        
                         if let Ok(evt) = rx.try_recv(){
                             if let Ok(event) = serde_json::to_vec::<TerminalEvent>(&evt) {
                                 log::info!("Sending evt to tui: {:?}", event);

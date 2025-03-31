@@ -1,11 +1,10 @@
 use crate::tabs::{scripts::{ScheduledTask, StartupProgram, StartupState}, tur_sheet::get_ticket::SendRequest};
-use super::{checklist::Category, render::Reporter, ScriptsTab};
+use super::{checklist::{Category, TodoItem}, render::Reporter, ScriptsTab};
 use std::{path::{Path, PathBuf}, process::Command};
 use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 use sysinfo::Disks;
-
 
 #[cfg(target_os="windows")]
 use crate::{
@@ -31,13 +30,32 @@ use crate::{
  
 */
 impl <'a> ScriptsTab <'a> {
-    pub fn run_selected_scripts(&mut self) {
-        let selected = self.get_selected_scripts();
-        if selected.is_empty() {
-            self.log_message("No scripts selected to run.");
-            return;
-        }
+    pub fn run_selected_scripts(&mut self, rerun: bool) {
+        let selected = if rerun {
+            let scripts = self.scripts_waiting_for_data.clone();
+            if scripts.is_empty() {
+                self.log_message("No scripts selected to run.");
+                return;
+            } else {
+                scripts
+            }
+        } else {
+            let scripts = self.get_selected_scripts();
 
+            self.scripts_waiting_for_data = scripts.iter().filter(|s| {
+                match s.text.as_str() {
+                    "Activate CPS" | "Activate SEB" => true,
+                    _ => false,
+                }
+            }).cloned().collect::<Vec<TodoItem>>();
+
+            if scripts.is_empty() {
+                self.log_message("No scripts selected to run.");
+                return;
+            } else {
+                scripts
+            }
+        };
 
         for item in selected {
             let category = item.category().clone();
@@ -69,6 +87,9 @@ impl <'a> ScriptsTab <'a> {
             log::info!("Cleared current script");
         }
         self.log_message("All selected scripts completed.");
+        if !rerun {
+            self.clear_selected_scripts();
+        }
         self.current_script.replace(None);
     }
 
@@ -395,7 +416,11 @@ impl <'a> ScriptsTab <'a> {
 
     #[cfg(target_os="windows")]
     fn activate_cps(&mut self, item_text: &str, category: &Category) {
-        let service_number = self.service_number.clone();
+        if self.service_number.is_empty() {
+            self.log_message("CPS activation requires SO number.");
+            return;
+        }
+
         if let Ok(processes) = get_running_processes() {
             for process in processes {
                 let name = process.process_name.to_lowercase();
@@ -415,17 +440,14 @@ impl <'a> ScriptsTab <'a> {
             }
         }
 
-        if service_number.is_empty() {
-            self.log_message("CPS activation requires SO number.");
-            return;
-        }
-
-        let so = service_number.clone();
+        let so = self.service_number.clone();
         let tx = self.progress_tx.clone();
         let client = self.client.clone();
+        
         tokio::spawn(async move {
-            let cps_request = SendRequest::get_cps(so.clone(), client.clone());
-            let cps_keys = cps_request.await.unwrap_or_default();
+            let cps_request = SendRequest::get_cps(so.clone(), client.clone()).await;
+            log::info!("CPS Request: {cps_request:?}");
+            let cps_keys = cps_request.unwrap_or_default();
             let res = install_webroot(cps_keys.webroot_key.clone(), client.clone(), tx.clone()).await;
             log::info!("install_webroot Result: {res:?}");
             let res = install_sas(cps_keys.superanti_key.clone(), client.clone(), tx).await;
@@ -439,10 +461,12 @@ impl <'a> ScriptsTab <'a> {
     fn activate_seb(&mut self, item_text: &str, category: &Category) {
         let service_number = self.service_number.clone();
         let email = self.customer_email.clone();
+        
         if service_number.is_empty() || email.is_empty() {
-            self.log_message("CPS activation requires SO number.");
+            self.log_message("SEB activation requires SO number or email.");
             return;
         }
+
         let client = self.client.clone();
         let tx = self.progress_tx.clone();
         tokio::spawn(async move {
@@ -452,7 +476,6 @@ impl <'a> ScriptsTab <'a> {
             }
         });
         
-        self.log_message("SEB activation not implemented (requires SO number or email).");
         self.update_checklist(category.clone(), item_text, false);
     }
 

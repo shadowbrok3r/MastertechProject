@@ -1,9 +1,19 @@
 use database::schema::utilities::get_connected_clients;
 
-use crate::terminal_mode::events::action_handler::{ActionHandler, WidgetEvent};
+use crate::terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId};
 use super::{PageState, WebconsoleTab};
 
 impl <'a> ActionHandler for WebconsoleTab <'a> {
+    fn widget_id(&self) -> WidgetId {
+        WidgetId("WebconsoleTab".to_string()) // Unique ID for the tab
+    }
+    
+    fn managed_widget_ids(&self) -> Vec<WidgetId> {
+        vec![
+            WidgetId("GetClients".to_string()),
+        ]
+    }
+
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::Active { widget_id: _ } => {}
