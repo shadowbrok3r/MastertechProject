@@ -2,6 +2,8 @@ use ratatui::{crossterm::event::{KeyEvent, MouseEvent}, layout::Rect, prelude::B
 use ratatui::symbols::border::Set;
 use button::ButtonState;
 
+use super::tabs::login::LoginTab;
+
 pub mod json_viewer;
 pub mod button;
 pub mod input_field;
@@ -29,13 +31,33 @@ pub const _SHORTCUT_SET_2: Set = Set {
     horizontal_bottom: "▔",
 };
 
-pub trait HandleWidget<'a>{
+pub trait HandleWidget<'a> { // : HandleClientWidget
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect);
     /// Handle a mouse event
     fn handle_mouse_event(&self, _mouse_event: &MouseEvent) { }
     /// Handle a key event
     fn handle_key_event(&mut self, _key_event: KeyEvent) -> bool { true }
+
+    // fn do_the_websocket_thing(&mut self) {
+    //     self.do_thing(|w| {
+    //         String::new()
+    //     });
+    // }
 }
+
+// pub enum WhichAmI {
+//     Master,
+//     Client
+// }
+
+// pub trait HandleClientWidget {
+//     fn do_thing<T: FnOnce(WhichAmI) -> String >(&mut self, add_contents: T) {
+//         let who_am_i = WhichAmI::Client;
+
+//         let x = add_contents(who_am_i);
+
+//     }
+// }
 
 
 pub trait ButtonType <'a> {
