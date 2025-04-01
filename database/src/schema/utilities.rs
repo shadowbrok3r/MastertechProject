@@ -282,7 +282,7 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), 
 pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
     debug!("get_connected_clients");
     let query: Vec<ConnectedClient> = DATABASE
-        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id PARALLEL")
+        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ")
         .await?
         .take(0)?;
     // info!("Clients: {:?}", query);

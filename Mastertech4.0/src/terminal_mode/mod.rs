@@ -5,7 +5,7 @@ use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::Service
 use websockets::TerminalWebsocketClient;
 // use websockets::TerminalWebsocketClient; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
-use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
+use events::{action_handler::{get_event_receiver, ActionHandler, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
 // use fx::{effect::UniqueEffectId, EffectStage};
@@ -255,6 +255,10 @@ impl <'a>TerminalApp<'a> {
                 // *manual_start = start;
             }
             
+            if let Ok(webconsole) = self.webconsole_tab.try_borrow() {
+                self.event_manager.update_widget_mappings(webconsole.widget_id());
+            }
+
             terminal.draw(|f| {
                 if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
                     Self::render_splash_screen(f, &mut splash_screen, &mut splash_screen2);

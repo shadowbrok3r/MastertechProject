@@ -41,7 +41,7 @@ impl RenderSystem {
                 }) => {
                     match recv_result {
                         Ok(Ok(message)) => {
-                            log::info!("RenderSystem Received Message: {}", message.as_display());
+                            // log::info!("RenderSystem Received Message: {}", message.as_display());
     
                             if let Some(notification) = message.as_any().downcast_ref::<Notification>() {
                                 if let Ok(mut notif) = self.notifications.lock() {

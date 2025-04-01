@@ -1,5 +1,5 @@
 use database::schema::utilities::create_full_task_payload;
-use crate::{app_state::MastertechContext, tabs::scripts::InstalledProgram};
+use crate::app_state::MastertechContext;
 use chrono::{DateTime, SecondsFormat};
 use tokio::spawn;
 use log::info;
@@ -20,17 +20,20 @@ impl MastertechContext {
         task_data.due_date = due_date.unwrap_or_default();
         let send_specs = self.send_specs.clone();
 
-        let mut programs: Vec<serde_json::Value> = vec![];
+        #[cfg(target_os="windows")]
+        {
+            let mut programs: Vec<serde_json::Value> = vec![];
 
-        if let Ok(installed_programs) = InstalledProgram::get_installed_programs() {
-            for program in installed_programs.iter() {
-                if let Ok(val) = serde_json::to_value(program) {
-                    programs.push(val.clone());
+            if let Ok(installed_programs) = tabs::scripts::InstalledProgram::get_installed_programs() {
+                for program in installed_programs.iter() {
+                    if let Ok(val) = serde_json::to_value(program) {
+                        programs.push(val.clone());
+                    }
                 }
+                computer_data.installed_programs = Some(programs.clone());
+            } else {
+                info!("Failed to get installed programs");
             }
-            computer_data.installed_programs = Some(programs.clone());
-        } else {
-            info!("Failed to get installed programs");
         }
 
         spawn(async move {

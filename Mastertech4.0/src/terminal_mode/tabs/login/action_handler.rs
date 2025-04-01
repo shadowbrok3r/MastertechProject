@@ -26,7 +26,7 @@ impl <'a> ActionHandler for LoginTab <'a> {
                     _ => {},
                 }
             }
-            WidgetEvent::ButtonClick { widget_id, button: _} => {
+            WidgetEvent::ButtonClick { widget_id, button: _, source: _} => {
                 let logout_label = self.login_btn.get_label();
                 if logout_label == "Logout" {
                     // let mut file = std::fs::File::

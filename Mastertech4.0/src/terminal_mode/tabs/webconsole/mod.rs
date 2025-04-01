@@ -1,4 +1,4 @@
-use crate::{filesystem::get_client_hash, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button}};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button};
 use crossbeam::channel::{Receiver, Sender};
 use database::{WS_MASTER_URL, schema::ConnectedClient};
 use displays::remote_viewer::{decode_buffer, ratagui::TerminalEvent};
@@ -23,7 +23,8 @@ pub struct WebconsoleTab <'a> {
     pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
     pub event_tx: Sender<TerminalEvent>,
     pub event_rx: Receiver<TerminalEvent>,
-    pub client_area: Rect
+    pub client_area: Rect,
+    pub show_side_panel: bool,
 }
 
 // Define a page state to track what’s displayed on the right side
@@ -50,19 +51,22 @@ impl <'a> WebconsoleTab <'a> {
             connected_clients_rx,
             // event_tx: None,
             event_tx, event_rx,
-            client_area: Rect::default()
+            client_area: Rect::default(),
+            show_side_panel: true
         }
     }
 
     pub fn receive(&mut self) {
         if let Ok(clients) = self.connected_clients_rx.try_recv() {
             for client in clients.iter() {
-                if client.connected && client.connection_string != get_client_hash().connection_string {
+                // if client.connected && client.connection_string != crate::filesystem::get_client_hash()
+                    // .connection_string 
+                // {
                     self.ws_clients.insert(
                         client.connection_string.clone(),
                         Button::new(&client.connection_string, WidgetId(client.connection_string.clone())).theme(CATPPUCCINTHEME),
                     );
-                }
+                // }
             }
         }
         // Poll buffer_rx for new frames

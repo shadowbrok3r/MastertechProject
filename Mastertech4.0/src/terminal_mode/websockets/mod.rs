@@ -18,7 +18,7 @@ pub struct TerminalWebsocketClient {
     bin_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     command_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     command_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
-    process: Arc<Mutex<Option<ChildStdin>>>,
+    // process: Arc<Mutex<Option<ChildStdin>>>,
     interactive_input_tx: tokio::sync::mpsc::UnboundedSender<String>, 
     interactive_input_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     client: ConnectedClient, // Store client info
@@ -30,14 +30,14 @@ impl TerminalWebsocketClient {
         let (bin_tx, bin_rx) = tokio::sync::mpsc::unbounded_channel();
         let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (interactive_input_tx, interactive_input_rx) = tokio::sync::mpsc::unbounded_channel();
-        let process = Arc::new(Mutex::new(None));
+        // let process = Arc::new(Mutex::new(None));
 
 
         Self {
             bin_tx,
             bin_rx,
             client: get_client_hash(),
-            process,
+            // process,
             command_tx,
             command_rx,
             interactive_input_tx,
@@ -67,7 +67,7 @@ impl TerminalWebsocketClient {
                 loop {
                     // Handle WebSocket events (e.g., READY or TerminalEvent from egui)
                     while let Some(event) = receiver.try_recv() {
-                        log::info!("Received WebSocket event: {:?}", event);
+                        // log::info!("Received WebSocket event: {:?}", event);
                         // update client to connected = false in db
                         match event {
                             WsEvent::Opened => { 
