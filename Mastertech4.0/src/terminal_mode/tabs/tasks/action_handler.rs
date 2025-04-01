@@ -15,7 +15,7 @@ impl ActionHandler for TasksTab {
             WidgetEvent::Active { widget_id: _ } => {
 
             }
-            WidgetEvent::ButtonClick { widget_id: _, button: _} => {
+            WidgetEvent::ButtonClick { widget_id: _, button: _, source: _} => {
             }
             _ => {}
         }

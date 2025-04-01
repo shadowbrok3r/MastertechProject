@@ -9,15 +9,23 @@ impl <'a> ActionHandler for WebconsoleTab <'a> {
     }
     
     fn managed_widget_ids(&self) -> Vec<WidgetId> {
-        vec![
+        let mut ids = vec![
             WidgetId("GetClients".to_string()),
-        ]
+            WidgetId("ToggleSidePanel".to_string())
+        ];
+        
+        for (_, btn) in self.ws_clients.iter() {
+            ids.push(btn.get_widget_id());
+        }
+        ids
     }
 
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::Active { widget_id: _ } => {}
-            WidgetEvent::ButtonClick { widget_id, button: _} => {
+            WidgetEvent::ButtonClick { widget_id, button: _, source: _ } => {
+                if !event.is_source_me() { }
+
                 match widget_id.0.as_str() {
                     "GetClients" => {
                         let tx = self.connected_clients_tx.clone();
@@ -28,40 +36,18 @@ impl <'a> ActionHandler for WebconsoleTab <'a> {
                             }
                         });
                     }
+                    "ToggleSidePanel" => { self.show_side_panel = !self.show_side_panel; }
                     _ => {
-                        if let Some((connection_string, _)) = self.ws_clients.iter().find(|(_, btn)| btn.get_widget_id().0 == widget_id.0) {
+                        if let Some((connection_string, _)) = self
+                            .ws_clients
+                            .iter()
+                            .find(|(_, btn)| btn.get_widget_id().0 == widget_id.0) 
+                        {
                             // Switch page state and start WebSocket for the selected client
+                            self.show_side_panel = false;
                             self.page_state = PageState::RemoteTerminal(connection_string.clone());
                             self.start_remote_websocket(connection_string.clone());
                         }
-                        // log::info!("Received Connection Command");
-                        // let url = format!(
-                        //     "{WS_MASTER_URL}&room_id={}",
-                        //     client.connection_string.clone()
-                        // );
-                        // match ewebsock::connect(&url, Default::default()) {
-                        //     Ok((ws_sender, ws_receiver)) => {
-                        //         client.connected = true;
-        
-                        //         let ws_client = WebSocketClient::new(
-                        //             ws_sender,
-                        //             ws_receiver,
-                        //             client.clone(),
-                        //             self.filesystem.clone(),
-                        //         );
-                                
-                        //         self.ws_clients
-                        //             .entry(client.connection_string.clone())
-                        //             .or_insert(ws_client);
-        
-                        //         self.error = format!("WebConsole -> Connected to server");
-                        //     }
-                        //     Err(error) => {
-                        //         client.connected = false;
-                        //         log::info!("Failed to connect to {:?}: {}", &url, error.clone());
-                        //         self.error = format!("WebConsole Error -> {error}");
-                        //     }
-                        // };
                     }
                 }
             }

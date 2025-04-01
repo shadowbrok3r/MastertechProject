@@ -65,49 +65,62 @@ impl <'a> WebconsoleTab <'a> {
 impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
         self.receive();
-        // Split area into buttons (left) and logs (right)
+        // Define constraints based on show_side_panel
+        let constraints: &[Constraint] = if self.show_side_panel {
+            &[
+                Constraint::Percentage(20), // Left: Buttons
+                Constraint::Percentage(80), // Right: Logs
+            ]
+        } else {
+            &[Constraint::Percentage(100)] // Full width for main content
+        };
+
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(15), // Left: Buttons
-                Constraint::Percentage(85), // Right: Logs
-            ])
+            .constraints(constraints)
             .split(area);
 
-        let left_half = main_chunks[0];
-        let right_half = main_chunks[1];
+        // Determine the main content area
+        let main_content_area = if self.show_side_panel {
+            main_chunks[1] // Right half when side panel is shown
+        } else {
+            main_chunks[0] // Full area when side panel is hidden
+        };
 
-        let left_side_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(2),
-            Constraint::Percentage(98),
-        ])
-        .split(left_half);
-
-        let para = Paragraph::new("Clients")
-            .block(Block::default().bg(CATPPUCCIN.base))
-            .centered();
-
-        para.render_ref(left_side_chunks[0], f.buffer_mut());
-
-        // Create grid layout for buttons
-        let button_grid = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                vec![
-                    Constraint::Length(4);
-                    if self.ws_clients.is_empty() { 1 } else { self.ws_clients.len() }     
+        // Conditionally render the side panel
+        if self.show_side_panel {
+            let left_half = main_chunks[0];
+            let left_side_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(2),  // Clients label
+                    Constraint::Percentage(98), // Buttons
                 ])
-            .split(left_side_chunks[1]);
-        
-        f.render_widget(&self.get_clients_btn, button_grid[0].shrink(4, 1));
+                .split(left_half);
 
-        for (i, (_, btn)) in self.ws_clients.iter().enumerate() {
-            f.render_widget(btn, button_grid[i].shrink(4, 1));
+            let para = Paragraph::new("Clients")
+                .block(Block::default().bg(CATPPUCCIN.base))
+                .centered();
+            para.render_ref(left_side_chunks[0], f.buffer_mut());
+
+            // Create grid layout for buttons
+            let button_count = 1 + self.ws_clients.len(); // 1 for Get Clients, plus one per client
+            let button_grid = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(vec![Constraint::Length(4); button_count])
+                .split(left_side_chunks[1]);
+
+            // Render "Get Clients" button at index 0
+            f.render_widget(&self.get_clients_btn, button_grid[0].shrink(4, 1));
+
+            // Render client buttons starting at index 1
+            for (i, (_, btn)) in self.ws_clients.iter().enumerate() {
+                f.render_widget(btn, button_grid[i + 1].shrink(4, 1));
+            }
         }
 
-        self.draw_page(f, right_half);
+        // Render the main content area
+        self.draw_page(f, main_content_area);
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {

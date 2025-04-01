@@ -49,7 +49,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
 
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
-            WidgetEvent::ButtonClick { widget_id, button } => {
+            WidgetEvent::ButtonClick { widget_id, button , source: _} => {
                 log::info!("Button: {button:?}");
                 match widget_id.0.as_str() {
                     "SubmitTur" => if let Ok(svc_data) = &mut self.service_data.lock() {

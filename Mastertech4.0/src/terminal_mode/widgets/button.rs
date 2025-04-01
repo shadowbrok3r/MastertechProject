@@ -3,7 +3,7 @@ use ratatui::{
     buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Style}, text::Line, widgets:: WidgetRef
 };
 use tachyonfx::{CellFilter, Effect};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE};
+use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE}};
 use std::{cell::RefCell, fmt::{Debug, Display}};
 use super::{ButtonType, SHORTCUT_SET};
 
@@ -148,7 +148,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
                 // Check if the mouse click is within area
                 if area.contains(mouse_position) {
                     self.set_state(ButtonState::Active);
-                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Left });
+                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Left, source: get_client_hash().connection_string });
                     self.click(); // calls our on_click callback
                 } else {
                     self.set_state(ButtonState::Normal);
@@ -156,7 +156,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if area.contains(mouse_position) {
-                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Right });
+                    let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Right, source: get_client_hash().connection_string });
                     self.set_state(ButtonState::AltClicked);
                 } else {
                     self.set_state(ButtonState::Normal);

@@ -18,6 +18,8 @@ use crate::{
 pub mod action_handler;
 pub mod render;
 pub mod checklist;
+
+#[cfg(target_os="windows")]
 pub mod script_checks;
 
 /* A Reporting System for each of these things like the AHS tuneup */

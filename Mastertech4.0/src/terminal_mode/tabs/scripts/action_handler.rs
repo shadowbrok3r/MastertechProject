@@ -25,7 +25,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
 
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
-            WidgetEvent::ButtonClick { widget_id , button} => {
+            WidgetEvent::ButtonClick { widget_id , button, source: _} => {
                 log::info!("Button: {button:?}\nwidget: {widget_id:?}");
                 // Show popup to the right of the clicked button
                 let widget_button = match widget_id.0.as_str() {
@@ -102,7 +102,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                             }
                         }
 
-
+                        #[cfg(target_os="windows")]
                         self.run_selected_scripts(false);
                     },
                     "Tuneup" => {}
@@ -185,6 +185,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     ApiEvent::GetTicketResponse(presta_data) => {
                         self.customer_email = presta_data.customer.email.clone();
                         self.log_message(format!("self.customer_email: {:?}", self.customer_email));
+                        #[cfg(target_os="windows")]
                         self.run_selected_scripts(true);
                     }
                     ApiEvent::GetSebResponse(_carbonite_response) => {

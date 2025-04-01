@@ -2,7 +2,7 @@
 use database::schema::{prestashop_schema::PrestashopPayload, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
 use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use crate::{filesystem::system_info::ComputerInfo, tabs::scripts::InstalledProgram};
+use crate::filesystem::system_info::ComputerInfo;
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::sync::{Arc, Condvar, Mutex};
 use surrealdb::RecordId;
@@ -174,31 +174,33 @@ impl ServiceData {
         task_data.due_date = DateTime::<Utc>::default().to_rfc3339_opts(SecondsFormat::Secs, true);
         let send_specs = self.send_specs.clone();
 
-        let mut programs: Vec<serde_json::Value> = vec![];
-
-        if let Ok(installed_programs) = InstalledProgram::get_installed_programs() {
-            for program in installed_programs.iter() {
-                if let Ok(val) = serde_json::to_value(program) {
-                    programs.push(val.clone());
+        #[cfg(target_os="windows")]
+        {
+            let mut programs: Vec<serde_json::Value> = vec![];
+            if let Ok(installed_programs) = tabs::scripts::InstalledProgram::get_installed_programs() {
+                for program in installed_programs.iter() {
+                    if let Ok(val) = serde_json::to_value(program) {
+                        programs.push(val.clone());
+                    }
                 }
+                computer_data.installed_programs = Some(programs.clone());
+            } else {
+                log::info!("Failed to get installed programs");
             }
-            computer_data.installed_programs = Some(programs.clone());
-        } else {
-            log::info!("Failed to get installed programs");
         }
-
-        tokio::spawn(async move {
-            let send_payload_result = create_full_task_payload(
-                ticket_data.into(),
-                customer_data,
-                computer_data,
-                task_data.into(),
-                task_notes,
-                send_specs,
-            )
-            .await;
-            log::info!("send_payload_result: {send_payload_result:?}");
-        });
+            tokio::spawn(async move {
+                let send_payload_result = create_full_task_payload(
+                    ticket_data.into(),
+                    customer_data,
+                    computer_data,
+                    task_data.into(),
+                    task_notes,
+                    send_specs,
+                )
+                .await;
+                log::info!("send_payload_result: {send_payload_result:?}");
+            });
+        
     }
 
     

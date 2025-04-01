@@ -3,6 +3,8 @@ use crossbeam::channel::{Receiver, Sender};
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
+use crate::filesystem::get_client_hash;
+
 // Define a global event sender (wrapped in `Arc<Mutex<T>>` for safe access)
 static GLOBAL_EVENT_SENDER: Lazy<(Sender<WidgetEvent>, Receiver<WidgetEvent>)> = Lazy::new(|| crossbeam::channel::unbounded());
 
@@ -30,13 +32,30 @@ pub enum WidgetButton {
     Left,
     Right
 }
+// pub enum WhoAmI {
+//     Source(String),
+// }
 
 /// A common event enum that all widgets use.
 pub enum WidgetEvent {
-    ButtonClick { widget_id: WidgetId, button: WidgetButton},
+    ButtonClick { widget_id: WidgetId, button: WidgetButton, source: String },
     Active { widget_id: WidgetId },
     // UpdateText { widget_id: WidgetId, text: String },
     Api(ApiEvent)
+}
+
+impl WidgetEvent {
+    pub fn is_source_me(&self) -> bool {
+        if let Self::ButtonClick { source, ..} = self {
+            if *source == get_client_hash().connection_string {
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
 }
 
 /// Trait for any widget (or component) that can handle events.
@@ -82,6 +101,31 @@ impl <'a> EventManager <'a> {
             self.widget_to_handler.insert(widget_id.clone(), handler.clone());
         }
         self.handlers.push((handler_id, handler));
+    }
+
+    pub fn update_widget_mappings(&mut self, handler_id: WidgetId) {
+        if let Some((_, handler)) = self.handlers.iter().find(|(id, _)| *id == handler_id) {
+            
+            let handler_id = handler.borrow().widget_id();
+            let widget_ids = handler.borrow().managed_widget_ids();
+            
+            // Remove old mappings for this handler
+            self.widget_to_handler.retain(|_, h| {
+                !std::rc::Rc::ptr_eq(h, handler) || h.borrow().widget_id() != handler_id
+            });
+            
+            // Add new mappings
+            for widget_id in widget_ids {
+                if let Some(existing) = self.widget_to_handler.insert(widget_id.clone(), handler.clone()) {
+                    log::warn!(
+                        "Widget ID {} reassigned from handler {} to {}",
+                        widget_id.0,
+                        existing.borrow().widget_id().0,
+                        handler_id.0
+                    );
+                }
+            }
+        }
     }
 
     pub fn process_events(&mut self) {
