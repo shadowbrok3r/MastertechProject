@@ -1,10 +1,11 @@
+use middleware::{context::Ctx, middleware_log::middleware_logger};
+use tower_http::{add_extension::AddExtensionLayer, cors::CorsLayer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
+use std::net::SocketAddr;
+use dotenv::dotenv;
 use axum::{middleware::map_response, Router};
 use log::info;
-use middleware::middleware_log::middleware_logger;
-use tower_http::cors::CorsLayer;
-use std::net::SocketAddr;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use dotenv::dotenv;
 
 
 pub mod middleware;
@@ -30,13 +31,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 	info!("Starting server on {addr}");
 	let app = Router::new()
 		// routes requring auth
-        .merge(routes::routes());
 		// .route_layer(middleware::from_fn(mw_require_auth))
 		// .layer(layer)
 		// Routes
+        .merge(routes::routes())
         // Layers
-		// .layer(CorsLayer::permissive())
-        // .layer(map_response(middleware_logger));
+        .layer(map_response(middleware_logger))
+		.layer(CorsLayer::permissive())
+		.layer(
+			AddExtensionLayer::new(
+				Ctx::new(
+					Ok("Shadowbroker".to_string()), 
+					Uuid::new_v4()
+				)
+			)
+		);
 		
 	axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 	Ok(())

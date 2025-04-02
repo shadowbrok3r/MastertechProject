@@ -6,21 +6,21 @@ edition = "2024"
 [dependencies]
 # The core stuff
 database = { workspace=true }
-axum = {version = "0.7", features=["tracing", "macros", "multipart", "ws"]}
+axum = {version = "0.8.3", features=["tracing", "macros", "multipart", "ws"]}
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["full"] }
-tower-cookies = "0.10"
+tower-cookies = "0.11.0"
 tokio = { version="1", features=["full"] }
 futures-util = "0.3"
 http = "1"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 dotenv="0.15"
-tokio-cron-scheduler = "0.13"
+tokio-cron-scheduler = {version = "0.13", features = ["english"]}
 
 # For logging
 log = "0.4"
-tracing-subscriber = {version="0.3", features=["env-filter", "json"]}
+tracing-subscriber = { version="0.3", features=["env-filter", "json"] }
 tracing = "0.1"
 
 # Database 
