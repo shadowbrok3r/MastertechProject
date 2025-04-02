@@ -1,5 +1,6 @@
 use crate::error::*;
 use axum::extract::FromRequestParts;
+use http::request::Parts;
 use log::debug;
 use uuid::Uuid;
 
@@ -33,16 +34,12 @@ impl Ctx {
 // Extractor - makes it possible to specify Ctx as a param - fetches the result from the header parts extension
 impl<S: Send + Sync> FromRequestParts<S> for Ctx {
     type Rejection = ApiError;
-    fn from_request_parts<'life0, 'life1, 'async_trait>(
-        parts: &'life0 mut axum::http::request::Parts,
-        _state: &'life1 S,
-    ) -> core::pin::Pin<
-        Box<dyn core::future::Future<Output = ApiResult<Self>> + core::marker::Send + 'async_trait>,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
+    
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) 
+        -> impl Future<Output = ApiResult<Self>> + Send
     {
         Box::pin(async {
             debug!(

@@ -6,15 +6,17 @@ use log::info;
 
 impl MastertechContext {
     pub fn submit_tur_mastertech(&mut self) {
+
         let due_date = Some(
             self.date
                 .unwrap_or(DateTime::default())
                 .to_rfc3339_opts(SecondsFormat::Secs, true),
         );
+
         let mut task_data = self.task_data.clone();
         let customer_data = self.customer_data.clone();
         let ticket_data = self.ticket_data.clone();
-        let mut computer_data = self.computer_data.clone();
+        let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
 
         task_data.due_date = due_date.unwrap_or_default();

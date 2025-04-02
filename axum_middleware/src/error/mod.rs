@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt;
 use uuid::Uuid;
-pub mod context;
-use context::Ctx;
+
+use crate::middleware::context::Ctx;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ApiError {
