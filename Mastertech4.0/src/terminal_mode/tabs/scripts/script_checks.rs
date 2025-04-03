@@ -1,29 +1,31 @@
-use super::{checklist::{Category, TodoItem}, render::Reporter, ScriptsTab};
-use serde::{Deserialize, Serialize};
-
-
-use crate::{
-    tabs::scripts::{
-        ScheduledTask, StartupProgram, StartupState, install_program, 
-        install_sas, install_supereasybackup, install_webroot, run_ps_script, 
-        AntiVirusProduct, InstalledProgram
-    },
-    utilities::windows::{
-        antivirus::check_antivirus, 
-        net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, 
-        registry::{
-            align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, 
-            disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, 
-            disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, 
-            disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar
-        }, 
-        windows_update::install_windows_updates
-    },
-    tur_sheet::get_ticket::SendRequest,
+use {
+    super::{checklist::{Category, TodoItem}, render::Reporter, ScriptsTab},
     std::{path::{Path, PathBuf}, process::Command},
     powershell_script::PsScriptBuilder,
     walkdir::WalkDir,
     sysinfo::Disks,
+    serde::{Deserialize, Serialize},
+    crate::{
+        tabs::{
+            scripts::{
+                ScheduledTask, StartupProgram, StartupState, install_program, 
+                install_sas, install_supereasybackup, install_webroot, run_ps_script, 
+                AntiVirusProduct, InstalledProgram
+            },
+            tur_sheet::get_ticket::SendRequest,
+        },
+        utilities::windows::{
+            antivirus::check_antivirus, 
+            net_adapter::{check_network_adapters, connect_to_wifi, get_wlan_status, scan_wifi_networks}, 
+            registry::{
+                align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, 
+                disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, 
+                disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, 
+                disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar
+            }, 
+            windows_update::install_windows_updates
+        }
+    }
 };
 
 /*
