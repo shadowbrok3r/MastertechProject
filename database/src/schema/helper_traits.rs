@@ -1142,7 +1142,9 @@ impl EmployeeHelper for Employee {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
         let pagination = format!("{},{}",start_idx.clone(), offset);
+
         info!("helper_traits -> Pagination: {pagination}");
+
         query.insert("filter[id_store]", &self.id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("filter[current_state]", status);
@@ -1154,6 +1156,7 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await.context("Pulling orders list")?;
+
         info!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
     }
@@ -1229,7 +1232,8 @@ impl EmployeeHelper for Employee {
                     "employees",
                     new_query
                 )
-                .await.context("Pulling split rep")?;
+                .await
+                .context("Pulling split rep")?;
 
             info!("helper_traits -> employee: {sales_rep:#?}");
             Some(employee_2)

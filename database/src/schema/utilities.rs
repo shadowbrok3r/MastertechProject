@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
 use crossbeam::channel::Sender;
 use log::{debug, info, warn};
 use regex::Regex;
@@ -481,7 +482,7 @@ pub async fn create_full_task_payload(
             .await
         {
             Ok(create_cust_record) => info!("schema/utilities.rs -> Created Record: {create_cust_record:?}"),
-            Err(e) => log::error!("Error with create_cust_record: {e:?}"),
+            Err(e) => log::warn!("Error with create_cust_record: {e:?}"),
         }
         if send_specs {
             match DATABASE
@@ -490,7 +491,7 @@ pub async fn create_full_task_payload(
                 .await
             {
                 Ok(create_computer_record) => info!("schema/utilities.rs -> Created Record: {create_computer_record:?}"),
-                Err(e) => log::error!("Error with create_computer_record: {e:?}"),
+                Err(e) => log::warn!("Error with create_computer_record: {e:?}"),
             }
         }
         match DATABASE
@@ -499,7 +500,7 @@ pub async fn create_full_task_payload(
             .await
         {
             Ok(create_ticket_record) => info!("schema/utilities.rs -> Created Record: {create_ticket_record:?}"),
-            Err(e) => log::error!("Error with create_ticket_record: {e:?}"),
+            Err(e) => log::warn!("Error with create_ticket_record: {e:?}"),
         }
     }
 
@@ -575,7 +576,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
             .request_resources_wasm("addresses", query.clone())
             .await?;
 
-        log::info!("Addresses: {customer_addresses:#?}");
+        println!("Addresses: {customer_addresses:#?}");
 
         if let Some(address) = customer_addresses.get(0) {
             tmp_address = address.clone();
@@ -805,6 +806,76 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         }
     )
 }
+
+
+/// Returns true if there is at least one day (between the day after check‑in and yesterday, skipping Sundays)
+/// that does not have any customer message recorded.
+pub fn has_missed_calls(order_date_str: &str, customer_messages: &[CustomerMessage]) -> bool {
+    // Parse the order's date_add. The format is "2025-04-04 16:48:01"
+    let order_date = match NaiveDateTime::parse_from_str(order_date_str, "%Y-%m-%d %H:%M:%S") {
+        Ok(dt) => dt.date(),
+        Err(e) => {
+            println!("Failed to parse order date {}: {}", order_date_str, e);
+            return false;
+        }
+    };
+
+    // Determine the current local date.
+    let today: NaiveDate = Local::now().naive_local().date();
+    
+    // Start checking from the day after the order check‑in.
+    let mut day = match order_date.succ_opt() {
+        Some(d) => d,
+        None => {
+            println!("Failed to get successor for order date: {}", order_date);
+            return false;
+        }
+    };
+
+    // Iterate until yesterday.
+    while day < today {
+        // Skip Sundays.
+        if day.weekday() == Weekday::Sun {
+            day = match day.succ_opt() {
+                Some(d) => d,
+                None => {
+                    println!("Failed to get successor for day: {}", day);
+                    break;
+                }
+            };
+            continue;
+        }
+        
+        // Check if there is at least one customer message on this day.
+        let mut called = false;
+        for msg in customer_messages {
+            if let Ok(msg_dt) = NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S") {
+                if msg_dt.date() == day {
+                    called = true;
+                    break;
+                }
+            } else {
+                println!("Failed to parse customer message date: {}", msg.date_add);
+            }
+        }
+        
+        // If for this day no call was recorded, we have a missed call.
+        if !called {
+            return true;
+        }
+        
+        day = match day.succ_opt() {
+            Some(d) => d,
+            None => {
+                println!("Failed to get successor for day: {}", day);
+                break;
+            }
+        };
+    }
+    false
+}
+
+
 
 #[derive(Serialize)]
 #[allow(dead_code)]
