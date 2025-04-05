@@ -808,27 +808,28 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
 }
 
 
-/// Returns true if there is at least one day (between the day after check‑in and yesterday, skipping Sundays)
-/// that does not have any customer message recorded.
-pub fn has_missed_calls(order_date_str: &str, customer_messages: &[CustomerMessage]) -> bool {
+/// Returns a vector of missing call days (formatted as "YYYY-MM-DD")
+/// for days (between the day after check‑in and yesterday, skipping Sundays)
+/// that have no corresponding customer message.
+pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[CustomerMessage]) -> Vec<String> {
     // Parse the order's date_add. The format is "2025-04-04 16:48:01"
     let order_date = match NaiveDateTime::parse_from_str(order_date_str, "%Y-%m-%d %H:%M:%S") {
         Ok(dt) => dt.date(),
         Err(e) => {
             println!("Failed to parse order date {}: {}", order_date_str, e);
-            return false;
+            return Vec::new();
         }
     };
 
     // Determine the current local date.
     let today: NaiveDate = Local::now().naive_local().date();
     
-    // Start checking from the day after the order check‑in.
+    let mut missing_days = Vec::new();
     let mut day = match order_date.succ_opt() {
         Some(d) => d,
         None => {
             println!("Failed to get successor for order date: {}", order_date);
-            return false;
+            return missing_days;
         }
     };
 
@@ -846,7 +847,7 @@ pub fn has_missed_calls(order_date_str: &str, customer_messages: &[CustomerMessa
             continue;
         }
         
-        // Check if there is at least one customer message on this day.
+        // Check if there's a customer message on this day.
         let mut called = false;
         for msg in customer_messages {
             if let Ok(msg_dt) = NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S") {
@@ -859,9 +860,9 @@ pub fn has_missed_calls(order_date_str: &str, customer_messages: &[CustomerMessa
             }
         }
         
-        // If for this day no call was recorded, we have a missed call.
         if !called {
-            return true;
+            // Format the missing day as a string, e.g. "2025-04-05"
+            missing_days.push(day.format("%Y-%m-%d").to_string());
         }
         
         day = match day.succ_opt() {
@@ -872,9 +873,8 @@ pub fn has_missed_calls(order_date_str: &str, customer_messages: &[CustomerMessa
             }
         };
     }
-    false
+    missing_days
 }
-
 
 
 #[derive(Serialize)]

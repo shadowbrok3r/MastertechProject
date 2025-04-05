@@ -32,8 +32,6 @@ tokio-util = "0.7"
 futures-channel = "0.3"
 anyhow = "1"
 
-# [profile.dev]
-# opt-level = 0
-
-# [profile.release]
-# opt-level = 3
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = "0.9"
