@@ -1,4 +1,4 @@
-use routes::api::prestashop::DateAndOrderNumber;
+use routes::api::prestashop::MissedCallOrder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tower_http::{add_extension::AddExtensionLayer, cors::CorsLayer};
 use middleware::{context::Ctx, middleware_log::middleware_logger};
@@ -76,7 +76,7 @@ impl AppState {
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CachedData {
-	orders: Vec<DateAndOrderNumber>,
+	orders: Vec<MissedCallOrder>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

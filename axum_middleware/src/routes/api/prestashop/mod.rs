@@ -1,4 +1,4 @@
-use database::schema::{prestashop_schema::{self, Employee, Prestashop}, utilities::has_missed_calls};
+use database::schema::{deserializer::deserialize_to_string, prestashop_schema::{self, Employee, Prestashop}, utilities::get_missing_call_days};
 use crate::{error::ApiError, middleware::context::Ctx, AppState};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use axum::{extract::State, Json};
@@ -7,13 +7,16 @@ use anyhow::Context;
 
 
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
-pub struct DateAndOrderNumber {
+pub struct MissedCallOrder {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
     // 2025-04-04 16:48:01
-    date_add: String,
-    id: String
+    pub date_add: String,
+    #[serde(skip_deserializing)]
+    pub missing_days: Vec<String>,
 }
 
-#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct RequiredData {
     refresh: bool,
     employee_id: String,
@@ -55,6 +58,8 @@ pub async fn get_all_missed_calls(
 ) 
     -> Result<Json<crate::CachedData>, ApiError> 
 {
+    println!("Got request: {payload:?}");
+
     let refresh = payload.refresh;
 
     let employee = Employee {
@@ -112,10 +117,8 @@ async fn start_cron_job(
                 let mut cache = state.cache.lock().await;
 
                 // Fetch services within the range
-                let orders = get_services_by_status(&id, &store).await;
-
                 // Handle the fetched services
-                match orders {
+                match get_services_by_status(&id, &store).await {
                     Ok(svcs) => { cache.insert(endpoint, crate::CachedData { orders: svcs.clone() }); },
                     Err(e) => println!("Error getting in repair shelf services: {:?}", e)
                 };
@@ -132,12 +135,11 @@ async fn start_cron_job(
 async fn get_services_by_status(
     status: &str, 
     store: &str
-) 
-    -> anyhow::Result<Vec<DateAndOrderNumber>, anyhow::Error> 
-{
+) -> anyhow::Result<Vec<MissedCallOrder>, anyhow::Error> {
     let mut api_call = Prestashop::default();
     let mut query: HashMap<&str, &str> = HashMap::new();
     let mut missed_orders = Vec::new();
+    
     query.insert("filter[current_state]", status);
     query.insert("filter[id_order_type]", "2");
     query.insert("filter[id_store]", store);
@@ -145,23 +147,23 @@ async fn get_services_by_status(
     query.insert("sort", "[id_DESC]");
     api_call.display = "[id, date_add]";
 
-    let orders: Vec<DateAndOrderNumber> = api_call
+    let orders: Vec<MissedCallOrder> = api_call
         .request_resources_wasm("orders", query.clone())
         .await
         .context("Pulling orders list")?;
 
-        println!("Orders: {orders:?}");
-        println!("Api query: {query:?}");
+    println!("Orders: {orders:?}");
+    println!("Api query: {query:?}");
 
     for order in orders.iter() {
-        let api_call = Prestashop::default();
+        let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
         
         if order.id.is_empty() {
             break;
         }
 
-        println!("helper_traits -> Pulling order {}", order.id);
+        println!("Pulling order {}", order.id);
         
         query.insert("filter[id]", order.id.as_str());
         query.insert("output_format", "JSON");
@@ -175,23 +177,28 @@ async fn get_services_by_status(
         if !customer_threads.is_empty() {
             for thread in customer_threads.iter() {
                 for msg in thread.associations.customer_messages.iter() {
-                    let msg =  api_call
+                    let msg = api_call
                         .request_subresources_by_id_wasm(
                             "customer_messages",
                             "customer_message",
                             msg.id.as_str(),
                         )
                         .await?;
-                    customer_messages.push(msg)
+                    customer_messages.push(msg);
                 }
             }
         }
-
-        println!("helper_traits -> Orders list: {orders:?}");
         
-        // Compare dates: if any required call day is missing, mark this order as having missed calls.
-        if has_missed_calls(&order.date_add, &customer_messages) {
-            missed_orders.push(order.clone());
+        // Get the missing days for this order.
+        let missing_days = get_missing_call_days(&order.date_add, &customer_messages);
+        
+        // Only include orders with missing call days.
+        if !missing_days.is_empty() {
+            missed_orders.push(MissedCallOrder {
+                date_add: order.date_add.clone(),
+                id: order.id.clone(),
+                missing_days,
+            });
         }
     }
 
