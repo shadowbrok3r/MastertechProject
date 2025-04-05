@@ -234,7 +234,7 @@ impl<'a> Prestashop<'a> {
     where
         T: for<'de> Deserialize<'de> + std::fmt::Debug + Send + Default,
     {
-        info!(
+        println!(
             "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
             self.query_args_wasm(resource_name, url_params.clone())
         );
@@ -251,7 +251,7 @@ impl<'a> Prestashop<'a> {
         let x: anyhow::Result<Vec<T>, serde_json::Error> = from_value(response[resource_name].clone());
         // info!("prestashop_schema -> x: {x:#?}");
         if let Err(e) = x {
-            log::info!("Error: {e:?}");
+            println!("Error: {e:?}");
             let mut new = Vec::new();
             new.push(T::default());
             return Ok(new)
