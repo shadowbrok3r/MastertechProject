@@ -1,4 +1,3 @@
-use routes::api::prestashop::MissedCallOrder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tower_http::{add_extension::AddExtensionLayer, cors::CorsLayer};
 use middleware::{context::Ctx, middleware_log::middleware_logger};
@@ -15,7 +14,7 @@ use log::info;
 pub mod middleware;
 pub mod error;
 pub mod routes;
-
+pub use routes::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
@@ -43,8 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 		// .route_layer(middleware::from_fn(mw_require_auth))
 		// .layer(layer)
 		// Routes
-		.merge(routes::routes(app_state.clone()))
-        // .merge(routes::routes())
+		.merge(routes(app_state.clone()))
         // Layers
         .layer(map_response(middleware_logger))
 		.layer(CorsLayer::permissive())

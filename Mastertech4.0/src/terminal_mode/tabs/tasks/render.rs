@@ -344,3 +344,12 @@ impl TasksTab {
         lines
     }
 }
+
+pub fn _center_horizontal(area: Rect, width: u16) -> Rect {
+    let [area] = ratatui::prelude::Layout::horizontal([
+            ratatui::prelude::Constraint::Length(width)
+        ])
+        .flex(ratatui::layout::Flex::Center)
+        .areas(area);
+    area
+}
