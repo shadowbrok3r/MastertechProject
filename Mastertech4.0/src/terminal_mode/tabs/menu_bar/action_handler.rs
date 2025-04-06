@@ -1,4 +1,6 @@
 
+use database::schema::utilities::get_tasks_for_store;
+
 use crate::terminal_mode::events::action_handler::{get_event_sender, ActionHandler, WidgetButton, WidgetEvent, WidgetId};
 
 use super::{MenuBar, Tab};
@@ -31,7 +33,19 @@ impl<'a> ActionHandler for MenuBar<'a> {
                     "Scripts" => { *current_tab = Tab::Scripts; }
                     "System" => { *current_tab = Tab::SystemInfo; }
                     "Ncdu" => { *current_tab = Tab::Ncdu; }
-                    "Tasks" => { *current_tab = Tab::Tasks; }
+                    "Tasks" => { 
+                        if let Ok(ctx) = self.ctx.try_lock() {
+                            let tx = ctx.tasks_tx.clone();
+                            let store = ctx.user.store.as_str().to_string();
+                            if !store.is_empty() {
+                                tokio::spawn(async move {
+                                    let tasks_result = get_tasks_for_store(tx, store).await;
+                                    log::info!("Tasks result: {tasks_result:?}");
+                                });
+                            }
+                        }
+                        *current_tab = Tab::Tasks;
+                     }
                     "Webconsole" => { 
                         if *current_tab == Tab::Webconsole {
                             let _ = get_event_sender().try_send(

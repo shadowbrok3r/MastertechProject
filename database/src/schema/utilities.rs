@@ -809,7 +809,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
 
 
 /// Returns a vector of missing call days (formatted as "YYYY-MM-DD")
-/// for days (between the day after check‑in and yesterday, skipping Sundays)
+/// for days (between the day after check‑in and today, skipping Sundays)
 /// that have no corresponding customer message.
 pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[CustomerMessage]) -> Vec<String> {
     // Parse the order's date_add. The format is "2025-04-04 16:48:01"
@@ -823,7 +823,16 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
 
     // Determine the current local date.
     let today: NaiveDate = Local::now().naive_local().date();
+    println!("Order date: {}", order_date);
+    println!("Today: {}", today);
     
+    // Log all customer message dates for debugging.
+    let msg_dates: Vec<String> = customer_messages
+        .iter()
+        .map(|msg| msg.date_add.clone())
+        .collect();
+    println!("Customer messages received: {:?}", msg_dates);
+
     let mut missing_days = Vec::new();
     let mut day = match order_date.succ_opt() {
         Some(d) => d,
@@ -833,10 +842,12 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
         }
     };
 
-    // Iterate until yesterday.
-    while day < today {
+    // Iterate until including today.
+    while day <= today {
+        println!("Checking day: {}", day.format("%Y-%m-%d"));
         // Skip Sundays.
         if day.weekday() == Weekday::Sun {
+            println!("Skipping Sunday: {}", day.format("%Y-%m-%d"));
             day = match day.succ_opt() {
                 Some(d) => d,
                 None => {
@@ -850,18 +861,22 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
         // Check if there's a customer message on this day.
         let mut called = false;
         for msg in customer_messages {
-            if let Ok(msg_dt) = NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S") {
-                if msg_dt.date() == day {
-                    called = true;
-                    break;
-                }
-            } else {
-                println!("Failed to parse customer message date: {}", msg.date_add);
+            match NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S") {
+                Ok(msg_dt) => {
+                    println!("  Comparing {} with customer message date {}",
+                             day.format("%Y-%m-%d"), msg_dt.date().format("%Y-%m-%d"));
+                    if msg_dt.date() == day {
+                        println!("  Found matching call for day {}", day.format("%Y-%m-%d"));
+                        called = true;
+                        break;
+                    }
+                },
+                Err(e) => println!("  Failed to parse customer message date {}: {}", msg.date_add, e),
             }
         }
         
         if !called {
-            // Format the missing day as a string, e.g. "2025-04-05"
+            println!("No call found for day {}", day.format("%Y-%m-%d"));
             missing_days.push(day.format("%Y-%m-%d").to_string());
         }
         
@@ -873,7 +888,100 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
             }
         };
     }
+    println!("Missing days: {:?}", missing_days);
     missing_days
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{NaiveDate, NaiveDateTime, Weekday};
+
+    // Define a dummy version of your CustomerMessage for testing purposes.
+    #[derive(Debug)]
+    struct DummyCustomerMessage {
+        pub date_add: String,
+    }
+
+    impl DummyCustomerMessage {
+        fn new(s: &str) -> Self {
+            Self {
+                date_add: s.to_string(),
+            }
+        }
+    }
+
+    // A helper function that mimics `get_missing_call_days` but allows you to specify what “today” is.
+    fn get_missing_call_days_with_today(
+        order_date_str: &str,
+        customer_messages: &[DummyCustomerMessage],
+        today: NaiveDate,
+    ) -> Vec<String> {
+        // Parse the order's date_add (format: "YYYY-MM-DD HH:MM:SS")
+        let order_date = NaiveDateTime::parse_from_str(order_date_str, "%Y-%m-%d %H:%M:%S")
+            .expect("Valid order date")
+            .date();
+
+        let mut missing_days = Vec::new();
+        let mut day = order_date.succ_opt().expect("Order date should have a successor");
+
+        // Iterate from the day after check‑in until including the specified `today`.
+        while day <= today {
+            // Skip Sundays.
+            if day.weekday() == Weekday::Sun {
+                day = day.succ_opt().expect("Day should have a successor");
+                continue;
+            }
+
+            let mut called = false;
+            for msg in customer_messages {
+                // Parse the customer message date.
+                let msg_dt = NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S")
+                    .expect("Valid message date")
+                    .date();
+                println!(
+                    "Comparing day {} with customer message date {}",
+                    day.format("%Y-%m-%d"),
+                    msg_dt.format("%Y-%m-%d")
+                );
+                if msg_dt == day {
+                    println!("Found call on {}", day.format("%Y-%m-%d"));
+                    called = true;
+                    break;
+                }
+            }
+
+            if !called {
+                println!("No call found on {}", day.format("%Y-%m-%d"));
+                missing_days.push(day.format("%Y-%m-%d").to_string());
+            }
+            day = day.succ_opt().expect("Day should have a successor");
+        }
+        missing_days
+    }
+
+    #[test]
+    fn test_get_missing_call_days_custom() {
+        // Order check-in date: April 1, 2025 16:00:58 (Tuesday).
+        let order_date_str = "2025-04-01 16:00:58";
+        // Dummy customer messages: one call on April 03 and one call on April 04.
+        let customer_messages = vec![
+            DummyCustomerMessage::new("2025-04-03 10:00:00"),
+            DummyCustomerMessage::new("2025-04-04 11:00:00"),
+        ];
+
+        // Let’s fix "today" as April 5, 2025.
+        let today = NaiveDate::from_ymd_opt(2025, 4, 5).expect("Valid date");
+
+        let missing = get_missing_call_days_with_today(order_date_str, &customer_messages, today);
+        // Expected missing days:
+        // - April 2 (Wednesday) is missing a call.
+        // - April 3 and 4 have calls.
+        // - April 5 (Saturday) is missing a call.
+        let expected = vec!["2025-04-02".to_string(), "2025-04-05".to_string()];
+        assert_eq!(missing, expected);
+    }
 }
 
 

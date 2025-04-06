@@ -53,15 +53,15 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn num_columns(&mut self) -> usize {
-        10
+        9
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Checkin Notes", "Device", "Model", "Needs Call"][column].into()
+        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Checkin Notes", "Device", "Model"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true, true, true, true, true][column]
+        [true, true, true, true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
@@ -85,9 +85,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopPayload, column: usize) {
         let _ = match column {
-            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.order.id.clone()))).inner,
-            1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.customer.name.clone()))).inner,
-            2 => ui.horizontal_centered(|ui| {
+            0 => ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.order.id.clone())),
+            1 => ui.label(format!(" {}", row.customer.name.clone())),
+            2 => {
                 // Parse the input into a NaiveDateTime
                 let naive_datetime = NaiveDateTime::parse_from_str(&row.order.date_add, "%Y-%m-%d %H:%M:%S")
                     .expect("Failed to parse datetime");
@@ -99,13 +99,13 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let formatted_date = datetime.format(" %m/%d/%Y").to_string();
                 let split1 = formatted_date.split_once('/').unwrap_or_default();
                 let split2 = split1.1.split_once('/').unwrap_or_default();
-                ui.horizontal_centered(|ui| {
+                ui.horizontal(|ui| {
                     ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}/", split1.0));
                     ui.colored_label(ui.style().visuals.error_fg_color, format!("{}/", split2.0));
                     ui.colored_label(ui.style().visuals.warn_fg_color, split2.1)
                 }).inner
-            }).inner,
-            3 => ui.horizontal_centered(|ui| {
+            },
+            3 => {
                 let status = match row.order.current_state.as_str() {
                     "30" => "In Repair",
                     "40" => "Done Shelf",
@@ -116,27 +116,20 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 };
 
                 ui.label(format!(" {status}"))
-            }).inner,
-            4 => ui.horizontal_centered(|ui| {
+            },
+            4 => {
                 let emp = row.sales_rep.clone().unwrap_or_default();
                 let split = parse_email_user(&emp.email);
                 ui.label(format!(" {split}"))
-            }).inner,
-            5 => ui.horizontal_centered(|ui| {
+            },
+            5 => {
                 let emp = row.split_rep.clone().unwrap_or_default();
                 let split = parse_email_user(&emp.email);
                 ui.label(format!(" {split}"))
-            }).inner,
-            6 => ui.horizontal_centered(|ui| Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui)).inner,
-            7 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg))).inner,
-            8 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model))).inner,
-            9 => ui.vertical_centered(|ui| {
-                ui.checkbox(&mut false, "")
-                // row.customer_messages.iter().map(|c| {
-                //     let date = convert_date_string(&c.date_add);
-                    
-                // })
-            }).inner,
+            },
+            6 => Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui),
+            7 => ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg)),
+            8 => ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model)),
             _ => unreachable!(),
         };
     }
@@ -153,7 +146,6 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             6 => col_config.resizable(true).at_least(80.),
             7 => col_config.resizable(true).at_least(100.).at_most(150.),
             8 => col_config.resizable(true).at_least(100.).at_most(150.),
-            9 => col_config.resizable(false).at_least(80.).at_most(80.),
             _ => col_config,
         }
     }
@@ -185,7 +177,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     ) -> Option<Box<PrestashopPayload>> {
         match column {
             0 | 1 => {
-                if resp.clicked() {
+                if resp.double_clicked() {
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
                     let notes_tx = self.notes_channel.0.clone();
@@ -224,7 +216,6 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             6 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
             7 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
             8 => dst.sales_rep = src.sales_rep.clone(),
-            9 => dst.sales_rep = src.sales_rep.clone(),
             _ => unreachable!(),
         }
     }

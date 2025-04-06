@@ -37,7 +37,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Ctx {
     
     fn from_request_parts(
         parts: &mut Parts,
-        state: &S,
+        _state: &S,
     ) 
         -> impl Future<Output = ApiResult<Self>> + Send
     {
