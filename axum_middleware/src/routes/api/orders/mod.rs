@@ -1,19 +1,8 @@
-use database::schema::{deserializer::deserialize_to_string, prestashop_schema::Employee};
+use database::schema::{get_data::get_services_by_status, prestashop_schema::{Employee, PrestashopOrderType}};
 use crate::{error::ApiError, middleware::context::Ctx, AppState};
 use axum::{extract::State, Json};
 
-pub mod data;
 pub mod schedule;
-
-#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
-pub struct MissedCallOrder {
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub id: String,
-    // 2025-04-04 16:48:01
-    pub date_add: String,
-    #[serde(default, skip_deserializing)]
-    pub missing_days: Vec<String>,
-}
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct RequiredData {
@@ -23,38 +12,10 @@ pub struct RequiredData {
     pub employee_store: String,
 }
 
-
-#[derive(Default, serde::Deserialize, serde::Serialize)]
-pub enum OrderType {
-    #[default]
-    CheckinShelf,
-    InRepair,
-    DoneShelf
-}
-
-impl OrderType {
-    fn as_str(&self) -> &str {
-        match self {
-            OrderType::CheckinShelf => "checkinShelf",
-            OrderType::InRepair => "inRepair",
-            OrderType::DoneShelf => "doneShelf",
-        }
-    }
-
-    // 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore
-    fn id(&self) -> &str {
-        match self {
-            OrderType::CheckinShelf => "29",
-            OrderType::InRepair => "30",
-            OrderType::DoneShelf => "40",
-        }
-    }
-}
-
 pub async fn get_all_missed_calls(
     State(state): State<AppState>,
     ctx: Ctx,
-    axum::extract::Path(endpoint): axum::extract::Path<OrderType>,
+    axum::extract::Path(endpoint): axum::extract::Path<PrestashopOrderType>,
     Json(payload): Json<RequiredData>,
 ) -> Result<Json<crate::CachedData>, ApiError> {
     println!("Got request: {payload:?}");
@@ -73,7 +34,7 @@ pub async fn get_all_missed_calls(
 
     // If refresh is true, grab new data immediately
     if refresh {
-        match super::data::get_services_by_status(endpoint.id(), &employee.id_store).await {
+        match get_services_by_status(endpoint.id(), &employee.id_store).await {
             Ok(new_orders) => {
                 let new_data = crate::CachedData { orders: new_orders };
                 cache.insert(endpoint_key.clone(), new_data);
@@ -104,7 +65,7 @@ pub async fn get_all_missed_calls(
 
     // If no refresh and cache is empty, fetch data now
     if !cache.contains_key(&endpoint_key) {
-        match super::data::get_services_by_status(endpoint.id(), &employee.id_store).await {
+        match get_services_by_status(endpoint.id(), &employee.id_store).await {
             Ok(new_orders) => {
                 let new_data = crate::CachedData { orders: new_orders };
                 cache.insert(endpoint_key.clone(), new_data);

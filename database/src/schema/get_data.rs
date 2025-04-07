@@ -1,15 +1,15 @@
 use crate::{
-    schema::{Record, TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, LiveTaskPayload, TicketPayload},
+    schema::{prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days, LiveTaskPayload, Record, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE},
     DATABASE,
 };
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 use surrealdb::RecordId;
 
 use super::utilities::Task;
 
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use surrealdb::Action;
@@ -101,6 +101,81 @@ pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(),
 
     info!("Updated notes: {update_task:?}");
     Ok(())
+}
+
+pub async fn get_services_by_status(
+    status: &str, 
+    store: &str
+) -> anyhow::Result<Vec<MissedCallOrder>, anyhow::Error> {
+    let mut api_call = Prestashop::default();
+    let mut query: HashMap<&str, &str> = HashMap::new();
+    let mut missed_orders = Vec::new();
+    
+    query.insert("filter[current_state]", status);
+    query.insert("filter[id_order_type]", "2");
+    query.insert("filter[id_store]", store);
+    query.insert("output_format", "JSON");
+    query.insert("sort", "[id_DESC]");
+    api_call.display = "[id, date_add]";
+
+    let orders: Vec<MissedCallOrder> = api_call
+        .request_resources_wasm("orders", query.clone())
+        .await
+        .context("Pulling orders list")?;
+
+    log::info!("Orders: {orders:?}");
+    log::info!("Api query: {query:?}");
+
+    for order in orders.iter() {
+        let api_call = Prestashop::default();
+        let mut query = HashMap::new();
+        
+        if order.id.is_empty() {
+            break;
+        }
+
+        log::info!("Pulling order {}", order.id);
+        
+        query.insert("filter[id_order]", order.id.as_str());
+        query.insert("output_format", "JSON");
+
+        let customer_threads: Vec<CustomerThread> = api_call
+            .request_resources_wasm("customer_threads", query.clone())
+            .await?;
+
+        let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+
+        if !customer_threads.is_empty() {
+            for thread in customer_threads.iter() {
+                for msg in thread.associations.customer_messages.iter() {
+                    let msg = api_call
+                        .request_subresources_by_id_wasm(
+                            "customer_messages",
+                            "customer_message",
+                            msg.id.as_str(),
+                        )
+                        .await?;
+                    customer_messages.push(msg);
+                }
+            }
+        }
+        
+        // Get the missing days for this order.
+        let missing_days = get_missing_call_days(&order.date_add, &customer_messages);
+        
+        // Only include orders with missing call days.
+        if !missing_days.is_empty() {
+            missed_orders.push(MissedCallOrder {
+                date_add: order.date_add.clone(),
+                id: order.id.clone(),
+                missing_days,
+            });
+        }
+    }
+
+    log::info!("Missed orders: {:#?}", missed_orders);
+
+    Ok(missed_orders)
 }
 
 #[async_trait]

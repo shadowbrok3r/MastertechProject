@@ -72,7 +72,7 @@ pub trait EmployeeHelper {
     /// Get Employee from ID
     async fn get_employee_from_id(&mut self, id_employee: &str) -> Result<Employee, Error>;
     /// Convert an order into a PrestashopPayload
-    async fn to_prestashop_payload(&mut self, service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> ;
+    async fn to_prestashop_payload(service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> ;
 }
 
 /// A trait for assisting with operations involving the `User` struct.
@@ -1161,7 +1161,7 @@ impl EmployeeHelper for Employee {
         Ok(orders)
     }
 
-    async fn to_prestashop_payload(&mut self, service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
+    async fn to_prestashop_payload(service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
         let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
         info!("helper_traits -> Pulling order {service_number}");

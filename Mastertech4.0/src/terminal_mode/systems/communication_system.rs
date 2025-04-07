@@ -12,7 +12,7 @@ pub trait Message: Send + Sync + Debug + Any {
 }
 
 impl dyn Message {
-    fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         // Upcast is automatic here: &dyn MyAny to &dyn Any.
         (self as &dyn Any).downcast_ref()
     }

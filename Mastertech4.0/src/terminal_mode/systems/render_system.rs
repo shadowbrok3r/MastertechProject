@@ -43,7 +43,7 @@ impl RenderSystem {
                         Ok(Ok(message)) => {
                             // log::info!("RenderSystem Received Message: {}", message.as_display());
     
-                            if let Some(notification) = message.as_any().downcast_ref::<Notification>() {
+                            if let Some(notification) = message.downcast_ref::<Notification>() {
                                 if let Ok(mut notif) = self.notifications.lock() {
                                     notif.push(notification.clone());
                                 }
@@ -58,7 +58,7 @@ impl RenderSystem {
                                         notif.retain(|n| n.id() != notification_id && !n.is_expired());
                                     }
                                 });
-                            } else if let Some(user) = message.as_any().downcast_ref::<DataMessage<User>>() {
+                            } else if let Some(user) = message.downcast_ref::<DataMessage<User>>() {
                                 if let Ok(mut ctx) = self.ctx.lock() {
                                     ctx.user = user.0.clone();
                                     let tx = ctx.tasks_tx.clone();

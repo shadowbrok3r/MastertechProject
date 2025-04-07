@@ -28,7 +28,6 @@ pub struct TaskRowViewer {
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>)
 }
 
-
 impl Default for TaskRowViewer {
     fn default() -> Self {
         let notes_channel = <Vec<TaskNotePayload>>::create_unbounded_channel();
@@ -57,7 +56,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Checkin Notes", "Device", "Model"][column].into()
+        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Device", "Model", "Checkin Notes"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
@@ -127,9 +126,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let split = parse_email_user(&emp.email);
                 ui.label(format!(" {split}"))
             },
-            6 => Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui),
-            7 => ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg)),
-            8 => ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model)),
+            6 => ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg)),
+            7 => ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model)),
+            8 => Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui),
             _ => unreachable!(),
         };
     }
@@ -143,9 +142,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             3 => col_config.resizable(true).at_least(130.).at_most(130.),
             4 => col_config.resizable(true).at_least(100.).at_most(150.),
             5 => col_config.resizable(true).at_least(100.).at_most(150.),
-            6 => col_config.resizable(true).at_least(80.),
+            6 => col_config.resizable(true).at_least(100.).at_most(150.),
             7 => col_config.resizable(true).at_least(100.).at_most(150.),
-            8 => col_config.resizable(true).at_least(100.).at_most(150.),
+            8 => col_config.resizable(true).at_least(150.),
             _ => col_config,
         }
     }
@@ -177,7 +176,8 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     ) -> Option<Box<PrestashopPayload>> {
         match column {
             0 | 1 => {
-                if resp.double_clicked() {
+                if resp.clicked() {
+                    log::info!("Clicked Col/Row: {column}/{}", row.order.id);
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
                     let notes_tx = self.notes_channel.0.clone();
@@ -213,9 +213,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             3 => dst.order.current_state = src.order.current_state.clone(),
             4 => dst.sales_rep = src.sales_rep.clone(),
             5 => dst.split_rep = src.split_rep.clone(),
-            6 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
-            7 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
-            8 => dst.sales_rep = src.sales_rep.clone(),
+            8 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
+            6 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
+            7 => dst.sales_rep = src.sales_rep.clone(),
             _ => unreachable!(),
         }
     }
@@ -245,9 +245,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let name1 = format!("{} {}", emp1.firstname, emp1.lastname);
                 name.cmp(&name1)
             },
-            6 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
-            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
-            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
+            6 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
+            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
             _ => row_l.sales_rep.clone().unwrap_or_default().lastname.cmp(&row_r.sales_rep.clone().unwrap_or_default().lastname)
         }
     }

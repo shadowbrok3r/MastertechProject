@@ -65,10 +65,9 @@ impl LinePlot {
                 // Interpolate the points for a smooth curve
                 let interpolated_points = interpolate_points(&*points);
                 // Create and return the line
-                Line::new(PlotPoints::new(interpolated_points))
+                Line::new(name, PlotPoints::new(interpolated_points))
                     .color(color)
                     .width(3.)
-                    .name(name)
             })
             .collect()
     }
