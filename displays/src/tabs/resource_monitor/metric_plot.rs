@@ -67,10 +67,9 @@ impl MetricPlot {
 
         let interpolated = interpolate_points(&points);
 
-        Line::new(PlotPoints::new(interpolated))
+        Line::new(name, PlotPoints::new(interpolated))
             .color(color)
             .style(LineStyle::Solid)
-            .name(name)
     }
 
 

@@ -1,4 +1,4 @@
-use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use chrono::{SecondsFormat, Utc};
@@ -23,9 +23,9 @@ impl TaskAuditViewer {
         let mut employee = Employee::default();
         employee.id = format!("{id}");
         employee.id_store = usr.id_store.unwrap_or_default();
-        match selected {
-            TaskAudit::CheckinShelf => {
-                PlatformSpawner::spawn(async move {
+        PlatformSpawner::spawn(async move {
+            match selected {
+                TaskAudit::CheckinShelf => {
                     // Fetch services within the range
                     let orders = employee
                         .get_services_by_status("29", start_idx, start_idx+30)
@@ -36,7 +36,7 @@ impl TaskAuditViewer {
                         Ok(svcs) => {
                             for order_num in svcs.iter() {
                                 if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
                                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
@@ -46,10 +46,8 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
                     };
-                });
-            },
-            TaskAudit::MyInRepair => {
-                PlatformSpawner::spawn(async move {
+                },
+                TaskAudit::MyInRepair => {
                     // Fetch services within the range            
                     let orders = employee
                         .get_my_services_in_repair()
@@ -60,7 +58,7 @@ impl TaskAuditViewer {
                         Ok(svcs) => {
                             for order_num in svcs.iter() {
                                 if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
                                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
@@ -70,10 +68,8 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
                     };
-                });
-            },
-            TaskAudit::InRepair => {
-                PlatformSpawner::spawn(async move {
+                },
+                TaskAudit::InRepair => {
                     // Fetch services within the range
                     let orders = employee
                         .get_services_by_status("30", start_idx, start_idx+30)
@@ -84,7 +80,7 @@ impl TaskAuditViewer {
                         Ok(svcs) => {
                             for order_num in svcs.iter() {
                                 if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
                                         Err(e) => log::info!("Error getting inrepair services: {:?}", e),
@@ -94,10 +90,8 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error getting in repair shelf services: {:?}", e)
                     };
-                });
-            },
-            TaskAudit::DoneShelf => {
-                PlatformSpawner::spawn(async move {
+                },
+                TaskAudit::DoneShelf => {
                     // Fetch services within the range
                     let orders = employee
                         .get_services_by_status("40", start_idx, start_idx+30)
@@ -108,7 +102,7 @@ impl TaskAuditViewer {
                         Ok(svcs) => {
                             for order_num in svcs.iter() {
                                 if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
                                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
@@ -118,10 +112,8 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error with get_services_by_status 40: : {:?}", e)
                     };
-                });
-            },
-            TaskAudit::AllServices => {
-                PlatformSpawner::spawn(async move {
+                },
+                TaskAudit::AllServices => {
                     // Fetch services within the range
                     let orders = employee
                         .get_all_my_services()
@@ -132,7 +124,7 @@ impl TaskAuditViewer {
                         Ok(svcs) => {
                             for order_num in svcs.iter() {
                                 if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
                                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
@@ -142,10 +134,8 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error with get_all_services_in_my_store: {:?}", e)
                     };
-                });
-            },
-            TaskAudit::MyServices => {
-                PlatformSpawner::spawn(async move {
+                },
+                TaskAudit::MyServices => {
                     // Fetch services within the range
                     let orders = employee
                         .get_all_my_services()
@@ -156,7 +146,7 @@ impl TaskAuditViewer {
                         Ok(svcs) => {
                             for order_num in svcs.iter() {
                                 if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = employee.to_prestashop_payload(&order_num.id).await;
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
                                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
@@ -166,9 +156,28 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error with get_my_services_in_repair: {:?}", e)
                     };
-                });
-            },
-        }
+                },
+                TaskAudit::NeedsCall => {
+                    let endpoint = PrestashopOrderType::default();
+                    // If refresh is true, grab new data immediately
+                    match get_services_by_status(endpoint.id(), &employee.id_store).await {
+                        Ok(missed_calls) => {
+                            for order_num in missed_calls.iter() {
+                                if !current_orders.contains(&order_num.id) {
+                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
+                                    match presta_payload {
+                                        Ok(service) => order_tx.try_send(service).unwrap(),
+                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                    }
+                                }
+                            }
+                        },
+                        Err(e) => log::info!("Error with get_services_by_status: {:?}", e),
+                    };
+                },
+            }
+        });
+
         let elapsed = time.elapsed();
         log::info!("Time elapsed: {elapsed:?}");
     }
@@ -176,15 +185,15 @@ impl TaskAuditViewer {
     pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
         if let Ok(order) = self.order_channel.1.try_recv() {
             self.loading = true;
-            let key = self.audit_selection.clone().as_str();
+            let key = self.audit_selection.as_str();
 
             self
                 .service_map
-                .entry(key.clone())
+                .entry(key.to_string())
                 .or_insert(DataTable::default());
 
             
-            if let Some(k) = self.service_map.get_mut(&key) {
+            if let Some(k) = self.service_map.get_mut(&key.to_string()) {
                 if !k.iter().contains(&order) {
                     log::info!("Order: {order:?}");
                     k.push(order);

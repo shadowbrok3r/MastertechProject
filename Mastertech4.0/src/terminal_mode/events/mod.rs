@@ -68,7 +68,6 @@ impl EventHandler {
     }
 }
 
-
 impl <'a>TerminalApp<'a> {
     pub fn handle_events(&mut self, remote_mouse_event: Option<MouseEvent>, remote_key_event: Option<KeyEvent>) -> bool {
         let quit = &mut false;

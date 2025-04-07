@@ -1,3 +1,4 @@
+use database::schema::prestashop_schema::MissedCallOrder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tower_http::{add_extension::AddExtensionLayer, cors::CorsLayer};
 use middleware::{context::Ctx, middleware_log::middleware_logger};

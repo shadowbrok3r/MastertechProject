@@ -1,3 +1,4 @@
+use eframe::egui::{Color32, Grid, Style};
 use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::User;
 use egui_data_table::Renderer;
@@ -13,20 +14,20 @@ use super::TaskAuditViewer;
 
 impl TaskAuditViewer {
     pub fn show(&mut self, ui: &mut Ui, current_user: Option<User>) {
-        SidePanel::right(Id::new("Task Audit Side Panel"))
-            .default_width(280.)
-            .max_width(900.)
-            .resizable(true)
-            .show_separator_line(true)
-            .show_inside(ui, |ui| 
-        {
-            let service = self.services_viewer.selected.clone();
+        if let Some(order) = self.services_viewer.selected.clone() {
+            SidePanel::right(Id::new("Task Audit Side Panel"))
+                .default_width(280.)
+                .max_width(900.)
+                .resizable(true)
+                .show_separator_line(true)
+                .show_inside(ui, |ui| 
+            {
+                let service = self.services_viewer.selected.clone();
 
-            let header = if let Some(service) = &service {
-                &format!("{} - {}", service.customer.name, service.order.id)
-            } else { "Task Details" };
+                let header = if let Some(service) = &service {
+                    &format!("{} - {}", service.customer.name, service.order.id)
+                } else { "Task Details" };
 
-            if let Some(order) = self.services_viewer.selected.clone() {
                 ui.vertical_centered_justified(|ui| {
                     let service = self.services_viewer.selected.clone();
 
@@ -61,8 +62,10 @@ impl TaskAuditViewer {
                         ui.separator();
                         ui.add_space(5.0);
 
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.);
+                        Grid::new(order.order.id.clone())
+                        .num_columns(2)
+                        .with_row_color(return_colors)
+                        .show(ui, |ui| {
                             ui.label("Status");
 
                             let status = match order.order.current_state.as_str() {
@@ -74,29 +77,22 @@ impl TaskAuditViewer {
                                 _ => ""
                             };
 
-                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                ui.label(status);
-                                ui.add_space(10.);
-                            });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.);
+                            ui.label(status);
+                            ui.end_row();
+
                             ui.label("Sales Rep");
                             let sales_rep = order.sales_rep.unwrap_or_default();
-                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                ui.label(format!("{} {}", sales_rep.firstname, sales_rep.lastname));
-                                ui.add_space(10.);
-                            });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.);
+                            ui.label(format!("{} {}", sales_rep.firstname, sales_rep.lastname));
+                            ui.end_row();
+
                             ui.label("Split Rep");
                             let split_rep = order.split_rep.unwrap_or_default();
+                            ui.label(format!("{} {}", split_rep.firstname, split_rep.lastname));
+                            ui.end_row();
 
-                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                ui.label(format!("{} {}", split_rep.firstname, split_rep.lastname));
-                                ui.add_space(10.);
-                            });
+                            ui.label("Missed Calls");
+                            
+
                         });
                     });
 
@@ -115,17 +111,8 @@ impl TaskAuditViewer {
                         self.services_viewer.chat_view.ui(ui);
                     });
                 });
-            } else {
-                ui.vertical_centered_justified(|ui| {
-
-                    ui.add_space(5.);
-                    ui.heading(header.to_uppercase());
-                    Separator::default().horizontal().shrink(ui.available_width()/2.5).ui(ui);
-                    ui.add_space(5.0);
-
-                });
-            }
-        });
+            });
+        } 
 
         TopBottomPanel::top("Task Audit Top Panel")
             .exact_height(30.)
@@ -141,15 +128,15 @@ impl TaskAuditViewer {
                 if Button::new(" Refresh ").ui(ui).clicked() {
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let selection = selected.clone().as_str();
+                    let selection = selected.as_str();
 
                     let start_idx = self
                         .index
-                        .entry(selection.clone())
+                        .entry(selection.to_string())
                         .or_insert(0)
                         .clone();
 
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
+                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
                         k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
@@ -161,16 +148,16 @@ impl TaskAuditViewer {
                 if Button::new(" Load +10 ").ui(ui).clicked() {
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
-                    let selection = selected.clone().as_str();
+                    let selection = selected.as_str();
 
                     let start_idx = self
                         .index
-                        .entry(selection.clone())
+                        .entry(selection.to_string())
                         .and_modify(|i| *i+=10)
                         .or_insert(0)
                         .clone();
 
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
+                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
                         k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
@@ -225,28 +212,29 @@ impl TaskAuditViewer {
             ui.horizontal(|ui| {
                 ui.add_space(10.);
 
-                let selected_text = self.audit_selection.to_owned().as_str();
+                let selected_text = self.audit_selection.as_str().to_string();
                 let selected = &mut self.audit_selection;
                 let current_selection = selected.clone();
 
                 ComboBox::new("Store_Selection", "")
-                    .selected_text(selected_text.as_str())
+                    .selected_text(selected_text)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(selected, TaskAudit::AllServices, " All Services ");
-                        ui.selectable_value(selected, TaskAudit::CheckinShelf, " Check-in Shelf ");
                         ui.selectable_value(selected, TaskAudit::MyInRepair, " My In Repair ");
+                        ui.selectable_value(selected, TaskAudit::MyInRepair, " My In Repair ");
+                        ui.selectable_value(selected, TaskAudit::NeedsCall, " Missed Calls ");
+                        ui.selectable_value(selected, TaskAudit::CheckinShelf, " Check-in Shelf ");
                         ui.selectable_value(selected, TaskAudit::InRepair, " In Repair ");
                         ui.selectable_value(selected, TaskAudit::DoneShelf, " Done Shelf ");
-                        ui.selectable_value(selected, TaskAudit::MyServices, " My Services ");
+                        ui.selectable_value(selected, TaskAudit::AllServices, " All Services ");
                     })
                     .response;
 
                 if current_selection != *selected {
                     self.loading = true;
                     let order_tx = self.order_channel.0.clone();
-                    let selection = selected.clone().as_str();
-                    let start_idx = self.index.entry(selection.clone()).or_insert(0).clone();
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
+                    let selection = selected.as_str();
+                    let start_idx = self.index.entry(selection.to_string()).or_insert(0).clone();
+                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
                         k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
@@ -270,14 +258,22 @@ impl TaskAuditViewer {
             });
             ui.add_space(5.);
 
-            if let Some(table) = self.service_map.get_mut(&self.audit_selection.clone().as_str()) {
-                let mut style = egui_data_table::Style::default();
-                style.single_click_edit_mode = true;
+            if let Some(table) = self.service_map.get_mut(&self.audit_selection.as_str().to_string()) {
+                let style = egui_data_table::Style::default();
+                // style.single_click_edit_mode = true;
                 Renderer::new(table, &mut self.services_viewer).with_style(style).ui(ui);
             }
         });  
     }
+}
 
-    
 
+fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
+    let mut _col = Color32::from_rgb(30, 30, 38);
+    if num % 2 == 0 {
+        _col = Color32::from_rgb(15, 15, 22);
+    } else {
+        _col = Color32::from_rgb(30, 30, 38);
+    }
+    Some(_col)
 }

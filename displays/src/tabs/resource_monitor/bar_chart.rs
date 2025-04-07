@@ -34,7 +34,7 @@ impl MetricBarChart {
             .map(|&(x, y)| Bar::new(x as f64, y as f64))
             .collect();
 
-        BarChart::new(bars).name(self.name.clone()).color(self.color)
+        BarChart::new(self.name.clone(), bars).color(self.color)
     }
 
     pub fn ui(&self, ui: &mut Ui, plot_name: &str) -> Response {

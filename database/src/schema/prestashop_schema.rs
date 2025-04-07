@@ -746,3 +746,41 @@ impl SubResource for Employee {
         "employee".to_string()
     }
 }
+
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MissedCallOrder {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
+    // 2025-04-04 16:48:01
+    pub date_add: String,
+    #[serde(default, skip_deserializing)]
+    pub missing_days: Vec<String>,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+pub enum PrestashopOrderType {
+    #[default]
+    CheckinShelf,
+    InRepair,
+    DoneShelf
+}
+
+impl PrestashopOrderType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::CheckinShelf => "checkinShelf",
+            Self::InRepair => "inRepair",
+            Self::DoneShelf => "doneShelf",
+        }
+    }
+
+    // 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore
+    pub fn id(&self) -> &str {
+        match self {
+            Self::CheckinShelf => "29",
+            Self::InRepair => "30",
+            Self::DoneShelf => "40",
+        }
+    }
+}

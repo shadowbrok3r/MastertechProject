@@ -50,18 +50,20 @@ pub enum TaskAudit {
     MyInRepair,
     InRepair,
     DoneShelf,
-    MyServices
+    MyServices,
+    NeedsCall
 }
 
 impl TaskAudit {
-    fn as_str(self) -> String {
+    fn as_str(&self) -> &str {
         match self {
-            TaskAudit::CheckinShelf => "Check-in Shelf".to_string(),
-            TaskAudit::MyInRepair => "My In Repair".to_string(),
-            TaskAudit::InRepair => "In Repair".to_string(),
-            TaskAudit::DoneShelf => "Done Shelf".to_string(),
-            TaskAudit::AllServices => "All Services".to_string(),
-            TaskAudit::MyServices => "My Services".to_string()
+            TaskAudit::CheckinShelf => "Check-in Shelf",
+            TaskAudit::MyInRepair => "My In Repair",
+            TaskAudit::InRepair => "In Repair",
+            TaskAudit::DoneShelf => "Done Shelf",
+            TaskAudit::AllServices => "All Services",
+            TaskAudit::MyServices => "My Services",
+            TaskAudit::NeedsCall => "Needs Call",
         }
     }
 }
