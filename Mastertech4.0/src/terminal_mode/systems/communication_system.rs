@@ -6,9 +6,16 @@ use serde::Serialize;
 use super::{data_system::DataSystem, notification_system::Notification, render_system::RenderSystem};
 
 // Generic Message trait
-pub trait Message: Send + Sync + Debug {
+pub trait Message: Send + Sync + Debug + Any {
     fn as_display(&self) -> String;
-    fn as_any(&self) -> &dyn Any;
+    // fn as_any(&self) -> &dyn Any;
+}
+
+impl dyn Message {
+    fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        // Upcast is automatic here: &dyn MyAny to &dyn Any.
+        (self as &dyn Any).downcast_ref()
+    }
 }
 
 // Communication trait for sending and receiving
@@ -50,9 +57,9 @@ impl Message for Notification {
         format!("{}: {}", self.header, self.text)
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    // fn as_any(&self) -> &dyn Any {
+    //     self
+    // }
 }
 
 
@@ -73,7 +80,7 @@ impl Message for DataMessage<User> {
         format!("{:?}", self.0)
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    // fn as_any(&self) -> &dyn Any {
+    //     self
+    // }
 }
