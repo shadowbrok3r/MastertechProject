@@ -343,26 +343,25 @@ pub fn reboot_system() -> Result<()> {
 /// Filters and installs updates separately for Windows Update and Microsoft Update
 unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &IUpdateCollection) -> Result<()> {
     unsafe { 
-        // let update_collection: IUpdateCollection = update_session.CreateUpdateSearcher()?.Search(&BSTR::from("IsInstalled=0 and DeploymentAction='Installation'"))?.Updates()?;
-        for i in 0..update_collection.Count()? {
+        // Iterate backwards to avoid shifting indices during removal
+        let count = update_collection.Count()?;
+        for i in (0..count).rev() {
             let update = update_collection.get_Item(i)?;
             let is_installed = update.IsInstalled()?.as_bool();
-            let is_downloaded = update.IsDownloaded()?.as_bool();
-            if !is_installed && !is_downloaded {
+            // Remove only if the update is already installed.
+            if is_installed {
+                log::info!("Skipping update (already installed): {}", update.Title()?.to_string());
+                update_collection.RemoveAt(i)?;
+            } else {
                 log::info!("Adding update: {}", update.Title()?.to_string());
                 log::info!("=>  IsInstalled: {:?}", is_installed);
                 log::info!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
                 log::info!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
                 log::info!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
-                log::info!("=>  IsDownloaded: {:?}", is_downloaded);
                 log::info!("=>  Description: {:?}", update.Description()?);
-                // update_collection.Add(&update)?;
-            } else {
-                log::info!("Skipping update: {}", update.Title()?.to_string());
-                update_collection.RemoveAt(i)?;
             }
         }
-        if update_collection.Count() ? != 0 {
+        if update_collection.Count()? != 0 {
             install_updates_from_collection(
                 update_session, 
                 &update_collection,
@@ -492,4 +491,3 @@ impl WindowsUpdates {
  * 
  * "RebootRequired=0" finds updates that do not require a computer to be restarted to complete an installation or uninstallation.
  ***/
- 
