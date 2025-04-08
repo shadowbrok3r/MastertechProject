@@ -1,6 +1,6 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
 use eframe::egui::{Color32, Hyperlink, KeyboardShortcut, Label, Widget};
-use database::schema::{helper_traits::parse_email_user, prestashop_schema::PrestashopPayload, TaskNotePayload};
+use database::schema::{helper_traits::parse_email_user, prestashop_schema::{MissedCallOrder, PrestashopPayload}, TaskNotePayload};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use egui_data_table::{viewer::{default_hotkeys, RowCodec, UiActionContext}, RowViewer, UiAction};
 use crate::PlatformSpawner;
@@ -25,7 +25,8 @@ pub struct TaskRowViewer {
     #[serde(skip)]
     pub notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
     #[serde(skip)]
-    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>)
+    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
+    pub missed_calls: Vec<MissedCallOrder>
 }
 
 impl Default for TaskRowViewer {
@@ -41,7 +42,8 @@ impl Default for TaskRowViewer {
             selected: Default::default(),
             open_hotkeys: Default::default(),
             chat_view: Default::default(),
-            order_data: PrestashopPayload::default()
+            order_data: PrestashopPayload::default(),
+            missed_calls: Vec::new(),
         }
     }
 }
@@ -88,8 +90,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             1 => ui.label(format!(" {}", row.customer.name.clone())),
             2 => {
                 // Parse the input into a NaiveDateTime
-                let naive_datetime = NaiveDateTime::parse_from_str(&row.order.date_add, "%Y-%m-%d %H:%M:%S")
-                    .expect("Failed to parse datetime");
+                let naive_datetime = NaiveDateTime::parse_from_str(&row.order.date_add, "%Y-%m-%d %H:%M:%S").unwrap_or_default();
 
                 // Convert to a DateTime with Utc timezone
                 let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive_datetime, Utc);
