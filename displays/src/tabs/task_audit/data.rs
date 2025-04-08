@@ -1,4 +1,4 @@
-use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use chrono::{SecondsFormat, Utc};
@@ -15,7 +15,8 @@ impl TaskAuditViewer {
         current_user: Option<User>, 
         order_tx: Sender<prestashop_schema::PrestashopPayload>, 
         current_orders: Vec<String>,
-        start_idx: i32
+        start_idx: i32,
+        missed_calls_tx: Sender<Vec<MissedCallOrder>>
     ) {
         let time = web_time::Instant::now();
         let usr = current_user.clone().unwrap_or_default();
@@ -158,22 +159,27 @@ impl TaskAuditViewer {
                     };
                 },
                 TaskAudit::NeedsCall => {
-                    let endpoint = PrestashopOrderType::default();
-                    // If refresh is true, grab new data immediately
-                    match get_services_by_status(endpoint.id(), &employee.id_store).await {
-                        Ok(missed_calls) => {
-                            for order_num in missed_calls.iter() {
-                                if !current_orders.contains(&order_num.id) {
-                                    let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
-                                    match presta_payload {
-                                        Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                    // let endpoint = PrestashopOrderType::CheckinShelf;
+                    for endpoint in PrestashopOrderType::VALUES {
+                        if endpoint != PrestashopOrderType::DoneShelf {
+                            // If refresh is true, grab new data immediately
+                            match get_services_by_status(endpoint.id(), &employee.id_store).await {
+                                Ok(missed_calls) => {
+                                    let _ = missed_calls_tx.try_send(missed_calls.clone());
+                                    for order_num in missed_calls.iter() {
+                                        if !current_orders.contains(&order_num.id) {
+                                            let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
+                                            match presta_payload {
+                                                Ok(service) => order_tx.try_send(service).unwrap(),
+                                                Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                            }
+                                        }
                                     }
-                                }
-                            }
-                        },
-                        Err(e) => log::info!("Error with get_services_by_status: {:?}", e),
-                    };
+                                },
+                                Err(e) => log::info!("Error with get_services_by_status: {:?}", e),
+                            };
+                        }
+                    }
                 },
             }
         });
@@ -183,6 +189,19 @@ impl TaskAuditViewer {
     }
 
     pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
+        if let Ok(missed_calls) = self.missed_calls_rx.try_recv() {
+            for new_call in missed_calls {
+                if !self
+                    .services_viewer
+                    .missed_calls
+                    .iter()
+                    .any(|existing| existing.id == new_call.id) 
+                {
+                    self.services_viewer.missed_calls.push(new_call);
+                }
+            }
+        }
+
         if let Ok(order) = self.order_channel.1.try_recv() {
             self.loading = true;
             let key = self.audit_selection.as_str();

@@ -1,4 +1,4 @@
-use database::schema::prestashop_schema::{self, PrestashopPayload};
+use database::schema::prestashop_schema::{self, MissedCallOrder, PrestashopPayload};
 use crossbeam::channel::{Receiver, Sender};
 use crate::{app_state::SharedContext, channel_manager::ChannelManager};
 use egui_data_table::DataTable;
@@ -25,11 +25,15 @@ pub struct TaskAuditViewer {
     index: HashMap<String, i32>,
     time: Option<web_time::Instant>,
     pub service_map: HashMap<String, DataTable<PrestashopPayload>>,
+    pub missed_calls_tx: Sender<Vec<MissedCallOrder>>,
+    pub missed_calls_rx: Receiver<Vec<MissedCallOrder>>
 }
 
 impl TaskAuditViewer {
     pub fn new() -> Self {
         let order_channel = <prestashop_schema::PrestashopPayload>::create_unbounded_channel();
+        let (missed_calls_tx, missed_calls_rx) = <Vec<MissedCallOrder>>::create_unbounded_channel();
+
         Self {
             audit_selection: TaskAudit::default(),
             services_viewer: TaskRowViewer::default(),
@@ -37,7 +41,9 @@ impl TaskAuditViewer {
             loading: false,
             index: HashMap::new(),
             service_map: HashMap::new(),
-            time: None
+            time: None,
+            missed_calls_tx,
+            missed_calls_rx,
         }
     }
 }

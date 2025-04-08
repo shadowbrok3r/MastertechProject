@@ -758,7 +758,7 @@ pub struct MissedCallOrder {
     pub missing_days: Vec<String>,
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize, PartialEq)]
 pub enum PrestashopOrderType {
     #[default]
     CheckinShelf,
@@ -783,4 +783,10 @@ impl PrestashopOrderType {
             Self::DoneShelf => "40",
         }
     }
+
+    pub const VALUES: [Self; 3] = [
+        Self::CheckinShelf,
+        Self::InRepair,
+        Self::DoneShelf,
+    ];
 }

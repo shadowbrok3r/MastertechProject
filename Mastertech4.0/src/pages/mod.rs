@@ -19,6 +19,8 @@ impl MasterTechApp {
         style.buttons.close_tab_color = Color32::from_rgb(191, 33, 101);
         style.tab_bar.hline_color = Color32::DARK_GRAY;
         style.separator.color_idle = Color32::DARK_GRAY;
+        style.separator.extra_interact_width = 7.;
+        style.separator.width = 1.3;
         style.main_surface_border_stroke = Stroke::new(0.25, Color32::TRANSPARENT);
         style.tab_bar.height = 20.0;
         style.tab.tab_body.inner_margin = Margin::same(1);
