@@ -1,5 +1,4 @@
 use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
-use regex::Regex;
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Networks, System};
@@ -90,7 +89,7 @@ impl ComputerInfo for ComputerData {
         #[cfg(target_os = "linux")]
         {
             info!("Filesystem -> get_computer_data -> Pulling linux gpu");
-            let re = Regex::new(r"\[(.*)\]").unwrap();
+            let re = regex::Regex::new(r"\[(.*)\]").unwrap();
             let gpu = String::from_utf8(
                 tokio::process::Command::new("sh")
                     .arg("-c")
@@ -197,7 +196,7 @@ impl ComputerInfo for ComputerData {
         #[cfg(target_os = "linux")]
         {
             info!("Filesystem -> get_computer_data -> Pulling linux gpu");
-            let re = Regex::new(r"\[(.*)\]").unwrap();
+            let re = regex::Regex::new(r"\[(.*)\]").unwrap();
             let gpu = String::from_utf8(
                 tokio::process::Command::new("sh")
                     .arg("-c")
