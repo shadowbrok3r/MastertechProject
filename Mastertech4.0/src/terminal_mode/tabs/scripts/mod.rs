@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::{ScheduledTask, StartupProgram, TaskbarItem}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use crate::{tabs::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
 use database::schema::Node;
 use displays::virtual_filesystem::FileSystem;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
@@ -59,12 +59,12 @@ pub struct ScriptsTab<'a> {
     /// Installed Programs tab
     #[cfg(target_os="windows")]
     installed_programs: Vec<InstalledProgram>,
-    /// Startup Items tab
-    startup_programs: Vec<StartupProgram>,
+    // /// Startup Items tab
+    // startup_programs: Vec<StartupProgram>,
     /// Scheduled Tasks tab
     scheduled_tasks: Vec<ScheduledTask>,
-    /// Taskbar Items tab
-    taskbar_items: Vec<TaskbarItem>,
+    // /// Taskbar Items tab
+    // taskbar_items: Vec<TaskbarItem>,
     /// Multipurpose checklist
     checklists: HashMap<String, TodoList>,
     /// Stores the latest retrieved Windows Updates info
@@ -89,7 +89,7 @@ pub struct ScriptsTab<'a> {
     /// (category, text) of the running script
     current_script: RefCell<Option<(Category, String)>>, 
     is_popup_open: RefCell<bool>,
-    destination_directory: String,
+    // destination_directory: String,
     data_transfer_progress_tx: Sender<Vec<u8>>,
     data_transfer_progress_rx: Receiver<Vec<u8>>,
     source_directories: Vec<(String, String)>,
@@ -245,9 +245,9 @@ impl<'a> ScriptsTab<'a> {
             antivirus_products: Vec::new(),
             #[cfg(target_os="windows")]
             installed_programs: Vec::new(),
-            startup_programs: Vec::new(),
+            // startup_programs: Vec::new(),
             scheduled_tasks: Vec::new(),
-            taskbar_items: Vec::new(),
+            // taskbar_items: Vec::new(),
 
             reports: RefCell::new(vec![]),
             current_reporter: RefCell::new(Reporter::Unknown),
@@ -280,7 +280,7 @@ impl<'a> ScriptsTab<'a> {
             current_script: RefCell::new(None),
             data_path_buttons: Vec::new(),
             is_popup_open: RefCell::new(false),
-            destination_directory: String::new(),
+            // destination_directory: String::new(),
             source_directories: Vec::new(),
             progress: RefCell::new(None),
             has_scrolled_manually: RefCell::new(false),

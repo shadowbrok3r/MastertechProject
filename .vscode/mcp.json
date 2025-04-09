@@ -1,0 +1,13 @@
+{
+    "servers": {
+        "rust-docs": {
+            "type": "stdio",
+            "command": "bun",
+            "args": [
+                "run",
+                "start",
+                "C:\\Users\\Owner\\Desktop\\rust-docs-mcp-server"
+            ]
+        }
+    }
+}
