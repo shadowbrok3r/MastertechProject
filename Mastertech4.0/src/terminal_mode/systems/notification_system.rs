@@ -1,8 +1,8 @@
 use ratatui::{layout::{Alignment, Constraint, Direction, Layout, Rect}, prelude::{Backend, Color}, style::{Modifier, Style}, symbols::line::DOUBLE, widgets::{Block, BorderType, Borders, Clear, LineGauge, Paragraph, Wrap}, Frame};
-use crate::terminal_mode::{fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{CATPPUCCIN, CYAN, SPRINGGREEN}};
+use crate::terminal_mode::{fx::{effect::UniqueEffectId, EffectStage}, styling::{CATPPUCCIN, CYAN, SPRINGGREEN}};
 use std::{hash::Hasher, time::Instant};
-use tachyonfx::CellFilter;
 
+#[allow(dead_code)]
 #[derive(Clone, PartialEq, Debug)]
 // Notification types
 pub enum NotificationType {
@@ -77,7 +77,8 @@ impl Notification {
         }
     }
 
-    pub fn render_effects(&self, effect_stage: &mut EffectStage<UniqueEffectId>, area: Rect) {
+    #[allow(dead_code)]
+    pub fn render_effects(&self, _effect_stage: &mut EffectStage<UniqueEffectId>, _area: Rect) {
         // let border_color = self.border_color();
         // let effect = outline_selected_cells(
         //     effect_stage, 

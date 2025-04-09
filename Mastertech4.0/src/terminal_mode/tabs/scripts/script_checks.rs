@@ -28,13 +28,18 @@ use {
     }
 };
 
-/*
- FIGURED OUT HOW TO ******REACTIVATE****** SUPERANTISPYWARE.
- "C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe" /autoregister:1HT2-ZJEA-VV0B5
+pub trait ScriptTask: Send + 'static {
+    fn name(&self) -> &'static str;
+    fn run(&self) -> ScriptOutcome;
+}
 
- YOU HAVE TO *KILL* THE EXECUTABLE, THEN RELAUNCH THE EXECUTABLE WITH THAT COMMANDLINE FLAG
- 
-*/
+pub enum ScriptOutcome {
+    Passed,
+    Warning(String),
+    Failed(String),
+    Error(String),
+}
+
 impl <'a> ScriptsTab <'a> {
     pub fn run_selected_scripts(&mut self, rerun: bool) {
         let selected = if rerun {

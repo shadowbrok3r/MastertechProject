@@ -2,8 +2,6 @@ use ratatui::{crossterm::event::{KeyEvent, MouseEvent}, layout::Rect, prelude::B
 use ratatui::symbols::border::Set;
 use button::ButtonState;
 
-use super::tabs::login::LoginTab;
-
 pub mod json_viewer;
 pub mod button;
 pub mod input_field;

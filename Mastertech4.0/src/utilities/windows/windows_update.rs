@@ -116,8 +116,8 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdow
         ))).ok();
 
         if install {
-            let res = process_updates(&update_session, &updates_wu);
-            let res1 = process_updates(&update_session, &updates_mu);
+            let res = process_updates(&update_session, &updates_wu, event_sender.clone());
+            let res1 = process_updates(&update_session, &updates_mu, event_sender.clone());
     
             event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Windows Updates Result: {res:?}"))).ok();
             event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Microsoft Updates Result: {res1:?}"))).ok();
@@ -283,7 +283,7 @@ unsafe fn install_updates_from_collection(
     updates: &IUpdateCollection,
     dummy_progress_cb: DummyProgressCallback,
     dummy_completed_cb: DummyCompletedCallback,
-) -> Result<()> {
+) -> Result<bool> {
     unsafe { 
         let update_downloader: IUpdateDownloader = update_session.CreateUpdateDownloader()?;
         update_downloader.SetUpdates(updates)?;
@@ -320,11 +320,9 @@ unsafe fn install_updates_from_collection(
             OperationResultCode(5) => log::info!("orcAborted"),
             _ => {}
         }   
-        if install_result.RebootRequired()?.as_bool() {
-            let _ = reboot_system();
-        }
+        
         // update_downloader.EndDownload(value)
-        Ok(())
+        Ok(install_result.RebootRequired()?.as_bool())
     }
 }
 
@@ -341,7 +339,7 @@ pub fn reboot_system() -> Result<()> {
 }
 
 /// Filters and installs updates separately for Windows Update and Microsoft Update
-unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &IUpdateCollection) -> Result<()> {
+unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &IUpdateCollection, event_sender: Sender<WindowsUpdateEvent>) -> Result<()> {
     unsafe { 
         // Iterate backwards to avoid shifting indices during removal
         let count = update_collection.Count()?;
@@ -350,27 +348,29 @@ unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &I
             let is_installed = update.IsInstalled()?.as_bool();
             // Remove only if the update is already installed.
             if is_installed {
-                log::info!("Skipping update (already installed): {}", update.Title()?.to_string());
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Skipping update (already installed): {}", update.Title()?.to_string()))).ok();
                 update_collection.RemoveAt(i)?;
             } else {
-                log::info!("Adding update: {}", update.Title()?.to_string());
-                log::info!("=>  IsInstalled: {:?}", is_installed);
-                log::info!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
-                log::info!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
-                log::info!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
-                log::info!("=>  Description: {:?}", update.Description()?);
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Adding update: {}", update.Title()?.to_string()))).ok();
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("=>  IsInstalled: {:?}", is_installed))).ok();
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool()))).ok();
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool()))).ok();
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool()))).ok();
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("=>  Description: {:?}", update.Description()?))).ok();
             }
         }
         if update_collection.Count()? != 0 {
-            install_updates_from_collection(
+            let shutdown_required = install_updates_from_collection(
                 update_session, 
                 &update_collection,
                 DummyProgressCallback::default().into(),
                 DummyCompletedCallback::default().into()
-            )
-        } else {
-            Ok(())
+            );
+
+            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Shutdown Required: {}", shutdown_required?))).ok();
         }
+        
+        Ok(())
     }
 }
 

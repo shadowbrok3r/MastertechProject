@@ -1,10 +1,25 @@
 use std::fmt::Display;
-
 use ratatui::widgets::ListState;
 
-use super::ScriptsTab;
+use super::{script_checks::{ScriptOutcome, ScriptTask}, ScriptsTab};
+
+pub struct TaskReport {
+    pub name: String,
+    pub outcome: Option<ScriptOutcome>,
+    pub progress: Option<(u64, u64)>, // (current, total)
+    pub details: String,
+}
+
+// UPDATED REPORTABLE TASK TRAIT TO EXTEND ScriptTask
+pub trait ReportableTask: ScriptTask {
+    /// Provides a detailed report based on criteria defined for this task.
+    fn report(&self) -> TaskReport;
+    /// Updates the report based on the given outcome.
+    fn update_report(&mut self, outcome: ScriptOutcome);
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TodoItemTag {
     #[default]
     Tuneup,
@@ -32,6 +47,7 @@ pub struct TodoItem {
     category: Category, // Changed from tag to category
 }
 
+#[allow(dead_code)]
 impl TodoItem {
     pub fn new(text: &str,category: Category) -> Self {
         // let tag = if let Some(tag) = tag { tag } else { TodoItemTag::default() };
