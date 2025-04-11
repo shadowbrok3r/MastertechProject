@@ -1,12 +1,11 @@
+use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
-// use deserializer::deserialize_to_string;
-use surrealdb::{sql::Uuid, RecordId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
+use surrealdb::RecordId;
 use serde_json::Value;
-use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use crate::DATABASE;
 use anyhow::Error;
 
@@ -81,12 +80,12 @@ pub struct TaskPayload {
 impl Default for TaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_name: String::new(),
             service_ticket: None,
             everest_initials: String::new(),
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
             due_date: String::new(),
             priority: Priority::Normal,
@@ -115,12 +114,12 @@ pub struct LiveTaskPayload {
 impl Default for LiveTaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_name: String::new(),
             service_ticket: None,
             everest_initials: String::new(),
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
             due_date: String::new(),
             priority: Priority::Normal,
@@ -174,7 +173,7 @@ pub struct TicketPayload {
 impl Default for TicketPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             created_at: Default::default(),
             customer: Default::default(),
             computer: Default::default(),
@@ -221,7 +220,7 @@ pub struct TicketData {
 impl Default for TicketData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             created_at: Default::default(),
             customer: Default::default(),
             computer: Default::default(),
@@ -320,7 +319,7 @@ pub struct CustomerData {
 impl Default for CustomerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CUSTOMER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             cust_code: Default::default(),
             part_order_links: Default::default(),
             name: Default::default(),
@@ -361,7 +360,7 @@ pub struct Job {
 impl Default for ComputerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((COMPUTER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             customer: Default::default(),
             seb_info: Default::default(),
             hostname: Default::default(),
@@ -574,7 +573,7 @@ pub struct TaskNotePayload {
 impl Default for TaskNotePayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_NOTE_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_id: Default::default(),
             everest_initials: Default::default(),
             created_at: Default::default(),
@@ -607,7 +606,7 @@ pub struct ConnectedClient {
 impl Default for ConnectedClient {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((CONNECTED_CLIENT_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             assigned_user: Default::default(),
             client_hash: Default::default(),
             connection_string: Default::default(),
@@ -637,8 +636,8 @@ pub struct Notification {
 impl Default for Notification {
     fn default() -> Self {
         Self {
-            id: RecordId::from((NOTIFICATION_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
-            user: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((NOTIFICATION_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            user: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             notification_description: Default::default(),
             notification_type: Default::default(),
             status: Default::default()
@@ -1054,7 +1053,7 @@ pub struct User {
 impl Default for User {
     fn default() -> Self {
         Self {
-            id: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            id: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             name: String::new(),
             everest_initials: String::new(),
             email: String::new(),
