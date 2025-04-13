@@ -1193,7 +1193,7 @@ impl FileSystem {
             downloaded_bytes += chunk.len() as u64;
             byte_vec.extend_from_slice(&chunk.as_slice());
             let _ = tx.send((downloaded_bytes, content_length));
-            #[cfg(not(target_arch="wasm32"))]
+            #[cfg(not(target_arch="wasm32"))] {}
             tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks
         }
 

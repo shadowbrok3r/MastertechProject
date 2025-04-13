@@ -6,7 +6,7 @@ use crossbeam::channel::Sender;
 use web_time::Instant;
 use std::io;
 // crossterm::event::{KeyCode, KeyModifiers}
-use super::terminal_line::TerminalLine;
+use super::{terminal_line::TerminalLine, SerializableBuffer};
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 struct InstantWrapper(Instant);
@@ -23,7 +23,7 @@ pub enum TerminalEvent {
 pub struct BufferMessage {
     pub frame_count: u64,
     pub timestamp: u128, // Milliseconds since epoch or elapsed time
-    pub buffer: Buffer, // Encoded buffer data
+    pub buffer: SerializableBuffer, // Encoded buffer data
     pub encode_duration: u64,
 }
 

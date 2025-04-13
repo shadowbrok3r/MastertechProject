@@ -35,6 +35,8 @@ use windows::{
 const CLSID_UPDATE_SESSION: GUID = GUID::from_u128(0x4CB43D7F_7EEE_4906_8698_60DA1C38F2FE);
 const CLSID_UPDATE_SERVICE_MANAGER: GUID = GUID::from_u128(0xf8d253d9_89a4_4daa_87b6_1168369f0b21);
 const MICROSOFT_UPDATE_SERVICE_ID: &str = "7971f918-a847-4430-9279-4a52d1efe18d";
+const DCAT_SERVICE_ID: &str = "855E8A7C-ECB4-4CA3-B045-1DFA50104289";
+const STORE_SERVICE_ID: &str = "117cab2d-82b1-4b5a-a08c-4d62dbee7782";
 
 /// Our custom struct to hold basic update info
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -63,6 +65,63 @@ pub struct DummyCompletedCallback {}
 pub enum WindowsUpdateEvent {
     UpdateLogs(String),
     ReturnedUpdates(WindowsUpdates),
+}
+
+/// Enum mapping HRESULT error codes to readable descriptions
+#[derive(Debug)]
+enum WindowsUpdateError {
+    NotSupported,
+    NoService,
+    UnknownId,
+    InvalidIndex,
+    OperationInProgress,
+    InvalidOperation,
+    DownloadFailed,
+    NotApplicable,
+    Other,
+}
+
+impl From<HRESULT> for WindowsUpdateError {
+    fn from(hr: HRESULT) -> Self {
+        match hr.0 as u32 {
+            0x80240037 => WindowsUpdateError::NotSupported,
+            0x80240001 => WindowsUpdateError::NoService,
+            0x80240003 => WindowsUpdateError::UnknownId,
+            0x80240007 => WindowsUpdateError::InvalidIndex,
+            0x80240009 => WindowsUpdateError::OperationInProgress,
+            0x80240036 => WindowsUpdateError::InvalidOperation,
+            0x80240034 => WindowsUpdateError::DownloadFailed,
+            0x80240017 => WindowsUpdateError::NotApplicable,
+            _ => WindowsUpdateError::Other // WindowsUpdateError::Other(hr.0 as u32),
+        }
+    }
+}
+
+impl IDownloadProgressChangedCallback_Impl for DummyProgressCallback_Impl {
+    fn Invoke(
+        &self,
+        downloadjob: Ref<'_, IDownloadJob>,
+        _callbackargs: Ref<'_, IDownloadProgressChangedCallbackArgs>,
+    ) -> Result<()> {
+        unsafe {
+            let progress = downloadjob.unwrap().GetProgress()?.PercentComplete()?;
+            let cb = _callbackargs.unwrap();
+            let total_downloaded = cb.Progress()?.TotalBytesDownloaded()?.Hi32;
+            let total_download_size = cb.Progress()?.TotalBytesToDownload()?.Hi32;
+            log::info!("Update Download progress: {progress:?}\ntotal_downloaded: {total_downloaded:?} / total_download_size: {total_download_size:?}");
+        }
+        Ok(())
+    }
+}
+
+impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
+    fn Invoke(
+        &self, 
+        _downloadjob: windows_core::Ref<'_, IDownloadJob>, 
+        _callbackargs: windows_core::Ref<'_, windows::Win32::System::UpdateAgent::IDownloadCompletedCallbackArgs>
+    ) -> windows_core::Result<()> {
+        Ok(())
+    }
 }
 
 pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdown: bool, install: bool) -> Result<()> {
@@ -134,62 +193,6 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdow
     Ok(())
 }
 
-impl IDownloadProgressChangedCallback_Impl for DummyProgressCallback_Impl {
-    fn Invoke(
-        &self,
-        downloadjob: Ref<'_, IDownloadJob>,
-        _callbackargs: Ref<'_, IDownloadProgressChangedCallbackArgs>,
-    ) -> Result<()> {
-        unsafe {
-            let progress = downloadjob.unwrap().GetProgress()?.PercentComplete()?;
-            let cb = _callbackargs.unwrap();
-            let total_downloaded = cb.Progress()?.TotalBytesDownloaded()?.Hi32;
-            let total_download_size = cb.Progress()?.TotalBytesToDownload()?.Hi32;
-            log::info!("Update Download progress: {progress:?}\ntotal_downloaded: {total_downloaded:?} / total_download_size: {total_download_size:?}");
-        }
-        Ok(())
-    }
-}
-
-impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
-    fn Invoke(
-        &self, 
-        _downloadjob: windows_core::Ref<'_, IDownloadJob>, 
-        _callbackargs: windows_core::Ref<'_, windows::Win32::System::UpdateAgent::IDownloadCompletedCallbackArgs>
-    ) -> windows_core::Result<()> {
-        Ok(())
-    }
-}
-
-/// Enum mapping HRESULT error codes to readable descriptions
-#[derive(Debug)]
-enum WindowsUpdateError {
-    NotSupported,
-    NoService,
-    UnknownId,
-    InvalidIndex,
-    OperationInProgress,
-    InvalidOperation,
-    DownloadFailed,
-    NotApplicable,
-    Other,
-}
-
-impl From<HRESULT> for WindowsUpdateError {
-    fn from(hr: HRESULT) -> Self {
-        match hr.0 as u32 {
-            0x80240037 => WindowsUpdateError::NotSupported,
-            0x80240001 => WindowsUpdateError::NoService,
-            0x80240003 => WindowsUpdateError::UnknownId,
-            0x80240007 => WindowsUpdateError::InvalidIndex,
-            0x80240009 => WindowsUpdateError::OperationInProgress,
-            0x80240036 => WindowsUpdateError::InvalidOperation,
-            0x80240034 => WindowsUpdateError::DownloadFailed,
-            0x80240017 => WindowsUpdateError::NotApplicable,
-            _ => WindowsUpdateError::Other // WindowsUpdateError::Other(hr.0 as u32),
-        }
-    }
-}
 
 /// Enables required privileges for performing update operations
 unsafe fn enable_privilege(privilege: PCWSTR) -> bool {
@@ -237,6 +240,7 @@ unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
 /// Searches for available updates using the specified update server
 unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> Result<IUpdateCollection> {
     unsafe { 
+        
         let search_result = match selection {
             2 => {
                 log::info!("ServerSelection: Windows Update");

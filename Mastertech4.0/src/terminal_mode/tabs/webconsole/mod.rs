@@ -119,7 +119,7 @@ impl <'a> WebconsoleTab <'a> {
                                             log::info!("Binary message received, len={}", buffer_array.len());
                                             if let Ok(buffer_msg) = decode_buffer(&buffer_array) {
                                                 log::info!("Decoded buffer, frame_count={}", buffer_msg.frame_count);
-                                                if buffer_tx.send((buffer_msg.frame_count, buffer_msg.buffer)).is_err() {
+                                                if buffer_tx.send((buffer_msg.frame_count, buffer_msg.buffer.into())).is_err() {
                                                     log::warn!("Failed to send remote buffer to buffer_tx");
                                                     break;
                                                 }

@@ -6,7 +6,7 @@ use std::{path::Path, time::{Duration, Instant}};
 // use tokio::{self, process::ChildStdin, sync::Mutex};
 use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
-use bincode::serialize;
+use bincode::{config::standard, serde::*};
 
 use super::{data::LocalTermEvent, TerminalApp};
 
@@ -218,8 +218,9 @@ impl TerminalWebsocketClient {
             Cmd::FileSystemAction(FileSystemAction::Select((_, path))) => {
                 match std::fs::read_to_string(path) {
                     Ok(file) => {
-                        let payload = serialize(
-                            &Cmd::FileSystemAction(FileSystemAction::PreviewedFile(file))
+                        let payload = encode_to_vec(
+                            &Cmd::FileSystemAction(FileSystemAction::PreviewedFile(file)),
+                            standard()
                         );
         
                         match payload {

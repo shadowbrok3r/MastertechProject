@@ -1,7 +1,7 @@
-use crate::terminal_mode::{context::TerminalContext, systems::{communication_system::DataMessage, notification_system::Notification}};
-use crossbeam::channel::{Receiver, Sender};
-use database::schema::{utilities::get_tasks_for_store, User};
+use crate::{filesystem::get_client_hash, terminal_mode::{context::TerminalContext, systems::{communication_system::DataMessage, notification_system::Notification}, websockets::create_client}};
+use database::{WS_CLIENT_URL, schema::{utilities::get_tasks_for_store, User}};
 use std::{sync::{Arc, Mutex}, time::Duration};
+use crossbeam::channel::{Receiver, Sender};
 use super::communication_system::Message;
 
 /// Render system
@@ -60,10 +60,23 @@ impl RenderSystem {
                                 });
                             } else if let Some(user) = message.downcast_ref::<DataMessage<User>>() {
                                 if let Ok(mut ctx) = self.ctx.lock() {
-                                    ctx.user = user.0.clone();
                                     let tx = ctx.tasks_tx.clone();
+                                    ctx.user = user.0.clone();
                                     let store = user.0.clone().store.as_str().to_string();
+                                    let usr_id = user.0.id.clone();
+                                    let mut client = get_client_hash();
+                                    let connection_url = format!(
+                                        "{WS_CLIENT_URL}&room_id={}",
+                                        client.id
+                                    );
+                                    ctx.url = Some(connection_url.clone());
+
                                     tokio::spawn(async move {
+
+                                        client.assigned_user = Some(usr_id.clone());
+                                        let create_client = create_client(client.clone()).await;
+                                        log::info!("Client Creation: {create_client:?}");
+                                        
                                         let tasks_result = get_tasks_for_store(tx, store).await;
                                         log::info!("Tasks result: {tasks_result:?}");
                                     });

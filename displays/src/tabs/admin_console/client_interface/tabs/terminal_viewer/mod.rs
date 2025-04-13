@@ -1,7 +1,5 @@
 use crate::remote_viewer::ratagui::{RataguiBackend, TerminalEvent};
 use crossbeam::channel::{unbounded, Sender, Receiver};
-use database::schema::utilities::decompress_data;
-use base64::{engine::general_purpose, Engine};
 use web_time::Instant;
 use ratatui::prelude::*;
 
@@ -57,20 +55,4 @@ impl RemoteTerminal {
             cached_buffer: Buffer::empty(initial_area),
         }
     }
-}
-
-/// Decompress and decode the given Vec<u8> (which is base64-encoded compressed JSON)
-/// and deserialize it back into a Buffer.
-pub fn decompress_buffer(input: Vec<u8>) -> anyhow::Result<Buffer, anyhow::Error> {
-    // Convert the input Vec<u8> into a String.
-    let encoded_str = String::from_utf8(input)?;
-    // Base64-decode into the compressed data.
-    let compressed = general_purpose::STANDARD.decode(&encoded_str)?;
-    // Decompress the data.
-    let decompressed = decompress_data(&compressed)?;
-    // Convert decompressed bytes into a string.
-    let decompressed_string = String::from_utf8(decompressed)?;
-    // Deserialize the JSON string into a Buffer.
-    let buf = serde_json::from_str::<Buffer>(&decompressed_string)?;
-    Ok(buf)
 }

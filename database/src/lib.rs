@@ -17,10 +17,10 @@ pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
 pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
-// pub const WS_CLIENT_URL: &str = "ws://localhost:8081/websocket?role=client";
-// pub const WS_MASTER_URL: &str = "ws://localhost:8081/websocket?role=master";
-pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
-pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
+pub const WS_CLIENT_URL: &str = "ws://localhost:8081/websocket?role=client";
+pub const WS_MASTER_URL: &str = "ws://localhost:8081/websocket?role=master";
+// pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
+// pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
 
 
 #[derive(Clone, Debug, Default)]
@@ -103,7 +103,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Wss>(DB_URL_DEV).await {
+        match DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await {
             Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
             Err(e) => log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
         }

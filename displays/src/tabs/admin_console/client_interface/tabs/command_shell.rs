@@ -1,8 +1,8 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use crate::tabs::admin_console::WebSocketClient;
+use bincode::{config::standard, serde::*};
 use ewebsock::WsMessage;
-use bincode::serialize;
 use core::f32;
 use crate::Cmd;
 
@@ -119,7 +119,7 @@ impl WebSocketClient {
                     timestamp:  chrono::Local::now().to_rfc3339()
                 });
 
-                match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
+                match encode_to_vec(&Cmd::InteractiveInput(std::mem::take(&mut self.input)), standard()){
                     Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
                     Err(e) => self.history.push(History { 
                         from: "Client".to_string(), 
