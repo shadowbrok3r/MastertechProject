@@ -42,6 +42,7 @@ futures = { workspace=true }
 bytes = { workspace=true }
 regex = { workspace=true }
 async-trait = { workspace = true }
+compact_str = { version = "0.9.0", features = ["serde"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ratatui = { workspace = true }

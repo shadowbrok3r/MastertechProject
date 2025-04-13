@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use ui::WsDisplayState;
 use web_time::Instant;
 
+use bincode::{config::standard, serde::*};
+
 use super::client_interface::tabs::command_shell::History;
 
 pub mod receive;
@@ -128,29 +130,29 @@ impl WebSocketClient {
 
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>> {
-    if let Ok(data) = bincode::serialize(system_info){
+    if let Ok(data) = encode_to_vec(system_info, standard()) {
         Some(data)
     } else { None }
 }
 
 pub fn deserialize_system_info(bytes: &[u8]) -> Option<SystemInformation> {
-    if let Ok(data) = bincode::deserialize(bytes){
+    if let Ok((data, _)) = decode_from_slice(bytes, standard()){
         Some(data)
     } else { None }
 }
 
 pub fn deserializer<T: Serialize + for<'a> Deserialize<'a> + 'static >(bytes: &[u8]) -> Option<T> {
-    if let Ok(data) = bincode::deserialize(bytes){
+    if let Ok((data, _)) = decode_from_slice(bytes, standard()){
         Some(data)
     } else { None }
 }
 
 pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
-    if let Ok(cmd) = bincode::deserialize(bytes){
+    if let Ok((cmd, _)) = decode_from_slice(bytes, standard()){
         Some(cmd)
     }else{ None }
 }
 
 pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
-    bincode::serialize(bytes).expect("Failed to deserialize Cmd")
+    encode_to_vec(bytes, standard()).expect("Failed to deserialize Cmd")
 }

@@ -8,9 +8,9 @@ use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
+use bincode::{config::standard, serde::*};
 use surrealdb::{RecordId, Response};
 use anyhow::{Result, Error};
-use bincode::serialize;
 use log::{error, info};
 
 impl MastertechContext{
@@ -372,8 +372,9 @@ impl WebConsoleFrontend {
                         let node = self.explorer.build_virtual_file_system(path, paths);
                         info!("websockets -> Node: {:?}", node);
     
-                        let payload = serialize(
-                            &Cmd::FileSystemAction(FileSystemAction::GetNode(node))
+                        let payload = encode_to_vec(
+                            &Cmd::FileSystemAction(FileSystemAction::GetNode(node)),
+                            standard()
                         );
         
                         match payload {
@@ -402,8 +403,9 @@ impl WebConsoleFrontend {
             Cmd::FileSystemAction(FileSystemAction::Select((_, path))) => {
                 match std::fs::read_to_string(path) {
                     Ok(file) => {
-                        let payload = serialize(
-                            &Cmd::FileSystemAction(FileSystemAction::PreviewedFile(file))
+                        let payload = encode_to_vec(
+                            &Cmd::FileSystemAction(FileSystemAction::PreviewedFile(file)),
+                            standard()
                         );
         
                         match payload {

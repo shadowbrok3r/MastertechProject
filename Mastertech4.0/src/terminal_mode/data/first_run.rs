@@ -1,18 +1,18 @@
-use crate::{app_state::{AppState, MainPages}, filesystem::get_client_hash, pages::login_page::HASH, terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, websockets::create_client, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
-use database::{WS_CLIENT_URL, schema::utilities::get_current_user_from_auth, Database, DATABASE};
+use crate::{app_state::{AppState, MainPages}, pages::login_page::HASH, terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
+use database::{schema::utilities::get_current_user_from_auth, Database, DATABASE};
 
 impl <'a>TerminalApp<'a> {
     pub fn first_run(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        if let Ok(mut ctx) = self.ctx.lock() {
+        if let Ok(ctx) = self.ctx.lock() {
 
-            let mut client = get_client_hash();
+            // let mut client = get_client_hash();
 
-            let connection_url = format!(
-                "{WS_CLIENT_URL}&room_id={}",
-                client.id
-            );
+            // let connection_url = format!(
+            //     "{WS_CLIENT_URL}&room_id={}",
+            //     client.id
+            // );
 
-            ctx.url = Some(connection_url.clone());
+            // ctx.url = Some(connection_url.clone());
 
             let loaded_data = load_encrypted_user_data(HASH);
             let app_state_tx = ctx.app_state_tx.clone();
@@ -35,10 +35,10 @@ impl <'a>TerminalApp<'a> {
                                         DataMessage(usr.clone())
                                     ))?;
 
-                                    client.assigned_user = Some(usr.id.clone());
+                                    // client.assigned_user = Some(usr.id.clone());
 
-                                    let create_client = create_client(client.clone()).await;
-                                    log::info!("Client Creation: {create_client:?}");
+                                    // let create_client = create_client(client.clone()).await;
+                                    // log::info!("Client Creation: {create_client:?}");
 
                                 }else{ 
                                     log::info!("no usr"); 

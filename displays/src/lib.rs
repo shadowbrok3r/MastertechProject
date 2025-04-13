@@ -1,5 +1,6 @@
 use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, DATABASE};
 use eframe::egui::{Modifiers, Response, Ui};
+use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -291,13 +292,10 @@ pub enum FileSystemAction{
 }
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
-    bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
-}
-
-pub fn _deserialize_system_info(bytes: &[u8]) -> SystemInformation {
-    bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
+    encode_to_vec(system_info, standard()).expect("Failed to serialize SystemInformation")
 }
 
 pub fn deserialize_command(bytes: &[u8]) -> Cmd {
-    bincode::deserialize(bytes).expect("Failed to deserialize Cmd")
+    let (cmd, _) = decode_from_slice(bytes, standard()).expect("Failed to deserialize Cmd");
+    cmd
 }

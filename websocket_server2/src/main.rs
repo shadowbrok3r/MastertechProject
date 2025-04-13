@@ -269,9 +269,9 @@ async fn main() {
     let address = SocketAddr::from(([0, 0, 0, 0], 8081));
     let listener = tokio::net::TcpListener::bind(address).await.unwrap();
     info!("Listening on {}", address);
-    tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
         serve(listener, app).await.unwrap();
-    });
+    }).await;
 }
 
 async fn websocket_handler(

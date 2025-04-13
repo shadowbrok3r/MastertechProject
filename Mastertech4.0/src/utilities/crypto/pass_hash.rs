@@ -6,6 +6,7 @@ use std::num::NonZeroU32;
 use std::fs::{read, File};
 use std::io::Write;
 use crate::pages::login_page::Login;
+use bincode::{config::standard, serde::*};
 
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
@@ -52,7 +53,7 @@ pub fn save_encrypted_user_data(user_data: &Login, password: &[u8])
 {
     let salt = generate_salt();
     let key = generate_key(password, &salt);
-    let serialized_data = bincode::serialize(user_data)?;
+    let serialized_data = encode_to_vec(user_data, standard())?;
     // let serialized_data = serde_json::to_vec(&user_data)?;
     let encrypted_data = encrypt_data(&serialized_data, &key);
     
@@ -80,8 +81,13 @@ pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
             let key = generate_key(password, salt);
             let decrypted_data = decrypt_data(encrypted_data, &key);
             // let login: Login = serde_json::from_slice(&decrypted_data).unwrap();
-            let login: Login = bincode::deserialize(&decrypted_data).unwrap();
-            Some(login)
+            match decode_from_slice(&decrypted_data, standard()) {
+                Ok((login, _)) => Some(login),
+                Err(e) => {
+                    info!("Failed to decode data: {e:?}");
+                    None
+                },
+            }
         },
         Err(e) => {
             info!("*.enc File not found {e:?}");

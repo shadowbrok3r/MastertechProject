@@ -56,7 +56,7 @@ impl RemoteTerminal {
                 );
 
                 let resized_buffer = resize_buffer(
-                    &new_buffer, 
+                    &new_buffer.into(), 
                     current_area
                 );
 

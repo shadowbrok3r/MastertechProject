@@ -216,3 +216,55 @@ pub(crate) fn load_icon() -> IconData {
         height: icon_height,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use bincode::config::{legacy, standard};
+    use displays::remote_viewer::{ratagui::BufferMessage, SerializableBuffer};
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    #[test]
+    fn test_encode_buffer_with_timestamp() {
+        // Create a ratatui Buffer
+        let buffer = Buffer::empty(Rect::new(0, 0, 10, 10));
+        let frame_count = 1;
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        // Convert Buffer to SerializableBuffer
+        let serializable_buffer = SerializableBuffer::from(buffer.clone());
+
+        // Create BufferMessage with SerializableBuffer
+        let message = BufferMessage {
+            timestamp,
+            frame_count,
+            encode_duration: 0, // Placeholder
+            buffer: serializable_buffer,
+        };
+
+        // Encode
+        let bincoded = bincode::serde::encode_to_vec(&message, standard()).unwrap();
+        let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), 8).unwrap();
+
+        println!("Compressed data: {:?}", compressed);
+
+        // Decode
+        let bincoded = zstd::decode_all(&*compressed).unwrap();
+        let (decoded_message, _) = bincode::serde::borrow_decode_from_slice::<BufferMessage, _>(
+            &bincoded,
+            standard(),
+        )
+        .unwrap();
+
+        // Convert decoded SerializableBuffer back to Buffer for comparison
+        let decoded_buffer = Buffer::from(decoded_message.buffer.clone());
+
+        println!("Decoded message: {:?}", decoded_message);
+        assert_eq!(buffer, decoded_buffer); // Verify the buffer contents
+    }
+    
+}
