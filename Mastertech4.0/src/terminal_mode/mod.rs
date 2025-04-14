@@ -175,7 +175,7 @@ impl Default for TerminalApp <'_>{
 impl <'a>TerminalApp<'a> {
     async fn ui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<(), anyhow::Error> {
         let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
-        let send_interval = Duration::from_secs_f32(0.3); // Changed: ~3 FPS interval
+        let send_interval = Duration::from_millis(30); // Changed: ~3 FPS interval
         let can_start = &mut false;
         // let manual_start = &mut false;
 

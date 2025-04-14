@@ -2,7 +2,7 @@
 use crate::remote_viewer::decode_buffer;
 use web_time::{Instant, SystemTime};
 use crossbeam::channel::{Receiver, Sender};
-use ratatui::prelude::*;
+use ratatui::{buffer::Cell, prelude::*};
 
 use super::RemoteTerminal;
 
@@ -70,20 +70,25 @@ impl RemoteTerminal {
     }
 }
 
-// Helper function to resize a buffer
 pub fn resize_buffer(source: &Buffer, target_area: Rect) -> Buffer {
-    let mut new_buffer = Buffer::empty(target_area);
+    let width = target_area.width as usize;
+    let height = target_area.height as usize;
+    let source_width = source.area.width as usize;
+    let source_height = source.area.height as usize;
+    let copy_width = source_width.min(width);
+    let copy_height = source_height.min(height);
 
-    // Copy content from source to new buffer, respecting bounds
-    for y in 0..source.area.height.min(target_area.height) {
-        for x in 0..source.area.width.min(target_area.width) {
-            if let Some(source_cell) = source.cell((x, y)) {
-                if let Some(target_cell) = new_buffer.cell_mut(Position::new(x, y)) {
-                    target_cell.clone_from(source_cell);
-                }
+    let mut content = vec![Cell::default(); width * height];
+    for y in 0..copy_height {
+        for x in 0..copy_width {
+            if let Some(cell) = source.cell(Position::new(x as u16, y as u16)) {
+                content[y * width + x] = cell.clone();
             }
         }
     }
 
-    new_buffer
+    Buffer {
+        area: target_area,
+        content,
+    }
 }

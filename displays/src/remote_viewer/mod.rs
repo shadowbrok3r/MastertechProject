@@ -1,4 +1,3 @@
-use std::time::SystemTime;
 use ratagui::BufferMessage;
 use ratatui::buffer::Buffer;
 use anyhow::Context;
@@ -6,7 +5,7 @@ use bincode::{config::*, serde::*};
 
 pub mod ratagui;
 pub mod terminal_line;
-const ZSTD_LEVEL: i32 = 7;
+const ZSTD_LEVEL: i32 = 3;
 
 pub fn encode_buffer(message: &Buffer) -> anyhow::Result<Vec<u8>> {
     let bincoded = encode_to_vec(message, standard()).context("Failed to serialize buffer")?;
@@ -18,19 +17,19 @@ pub fn encode_buffer(message: &Buffer) -> anyhow::Result<Vec<u8>> {
 pub fn encode_buffer_with_frame(frame_index: u64, buffer: &Buffer) -> anyhow::Result<Vec<u8>> {
     let data = (frame_index, buffer);
     let bincoded = encode_to_vec(&data, standard()).context("Failed to serialize frame and buffer")?;
-    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL)
-        .context("Failed to compress frame data")?;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL).context("Failed to compress frame data")?;
     Ok(compressed.into())
 }
 
 // Updated encoding function
 pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow::Result<Vec<u8>, anyhow::Error> {
-    let timestamp = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
 
-    // let encode_start = Instant::now();
+    // let encode_start = std::time::Instant::now();
+    
     let message = BufferMessage {
         timestamp,
         frame_count,
@@ -39,20 +38,8 @@ pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow
     };
     
     let bincoded = encode_to_vec(&message, standard()).context("Failed to serialize frame and buffer")?;
-    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL)
-        .context("Failed to compress frame data")?;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL).context("Failed to compress frame data")?;
     
-    // let encode_duration = encode_start.elapsed().as_millis() as u64;
-    // let updated_message = BufferMessage {
-    //     timestamp,
-    //     frame_count,
-    //     encode_duration,
-    //     buffer: buffer.clone(),
-    // };
-    // let updated_bincoded = serde_json::to_vec(&updated_message).context("Failed to serialize updated frame and buffer")?;
-    // let updated_compressed = zstd::encode_all(std::io::Cursor::new(&updated_bincoded), ZSTD_LEVEL)
-    //     .context("Failed to compress updated frame data")?;
-
     Ok(compressed.into())
 }
 
