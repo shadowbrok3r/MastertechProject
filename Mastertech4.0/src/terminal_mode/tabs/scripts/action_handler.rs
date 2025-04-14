@@ -10,7 +10,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
     }
 
     fn managed_widget_ids(&self) -> Vec<WidgetId> {
-        vec![
+        let mut widgets = vec![
             WidgetId("Run".to_string()),
             WidgetId("Tuneup".to_string()),
             WidgetId("Qc".to_string()),
@@ -20,7 +20,13 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
             WidgetId("UserScripts".to_string()),
             WidgetId("ServiceNumberScriptsPage".to_string()),
             // Add any other widget IDs handled by this tab
-        ]
+        ];
+
+        for btn in self.data_path_buttons.iter() {
+            widgets.push(btn.get_widget_id());
+        }
+        
+        widgets
     }
 
     fn handle_event(&mut self, event: &WidgetEvent) {

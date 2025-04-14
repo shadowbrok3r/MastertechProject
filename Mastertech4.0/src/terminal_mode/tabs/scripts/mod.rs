@@ -332,13 +332,12 @@ impl<'a> ScriptsTab<'a> {
             self.data_path_buttons.clear();
             for (path, size) in path_info {
                 self.log_message(&format!("Path {:<5} Size: {:>5}", path.clone(), size.clone()));
-                self.data_path_buttons.push(
-                    Button::new(
-                        format!(" {} | {} ", path.clone(), size.clone()), 
-                        WidgetId(path)
-                    )
-                    .theme(CYAN)
-                );
+                let btn =                     Button::new(
+                    format!(" {} | {} ", path.clone(), size.clone()), 
+                    WidgetId(path)
+                )
+                .theme(CYAN);
+                self.data_path_buttons.push(btn);
             }
             self.is_popup_open.replace(true);
         }
