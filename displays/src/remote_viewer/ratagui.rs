@@ -114,10 +114,9 @@ impl Widget for &mut RataguiBackend {
                 if let eframe::egui::Event::Key { key, pressed, modifiers, .. } = event {
                     if *pressed {
                         let event = TerminalEvent::KeyPress { code: *key, modifiers: *modifiers };
-                        if self.event_tx.send(event).is_ok() {
-                            // log::info!("Sent key press event: code={}, modifiers={:?}", code, rat_modifiers);
-                        } else {
-                            log::warn!("Failed to send key event");
+                        log::info!("Sent key press event: {event:#?}");
+                        if let Err(e) = self.event_tx.send(event) {
+                            log::warn!("Failed to send key event: {e:?}");
                         }
                     }
                 }
