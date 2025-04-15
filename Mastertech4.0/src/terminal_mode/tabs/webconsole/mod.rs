@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, widgets::button::Button};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::CATPPUCCINTHEME, widgets::button::Button};
 use crossbeam::channel::{Receiver, Sender};
 use database::{WS_MASTER_URL, schema::ConnectedClient};
 use displays::remote_viewer::{decode_buffer, ratagui::TerminalEvent};
@@ -59,8 +59,7 @@ impl <'a> WebconsoleTab <'a> {
     pub fn receive(&mut self) {
         if let Ok(clients) = self.connected_clients_rx.try_recv() {
             for client in clients.iter() {
-                // if client.connected && client.connection_string != crate::filesystem::get_client_hash()
-                    // .connection_string 
+                // if client.connected && client.connection_string != crate::filesystem::get_client_hash().connection_string 
                 // {
                     self.ws_clients.insert(
                         client.connection_string.clone(),
@@ -68,6 +67,7 @@ impl <'a> WebconsoleTab <'a> {
                     );
                 // }
             }
+            let _ = get_update_sender().try_send(self.widget_id());
         }
         // Poll buffer_rx for new frames
         if let Some(ref mut buffer_rx) = self.buffer_rx {
@@ -76,8 +76,6 @@ impl <'a> WebconsoleTab <'a> {
                 self.remote_buffer = Some(buffer);
             }
         }
-
-        
     }
 
     // Start WebSocket connection for a specific client
@@ -142,14 +140,12 @@ impl <'a> WebconsoleTab <'a> {
                             }
                         }
 
-                        
                         // Check for shutdown
                         tokio::select! {
                             Ok(()) = shutdown_rx.recv() => {
                                 log::info!("Remote WebSocket shutdown");
                                 break;
                             },
-                            
                             else => {
                                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                             }

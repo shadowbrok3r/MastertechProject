@@ -45,6 +45,8 @@ pub struct UpdateInfo {
     pub is_installed: bool,
     pub is_downloaded: bool,
     pub description: String,
+    pub driver_class: Option<String>,
+    pub driver_hardware_id: Option<String>,
 }
 
 /// A container for multiple updates
@@ -124,63 +126,108 @@ impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
     }
 }
 
-pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdown: bool, install: bool) -> Result<()> {
+pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, _shutdown: bool, install: bool) -> Result<()> {
+    let mut installed_updates = WindowsUpdates::default();
+    let mut all_updates: Option<IUpdateCollection> = None;
+
     let mut installed_updates = WindowsUpdates::default();
     
     unsafe {
-        if shutdown {
-             // Enable shutdown privileges for system updates
-             enable_privilege(PCWSTR::from_raw(SE_SHUTDOWN_NAME.as_ptr()));   
-        }
+        enable_privilege(PCWSTR::from_raw(SE_SHUTDOWN_NAME.as_ptr()));
 
         event_sender.try_send(WindowsUpdateEvent::UpdateLogs("Initializing COM...".to_string())).ok();
-
         let x = CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED).map(|| {});
         event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("COM init: {x:?}"))).ok();
-
         event_sender.try_send(WindowsUpdateEvent::UpdateLogs("Ensuring Microsoft Update is enabled...".to_string())).ok();
-        ensure_microsoft_update_enabled()?;
+        match ensure_microsoft_update_enabled() {
+            Ok(_) => log::info!("Microsoft Update enabled."),
+            Err(e) => log::info!("Error enabling Update Services: {e:?}"),
+        }
 
         // Create an update session
         event_sender.try_send(WindowsUpdateEvent::UpdateLogs("Creating Update Session...".to_string())).ok();
+
         let update_session: IUpdateSession = CoCreateInstance(
             &CLSID_UPDATE_SESSION, 
             None, 
             CLSCTX_INPROC_SERVER
         )?;
+
         let update_searcher: IUpdateSearcher = update_session.CreateUpdateSearcher()?;
 
         event_sender.try_send(WindowsUpdateEvent::UpdateLogs("Searching Windows Update...".to_string())).ok();
-        let updates_wu = search_updates(&update_searcher, 2)
-            .inspect_err(|e| {
-                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!(
-                    "Windows update error: {:?}", WindowsUpdateError::from(e.code())
-                ))).ok();
+
+        let services = [
+            ("Windows Update", ServerSelection(2), None),
+            ("Microsoft Update", ServerSelection(3), Some(MICROSOFT_UPDATE_SERVICE_ID)),
+            ("Driver Catalog (DCAT)", ServerSelection(3), Some(DCAT_SERVICE_ID)),
+            ("Microsoft Store", ServerSelection(3), Some(STORE_SERVICE_ID)),
+        ];
+
+        for (name, selection, service_id) in services.iter() {
+            event_sender
+                .try_send(WindowsUpdateEvent::UpdateLogs(format!("Searching {}...", name)))
+                .ok();
+            let updates = search_updates(&update_searcher, name, *selection, *service_id).inspect_err(|e| {
+                event_sender
+                    .try_send(WindowsUpdateEvent::UpdateLogs(format!(
+                        "{} error: {:?}",
+                        name,
+                        WindowsUpdateError::from(e.code())
+                    )))
+                    .ok();
             })?;
 
-        event_sender.try_send(WindowsUpdateEvent::UpdateLogs("Searching Microsoft Update...".to_string())).ok();
-        let updates_mu = search_updates(&update_searcher, 3)
-            .inspect_err(|e| {
-                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!(
-                    "Microsoft update error: {:?}", WindowsUpdateError::from(e.code())
-                ))).ok();
-            })?;
+            if all_updates.is_none() {
+                all_updates = Some(update_session.CreateUpdateCollection()?);
+            }
 
-        installed_updates
-            .append_from_collection(&updates_mu)?
-            .append_from_collection(&updates_wu)?;
+            let target_collection = all_updates.as_ref().unwrap();
+            for i in 0..updates.Count()? {
+                let update = updates.get_Item(i)?;
+                let update_id = update.Identity()?;
+                let mut is_duplicate = false;
 
-        event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!(
-            "All updates found: {:#?}", installed_updates
-        ))).ok();
+                for j in 0..target_collection.Count()? {
+                    let existing = target_collection.get_Item(j)?;
+                    if existing.Identity()?.UpdateID()?.eq(&update_id.UpdateID()?) {
+                        is_duplicate = true;
+                        break;
+                    }
+                }
 
-        if install {
-            let res = process_updates(&update_session, &updates_wu, event_sender.clone());
-            let res1 = process_updates(&update_session, &updates_mu, event_sender.clone());
-    
-            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Windows Updates Result: {res:?}"))).ok();
-            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Microsoft Updates Result: {res1:?}"))).ok();
+                if !is_duplicate {
+                    target_collection.Add(&update)?;
+                    log::info!("Added unique update from {}: {:?}", name, update.Title()?);
+                } else {
+                    log::info!("Skipped duplicate update from {}: {:?}", name, update.Title()?);
+                }
+            }
+
+            installed_updates.append_from_collection(&updates)?;
         }
+
+        event_sender
+            .try_send(WindowsUpdateEvent::UpdateLogs(format!(
+                "Found {} updates (including drivers): {:#?}",
+                installed_updates.updates.len(),
+                installed_updates
+            )))
+            .ok();
+
+            if install && all_updates.is_some() && all_updates.as_ref().unwrap().Count()? > 0 {
+                let res = process_updates(&update_session, all_updates.as_ref().unwrap(), event_sender.clone());
+                event_sender
+                    .try_send(WindowsUpdateEvent::UpdateLogs(format!("Update installation result: {res:?}")))
+                    .ok();
+    
+                // if res {
+                //     event_sender
+                //         .try_send(WindowsUpdateEvent::UpdateLogs("System reboot required.".to_string()))
+                //         .ok();
+                //     // reboot_system()?;
+                // }
+            }
 
         drop(update_searcher);
         drop(update_session);
@@ -192,7 +239,6 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, shutdow
 
     Ok(())
 }
-
 
 /// Enables required privileges for performing update operations
 unsafe fn enable_privilege(privilege: PCWSTR) -> bool {
@@ -224,56 +270,60 @@ unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
         for i in 0..count {
             let service = services.get_Item(i)?;
             let service_id = service.ServiceID()?;
-            if service_id.to_string().eq_ignore_ascii_case(MICROSOFT_UPDATE_SERVICE_ID) {
-                log::info!("Microsoft Update is already enabled.");
-                return Ok(());
-            }
+            log::info!("Checking service ID: {:?}", service_id.to_string());
         }
         
-        log::info!("Microsoft Update is not enabled. Enabling it now...");
+        log::info!("Adding Service MICROSOFT_UPDATE_SERVICE_ID");
         service_manager.AddService(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID),  &BSTR::from(""))?;
-        log::info!("Microsoft Update has been successfully enabled.");
+        log::info!("MICROSOFT_UPDATE_SERVICE_ID has been successfully enabled.");
+
+        log::info!("Adding Service DCAT_SERVICE_ID");
+        service_manager.AddService(&BSTR::from(DCAT_SERVICE_ID),  &BSTR::from(""))?;
+        log::info!("DCAT_SERVICE_ID has been successfully enabled.");
+
+        log::info!("Adding Service STORE_SERVICE_ID");
+        service_manager.AddService(&BSTR::from(STORE_SERVICE_ID),  &BSTR::from(""))?;
+        log::info!("STORE_SERVICE_ID has been successfully enabled.");
+
         Ok(())
     }
 }
 
 /// Searches for available updates using the specified update server
-unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> Result<IUpdateCollection> {
-    unsafe { 
-        
-        let search_result = match selection {
-            2 => {
-                log::info!("ServerSelection: Windows Update");
-                update_searcher.SetServerSelection(ServerSelection(2))?;
-                update_searcher.Search(
-                    &BSTR::from(
-                        "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
-                        // "(IsInstalled=0 and DeploymentAction='Installation' and BrowseOnly=1 or BrowseOnly=0) or (IsHidden=1 and IsInstalled=0)"
-                    )
-                )
-            },
-            3 => {
-                log::info!("ServerSelection: Microsoft Update");
-                update_searcher.SetServerSelection(ServerSelection(3))?;
-                update_searcher.SetServiceID(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID))?;
-                update_searcher.Search(
-                    &BSTR::from(
-                        "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
-                        // "IsInstalled=0 and DeploymentAction='Installation'"
-                    )
-                )
-            },
-            _ => return Err(windows::core::Error::from_win32()),
-        };
-        
-        let update_result = search_result?.Updates()?;
-        for i in 0..update_result.Count()? {
+unsafe fn search_updates(
+    update_searcher: &IUpdateSearcher,
+    service_name: &str,
+    server_selection: ServerSelection,
+    service_id: Option<&str>,
+) -> Result<IUpdateCollection> {
+    unsafe {
+        log::info!("Searching updates for: {}", service_name);
+        update_searcher.SetServerSelection(server_selection)?;
+        update_searcher.SetOnline(true)?; // Ensure online search
+        update_searcher.SetCanAutomaticallyUpgradeService(true)?;
+        if let Some(id) = service_id {
+            update_searcher.SetServiceID(&BSTR::from(id))?;
+            log::info!("Using service ID: {}", id);
+        }
+
+        let search_result = update_searcher.Search(&BSTR::from(
+            "IsInstalled=0 and (Type='Software' or Type='Driver')"
+        ))?;
+
+        let update_result = search_result.Updates()?;
+        for i in (0..update_result.Count()?).rev() {
             let update = update_result.get_Item(i)?;
             if update.IsInstalled()?.as_bool() {
                 log::info!("Update already installed, removing: {:?}", update.Title()?);
                 update_result.RemoveAt(i)?;
             } else {
-                log::info!("Adding update to collection: {:?}", update.Title()?);
+                let update_type = update.Type()?;
+                log::info!(
+                    "Adding update to collection: {:?} (Type: {}) from {}",
+                    update.Title()?,
+                    if update_type.0 == 1 { "Software" } else { "Driver" },
+                    service_name
+                );
             }
         }
 

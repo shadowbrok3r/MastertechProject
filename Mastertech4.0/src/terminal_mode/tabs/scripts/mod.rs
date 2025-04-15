@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use crate::{tabs::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
 use database::schema::Node;
 use displays::virtual_filesystem::FileSystem;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
@@ -340,6 +340,7 @@ impl<'a> ScriptsTab<'a> {
                 self.data_path_buttons.push(btn);
             }
             self.is_popup_open.replace(true);
+            let _ = get_update_sender().try_send(self.widget_id());
         }
 
         if let Ok(data_transfer_progress) = self.data_transfer_progress_rx.try_recv() {

@@ -242,13 +242,20 @@ impl<'a> ScriptsTab<'a> {
     
     fn draw_data_path_buttons<B: Backend>(&self, f: &mut Frame, area: Rect) {
         let popup_title = "  Data Transfer Options  ";
-        let popup_text = "Please choose a destination for the data transfer, \nand right click on a path to exclude it from the data transfer";
+        let popup_text = "Please choose a destination for the data transfer, and right click on a path to exclude it from the data transfer";
 
         // Calculate button grid dimensions
         let button_count = self.data_path_buttons.len();
         let rows = (button_count + 1) / 2; // 2 columns
-        let popup_width = 70; // Fixed width, adjust as needed
-        let popup_height = rows as u16 * 4 + 4; // 3 lines per row + title/text/padding
+
+        let popup_width: u16 = 70; // Fixed width, adjust as needed
+        
+        let inner_width = popup_width.saturating_sub(2); // Account for margins
+        let text_lines = (popup_text.len() as u16 + inner_width - 1) / inner_width; // Ceiling division
+        let text_height = text_lines.max(2); // Ensure at least 2 lines, adjust as needed
+    
+        // Calculate popup height
+        let popup_height = text_height + 2 + rows as u16 * 3 + 2; // Text + padding + buttons + borders
 
         // Center the popup in the provided area
         let popup_area = Rect::new(
@@ -269,7 +276,6 @@ impl<'a> ScriptsTab<'a> {
             .title_alignment(Alignment::Center)
             .style(Style::default().fg(SPRINGGREEN.text));
 
-        
         f.render_widget(block, popup_area);
 
         // Define inner area for content
@@ -279,15 +285,15 @@ impl<'a> ScriptsTab<'a> {
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // Text (no title here since block handles it)
-                Constraint::Length(4), // Padding
-                Constraint::Min(rows as u16 * 4 ), // Buttons: ensure enough space
+                Constraint::Length(text_height + 1), // Text area with padding
+                Constraint::Length(1), // Padding
+                Constraint::Min(rows as u16 * 3), // Buttons
             ])
             .split(inner_area);
 
         // Render the instructional text
         let text_block = Paragraph::new(popup_text)
-            .wrap(Wrap { trim: false })
+            .wrap(Wrap { trim: true })
             .alignment(Alignment::Center);
 
         f.render_widget(text_block, content_chunks[0]);
