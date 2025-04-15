@@ -5,7 +5,7 @@ use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::Service
 use websockets::TerminalWebsocketClient;
 // use websockets::TerminalWebsocketClient; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
-use events::{action_handler::{get_event_receiver, ActionHandler, EventManager}, EventHandler};
+use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
 use crate::filesystem::system_info::get_sysinfo_no_gpu;
 // use fx::{effect::UniqueEffectId, EffectStage};
@@ -134,7 +134,15 @@ impl Default for TerminalApp <'_>{
         let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
         let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
         // let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
-        let scripts_tab = Rc::new(RefCell::new(ScriptsTab::new(client.clone(), ctx.clone())));
+
+        let scripts_tab = Rc::new(
+            RefCell::new(
+                ScriptsTab::new(
+                    client.clone(), 
+                    ctx.clone()
+                )
+            )
+        );
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
         let webconsole_tab = Rc::new(RefCell::new(WebconsoleTab::new(client.clone(), ctx.clone())));
 
@@ -253,10 +261,6 @@ impl <'a>TerminalApp<'a> {
             if let Ok(start) = self.manual_connect_rx.try_recv() {
                 *can_start = start;
                 // *manual_start = start;
-            }
-            
-            if let Ok(webconsole) = self.webconsole_tab.try_borrow() {
-                self.event_manager.update_widget_mappings(webconsole.widget_id());
             }
 
             terminal.draw(|f| {

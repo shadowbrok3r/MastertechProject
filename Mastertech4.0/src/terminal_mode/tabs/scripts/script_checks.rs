@@ -942,7 +942,7 @@ pub fn read_folder(mut path: PathBuf, depth: usize, read_dirs_only: bool) -> Vec
             let exclude = path.file_name()
                 .map(|name| {
                     let name_str = name.to_string_lossy();
-                    name_str == "Public" || name_str.contains("Default") || name_str == "All Users"
+                    name_str.contains("Default") || name_str == "All Users"
                 })
                 .unwrap_or(false);
 
