@@ -135,9 +135,11 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, _shutdo
             event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Searching {}...", name))).ok();
             let updates = search_updates(&update_searcher, *selection, *service_id)
                 .inspect_err(|e| {
-                    event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!(
+                    let err = WindowsUpdateEvent::UpdateLogs(format!(
                         "{} error: {:?} - {:?}", name, WindowsUpdateError::from(e.code()), e.code()
-                    ))).ok();
+                    ));
+                    log::info!("{err:?}");
+                    event_sender.try_send(err).ok();
                 })?;
 
             installed_updates.append_from_collection(&updates)?;
@@ -407,6 +409,7 @@ enum WindowsUpdateError {
     InvalidOperation,
     DownloadFailed,
     NotApplicable,
+    #[allow(unused)]
     Other(String),
 }
 

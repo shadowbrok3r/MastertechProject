@@ -7,6 +7,33 @@ const USER_NOTIFS: &str = r"Software\Microsoft\Windows\CurrentVersion\UserProfil
 const WINDOWS_COPILOT_KEY: &str = r"Software\Policies\Microsoft\Windows\WindowsCopilot";
 const ACCOUNT_NOTIFICATIONS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\SystemSettings\AccountNotifications";
 const AUX_PINS_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband\AuxilliaryPins";
+/*
+----------------------------------------------------------------------------------------
+
+::  Microsoft.Windows.Cortana [ Microsoft Windows Cortana ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Microsoft.Windows.Cortana_cw5n1h2txyewy!CortanaUI /v Enabled /t REG_DWORD /d 0 /f
+
+::  QuietHours [ Quiet Hours ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\QuietHours /v Enabled /t REG_DWORD /d 0 /f
+
+::  ImmersiveControlPanel [ Settings ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel /v Enabled /t REG_DWORD /d 0 /f
+
+::  AutoPlay [ AutoPlay ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.AutoPlay /v Enabled /t REG_DWORD /d 0 /f
+
+::  LowDisk [ Storage Settings ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.LowDisk /v Enabled /t REG_DWORD /d 0 /f
+
+::  Print.Notification [ Print Notification ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.Print.Notification /v Enabled /t REG_DWORD /d 0 /f
+
+::  SecurityAndMaintenance [ Security and Maintenance ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance /v Enabled /t REG_DWORD /d 0 /f
+
+::  WiFiNetworkManager [ Wireless ]
+REG ADD HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.WiFiNetworkManager /v Enabled /t REG_DWORD /d 0 /f
+*/
 pub fn disable_notifications() -> Result<Vec<String>> {
     let mut results = Vec::new();
     let push_notifs_key = CURRENT_USER.options().read().write().open(PUSH_NOTIFICATIONS_KEY)?;

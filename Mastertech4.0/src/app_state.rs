@@ -106,7 +106,7 @@ pub struct MastertechContext {
     pub ctx: Context,
     pub open_tabs: HashSet<String>,
 
-    pub date: Option<DateTime<Utc>>,
+    pub date: DateTime<Utc>,
 
     pub reader_bytes: u32,
 
@@ -258,7 +258,7 @@ impl MasterTechApp {
             ctx: Context::default(),
             open_tabs: tree.1,
 
-            date: None,
+            date: chrono::offset::Utc::now(),
             animate_progress_bar: false,
             reader_bytes: 0,
 

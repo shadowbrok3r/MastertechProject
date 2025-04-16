@@ -1,4 +1,4 @@
-use crate::{tabs::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use crate::{utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
 use database::schema::Node;
 use displays::virtual_filesystem::FileSystem;
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
@@ -10,10 +10,7 @@ use render::{Report, Reporter};
 use reqwest::Client;
 
 #[cfg(target_os="windows")]
-use crate::{
-    utilities::windows::windows_update::{WindowsUpdateEvent, WindowsUpdates},
-    tabs::scripts::{AntiVirusProduct, InstalledProgram}
-};
+use crate::utilities::{scripts::{AntiVirusProduct, InstalledProgram}, windows::windows_update::{WindowsUpdateEvent, WindowsUpdates}};
 
 pub mod action_handler;
 pub mod render;

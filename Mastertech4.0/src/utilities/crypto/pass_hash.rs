@@ -70,9 +70,6 @@ fn generate_salt() -> [u8; SALT_LEN] {
     salt
 }
 
-
-
-
 pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
     match read("data.enc"){
         Ok(data) => {
