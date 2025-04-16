@@ -1,18 +1,20 @@
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
-    CM_Get_DevNode_Status, SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW, SetupDiGetDeviceInstanceIdW, SetupDiGetDeviceRegistryPropertyW, CM_DEVNODE_STATUS_FLAGS, CM_PROB, CR_SUCCESS, DIGCF_ALLCLASSES, DIGCF_PRESENT, SPDRP_DEVICEDESC, SPDRP_DRIVER, SP_DEVINFO_DATA
+    CM_Get_DevNode_Status, SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
+    SetupDiGetDeviceInstanceIdW, SetupDiGetDeviceRegistryPropertyW, CM_DEVNODE_STATUS_FLAGS, CM_PROB,
+    CR_SUCCESS, DIGCF_ALLCLASSES, DIGCF_PRESENT, SPDRP_DEVICEDESC, SPDRP_DRIVER, SP_DEVINFO_DATA,
 };
 use windows::Win32::Foundation::MAX_PATH;
 use windows::core::{PWSTR, Result};
 
 #[derive(Debug)]
-struct DeviceProblem {
+pub struct DeviceProblem {
     instance_id: String,
     description: String,
-    problem_code: u32,
+    problem_code: &'static str,
     driver_desc: Option<String>,
 }
 
-fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
+pub fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
     unsafe {
         // Create device information set for all present devices
         let hdevinfo = SetupDiGetClassDevsW(None, None, None, DIGCF_ALLCLASSES | DIGCF_PRESENT)?;
@@ -32,7 +34,7 @@ fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
                 0,
             );
 
-            if cm_result == CR_SUCCESS && problem_code != 0 {
+            if cm_result == CR_SUCCESS && problem_code != CM_PROB(0) {
                 // Get device instance ID
                 let mut instance_id = [0u16; MAX_PATH as usize];
                 if SetupDiGetDeviceInstanceIdW(
@@ -40,7 +42,9 @@ fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
                     &devinfo_data,
                     Some(&mut instance_id),
                     None,
-                ).is_ok() {
+                )
+                .is_ok()
+                {
                     let instance_id_str = PWSTR(&mut instance_id as *mut _).to_string()?;
 
                     // Get device description
@@ -50,9 +54,14 @@ fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
                         &devinfo_data,
                         SPDRP_DEVICEDESC,
                         None,
-                        Some(&mut desc as *mut _ as *mut u8),
-                        Some((MAX_PATH * 2) as u32),
-                    ).is_ok() {
+                        Some(std::slice::from_raw_parts_mut(
+                            desc.as_mut_ptr() as *mut u8,
+                            desc.len() * 2,
+                        )),
+                        None,
+                    )
+                    .is_ok()
+                    {
                         PWSTR(&mut desc as *mut _).to_string().unwrap_or_default()
                     } else {
                         String::from("Unknown")
@@ -65,26 +74,31 @@ fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
                         &devinfo_data,
                         SPDRP_DRIVER,
                         None,
-                        &mut driver_desc as *mut _ as *mut u8,
-                        (MAX_PATH * 2) as u32,
-                    ).is_ok() {
+                        Some(std::slice::from_raw_parts_mut(
+                            driver_desc.as_mut_ptr() as *mut u8,
+                            driver_desc.len() * 2,
+                        )),
+                        None,
+                    )
+                    .is_ok()
+                    {
                         PWSTR(&mut driver_desc as *mut _).to_string().ok()
                     } else {
                         None
                     };
 
                     log::info!(
-                        "Problem device: {} ({}), Code: {:?}",
+                        "Problem device: {} ({}), Code: {}",
                         desc_str,
                         instance_id_str,
-                        problem_code
+                        problem_code.0
                     );
 
                     devices.push(DeviceProblem {
                         instance_id: instance_id_str,
                         description: desc_str,
-                        problem_code: problem_code.0,
-                        driver_desc,
+                        problem_code: problem_code_to_description(problem_code.0),
+                        driver_desc: driver_str,
                     });
                 }
             }
@@ -107,4 +121,19 @@ fn problem_code_to_description(code: u32) -> &'static str {
         10 => "The device cannot start.",
         _ => "Unknown problem.",
     }
+}
+
+mod test {
+    #[cfg(test)]
+    mod tests {
+        use crate::utilities::windows::drivers::enum_problem_devices;
+
+        use super::*;
+
+        #[test]
+        fn test_problem_code_to_description() {
+           println!("Device problems: {:?}", enum_problem_devices());
+        }
+    }
+
 }

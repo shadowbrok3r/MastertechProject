@@ -2,7 +2,6 @@ use crate::{app_state::MastertechContext, tabs::tur_sheet::get_ticket::SendReque
 use std::{collections::HashMap, path::PathBuf};
 use database::schema::{Store, User};
 use serde_json::Value;
-use chrono::DateTime;
 use log::info;
 
 use super::email_builder::{AsanaTask, TaskAssignee};
@@ -40,7 +39,7 @@ impl MastertechContext{
             let checkin_notes = &self.ticket_data.checkin_notes;
             let recommendations = &self.task_data.task_description;   
 
-            let date = self.date.unwrap_or(DateTime::default());
+            let date = self.date;
             let mut _attached_file: Option<PathBuf> = None;
             if let Some(file) = &self.opened_file{
                 _attached_file = Some(file.to_path_buf());

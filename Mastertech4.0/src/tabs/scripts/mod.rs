@@ -15,27 +15,7 @@ use log::info;
 #[allow(unused_imports)]
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 
-pub mod task_scheduler;
-pub mod taskbar;
-pub mod startup;
-pub mod processes;
-#[cfg(target_os="windows")]
-pub mod programs;
-#[cfg(target_os="windows")]
-pub mod antivirus;
 
-pub use {
-    task_scheduler::*,
-    taskbar::*,
-    startup::*,
-    processes::*,
-};
-
-#[cfg(target_os="windows")]
-pub use {
-    programs::*,
-    antivirus::*  
-};
 
 #[derive(Embed)]
 #[folder = "src/assets/superanti/"]

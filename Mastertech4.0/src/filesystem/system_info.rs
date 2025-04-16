@@ -555,7 +555,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         }
     }
 
-    for component in &components {
+    for component in components.list() {
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
         // comps += format!("{component:#?} \n", component.).as_str();
     }
