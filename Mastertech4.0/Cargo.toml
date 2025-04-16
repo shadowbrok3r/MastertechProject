@@ -137,7 +137,11 @@ windows = {version = "0.61", features = [
     "Win32_NetworkManagement_Ndis",
     "Win32_Networking_WinSock", 
     "Win32_NetworkManagement_IpHelper",
-    "Win32_NetworkManagement_WiFi"
+    "Win32_NetworkManagement_WiFi",
+    "Win32_System_Diagnostics",
+    "Win32_Devices",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties"
 ]}
 windows-registry = "0.5"
 windows-core = "0.61"
@@ -149,7 +153,7 @@ minidump = { version = "0.25.0" }
 minidump-common = { version = "0.25.0" }
 minidump-processor = { version = "0.25.0", features = ["http"] }
 minidump-unwind = "0.25.0"
-wmi = "0.15.0"
+wmi = "0.16.0"
 evtx = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]

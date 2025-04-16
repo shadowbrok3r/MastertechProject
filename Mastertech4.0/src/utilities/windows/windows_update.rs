@@ -5,7 +5,7 @@ use windows::{
         implement, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
     },
     Win32::{
-        Foundation::HANDLE, 
+        Foundation::{HANDLE, VARIANT_TRUE}, 
         Security::{
             AdjustTokenPrivileges, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED, 
             SE_SHUTDOWN_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY
@@ -15,7 +15,7 @@ use windows::{
             Shutdown::{self, ExitWindowsEx, EWX_FORCE, EWX_REBOOT}, 
             Threading::OpenProcessToken, 
             UpdateAgent::{
-                IDownloadCompletedCallback_Impl, IDownloadJob, IDownloadProgressChangedCallbackArgs, IDownloadProgressChangedCallback_Impl, IUpdateCollection, IUpdateDownloader, IUpdateSearcher, IUpdateServiceManager, IUpdateSession, OperationResultCode, ServerSelection
+                IDownloadCompletedCallback_Impl, IDownloadJob, IDownloadProgressChangedCallbackArgs, IDownloadProgressChangedCallback_Impl, IUpdateCollection, IUpdateDownloader, IUpdateSearcher, IUpdateServiceManager, IUpdateSession, OperationResultCode, ServerSelection, UpdateType
             }, 
             Variant::VARIANT
         }
@@ -45,8 +45,6 @@ pub struct UpdateInfo {
     pub is_installed: bool,
     pub is_downloaded: bool,
     pub description: String,
-    pub driver_class: Option<String>,
-    pub driver_hardware_id: Option<String>,
 }
 
 /// A container for multiple updates
@@ -69,35 +67,6 @@ pub enum WindowsUpdateEvent {
     ReturnedUpdates(WindowsUpdates),
 }
 
-/// Enum mapping HRESULT error codes to readable descriptions
-#[derive(Debug)]
-enum WindowsUpdateError {
-    NotSupported,
-    NoService,
-    UnknownId,
-    InvalidIndex,
-    OperationInProgress,
-    InvalidOperation,
-    DownloadFailed,
-    NotApplicable,
-    Other,
-}
-
-impl From<HRESULT> for WindowsUpdateError {
-    fn from(hr: HRESULT) -> Self {
-        match hr.0 as u32 {
-            0x80240037 => WindowsUpdateError::NotSupported,
-            0x80240001 => WindowsUpdateError::NoService,
-            0x80240003 => WindowsUpdateError::UnknownId,
-            0x80240007 => WindowsUpdateError::InvalidIndex,
-            0x80240009 => WindowsUpdateError::OperationInProgress,
-            0x80240036 => WindowsUpdateError::InvalidOperation,
-            0x80240034 => WindowsUpdateError::DownloadFailed,
-            0x80240017 => WindowsUpdateError::NotApplicable,
-            _ => WindowsUpdateError::Other // WindowsUpdateError::Other(hr.0 as u32),
-        }
-    }
-}
 
 impl IDownloadProgressChangedCallback_Impl for DummyProgressCallback_Impl {
     fn Invoke(
@@ -128,9 +97,6 @@ impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
 
 pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, _shutdown: bool, install: bool) -> Result<()> {
     let mut installed_updates = WindowsUpdates::default();
-    let mut all_updates: Option<IUpdateCollection> = None;
-
-    let mut installed_updates = WindowsUpdates::default();
     
     unsafe {
         enable_privilege(PCWSTR::from_raw(SE_SHUTDOWN_NAME.as_ptr()));
@@ -152,6 +118,7 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, _shutdo
             None, 
             CLSCTX_INPROC_SERVER
         )?;
+        
 
         let update_searcher: IUpdateSearcher = update_session.CreateUpdateSearcher()?;
 
@@ -161,73 +128,29 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, _shutdo
             ("Windows Update", ServerSelection(2), None),
             ("Microsoft Update", ServerSelection(3), Some(MICROSOFT_UPDATE_SERVICE_ID)),
             ("Driver Catalog (DCAT)", ServerSelection(3), Some(DCAT_SERVICE_ID)),
-            ("Microsoft Store", ServerSelection(3), Some(STORE_SERVICE_ID)),
+            // ("Microsoft Store", ServerSelection(3), Some(STORE_SERVICE_ID)),
         ];
 
         for (name, selection, service_id) in services.iter() {
-            event_sender
-                .try_send(WindowsUpdateEvent::UpdateLogs(format!("Searching {}...", name)))
-                .ok();
-            let updates = search_updates(&update_searcher, name, *selection, *service_id).inspect_err(|e| {
-                event_sender
-                    .try_send(WindowsUpdateEvent::UpdateLogs(format!(
-                        "{} error: {:?}",
-                        name,
-                        WindowsUpdateError::from(e.code())
-                    )))
-                    .ok();
-            })?;
-
-            if all_updates.is_none() {
-                all_updates = Some(update_session.CreateUpdateCollection()?);
-            }
-
-            let target_collection = all_updates.as_ref().unwrap();
-            for i in 0..updates.Count()? {
-                let update = updates.get_Item(i)?;
-                let update_id = update.Identity()?;
-                let mut is_duplicate = false;
-
-                for j in 0..target_collection.Count()? {
-                    let existing = target_collection.get_Item(j)?;
-                    if existing.Identity()?.UpdateID()?.eq(&update_id.UpdateID()?) {
-                        is_duplicate = true;
-                        break;
-                    }
-                }
-
-                if !is_duplicate {
-                    target_collection.Add(&update)?;
-                    log::info!("Added unique update from {}: {:?}", name, update.Title()?);
-                } else {
-                    log::info!("Skipped duplicate update from {}: {:?}", name, update.Title()?);
-                }
-            }
+            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Searching {}...", name))).ok();
+            let updates = search_updates(&update_searcher, *selection, *service_id)
+                .inspect_err(|e| {
+                    event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!(
+                        "{} error: {:?} - {:?}", name, WindowsUpdateError::from(e.code()), e.code()
+                    ))).ok();
+                })?;
 
             installed_updates.append_from_collection(&updates)?;
-        }
 
-        event_sender
-            .try_send(WindowsUpdateEvent::UpdateLogs(format!(
-                "Found {} updates (including drivers): {:#?}",
-                installed_updates.updates.len(),
-                installed_updates
-            )))
-            .ok();
+            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!(
+                "{} updates found: {} items", name, updates.Count()?
+            ))).ok();
 
-            if install && all_updates.is_some() && all_updates.as_ref().unwrap().Count()? > 0 {
-                let res = process_updates(&update_session, all_updates.as_ref().unwrap(), event_sender.clone());
-                event_sender
-                    .try_send(WindowsUpdateEvent::UpdateLogs(format!("Update installation result: {res:?}")))
-                    .ok();
-    
-                // if res {
-                //     event_sender
-                //         .try_send(WindowsUpdateEvent::UpdateLogs("System reboot required.".to_string()))
-                //         .ok();
-                //     // reboot_system()?;
-                // }
+            if install && updates.Count()? > 0 {
+                let res = process_updates(&update_session, &updates, event_sender.clone());
+                event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("{} result: {res:?}", name))).ok();
             }
+        }
 
         drop(update_searcher);
         drop(update_session);
@@ -292,25 +215,39 @@ unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
 /// Searches for available updates using the specified update server
 unsafe fn search_updates(
     update_searcher: &IUpdateSearcher,
-    service_name: &str,
-    server_selection: ServerSelection,
+    selection: ServerSelection,
     service_id: Option<&str>,
 ) -> Result<IUpdateCollection> {
-    unsafe {
-        log::info!("Searching updates for: {}", service_name);
-        update_searcher.SetServerSelection(server_selection)?;
-        update_searcher.SetOnline(true)?; // Ensure online search
-        update_searcher.SetCanAutomaticallyUpgradeService(true)?;
+    unsafe { 
+
+        let name = match (selection, service_id) {
+            (ServerSelection(2), None) => "Windows Update",
+            (ServerSelection(3), Some(id)) if id == MICROSOFT_UPDATE_SERVICE_ID => "Microsoft Update",
+            (ServerSelection(3), Some(id)) if id == DCAT_SERVICE_ID => "Driver Catalog (DCAT)",
+            (ServerSelection(3), Some(id)) if id == STORE_SERVICE_ID => "Microsoft Store",
+            _ => "Unknown Service",
+        };
+
+        log::info!("ServerSelection: {name}\nServerSelection ID: {service_id:?}");
+        update_searcher.SetServerSelection(selection)?;
+        log::info!("update_searcher.SetOnline(VARIANT_TRUE)?;");
+        update_searcher.SetOnline(VARIANT_TRUE)?; // Ensure online search
+        // log::info!("update_searcher.SetCanAutomaticallyUpgradeService(VARIANT_TRUE)?;");
+        update_searcher.SetIncludePotentiallySupersededUpdates(VARIANT_TRUE)?;
+        
         if let Some(id) = service_id {
+            log::info!("service_id: {id}");
             update_searcher.SetServiceID(&BSTR::from(id))?;
-            log::info!("Using service ID: {}", id);
         }
 
+        log::info!("QUERY => \"IsInstalled=0 and (Type='Software' or Type='Driver')\"");
+        
         let search_result = update_searcher.Search(&BSTR::from(
-            "IsInstalled=0 and (Type='Software' or Type='Driver')"
+            "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
         ))?;
 
         let update_result = search_result.Updates()?;
+        log::info!("update_result: {update_result:?}");
         for i in (0..update_result.Count()?).rev() {
             let update = update_result.get_Item(i)?;
             if update.IsInstalled()?.as_bool() {
@@ -319,10 +256,9 @@ unsafe fn search_updates(
             } else {
                 let update_type = update.Type()?;
                 log::info!(
-                    "Adding update to collection: {:?} (Type: {}) from {}",
+                    "Adding update to collection: {:?} (Type: {})",
                     update.Title()?,
-                    if update_type.0 == 1 { "Software" } else { "Driver" },
-                    service_name
+                    if update_type == UpdateType(1) { "Software" } else { "Driver" }
                 );
             }
         }
@@ -459,6 +395,89 @@ impl WindowsUpdates {
         }
     }
 }
+
+/// Enum mapping HRESULT error codes to readable descriptions
+#[derive(Debug)]
+enum WindowsUpdateError {
+    NotSupported,
+    NoService,
+    UnknownId,
+    InvalidIndex,
+    OperationInProgress,
+    InvalidOperation,
+    DownloadFailed,
+    NotApplicable,
+    Other(String),
+}
+
+impl From<HRESULT> for WindowsUpdateError {
+    fn from(hr: HRESULT) -> Self {
+        match hr.0 as u32 {
+            0x80240037 => WindowsUpdateError::NotSupported,
+            0x80240001 => WindowsUpdateError::NoService,
+            0x80240003 => WindowsUpdateError::UnknownId,
+            0x80240007 => WindowsUpdateError::InvalidIndex,
+            0x80240009 => WindowsUpdateError::OperationInProgress,
+            0x80240036 => WindowsUpdateError::InvalidOperation,
+            0x80240034 => WindowsUpdateError::DownloadFailed,
+            0x80240017 => WindowsUpdateError::NotApplicable,
+            0x80070020 => WindowsUpdateError::Other("InstallFileLocked => Couldn't access the file because it is already in use. This can occur when the installer tries to replace a file that an antivirus, antimalware or backup program is currently scanning.".to_string()),
+            0x80240002 => WindowsUpdateError::Other("WU_E_MAX_CAPACITY_REACHED => The maximum capacity of the service was exceeded.".to_string()),
+            0x80240004 => WindowsUpdateError::Other("WU_E_NOT_INITIALIZED => The object couldn't be initialized.".to_string()),
+            0x80240005 => WindowsUpdateError::Other("WU_E_RANGEOVERLAP => The update handler requested a byte range overlapping a previously requested range.".to_string()),
+            0x80240006 => WindowsUpdateError::Other("WU_E_TOOMANYRANGES => The requested number of byte ranges exceeds the maximum number (2^31 - 1).".to_string()),
+            0x80240008 => WindowsUpdateError::Other("WU_E_ITEMNOTFOUND => The key for the item queried couldn't be found.".to_string()),
+            0x8024000A => WindowsUpdateError::Other("WU_E_COULDNOTCANCEL => Cancellation of the operation wasn't allowed.".to_string()),
+            0x8024000B => WindowsUpdateError::Other("WU_E_CALL_CANCELLED => Operation was canceled.".to_string()),
+            0x8024000C => WindowsUpdateError::Other("WU_E_NOOP => No operation was required.".to_string()),
+            0x8024000D => WindowsUpdateError::Other("WU_E_XML_MISSINGDATA => Windows Update Agent couldn't find required information in the update's XML data.".to_string()),
+            0x8024000E => WindowsUpdateError::Other("WU_E_XML_INVALID => Windows Update Agent found invalid information in the update's XML data.".to_string()),
+            0x8024000F => WindowsUpdateError::Other("WU_E_CYCLE_DETECTED => Circular update relationships were detected in the metadata.".to_string()),
+            0x80240010 => WindowsUpdateError::Other("WU_E_TOO_DEEP_RELATION => Update relationships too deep to evaluate were evaluated.".to_string()),
+            0x80240011 => WindowsUpdateError::Other("WU_E_INVALID_RELATIONSHIP => An invalid update relationship was detected.".to_string()),
+            0x80240012 => WindowsUpdateError::Other("WU_E_REG_VALUE_INVALID => An invalid registry value was read.".to_string()),
+            0x80240013 => WindowsUpdateError::Other("WU_E_DUPLICATE_ITEM => Operation tried to add a duplicate item to a list.".to_string()),
+            0x80240016 => WindowsUpdateError::Other("WU_E_INSTALL_NOT_ALLOWED => Operation tried to install while another installation was in progress or the system was pending a mandatory restart.".to_string()),
+            0x80240018 => WindowsUpdateError::Other("WU_E_NO_USERTOKEN => Operation failed because a required user token is missing.".to_string()),
+            0x80240019 => WindowsUpdateError::Other("WU_E_EXCLUSIVE_INSTALL_CONFLICT => An exclusive update can't be installed with other updates at the same time.".to_string()),
+            0x8024001A => WindowsUpdateError::Other("WU_E_POLICY_NOT_SET => A policy value wasn't set.".to_string()),
+            0x8024001B => WindowsUpdateError::Other("WU_E_SELFUPDATE_IN_PROGRESS => The operation couldn't be performed because the Windows Update Agent is self-updating.".to_string()),
+            0x8024001D => WindowsUpdateError::Other("WU_E_INVALID_UPDATE => An update contains invalid metadata.".to_string()),
+            0x8024001E => WindowsUpdateError::Other("WU_E_SERVICE_STOP => Operation didn't complete because the service or system was being shut down.".to_string()),
+            0x8024001F => WindowsUpdateError::Other("WU_E_NO_CONNECTION => Operation didn't complete because the network connection was unavailable.".to_string()),
+            0x80240020 => WindowsUpdateError::Other("WU_E_NO_INTERACTIVE_USER => Operation didn't complete because there's no logged-on interactive user.".to_string()),
+            0x80240021 => WindowsUpdateError::Other("WU_E_TIME_OUT => Operation didn't complete because it timed out.".to_string()),
+            0x80240022 => WindowsUpdateError::Other("WU_E_ALL_UPDATES_FAILED => Operation failed for all the updates.".to_string()),
+            0x80240023 => WindowsUpdateError::Other("WU_E_EULAS_DECLINED => The license terms for all updates were declined.".to_string()),
+            0x80240024 => WindowsUpdateError::Other("WU_E_NO_UPDATE => There are no updates.".to_string()),
+            0x80240025 => WindowsUpdateError::Other("WU_E_USER_ACCESS_DISABLED => Group Policy settings prevented access to Windows Update.".to_string()),
+            0x80240026 => WindowsUpdateError::Other("WU_E_INVALID_UPDATE_TYPE => The type of update is invalid.".to_string()),
+            0x80240027 => WindowsUpdateError::Other("WU_E_URL_TOO_LONG => The URL exceeded the maximum length.".to_string()),
+            0x80240028 => WindowsUpdateError::Other("WU_E_UNINSTALL_NOT_ALLOWED => The update couldn't be uninstalled because the request didn't originate from a WSUS server.".to_string()),
+            0x80240029 => WindowsUpdateError::Other("WU_E_INVALID_PRODUCT_LICENSE => Search may have missed some updates before there's an unlicensed application on the system.".to_string()),
+            0x8024002A => WindowsUpdateError::Other("WU_E_MISSING_HANDLER => A component required to detect applicable updates was missing.".to_string()),
+            0x8024002B => WindowsUpdateError::Other("WU_E_LEGACYSERVER => An operation didn't complete because it requires a newer version of server.".to_string()),
+            0x8024002C => WindowsUpdateError::Other("WU_E_BIN_SOURCE_ABSENT => A delta-compressed update couldn't be installed because it required the source.".to_string()),
+            0x8024002D => WindowsUpdateError::Other("WU_E_SOURCE_ABSENT => A full-file update couldn't be installed because it required the source.".to_string()),
+            0x8024002E => WindowsUpdateError::Other("WU_E_WU_DISABLED => Access to an unmanaged server isn't allowed.".to_string()),
+            0x8024002F => WindowsUpdateError::Other("WU_E_CALL_CANCELLED_BY_POLICY => Operation didn't complete because the DisableWindowsUpdateAccess policy was set.".to_string()),
+            0x80240030 => WindowsUpdateError::Other("WU_E_INVALID_PROXY_SERVER => The format of the proxy list was invalid.".to_string()),
+            0x80240031 => WindowsUpdateError::Other("WU_E_INVALID_FILE => The file is in the wrong format.".to_string()),
+            0x80240032 => WindowsUpdateError::Other("WU_E_INVALID_CRITERIA => The search criteria string was invalid.".to_string()),
+            0x80240033 => WindowsUpdateError::Other("WU_E_EULA_UNAVAILABLE => License terms couldn't be downloaded.".to_string()),
+            0x80240035 => WindowsUpdateError::Other("WU_E_UPDATE_NOT_PROCESSED => The update wasn't processed.".to_string()),
+            0x80240038 => WindowsUpdateError::Other("WU_E_WINHTTP_INVALID_FILE => The downloaded file has an unexpected content type.".to_string()),
+            0x80240039 => WindowsUpdateError::Other("WU_E_TOO_MANY_RESYNC => Agent is asked by server to resync too many times.".to_string()),
+            0x80240040 => WindowsUpdateError::Other("WU_E_NO_SERVER_CORE_SUPPORT => WUA API method doesn't run on Server Core installation.".to_string()),
+            0x80240041 => WindowsUpdateError::Other("WU_E_SYSPREP_IN_PROGRESS => Service isn't available while sysprep is running.".to_string()),
+            0x80240042 => WindowsUpdateError::Other("WU_E_UNKNOWN_SERVICE => The update service is no longer registered with AU.".to_string()),
+            0x80240043 => WindowsUpdateError::Other("WU_E_NO_UI_SUPPORT => There's no support for WUA UI.".to_string()),
+            0x80240FFF => WindowsUpdateError::Other("WU_E_UNEXPECTED => An operation failed due to reasons not covered by another error code.".to_string()),
+            _ => WindowsUpdateError::Other(format!("Unknown: {hr:?}")) // WindowsUpdateError::Other(hr.0 as u32),
+        }
+    }
+}
+
 
 /*** 
  **** ServerSelection enumeration
