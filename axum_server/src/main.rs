@@ -2,6 +2,7 @@ use database::schema::prestashop_schema::MissedCallOrder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tower_http::{add_extension::AddExtensionLayer, cors::CorsLayer};
 use middleware::{context::Ctx, middleware_log::middleware_logger};
+use rmcp::transport::sse_server::{SseServer, SseServerConfig};
 use axum::{middleware::map_response, Router};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -11,14 +12,17 @@ use dotenv::dotenv;
 use uuid::Uuid;
 use log::info;
 
+use ai::Counter;
 
 pub mod middleware;
 pub mod error;
 pub mod routes;
+pub mod ai;
+
 pub use routes::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>>{
+async fn main() -> anyhow::Result<()>{
 	dotenv().ok();
 
 	tracing_subscriber::registry() // level set by either RUST_LOG env variable or defaults to debug
@@ -31,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 	let server_url = dotenv::var("SERVER_URL").unwrap_or("0.0.0.0".to_string());
 	let server_port = dotenv::var("SERVER_PORT").unwrap_or("8082".to_string());
 	let addr: SocketAddr = format!("{}:{}", server_url, server_port).parse().expect("Can not parse address and port");
+	let sse_server = SseServer::serve(addr).await?;
 	let listener = tokio::net::TcpListener::bind(&addr).await?;
 	info!("Starting server on {addr}");
 
@@ -56,7 +61,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 			)
 		);
 		
-	axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+	let ct = sse_server.config.ct.child_token();
+	axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(async move {
+        ct.cancelled().await;
+        tracing::info!("sse server cancelled");
+    }).await?;
+
+	let ct = sse_server.with_service(Counter::new);
+	tokio::signal::ctrl_c().await?;
+    ct.cancel();
 	Ok(())
 }
 

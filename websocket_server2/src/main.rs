@@ -7,9 +7,8 @@ use axum::{
     routing::get,
     serve, Router,
 };
-use database::{initialize_db, schema::{ConnectedClient, DB, NS}, DATABASE};
+use database::{schema::ConnectedClient, DATABASE};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
-use surrealdb::opt::auth::Database;
 use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -241,7 +240,7 @@ impl ChatServer {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     // let init = initialize_db().await;
     // if init.is_ok() {    
@@ -266,12 +265,13 @@ async fn main() {
         .route("/websocket", get(websocket_handler))
         .layer(Extension(Arc::new(chat_server)));
 
-    let address = SocketAddr::from(([0, 0, 0, 0], 8081));
-    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 8081))).await?;
     info!("Listening on {}", address);
     let _ = tokio::spawn(async move {
-        serve(listener, app).await.unwrap();
+        serve(listener, app).await?;
+        Ok::<(), anyhow::Error>(())
     }).await;
+    Ok(())
 }
 
 async fn websocket_handler(

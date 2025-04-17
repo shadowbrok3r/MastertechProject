@@ -1,0 +1,31 @@
+# [build]
+# target = [ "x86_64-unknown-linux-gnu" ] # Linux 64
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold", "-Awarnings"]
+
+
+[build]
+[target.x86_64-pc-windows-msvc]
+linker = "lld-link.exe"
+rustflags = ["-C", "target-feature=+crt-static"] # "--cfg", "tokio_unstable" , "-Awarnings"
+
+
+
+
+
+
+# [build]
+#target = [
+    # "x86_64-pc-windows-msvc", # windows MSVC 64
+    # # "x86_64-pc-windows-gnu", # Windows MINGW 64
+    # "x86_64-apple-darwin", # MacOS 64
+# ]
+
+# OPENSSL_DIR = { value = "vendor/openssl", relative = true } # for linux
+#       Windows 7 x32      --   rustup target add i686-pc-windows-gnu
+#       Windows 7 x64      --   rustup target add x86_64-pc-windows-gnu
+#       PopOS x64          --   rustup target add x86_64-unknown-linux-gnu
+#       MacOS Silicon      --   rustup target add aarch64-apple-darwin
+#       MacOS Intel x64    --   rustup target add x86_64-apple-darwin
+#       cross build -r --target [target-triple]
