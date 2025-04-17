@@ -22,10 +22,12 @@ pub use {
     antivirus::*  
 };
 
+#[cfg(target_os="windows")]
 fn _install_pc_health_check() -> anyhow::Result<String, anyhow::Error> {
     Ok(run_ps_script("winget install Microsoft.WindowsPCHealthCheck -h --accept-package-agreements --force")?)
 }
 
+#[cfg(target_os="windows")]
 fn _install_windbg() -> anyhow::Result<String, anyhow::Error> {
     Ok(run_ps_script("winget install Microsoft.WinDbg -h --accept-package-agreements --force")?)
 }
@@ -39,12 +41,15 @@ pub fn _prompt_for_user_pw() -> anyhow::Result<(), anyhow::Error> {
 
     Ok(())
 }
-
+#[cfg(target_os="windows")]
 pub fn _checkdisk() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("chkdsk /f/x/r C:")?) }
 
+#[cfg(target_os="windows")]
 pub fn _dism_scan() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("")?) }
 
+#[cfg(target_os="windows")]
 pub fn _sfc_scan() -> anyhow::Result<String, anyhow::Error> { Ok(run_ps_script("sfc /scannow")?) }
+
 
 pub fn check_power_options() -> anyhow::Result<(), anyhow::Error> {
 

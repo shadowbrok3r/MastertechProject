@@ -266,7 +266,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(Arc::new(chat_server)));
 
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 8081))).await?;
-    info!("Listening on {}", address);
+    // info!("Listening on {}", address);
     let _ = tokio::spawn(async move {
         serve(listener, app).await?;
         Ok::<(), anyhow::Error>(())

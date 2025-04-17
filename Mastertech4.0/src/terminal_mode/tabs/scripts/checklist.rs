@@ -1,6 +1,6 @@
 use std::fmt::Display;
 use ratatui::widgets::ListState;
-
+#[cfg(target_os="windows")]
 use super::{script_checks::{ScriptOutcome, ScriptTask}, ScriptsTab};
 
 pub struct TaskReport {
