@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [ "database" , "displays", "MtechServer2.0", "Mastertech4.0", "axum_server", "websocket_server2"] #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
 
 [workspace.dependencies]
