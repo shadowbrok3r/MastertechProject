@@ -38,7 +38,7 @@ num-format = "0.4"
 fs_extra = "1.3"
 rayon = "1"
 quick-xml = { version="0.37", features = ["serialize"] }
-serde-xml-rs = "0.6"
+serde-xml-rs = "0.7.0"
 num-traits = "0.2"
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = "0.3"
@@ -71,7 +71,9 @@ tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 nvme = "0.2"
 rmcp = {version = "0.1.5", features = ["server", "transport-sse-server", "transport-io"]}
-
+xcap = "0.5.0"
+display-info = "0.5.4"
+enigo = { version = "0.3.0", features = ["serde"] }
 
 egui-data-table = { workspace = true }
 ratatui = { workspace = true }
