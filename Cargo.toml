@@ -37,7 +37,7 @@ egui_struct = "0.4"
 wasm-bindgen = "0.2"
 web-time = "1"
 wasm-bindgen-futures = "0.4"
-brotli = "7.0.0"
+brotli = "8.0.0"
 base64 = "0.22"
 tokio = { version = "1", features = ["full", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } # features = ["now", "wasmbind", "wasm-bindgen", "js-sys"]

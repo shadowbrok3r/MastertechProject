@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2024"
-ProductVersion = "4.4.1"
+ProductVersion = "4.4.2"
 FileDescription = "Mastertech"
 
 [features]
@@ -158,7 +158,7 @@ minidump = { version = "0.25.0" }
 minidump-common = { version = "0.25.0" }
 minidump-processor = { version = "0.25.0", features = ["http"] }
 minidump-unwind = "0.25.0"
-wmi = "0.16.0"
+wmi = "0.17.0"
 evtx = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
