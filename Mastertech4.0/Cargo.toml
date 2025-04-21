@@ -76,7 +76,7 @@ display-info = "0.5.4"
 enigo = { version = "0.3.0", features = ["serde"] }
 self-replace = "1.5.0"
 zstd = "0.13.3"
-ratatui-explorer = { version = "0.2.0", features = ["crossterm"] }
+humansize = "2"
 
 egui-data-table = { workspace = true }
 ratatui = { workspace = true }
