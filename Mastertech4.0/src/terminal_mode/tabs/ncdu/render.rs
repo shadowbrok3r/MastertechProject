@@ -1,5 +1,6 @@
 
-use ratatui::{crossterm::event::KeyCode, prelude::*, widgets::{Block, BorderType, Borders, Clear, Paragraph}};
+use crossterm::event::Event;
+use ratatui::{prelude::*, widgets::{Block, BorderType, Borders, Clear, Paragraph}};
 use crate::terminal_mode::widgets::HandleWidget;
 use super::{get_file_content, NcduTab};
 
@@ -17,7 +18,7 @@ impl<'a> HandleWidget <'a> for NcduTab {
             Block::default()
                 .title("Preview")
                 .borders(Borders::ALL)
-                .border_type(BorderType::Double),
+                .border_type(BorderType::Rounded),
         );
         f.render_widget(para, chunks[1]);
     }
@@ -27,21 +28,7 @@ impl<'a> HandleWidget <'a> for NcduTab {
     }
     
     fn handle_key_event(&mut self, key_event: ratatui::crossterm::event::KeyEvent) -> bool {
-        // let event = Event::Key(key_event);
-
-        let input = match key_event.code {
-            KeyCode::Up => ratatui_explorer::Input::Up,
-            KeyCode::Down => ratatui_explorer::Input::Down,
-            KeyCode::Left => ratatui_explorer::Input::Left,
-            KeyCode::Right => ratatui_explorer::Input::Right,
-            KeyCode::PageUp => ratatui_explorer::Input::PageUp,
-            KeyCode::PageDown => ratatui_explorer::Input::PageDown,
-            KeyCode::Home => ratatui_explorer::Input::Home,
-            KeyCode::End => ratatui_explorer::Input::End,
-            _ => ratatui_explorer::Input::None
-        };
-
-        let _ = self.explorer.handle(input);
+        let _ = self.explorer.handle(&Event::Key(key_event));
 
         return true;
     }

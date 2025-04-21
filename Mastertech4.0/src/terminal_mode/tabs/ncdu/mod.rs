@@ -1,17 +1,18 @@
 use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use ratatui::{prelude::*, widgets::{Block, Borders}};
-use ratatui_explorer::{File, FileExplorer, Theme};
+use file_explorer::{File, FileExplorer, Theme};
 use crate::terminal_mode::{context::TerminalContext, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}};
 
 pub mod render;
-
+pub mod file_explorer;
 
 /// A tab that mimics *ncdu* by embedding `ratatui-explorer`.
 pub struct NcduTab {
     _ctx: Arc<Mutex<TerminalContext>>, // allows cross‑tab shared state
     explorer: FileExplorer,           // the main widget
     layout: Layout,                   // cached layout description
+    // sizes: SizeCache,
 }
 
 impl NcduTab {
@@ -19,7 +20,7 @@ impl NcduTab {
     pub fn new(_ctx: Arc<Mutex<TerminalContext>>) -> Self {
         // Build a theme consistent with your global style guide
         let theme = Theme::default()
-            .with_highlight_symbol("=> ")
+            // .with_highlight_symbol("=> ")
             .add_default_title()
             .with_block(Block::default().borders(Borders::ALL).border_type(ratatui::widgets::BorderType::Rounded))
             .with_dir_style(Style::default().fg(CYAN.text).add_modifier(Modifier::BOLD))
@@ -43,16 +44,13 @@ impl NcduTab {
         // 1/3 – 2/3 horizontal split is typical ncdu‑like layout.
         let layout = Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
 
-        Self { _ctx, explorer, layout }
+        Self { _ctx, explorer, layout } // , sizes: SizeCache::default()
     }
-
 
     pub fn _receive(&mut self) {
 
     }
 }
-
-/* ---------- helper functions ---------- */
 
 fn get_file_content(file: &File) -> anyhow::Result<std::borrow::Cow<'_, str>, anyhow::Error> {
     if file.is_file() {
@@ -65,5 +63,3 @@ fn get_file_content(file: &File) -> anyhow::Result<std::borrow::Cow<'_, str>, an
         Ok(std::borrow::Cow::Borrowed("<not a regular file>"))
     }
 }
-
-
