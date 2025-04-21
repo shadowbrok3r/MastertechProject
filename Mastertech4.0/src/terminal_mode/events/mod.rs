@@ -84,7 +84,7 @@ impl <'a>TerminalApp<'a> {
                     Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
                     Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
                     Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
-                    Tab::Ncdu => {}
+                    Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event),
                 };
             }
 
@@ -118,7 +118,7 @@ impl <'a>TerminalApp<'a> {
                                         Tab::Webconsole => menu_bar.set_active_tab(Tab::Logs),
                                         Tab::Logs => menu_bar.set_active_tab(Tab::Login),
                                         Tab::Login => menu_bar.set_active_tab(Tab::TurSheet),
-                                        Tab::Ncdu => {},
+                                        Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu)
                                     };
                                 }
                                 KeyCode::Left => {
@@ -130,7 +130,7 @@ impl <'a>TerminalApp<'a> {
                                         Tab::Webconsole => menu_bar.set_active_tab(Tab::SystemInfo),
                                         Tab::Logs => menu_bar.set_active_tab(Tab::Webconsole),
                                         Tab::Login => menu_bar.set_active_tab(Tab::Logs),
-                                        Tab::Ncdu => {},
+                                        Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu)
                                     };
                                 }
                                 _ => {}
@@ -145,7 +145,7 @@ impl <'a>TerminalApp<'a> {
                             Tab::Logs => self.logger.handle_key_event(key_event),
                             Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
                             Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_key_event(key_event),
-                            Tab::Ncdu => false,
+                            Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_key_event(key_event),
                         };
 
                         if consumed {}
@@ -188,7 +188,7 @@ impl <'a>TerminalApp<'a> {
                                                 Tab::Webconsole => menu_bar.set_active_tab(Tab::Logs),
                                                 Tab::Logs => menu_bar.set_active_tab(Tab::Login),
                                                 Tab::Login => menu_bar.set_active_tab(Tab::TurSheet),
-                                                Tab::Ncdu => {},
+                                                Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu),
                                             };
                                         }
                                         KeyCode::Left => if key_event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -200,7 +200,7 @@ impl <'a>TerminalApp<'a> {
                                                 Tab::Webconsole => menu_bar.set_active_tab(Tab::SystemInfo),
                                                 Tab::Logs => menu_bar.set_active_tab(Tab::Webconsole),
                                                 Tab::Login => menu_bar.set_active_tab(Tab::Logs),
-                                                Tab::Ncdu => {},
+                                                Tab::Ncdu => menu_bar.set_active_tab(Tab::Ncdu),
                                             };
                                         }
                                         _ => {}
@@ -216,7 +216,7 @@ impl <'a>TerminalApp<'a> {
                                     Tab::Logs => self.logger.handle_key_event(key_event),
                                     Tab::Login => self.login_tab.borrow_mut().handle_key_event(key_event),
                                     Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_key_event(key_event),
-                                    Tab::Ncdu => false,
+                                    Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_key_event(key_event),
                                 };
 
                                 if consumed {}
@@ -233,7 +233,7 @@ impl <'a>TerminalApp<'a> {
                             Tab::Tasks => self.tasks_tab.borrow_mut().handle_mouse_event(&mouse_event),
                             Tab::Webconsole => self.webconsole_tab.borrow_mut().handle_mouse_event(&mouse_event),
                             Tab::Logs => self.logger.handle_mouse_event(&mouse_event),
-                            Tab::Ncdu => {}
+                            Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event)
                         };
                     },
                     Event::Error => log::info!("Error in event loop"),

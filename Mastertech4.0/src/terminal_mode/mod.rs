@@ -1,7 +1,6 @@
-use data::LocalTermEvent;
 use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
-use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, ScriptsTab, SysinfoTab};
+use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
 use websockets::TerminalWebsocketClient;
 // use websockets::TerminalWebsocketClient; // ncdu::NcduTab
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
@@ -12,6 +11,7 @@ use crate::filesystem::system_info::get_sysinfo_no_gpu;
 use crossbeam::channel::unbounded;
 use context::TerminalContext;
 use widgets::HandleWidget;
+use data::LocalTermEvent;
 use ratatui::prelude::*;
 use reqwest::Client;
 
@@ -44,7 +44,7 @@ pub struct TerminalApp<'a> {
     menu_bar: Rc<RefCell<MenuBar<'a>>>,
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
-    // ncdu_tab: Rc<RefCell<NcduTab>>,
+    ncdu_tab: Rc<RefCell<NcduTab>>,
     tasks_tab: Rc<RefCell<TasksTab>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
@@ -133,7 +133,7 @@ impl Default for TerminalApp <'_>{
         let mut event_manager = EventManager::new(get_event_receiver());
         let service_tab = Rc::new(RefCell::new(ServiceFormTab::new(client.clone(), ctx.clone())));
         let tasks_tab = Rc::new(RefCell::new(TasksTab::new(client.clone(), ctx.clone())));
-        // let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
+        let ncdu_tab = Rc::new(RefCell::new(NcduTab::new(ctx.clone())));
 
         let scripts_tab = Rc::new(
             RefCell::new(
@@ -166,7 +166,7 @@ impl Default for TerminalApp <'_>{
             service_tab,
             sysinfo_tab,
             webconsole_tab,
-            // ncdu_tab,
+            ncdu_tab,
             // first_run: true,
             data_system,
             render_system,
@@ -351,7 +351,7 @@ impl <'a>TerminalApp<'a> {
                 Tab::SystemInfo => self.sysinfo_tab.draw::<B>(f, main_content_area),
                 Tab::Login => self.login_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Webconsole => self.webconsole_tab.borrow_mut().draw::<B>(f, main_content_area),
-                Tab::Ncdu => {},
+                Tab::Ncdu => self.ncdu_tab.borrow_mut().draw::<B>(f, main_content_area),
                 Tab::Logs => {
                     buf.merge(f.buffer_mut());
                     self.logger.draw::<B>(f, main_content_area);
