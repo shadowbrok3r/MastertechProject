@@ -74,6 +74,9 @@ rmcp = {version = "0.1.5", features = ["server", "transport-sse-server", "transp
 xcap = "0.5.0"
 display-info = "0.5.4"
 enigo = { version = "0.3.0", features = ["serde"] }
+self-replace = "1.5.0"
+zstd = "0.13.3"
+ratatui-explorer = { version = "0.2.0", features = ["crossterm"] }
 
 egui-data-table = { workspace = true }
 ratatui = { workspace = true }
@@ -103,8 +106,7 @@ egui_json_tree = { workspace = true }
 brotli = { workspace=true }
 base64 = { workspace=true }
 egui_plot = { workspace = true }
-self-replace = "1.5.0"
-zstd = "0.13.3"
+
 
 
 

@@ -8,6 +8,7 @@ use enigo::{
     Direction, // For key press/release/click actions
     Enigo, Key, Keyboard, Mouse, Settings, // Note: enigo::Mouse/Keyboard traits
 };
+use rmcp::transport::stdio;
 // *** Added for wait tool ***
 use tokio::time::{sleep, Duration};
 
@@ -32,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::Cursor;
 use std::process::Command;
-use log::{info, warn}; // Added warn
+use tracing::{info, warn}; // Added warn
 
 // --- Tool Parameter Struct Definitions ---
 
@@ -296,7 +297,7 @@ impl DesktopToolProvider {
         ]))
     }
 
-    #[tool(name = "mouse_action", description = "Performs a mouse action (click, press, release) or scrolls the mouse wheel using enigo.")]
+    #[tool(name = "mouse_action", description = "Performs a mouse action (click, press, release) or scrolls the mouse wheel")]
     async fn mouse_action(
         &self,
         #[tool(aggr)] params: MouseClickParams
@@ -332,7 +333,7 @@ impl DesktopToolProvider {
         ]))
     }
 
-    #[tool(name = "keyboard_action", description = "Types text or performs a key event (click, press, release) using enigo.")]
+    #[tool(name = "keyboard_action", description = "Types text or performs a key event (click, press, release)")]
     async fn keyboard_action(
         &self,
         #[tool(aggr)] params: KeyboardActionParams
@@ -435,150 +436,152 @@ impl DesktopToolProvider {
         ]))
     }
 
-    // // --- NEW Tools for OpenAI Computer Use Actions ---
-    // #[tool(name = "execute_openai_click", description = "Executes a mouse click action requested by the OpenAI Computer Use model.")]
-    // async fn execute_openai_click(
-    //     &self,
-    //     #[tool(aggr)] params: OpenAIClickParams
-    // ) -> Result<CallToolResult, ErrorData> {
-    //     info!("Executing OpenAI action: click at ({}, {}) with button '{}'", params.x, params.y, params.button);
-    //     let mut enigo = Enigo::new(&Settings::default())
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
+    /*
+    // --- NEW Tools for OpenAI Computer Use Actions ---
+    #[tool(name = "execute_openai_click", description = "Executes a mouse click action requested by the OpenAI Computer Use model.")]
+    async fn execute_openai_click(
+        &self,
+        #[tool(aggr)] params: OpenAIClickParams
+    ) -> Result<CallToolResult, ErrorData> {
+        info!("Executing OpenAI action: click at ({}, {}) with button '{}'", params.x, params.y, params.button);
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-    //     // Move mouse first
-    //     enigo.move_mouse(params.x, params.y, Coordinate::Abs)
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Click: Failed to move mouse: {e:?}"), None))?;
+        // Move mouse first
+        enigo.move_mouse(params.x, params.y, Coordinate::Abs)
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Click: Failed to move mouse: {e:?}"), None))?;
 
-    //     // Determine button
-    //     let button_enum = match params.button.to_lowercase().as_str() {
-    //         "left" => Button::Left,
-    //         "right" => Button::Right,
-    //         "middle" => Button::Middle,
-    //         _ => return Err(ErrorData::invalid_params(format!("OpenAI Click: Invalid button '{}'", params.button), None)),
-    //     };
+        // Determine button
+        let button_enum = match params.button.to_lowercase().as_str() {
+            "left" => Button::Left,
+            "right" => Button::Right,
+            "middle" => Button::Middle,
+            _ => return Err(ErrorData::invalid_params(format!("OpenAI Click: Invalid button '{}'", params.button), None)),
+        };
 
-    //     // Perform click
-    //     enigo.button(button_enum, Direction::Click)
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Click: Failed to click button: {e:?}"), None))?;
+        // Perform click
+        enigo.button(button_enum, Direction::Click)
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Click: Failed to click button: {e:?}"), None))?;
 
-    //     Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
-    //         .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_click result"))
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
-    //     ]))
-    // }
+        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+            .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_click result"))
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
+        ]))
+    }
 
-    // #[tool(name = "execute_openai_scroll", description = "Executes a mouse scroll action requested by the OpenAI Computer Use model.")]
-    // async fn execute_openai_scroll(
-    //     &self,
-    //     #[tool(aggr)] params: OpenAIScrollParams
-    // ) -> Result<CallToolResult, ErrorData> {
-    //     info!("Executing OpenAI action: scroll at ({}, {}) with delta ({}, {})", params.x, params.y, params.scroll_x, params.scroll_y);
-    //     let mut enigo = Enigo::new(&Settings::default())
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
+    #[tool(name = "execute_openai_scroll", description = "Executes a mouse scroll action requested by the OpenAI Computer Use model.")]
+    async fn execute_openai_scroll(
+        &self,
+        #[tool(aggr)] params: OpenAIScrollParams
+    ) -> Result<CallToolResult, ErrorData> {
+        info!("Executing OpenAI action: scroll at ({}, {}) with delta ({}, {})", params.x, params.y, params.scroll_x, params.scroll_y);
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-    //     // Move mouse to scroll origin first
-    //     enigo.move_mouse(params.x, params.y, Coordinate::Abs)
-    //          .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Scroll: Failed to move mouse: {e:?}"), None))?;
+        // Move mouse to scroll origin first
+        enigo.move_mouse(params.x, params.y, Coordinate::Abs)
+             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Scroll: Failed to move mouse: {e:?}"), None))?;
 
-    //     // Perform scroll - enigo uses Button enum for scroll direction
-    //     // Note: This scrolls once per direction. Magnitude requires looping.
-    //     if params.scroll_y != 0 {
-    //         let button = if params.scroll_y < 0 { Button::ScrollUp } else { Button::ScrollDown };
-    //         let count = params.scroll_y.abs();
-    //         info!("Scrolling vertically: {:?} {} times", button, count);
-    //         for _ in 0..count { // Loop for magnitude
-    //              enigo.button(button, Direction::Click)
-    //                 .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Scroll: Failed vertical scroll: {e:?}"), None))?;
-    //              // Optional small delay between scroll clicks might be needed
-    //              // tokio::time::sleep(Duration::from_millis(10)).await;
-    //         }
-    //     }
-    //     if params.scroll_x != 0 {
-    //          let button = if params.scroll_x < 0 { Button::ScrollLeft } else { Button::ScrollRight };
-    //          let count = params.scroll_x.abs();
-    //          info!("Scrolling horizontally: {:?} {} times", button, count);
-    //          for _ in 0..count { // Loop for magnitude
-    //              enigo.button(button, Direction::Click)
-    //                 .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Scroll: Failed horizontal scroll: {e:?}"), None))?;
-    //              // Optional small delay
-    //              // tokio::time::sleep(Duration::from_millis(10)).await;
-    //          }
-    //     }
+        // Perform scroll - enigo uses Button enum for scroll direction
+        // Note: This scrolls once per direction. Magnitude requires looping.
+        if params.scroll_y != 0 {
+            let button = if params.scroll_y < 0 { Button::ScrollUp } else { Button::ScrollDown };
+            let count = params.scroll_y.abs();
+            info!("Scrolling vertically: {:?} {} times", button, count);
+            for _ in 0..count { // Loop for magnitude
+                 enigo.button(button, Direction::Click)
+                    .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Scroll: Failed vertical scroll: {e:?}"), None))?;
+                 // Optional small delay between scroll clicks might be needed
+                 // tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        if params.scroll_x != 0 {
+             let button = if params.scroll_x < 0 { Button::ScrollLeft } else { Button::ScrollRight };
+             let count = params.scroll_x.abs();
+             info!("Scrolling horizontally: {:?} {} times", button, count);
+             for _ in 0..count { // Loop for magnitude
+                 enigo.button(button, Direction::Click)
+                    .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Scroll: Failed horizontal scroll: {e:?}"), None))?;
+                 // Optional small delay
+                 // tokio::time::sleep(Duration::from_millis(10)).await;
+             }
+        }
 
-    //     Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
-    //         .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_scroll result"))
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
-    //     ]))
-    // }
+        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+            .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_scroll result"))
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
+        ]))
+    }
 
-    //  #[tool(name = "execute_openai_keypress", description = "Executes key presses requested by the OpenAI Computer Use model.")]
-    // async fn execute_openai_keypress(
-    //     &self,
-    //     #[tool(aggr)] params: OpenAIKeyPressParams
-    // ) -> Result<CallToolResult, ErrorData> {
-    //     info!("Executing OpenAI action: keypress sequence: {:?}", params.keys);
-    //     let mut enigo = Enigo::new(&Settings::default())
-    //          .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
+     #[tool(name = "execute_openai_keypress", description = "Executes key presses requested by the OpenAI Computer Use model.")]
+    async fn execute_openai_keypress(
+        &self,
+        #[tool(aggr)] params: OpenAIKeyPressParams
+    ) -> Result<CallToolResult, ErrorData> {
+        info!("Executing OpenAI action: keypress sequence: {:?}", params.keys);
+        let mut enigo = Enigo::new(&Settings::default())
+             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-    //     // OpenAI keypress action sends an array of keys to be pressed sequentially (like modifiers + key)
-    //     // We simulate this by pressing down all keys then releasing them in reverse.
-    //     // This might need refinement based on observed OpenAI behavior.
-    //     let mut key_enums = Vec::new();
-    //     for key_str in &params.keys {
-    //          let key_enum = match key_str.to_lowercase().as_str() {
-    //             "alt" | "altgraph" => Key::Alt, "backspace" => Key::Backspace, "capslock" | "caps_lock" => Key::CapsLock,
-    //             "control" | "ctrl" => Key::Control, "delete" => Key::Delete, "down" | "downarrow" => Key::DownArrow,
-    //             "end" => Key::End, "escape" | "esc" => Key::Escape,
-    //             "f1" => Key::F1, "f2" => Key::F2, "f3" => Key::F3, "f4" => Key::F4, "f5" => Key::F5,
-    //             "f6" => Key::F6, "f7" => Key::F7, "f8" => Key::F8, "f9" => Key::F9, "f10" => Key::F10,
-    //             "f11" => Key::F11, "f12" => Key::F12, "home" => Key::Home, "left" | "leftarrow" => Key::LeftArrow,
-    //             "meta" | "win" | "command" | "super" | "windows" => Key::Meta, "option" => Key::Option,
-    //             "pagedown" | "page_down" => Key::PageDown, "pageup" | "page_up" => Key::PageUp,
-    //             "return" | "enter" => Key::Return, "right" | "rightarrow" => Key::RightArrow,
-    //             "shift" => Key::Shift, "space" => Key::Space, "tab" => Key::Tab, "up" | "uparrow" => Key::UpArrow,
-    //             s if s.chars().count() == 1 => Key::Unicode(s.chars().next().unwrap()),
-    //             _ => return Err(ErrorData::invalid_params(format!("OpenAI Keypress: Unsupported key specified: '{}'.", key_str), None)),
-    //         };
-    //         key_enums.push(key_enum);
-    //     }
+        // OpenAI keypress action sends an array of keys to be pressed sequentially (like modifiers + key)
+        // We simulate this by pressing down all keys then releasing them in reverse.
+        // This might need refinement based on observed OpenAI behavior.
+        let mut key_enums = Vec::new();
+        for key_str in &params.keys {
+             let key_enum = match key_str.to_lowercase().as_str() {
+                "alt" | "altgraph" => Key::Alt, "backspace" => Key::Backspace, "capslock" | "caps_lock" => Key::CapsLock,
+                "control" | "ctrl" => Key::Control, "delete" => Key::Delete, "down" | "downarrow" => Key::DownArrow,
+                "end" => Key::End, "escape" | "esc" => Key::Escape,
+                "f1" => Key::F1, "f2" => Key::F2, "f3" => Key::F3, "f4" => Key::F4, "f5" => Key::F5,
+                "f6" => Key::F6, "f7" => Key::F7, "f8" => Key::F8, "f9" => Key::F9, "f10" => Key::F10,
+                "f11" => Key::F11, "f12" => Key::F12, "home" => Key::Home, "left" | "leftarrow" => Key::LeftArrow,
+                "meta" | "win" | "command" | "super" | "windows" => Key::Meta, "option" => Key::Option,
+                "pagedown" | "page_down" => Key::PageDown, "pageup" | "page_up" => Key::PageUp,
+                "return" | "enter" => Key::Return, "right" | "rightarrow" => Key::RightArrow,
+                "shift" => Key::Shift, "space" => Key::Space, "tab" => Key::Tab, "up" | "uparrow" => Key::UpArrow,
+                s if s.chars().count() == 1 => Key::Unicode(s.chars().next().unwrap()),
+                _ => return Err(ErrorData::invalid_params(format!("OpenAI Keypress: Unsupported key specified: '{}'.", key_str), None)),
+            };
+            key_enums.push(key_enum);
+        }
 
-    //     // Press keys down
-    //     for key_enum in &key_enums {
-    //          enigo.key(*key_enum, Direction::Press)
-    //               .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Keypress: Failed to press key '{:?}': {}", key_enum, e), None))?;
-    //     }
-    //     // Release keys in reverse order
-    //     for key_enum in key_enums.iter().rev() {
-    //          enigo.key(*key_enum, Direction::Release)
-    //               .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Keypress: Failed to release key '{:?}': {}", key_enum, e), None))?;
-    //     }
+        // Press keys down
+        for key_enum in &key_enums {
+             enigo.key(*key_enum, Direction::Press)
+                  .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Keypress: Failed to press key '{:?}': {}", key_enum, e), None))?;
+        }
+        // Release keys in reverse order
+        for key_enum in key_enums.iter().rev() {
+             enigo.key(*key_enum, Direction::Release)
+                  .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Keypress: Failed to release key '{:?}': {}", key_enum, e), None))?;
+        }
 
-    //     info!("OpenAI keypress sequence executed successfully.");
-    //     Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
-    //         .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_keypress result"))
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
-    //     ]))
-    // }
+        info!("OpenAI keypress sequence executed successfully.");
+        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+            .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_keypress result"))
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
+        ]))
+    }
 
-    //  #[tool(name = "execute_openai_type", description = "Executes typing text requested by the OpenAI Computer Use model.")]
-    // async fn execute_openai_type(
-    //     &self,
-    //     #[tool(aggr)] params: OpenAITypeParams
-    // ) -> Result<CallToolResult, ErrorData> {
-    //     info!("Executing OpenAI action: type text: '{}'", params.text);
-    //     let mut enigo = Enigo::new(&Settings::default())
-    //          .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
+     #[tool(name = "execute_openai_type", description = "Executes typing text requested by the OpenAI Computer Use model.")]
+    async fn execute_openai_type(
+        &self,
+        #[tool(aggr)] params: OpenAITypeParams
+    ) -> Result<CallToolResult, ErrorData> {
+        info!("Executing OpenAI action: type text: '{}'", params.text);
+        let mut enigo = Enigo::new(&Settings::default())
+             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-    //     enigo.text(&params.text)
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Type: Failed to type text: {e:?}"), None))?;
+        enigo.text(&params.text)
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("OpenAI Type: Failed to type text: {e:?}"), None))?;
 
-    //     info!("OpenAI text typing successful.");
-    //     Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
-    //         .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_type result"))
-    //         .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
-    //     ]))
-    // }
-
+        info!("OpenAI text typing successful.");
+        Ok(CallToolResult::success(vec![Content::json(json!({ "status": "success" }))
+            .map_err(|e| anyhow!(e).context("Failed to serialize execute_openai_type result"))
+            .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
+        ]))
+    }
+    */
+    
      #[tool(name = "execute_openai_wait", description = "Executes a wait/sleep action requested by the OpenAI Computer Use model.")]
     async fn execute_openai_wait(
         &self,
@@ -608,12 +611,16 @@ impl ServerHandler for DesktopToolProvider {
                 .enable_tools()
                 .build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some("This server allows controlling the desktop via various tools (mouse, keyboard, screen capture, shell commands). It also includes tools specifically for executing actions requested by OpenAI's Computer Use API.".to_string()), // Updated instructions slightly
+            instructions: Some(
+                r#"This server allows controlling the desktop via various tools
+                (mouse, keyboard, screen capture, shell commands).
+                It also includes tools specifically for executing actions
+                requested by OpenAI's Computer Use API."#.to_string()
+            ),
         }
     }
     // Add other ServerHandler methods if needed
 }
-
 
 // --- TCP Server Function ---
 pub async fn run_mcp_server_tcp() -> anyhow::Result<()> {
@@ -650,4 +657,56 @@ pub async fn run_mcp_server_tcp() -> anyhow::Result<()> {
         });
     }
     // Ok(()) // Unreachable
+}
+
+// --- Stdio Server Function ---
+// Renamed from run_mcp_server_tcp
+pub async fn run_mcp_server_stdio() -> anyhow::Result<()> {
+    // You might want to configure tracing here if this binary is run directly
+    // or ensure the parent process configures it.
+    // Example:
+    // tracing_subscriber::fmt()
+    //     .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse()?))
+    //     .init(); // Or .try_init() if it might be initialized elsewhere
+
+    info!("MCP Server starting in STDIO mode.");
+
+    let tool_provider = DesktopToolProvider; // Create the tool provider instance
+
+    info!("Using stdio transport. Waiting for commands on stdin...");
+
+    // Serve the server using the stdio transport.
+    // This function will run until the stdio stream is closed (e.g., the parent process closes the pipes)
+    // or an unrecoverable error occurs.
+    match serve_server(tool_provider, stdio()).await {
+        Ok(server_handle) => {
+            // server_handle.waiting() waits for the server loop to exit.
+            if let Err(e) = server_handle.waiting().await {
+                // Log errors unless they are expected closure types
+                // (These string checks might need adjustment based on exact errors seen)
+                let err_str = e.to_string();
+                if !err_str.contains("EOF") // Standard end-of-file
+                    && !err_str.contains("Broken pipe") // Pipe closed by the other end
+                    && !err_str.contains("Connection reset by peer") // Another common pipe closure error
+                    && !err_str.contains("os error 109") // Windows specific pipe error
+                    && !err_str.contains("The pipe is being closed") // Another Windows pipe error
+                    && !err_str.contains("Input/output error") // Can happen on pipe close
+                {
+                    log::error!("Server exited with unexpected error: {:?}", e);
+                    // Consider propagating the error if the calling context needs it
+                    // return Err(e.into());
+                } else {
+                    info!("Stdio stream closed (EOF or broken pipe). Server shutting down gracefully.");
+                }
+            } else {
+                 info!("Server finished gracefully.");
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to start serving on stdio: {:?}", e);
+            return Err(e.into()); // Propagate the startup error
+        }
+    }
+
+    Ok(())
 }
