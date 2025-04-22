@@ -275,6 +275,7 @@ unsafe fn install_updates_from_collection(
     updates: &IUpdateCollection,
     dummy_progress_cb: DummyProgressCallback,
     dummy_completed_cb: DummyCompletedCallback,
+    event_sender: Sender<WindowsUpdateEvent>
 ) -> Result<bool> {
     unsafe { 
         let update_downloader: IUpdateDownloader = update_session.CreateUpdateDownloader()?;
@@ -293,7 +294,9 @@ unsafe fn install_updates_from_collection(
 
         while !download_job.IsCompleted()?.as_bool() {
             let progress = download_job.GetProgress()?;
-            log::info!("Download Progress: {}%", progress.PercentComplete()?);
+            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(
+                format!("Download Progress: {}%", progress.PercentComplete()?)
+            ));
             // std::thread::sleep(std::time::Duration::from_secs(5));
         }
         download_job.CleanUp()?;
@@ -356,7 +359,8 @@ unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &I
                 update_session, 
                 &update_collection,
                 DummyProgressCallback::default().into(),
-                DummyCompletedCallback::default().into()
+                DummyCompletedCallback::default().into(),
+                event_sender.clone()
             );
 
             event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Shutdown Required: {}", shutdown_required?))).ok();

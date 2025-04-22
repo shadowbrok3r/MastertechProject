@@ -85,7 +85,10 @@ impl WebSocketClient {
             WsDisplayState::Explorer => ui.group(|ui| self.explorer.display(ui)).inner,
             WsDisplayState::ToolBox => ui.group(|ui| self.toolbox.display(ui)).inner,
             WsDisplayState::Shell => self.show_shell(ui),
-            WsDisplayState::Terminal => self.remote_terminal.ui(ui),
+            WsDisplayState::Terminal => {
+                #[cfg(feature="tokio")]
+                self.remote_terminal.ui(ui)
+            },
         };
     }
 }

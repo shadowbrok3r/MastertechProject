@@ -15,28 +15,6 @@ use log::{debug, info};
 use serde_json::Value;
 use regex::Regex;
 
-/// Macro to implement GetDataFromId for structs with an 'id' field
-// macro_rules! _get_id {
-//     ($struct_name:ident) => {
-//         #[async_trait(?Send)]
-//         impl GetDataFromId for $struct_name {
-//             async fn get_id(&mut self) -> &RecordId {
-//                 &mut self.id
-//             }
-//         }
-//     };
-// }
-
-
-
-
-// impl TaskStatus for User {
-//     fn get_user_statuses(&self) -> String {
-//         self..clone()
-//     }
-// }
-
-
 /// Get the associated data tied to an ID
 #[async_trait(?Send)]
 pub trait GetAssociatedDataFromId<D> {
@@ -1611,6 +1589,7 @@ impl From<PrestashopPayload> for TaskPayload {
         ));
 
         for msg in value.customer_messages.iter() {
+            // let initials = if msg.id_employee 
             task_notes.push(TaskNotePayload {
                 everest_initials: msg.id_employee.clone(),
                 note: msg.message.clone(),
