@@ -422,7 +422,7 @@ pub async fn create_full_task_payload(
     info!("schema/utilities.rs -> Send_Payload");
     let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
     let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
-
+    
     // let task_id = task_data.id.clone();
     let ticket_id = ticket_data.id.clone();
     let customer_id = customer_data.id.clone();

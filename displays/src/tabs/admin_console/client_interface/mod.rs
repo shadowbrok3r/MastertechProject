@@ -3,12 +3,13 @@ use database::schema::{ConnectedClient, SystemInformation};
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use filesystem_helper::WebSocketHelperDelegate;
 use crossbeam::channel::{Receiver, Sender};
-use tabs::terminal_viewer::RemoteTerminal;
+use bincode::{config::standard, serde::*};
 use serde::{Deserialize, Serialize};
 use ui::WsDisplayState;
 use web_time::Instant;
 
-use bincode::{config::standard, serde::*};
+#[cfg(feature="tokio")]
+use tabs::terminal_viewer::RemoteTerminal;
 
 use super::client_interface::tabs::command_shell::History;
 
@@ -56,6 +57,7 @@ pub struct WebSocketClient {
     my_history: Vec<History>,
     notifications: i32,
     resource_monitor: ResourceMonitor,
+    #[cfg(feature="tokio")]
     remote_terminal: RemoteTerminal
 }
 
@@ -66,35 +68,40 @@ impl WebSocketClient {
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
         let (msg_to_client_tx, msg_to_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
         let (msg_from_client_tx, msg_from_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
-        let (size_tx, size_rx) = crossbeam::channel::unbounded();
 
         let helper_delegate = WebSocketHelperDelegate::new(send_cmd_tx.clone());
         let mut explorer = FileSystem::new();
         explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
 
-        let remote_terminal = RemoteTerminal::new(msg_to_client_tx, size_tx.clone());
-        let current_area = remote_terminal.current_area;
-        let tx = remote_terminal.buffer_tx.clone();
-
-        PlatformSpawner::spawn(async move {
-            log::info!("Checking for messages from client");
-            loop {
-                while let Ok(msg) = msg_from_client_rx.try_recv() {
-                    log::info!("GOT A BUFFER");
-                    if let WsMessage::Binary(buffer_array) = msg {
-                        RemoteTerminal::receive_buffer(
-                            tx.clone(), 
-                            &size_rx, 
-                            buffer_array, 
-                            current_area
-                        );
+        #[cfg(feature="tokio")]
+        {
+            let (size_tx, size_rx) = crossbeam::channel::unbounded::<ratatui::layout::Rect>();
+            let remote_terminal = RemoteTerminal::new(msg_to_client_tx, size_tx.clone());
+            let current_area = remote_terminal.current_area;
+            let tx = remote_terminal.buffer_tx.clone();
+    
+            PlatformSpawner::spawn(async move {
+                log::info!("Checking for messages from client");
+                loop {
+                    while let Ok(msg) = msg_from_client_rx.try_recv() {
+                        log::info!("GOT A BUFFER");
+                        if let WsMessage::Binary(buffer_array) = msg {
+                            RemoteTerminal::receive_buffer(
+                                tx.clone(), 
+                                &size_rx, 
+                                buffer_array, 
+                                current_area
+                            );
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
+
 
 
         Self {
+            #[cfg(feature="tokio")]
             remote_terminal,
             client,
             msg_to_client_rx,

@@ -20,6 +20,9 @@ use log::info;
 #[cfg(feature="tokio")]
 use std::path::PathBuf;
 
+
+
+
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
 
@@ -1131,11 +1134,11 @@ impl FileSystem {
     
             // Push the chunk into the vector
             byte_vec.extend_from_slice(&chunk);
-    
+            #[cfg(feature="tokio")]
+            tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks    
             // Report progress via the Sender
             let _ = tx.send((downloaded_bytes, content_length));
-            #[cfg(not(target_arch="wasm32"))]
-            tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks
+
         }
     
         if downloaded_bytes == content_length {
@@ -1193,7 +1196,7 @@ impl FileSystem {
             downloaded_bytes += chunk.len() as u64;
             byte_vec.extend_from_slice(&chunk.as_slice());
             let _ = tx.send((downloaded_bytes, content_length));
-            #[cfg(not(target_arch="wasm32"))] {}
+            #[cfg(feature="tokio")]
             tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks
         }
 

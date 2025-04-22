@@ -9,24 +9,26 @@ use surrealdb::RecordId;
 use egui_extras::Strip;
 use std::fmt::Debug;
 
-pub mod file_viewer;
+pub mod virtual_filesystem;
 pub mod channel_manager;
 pub mod egui_data_table;
 pub mod markdown_editor;
-pub mod modals;
+pub mod file_viewer;
+pub mod viewports;
+pub mod app_state;
+pub mod first_run;
 pub mod ui_tools;
-// #[cfg(not(target_arch = "wasm32"))]
-pub mod remote_viewer;
+pub mod ui_data;
+pub mod modals;
 pub mod views;
-pub mod virtual_filesystem;
 pub mod tasks;
 pub mod chats;
 pub mod tabs;
-pub mod app_state;
-pub mod ui_data;
-pub mod first_run;
 pub mod ai;
-pub mod viewports;
+
+#[cfg(feature = "tokio")]
+pub mod remote_viewer;
+
 pub use platform::PlatformSpawner;
 
 #[cfg(target_arch="wasm32")]

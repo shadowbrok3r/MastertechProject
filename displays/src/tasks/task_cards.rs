@@ -19,8 +19,12 @@ impl Displayable for TaskPayload {
 
         {
             let ui = &mut frame.content_ui;
-            ui.set_width(430.0);
-            ui.set_max_height(300.);
+            let available = ui.available_width();
+            const CARD_MARGIN: f32 = 8.0; // match the Frame::inner_margin you’re using
+            ui.set_width(available - CARD_MARGIN * 2.0);
+            
+            
+            // ui.set_max_height(300.);
             ui.set_min_height(67.0);
 
             ui.horizontal(|ui| {
