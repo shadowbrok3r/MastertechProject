@@ -1017,7 +1017,7 @@ impl PhoneNumberFormatter {
         } else if let Some(caps) = self.re_dashes.captures(phone) {
             Some(format!("({}) {}-{}", &caps[1], &caps[2], &caps[3]))
         } else {
-            None
+            Some(phone.to_string())
         };
 
         if let Some(ref result) = formatted {

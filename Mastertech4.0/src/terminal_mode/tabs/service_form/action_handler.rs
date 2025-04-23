@@ -103,12 +103,6 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 log::info!("Customer email: {cust_email:?}");
                                 let client = self.client.clone();
                                 tokio::spawn(async move {
-                                    // let mut params: HashMap<&str, &str> = HashMap::new();
-                                    // params.insert("user_email", "logan.lees@pclaptops.com");
-                                    // params.insert("user_password", "Poolparty1");
-                                    // params.insert("application", "carbonite");
-                                    // params.insert("action", "search");
-                                    // params.insert("search", &cust_email);
 
                                     let json = serde_json::json!({
                                         "user_email": "logan.lees@pclaptops.com",
@@ -176,7 +170,45 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
 
                         if let Ok(svc_data) = &mut self.service_data.lock() {
 
-                            let _ = svc_data.receive(presta_data.clone());
+                            let rec = &mut String::new();
+                            if let Ok(recommendations) = self.recommendations.input.try_borrow() {
+                                *rec = recommendations.lines()[0].clone();
+                            }
+                            let _ = svc_data.receive(presta_data.clone(), rec.clone());
+                            
+                            let cust_email = svc_data.customer_data.email.clone();
+                            if !cust_email.is_empty() {
+                                log::info!("Customer email: {cust_email:?}");
+                                let client = self.client.clone();
+                                tokio::spawn(async move {
+
+                                    let json = serde_json::json!({
+                                        "user_email": "logan.lees@pclaptops.com",
+                                        "user_password": "Poolparty1",
+                                        "application": "carbonite",
+                                        "action": "search",
+                                        "search": &cust_email
+                                    });
+
+                                    let response = client
+                                        .post("https://scaffold.pclaptops.com/api/index")
+                                        .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+                                        .header(ACCEPT, "application/json")
+                                        .json(&json)
+                                        // .form(&params)
+                                        .send()
+                                        .await?;
+
+                                    log::info!("response: {response:?}");
+
+                                    let response_json: Vec<CarboniteResponse> = response.json().await?;
+                                    log::info!("SEB Response: {:?}", response_json);
+                                    let tx = get_event_sender();
+                                    tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
+                                    Ok::<(), anyhow::Error>(())
+                                });
+                            }
+
                             log::info!("service_number");
                             // Update service_number
                             {

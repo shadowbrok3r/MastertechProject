@@ -103,7 +103,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+        match DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_DEV).await {
             Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
             Err(e) => log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
         }

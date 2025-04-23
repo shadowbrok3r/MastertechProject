@@ -1,9 +1,9 @@
 
-use database::schema::{prestashop_schema::PrestashopPayload, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
+use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone, query_user_from_email}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_TABLE, TICKET_TABLE};
 use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crate::filesystem::system_info::ComputerInfo;
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{SecondsFormat, Utc};
 use std::sync::{Arc, Condvar, Mutex};
 use surrealdb::RecordId;
 use egui::{Key, Modifiers};
@@ -64,46 +64,104 @@ impl ServiceData {
         }
     }
     
-    pub fn receive(&mut self, presta_data: PrestashopPayload) {
+    pub fn receive(&mut self, presta_data: PrestashopPayload, recommendations: String) {
         log::info!("{:?}", serde_json::to_value(&presta_data).unwrap_or_default());
         let customer = &mut self.customer_data;
         let ticket = &mut self.ticket_data;
         let task = &mut self.task_data;
         let task_notes = &mut self.task_notes;
+        let computer = &mut self.computer_data;
 
+        task.id = RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
+        task.task_description = recommendations.clone();
         let service_details = presta_data.order.associations.order_service.clone();
         let mut services: Vec<RecordId> = Vec::new();
 
+        let device_details: Vec<ServiceOrder> = presta_data
+            .order
+            .associations
+            .order_service
+            .iter()
+            .map(|o| {
+                ServiceOrder {
+                    device_name: o.device_name.clone(),
+                    device_mfg: o.device_mfg.clone(),
+                    device_model: o.device_model.clone(),
+                    device_serial: o.device_serial.clone(),
+                    device_password: o.device_password.clone(),
+                    device_power_supply: o.device_power_supply.clone(),
+                    check_in_notes: o.check_in_notes.clone(),
+                    ..Default::default()
+                }
+            }
+        ).collect();
+
+        let device = device_details.get(0).cloned().unwrap_or_default();
+
+        *computer = ComputerData {
+            device_name: Some(device.device_name),
+            device_mfg: Some(device.device_mfg),
+            device_model: Some(device.device_model),
+            device_serial: Some(device.device_serial),
+            customer: Some(customer.id.clone()),
+            ..computer.clone()
+        };
+        
         let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
         let split_rep = presta_data.split_rep.clone().unwrap_or_default();
 
-        let sales_rep_initials = sales_rep.initials.clone();
-        let split_initials = split_rep.initials.clone();
+        let email = parse_email_user(&sales_rep.email).to_string();
+        let email_split_rep = parse_email_user(&split_rep.email).to_string();
 
-        let email = sales_rep
-            .email
-            .split_once("@")
-            .clone()
-            .unwrap_or((&sales_rep_initials, ""))
-            .0
-            .to_string();
+        let (tx, rx) = crossbeam::channel::bounded::<User>(1);
+        
+        let employees = presta_data
+            .customer_messages
+            .iter()
+            .map(|msg| msg.id_employee.clone())
+            .collect::<Vec<String>>();
 
-        let email_split_rep = split_rep
-            .email
-            .split_once("@")
-            .clone()
-            .unwrap_or((&split_initials, ""))
-            .0
-            .to_string();
+        tokio::spawn(async move {
+            for emp in employees.iter() {
+                let employee = Employee::default().get_employee_from_id(emp).await?;
+                let user = query_user_from_email(employee.email).await?;
+                tx.try_send(user)?;
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let username = &mut String::new();
+        let user_id: &mut Option<RecordId> = &mut None;
+
+        if let Ok(usr) = rx.try_recv() { 
+            *username = parse_email_user(&usr.email).to_string();
+            *user_id = Some(usr.id);
+        }
 
         for msg in presta_data.customer_messages.iter() {
             task_notes.push(TaskNotePayload {
                 everest_initials: msg.id_employee.clone(),
                 note: msg.message.clone(),
-                ..Default::default()
+                created_at: match convert_date_string(&msg.date_add) {
+                    Ok(date) => date,
+                    Err(e) => {
+                        log::info!("Parse error: {e:?}");
+                        msg.date_add.clone()
+                    },
+                },
+                id: RecordId::from((TASK_TABLE, msg.id.clone())),
+                task_id: Some(task.id.clone()),
+                username: username.clone(),
+                user: user_id.clone(),
+                id_customer_thread: Some(msg.id_customer_thread.clone()),
+                id_customer_message: Some(msg.id.clone()),
+                id_employee: Some(msg.id_employee.clone()),
+                service_number: Some(ticket.service_number.clone()),
             })
         }
 
+        task.task_note = task_notes.clone();
         customer.id = presta_data.customer.id.clone();
         customer.cust_code = presta_data.customer.cust_code.clone();
         customer.email = presta_data.customer.email.clone();
@@ -168,39 +226,25 @@ impl ServiceData {
         let mut task_data = self.task_data.clone();
         let customer_data = self.customer_data.clone();
         let ticket_data = self.ticket_data.clone();
-        let mut computer_data = self.computer_data.clone();
+        let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
 
-        task_data.due_date = DateTime::<Utc>::default().to_rfc3339_opts(SecondsFormat::Secs, true);
+        task_data.due_date = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
         let send_specs = self.send_specs.clone();
 
-        #[cfg(target_os="windows")]
-        {
-            let mut programs: Vec<serde_json::Value> = vec![];
-            if let Ok(installed_programs) = crate::utilities::scripts::InstalledProgram::get_installed_programs() {
-                for program in installed_programs.iter() {
-                    if let Ok(val) = serde_json::to_value(program) {
-                        programs.push(val.clone());
-                    }
-                }
-                computer_data.installed_programs = Some(programs.clone());
-            } else {
-                log::info!("Failed to get installed programs");
-            }
-        }
-            tokio::spawn(async move {
-                let send_payload_result = create_full_task_payload(
-                    ticket_data.into(),
-                    customer_data,
-                    computer_data,
-                    task_data.into(),
-                    task_notes,
-                    send_specs,
-                )
-                .await;
-                log::info!("send_payload_result: {send_payload_result:?}");
-            });
-        
+        tokio::spawn(async move {
+            let send_payload_result = create_full_task_payload(
+                ticket_data.into(),
+                customer_data,
+                computer_data,
+                task_data.into(),
+                task_notes,
+                send_specs,
+            )
+            .await;
+            log::info!("send_payload_result: {send_payload_result:?}");
+        });
+    
     }
 
     
