@@ -1,9 +1,8 @@
-use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Notification, TicketData, TicketPayload};
+use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
-    },
-    DATABASE,
+        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE
+    }, PlatformSpawner, Spawner, DATABASE
 };
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
@@ -410,13 +409,37 @@ impl NotificationMod for Notification {
     }
 }
 
+pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
+    let (tx, rx) = crossbeam::channel::bounded(1);
+    PlatformSpawner::spawn(async move {
+        let res = async {
+            // supereasybackup.com/downloads/SuperEasyBackup.exe
+            let file_path = "C:\\DCProtectData\\Shared\\Logs\\InstallationTracking.log"; // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log";
+
+            // Read the file content
+            let file_content = tokio::fs::read_to_string(file_path).await?;
+
+            // Deserialize the XML content
+            let result: LocalSebData = serde_json::from_str(&file_content)?;
+            let _ = tx.send(result);
+            Ok::<(), anyhow::Error>(())
+        }.await;
+        log::info!("Res: {res:?}");
+    });
+
+    if let Ok(seb) = rx.recv() {
+        Ok(seb)
+    } else {
+        Err(anyhow::anyhow!("Could not get LocalSebData"))
+    }
+}
 
 pub async fn create_full_task_payload(
     ticket_data: TicketData,
     customer_data: CustomerData,
     computer_data: ComputerData,
     mut task_data: LiveTaskPayload,
-    task_notes: Vec<TaskNotePayload>,
+    mut task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
 ) -> anyhow::Result<(), anyhow::Error> {
     info!("schema/utilities.rs -> Send_Payload");
@@ -427,96 +450,85 @@ pub async fn create_full_task_payload(
     let ticket_id = ticket_data.id.clone();
     let customer_id = customer_data.id.clone();
     let computer_id = computer_data.id.clone();
-
+    let service_number = ticket_data.service_number.clone();
     task_data.task_name = format!(
         "{} - {}",
         &customer_data.name,
-        ticket_data.service_number.clone()
+        service_number.clone()
     );
     task_data.service_ticket = Some(ticket_id.clone());
-    task_data.service_number = Some(ticket_data.service_number.clone());
+    task_data.service_number = Some(service_number.clone());
     task_data.priority = Priority::Normal;
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
-    if let Some(cust_record) = query_id::<CustomerData>(CUSTOMER_TABLE.to_string(), customer_id.clone()).await? {
-        info!("schema/utilities.rs -> cust_record: {cust_record:?}");
-        let update_cust_record: Option<Record> = DATABASE
-            .update(customer_id)
-            .content(customer_data.clone())
-            .await?;
-        info!("schema/utilities.rs -> Customer updated: {update_cust_record:?}");
+    // if ticket_data.computer.is_none() {
+    //     ticket_data.computer = Some(computer_data.id.clone());
+    // }
 
-        if let Some(computer_record) = query_id::<ComputerData>(COMPUTER_TABLE.to_string(), computer_id.clone()).await? {
-            info!("schema/utilities.rs -> computer_record: {computer_record:?}");
-            if send_specs {
-                let create_computer_record: Option<Record> = DATABASE
-                    .update(computer_id)
-                    .content(computer_data)
-                    .await?;
-                info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
-            }
-        } else {
-            let create_computer_record: Option<RecordId> = DATABASE
-                .create(COMPUTER_TABLE)
-                .content(computer_data)
-                .await?;
-            info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
-        }
-        if let Some(ticket) = query_id::<TicketData>(TICKET_TABLE.to_string(), ticket_id.clone()).await? {
-            info!("schema/utilities.rs -> ticket record: {ticket:?}");
-            let service_ticket_record: Option<Record> = DATABASE
-                .update(ticket_id)
-                .content(ticket_data)
-                .await?;
-            info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
-        } else {
-            let service_ticket_record: Option<RecordId> =
-                DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
-            info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
-        }
-    } else {
-        match DATABASE
-            .create::<Option<Record>>(CUSTOMER_TABLE)
-            .content(customer_data.clone())
-            .await
-        {
-            Ok(create_cust_record) => info!("schema/utilities.rs -> Created Record: {create_cust_record:?}"),
-            Err(e) => log::warn!("Error with create_cust_record: {e:?}"),
-        }
-        if send_specs {
-            match DATABASE
-                .create::<Option<Record>>(COMPUTER_TABLE)
-                .content(computer_data)
-                .await
-            {
-                Ok(create_computer_record) => info!("schema/utilities.rs -> Created Record: {create_computer_record:?}"),
-                Err(e) => log::warn!("Error with create_computer_record: {e:?}"),
-            }
-        }
-        match DATABASE
-            .create::<Option<Record>>(TICKET_TABLE)
-            .content(ticket_data)
-            .await
-        {
-            Ok(create_ticket_record) => info!("schema/utilities.rs -> Created Record: {create_ticket_record:?}"),
-            Err(e) => log::warn!("Error with create_ticket_record: {e:?}"),
-        }
+    info!("schema/utilities.rs -> cust_record: {customer_data:?}");
+    let update_cust_record: Option<Record> = DATABASE
+        .upsert(customer_id)
+        .content(customer_data.clone())
+        .await?;
+    info!("schema/utilities.rs -> Customer updated: {update_cust_record:?}");
+
+    info!("schema/utilities.rs -> computer_record: {computer_data:?}");
+    if send_specs {
+        let create_computer_record: Option<Record> = DATABASE
+            .upsert(computer_id)
+            .content(computer_data)
+            .await?;
+        info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
     }
+
+    info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
+    let service_ticket_record: Option<Record> = DATABASE
+        .upsert(ticket_id)
+        .content(ticket_data)
+        .await?;
+    info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
 
     info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
 
-    let create_task_record: Option<Record> = DATABASE
-        .create(TASK_TABLE)
-        .content(task_data).await?;
+    
+    let check_task_record: Vec<LiveTaskPayload> = DATABASE
+        .query("SELECT * FROM task WHERE service_number == $service_number")
+        .bind(("service_number", service_number.clone()))
+        .await?
+        .take(0)?;
 
-    info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
+    info!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
 
-    if !task_notes.is_empty() {
-        for mut note in task_notes {
-            let res = note.handle_note_creation().await;
-            info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
-        }
+    if !check_task_record.is_empty() {
+        for task in check_task_record.iter() {
+            if task.id == task_data.id {
+                let upsert_task_record: Option<Record> = DATABASE
+                    .update(task.id.clone())
+                    .content(LiveTaskPayload {
+                        id: task.id.clone(),
+                        ..task_data.clone()
+                    }).await?;
+
+                for note in task_notes.iter_mut() {
+                    if note.task_id == Some(task_data.id.clone()) && note.task_id != Some(task.id.clone()) {
+                        note.task_id = Some(task.id.clone());
+                    }
+                }
+                info!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
+            }
+
+        } 
+    } else {
+        let create_task_record: Option<Record> = DATABASE
+            .create(TASK_TABLE)
+            .content(task_data).await?;
+        info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
+    }
+
+    for mut note in task_notes {
+        let res = note.handle_note_creation().await;
+        info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
     }
 
     Ok(())

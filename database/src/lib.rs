@@ -23,6 +23,58 @@ pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=cli
 pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
 
 
+pub use platform::PlatformSpawner;
+pub trait Spawner {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn<F>(future: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static;
+
+    #[cfg(target_arch = "wasm32")]
+    fn spawn<F>(future: F)
+    where
+        F: std::future::Future<Output = ()> + 'static;
+}
+
+#[cfg(target_arch = "wasm32")]
+mod platform {
+    use super::Spawner;
+    use wasm_bindgen_futures::spawn_local;
+
+    pub struct PlatformSpawner;
+
+    impl Spawner for PlatformSpawner {
+        fn spawn<F>(future: F)
+        where
+            F: std::future::Future<Output = ()> + 'static,
+        {
+            spawn_local(future);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod platform {
+    use super::Spawner;
+    use tokio::task;
+
+    pub struct PlatformSpawner;
+
+    impl Spawner for PlatformSpawner {
+        fn spawn<F>(future: F)
+        where
+            F: std::future::Future<Output = ()> 
+                + 'static 
+                + std::marker::Send,
+                
+        {
+            task::spawn(future);
+        }
+    }
+}
+
+
+
 #[derive(Clone, Debug, Default)]
 pub struct Database {
     pub jwt: Option<Jwt>,

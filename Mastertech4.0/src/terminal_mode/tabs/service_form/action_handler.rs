@@ -1,13 +1,11 @@
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent, WidgetId}
+    terminal_mode::{events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent, WidgetId}, systems::notification_system::{Notification, NotificationType}}
 };
 
 use database::schema::{
-    prestashop_schema::ServiceOrder, utilities::PhoneNumberFormatter, CarboniteResponse, GetKeysResponse
+    prestashop_schema::ServiceOrder, utilities::{get_local_seb_data, PhoneNumberFormatter}, CarboniteResponse, ExtendedSeb, GetKeysResponse, LocalSebData
 };
-
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
 
 use super::ServiceFormTab;
 
@@ -53,7 +51,23 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                 log::info!("Button: {button:?}");
                 match widget_id.0.as_str() {
                     "SubmitTur" => if let Ok(svc_data) = &mut self.service_data.lock() {
-                        svc_data.submit_tur_mastertech();
+                        if let Ok(recommendations) = self.recommendations.input.try_borrow() {
+                            svc_data.task_data.task_description = recommendations.lines()[0].clone();
+                        }
+                        let description_empty = svc_data.task_data.task_description.is_empty();
+                        
+                        if description_empty { // also check salesman here
+                            if let Ok(ctx) = self.ctx.try_lock() {
+                                ctx.data_sender.send(Box::new(Notification::new(
+                                    NotificationType::Error, 
+                                    "Missing Recommendations", 
+                                    "Please write recommendations, then submit tur sheet again", 
+                                    5
+                                ))).unwrap();
+                            }
+                        } else {
+                            svc_data.submit_tur_mastertech();
+                        }
                     },
                     "GetKeys" => {
                         let (tx, rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
@@ -103,27 +117,9 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 log::info!("Customer email: {cust_email:?}");
                                 let client = self.client.clone();
                                 tokio::spawn(async move {
-
-                                    let json = serde_json::json!({
-                                        "user_email": "logan.lees@pclaptops.com",
-                                        "user_password": "Poolparty1",
-                                        "application": "carbonite",
-                                        "action": "search",
-                                        "search": &cust_email
-                                    });
-
-                                    let response = client
-                                        .post("https://scaffold.pclaptops.com/api/index")
-                                        .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                                        .header(ACCEPT, "application/json")
-                                        .json(&json)
-                                        // .form(&params)
-                                        .send()
+                                    let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
+                                        .from_customer_email(cust_email.clone(), client)
                                         .await?;
-
-                                    log::info!("response: {response:?}");
-
-                                    let response_json: Vec<CarboniteResponse> = response.json().await?;
                                     log::info!("SEB Response: {:?}", response_json);
                                     let tx = get_event_sender();
                                     tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
@@ -169,39 +165,16 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         }
 
                         if let Ok(svc_data) = &mut self.service_data.lock() {
-
-                            let rec = &mut String::new();
-                            if let Ok(recommendations) = self.recommendations.input.try_borrow() {
-                                *rec = recommendations.lines()[0].clone();
-                            }
-                            let _ = svc_data.receive(presta_data.clone(), rec.clone());
+                            let _ = svc_data.receive(presta_data.clone());
                             
                             let cust_email = svc_data.customer_data.email.clone();
                             if !cust_email.is_empty() {
                                 log::info!("Customer email: {cust_email:?}");
                                 let client = self.client.clone();
                                 tokio::spawn(async move {
-
-                                    let json = serde_json::json!({
-                                        "user_email": "logan.lees@pclaptops.com",
-                                        "user_password": "Poolparty1",
-                                        "application": "carbonite",
-                                        "action": "search",
-                                        "search": &cust_email
-                                    });
-
-                                    let response = client
-                                        .post("https://scaffold.pclaptops.com/api/index")
-                                        .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                                        .header(ACCEPT, "application/json")
-                                        .json(&json)
-                                        // .form(&params)
-                                        .send()
+                                    let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
+                                        .from_customer_email(cust_email.clone(), client)
                                         .await?;
-
-                                    log::info!("response: {response:?}");
-
-                                    let response_json: Vec<CarboniteResponse> = response.json().await?;
                                     log::info!("SEB Response: {:?}", response_json);
                                     let tx = get_event_sender();
                                     tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
@@ -343,6 +316,43 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         for field in self.seb_fields.iter_mut() {
                             let id = field.id();
                             let carbonite = carbonite_response.get(0).cloned().unwrap_or_default();
+                            if let Ok(mut ctx) = self.ctx.try_lock() {
+                                let svc_data = &mut ctx.service_data;
+                                if let Ok(seb) = get_local_seb_data() {
+                                    svc_data.computer_data.seb_info = Some(seb);
+                                } else {
+                                    svc_data.computer_data.seb_info = Some(LocalSebData {
+                                        InstalledDeviceId: carbonite.device_id.clone(),
+                                        InstallInstanceId: carbonite.device_id.clone(),
+                                        ActivationCode: carbonite.activation_code.clone(),
+                                        InstallVersion: carbonite.client_version.clone(),
+                                        MachineName: carbonite.device_name.clone(),
+                                        ExtendedSeb: Some(ExtendedSeb {
+                                            email: carbonite.email.clone(),
+                                            phone: carbonite.phone.clone(),
+                                            userid: carbonite.userid.clone(),
+                                            device_name: carbonite.device_name.clone(),
+                                            device_id: carbonite.device_id.clone(),
+                                            state: carbonite.state.clone(),
+                                            usage_gb: carbonite.usage_gb.clone(),
+                                            date_device_created: carbonite.date_device_created.clone(),
+                                            activated: carbonite.activated.clone(),
+                                            activation_code: carbonite.activation_code.clone(),
+                                            last_complete_backup: carbonite.last_complete_backup.clone(),
+                                            last_client_status_update: carbonite.last_client_status_update.clone(),
+                                            id_recurly_account: carbonite.id_recurly_account.clone(),
+                                            date_last_scan: carbonite.date_last_scan.clone(),
+                                            date_email_sent: carbonite.date_email_sent.clone(),
+                                            date_canceled_account: carbonite.date_canceled_account.clone(),
+                                            date_deleted_account: carbonite.date_deleted_account.clone(),
+                                            current_period_ends_at: carbonite.current_period_ends_at.clone(),
+                                            date_modified: carbonite.date_modified.clone(),
+                                            date_created: carbonite.date_created.clone(),
+                                        }),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
                             match id.0.as_str() {
                                 "CarboniteDeviceName" => {
                                     let mut input = field.input.borrow_mut();
