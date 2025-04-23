@@ -2,7 +2,7 @@
 use super::{
     prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::{schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
+use crate::{schema::{utilities::query_user_from_email, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::schema::deserializer::deserialize_to_string;
 use std::{collections::HashMap, fmt::Debug};
@@ -1588,6 +1588,32 @@ impl From<PrestashopPayload> for TaskPayload {
             ticket.service_number.clone(),
         ));
 
+        let (tx, rx) = crossbeam::channel::bounded::<User>(1);
+        
+        let employees = value
+            .customer_messages
+            .iter()
+            .map(|msg| msg.id_employee.clone())
+            .collect::<Vec<String>>();
+
+        tokio::spawn(async move {
+            for emp in employees.iter() {
+                let employee = Employee::default().get_employee_from_id(emp).await?;
+                let user = query_user_from_email(employee.email).await?;
+                tx.try_send(user)?;
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let username = &mut String::new();
+        let user_id: &mut Option<RecordId> = &mut None;
+
+        if let Ok(usr) = rx.try_recv() { 
+            *username = parse_email_user(&usr.email).to_string();
+            *user_id = Some(usr.id);
+        }
+
         for msg in value.customer_messages.iter() {
             // let initials = if msg.id_employee 
             task_notes.push(TaskNotePayload {
@@ -1595,11 +1621,20 @@ impl From<PrestashopPayload> for TaskPayload {
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
-                // created_at: msg.date_add.clone(),
+                created_at:  match convert_date_string(&msg.date_add) {
+                    Ok(date) => date,
+                    Err(e) => {
+                        log::info!("Parse error: {e:?}");
+                        msg.date_add.clone()
+                    },
+                },
                 id_customer_thread: Some(msg.id_customer_thread.clone()),
                 id_customer_message: Some(msg.id.clone()),
                 id_employee: Some(msg.id_employee.clone()),
-                ..Default::default()
+                username: username.clone(),
+                user: user_id.clone(),
+                service_number: Some(ticket.service_number.clone()),
+                // ..Default::default()
             })
         }
         task.task_note = task_notes;

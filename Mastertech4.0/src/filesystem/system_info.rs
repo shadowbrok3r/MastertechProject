@@ -1,5 +1,5 @@
 use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
-use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
+use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info, terminal_mode::tabs::script_checks::check_windows_activation, utilities::scripts::InstalledProgram};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Networks, System};
 use num_format::{Locale, ToFormattedString};
@@ -131,6 +131,22 @@ impl ComputerInfo for ComputerData {
         info!("Filesystem -> get_computer_data -> ID: {id}");
         self.id = RecordId::from((COMPUTER_TABLE, id.clone().as_str()));
         info!("Filesystem -> get_computer_data -> RecordID: {:?}", self.id.clone());
+
+        #[cfg(target_os="windows")]
+        {
+            let installed_programs = InstalledProgram::get_installed_programs()?;
+            if let Ok(programs) = serde_json::to_value(installed_programs) {
+                self.installed_programs = Some(programs);
+            }
+
+            let license_status = check_windows_activation()?;
+            if license_status.license_status == 1 {
+                self.windows_active = Some(true);
+            } else {
+                self.windows_active = Some(false);
+            }
+        }
+
         Ok(self.to_owned())
     }
 

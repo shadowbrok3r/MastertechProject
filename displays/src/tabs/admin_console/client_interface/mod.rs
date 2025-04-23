@@ -74,9 +74,13 @@ impl WebSocketClient {
         explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
 
         #[cfg(feature="tokio")]
+        let (size_tx, size_rx) = crossbeam::channel::unbounded::<ratatui::layout::Rect>();
+
+        #[cfg(feature="tokio")]
+        let remote_terminal = RemoteTerminal::new(msg_to_client_tx, size_tx.clone());
+
+        #[cfg(feature="tokio")]
         {
-            let (size_tx, size_rx) = crossbeam::channel::unbounded::<ratatui::layout::Rect>();
-            let remote_terminal = RemoteTerminal::new(msg_to_client_tx, size_tx.clone());
             let current_area = remote_terminal.current_area;
             let tx = remote_terminal.buffer_tx.clone();
     
@@ -97,8 +101,6 @@ impl WebSocketClient {
                 }
             });
         }
-
-
 
         Self {
             #[cfg(feature="tokio")]

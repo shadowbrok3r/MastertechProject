@@ -349,7 +349,7 @@ pub struct ComputerData {
     pub device_model: Option<String>,
     pub device_serial: Option<String>,
     pub windows_active: Option<bool>,
-    pub installed_programs: Option<Vec<Value>>
+    pub installed_programs: Option<Value>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
