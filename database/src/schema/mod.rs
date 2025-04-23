@@ -1,3 +1,4 @@
+use chrono::{SecondsFormat, Utc};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
@@ -75,6 +76,7 @@ pub struct TaskPayload {
     pub task_note: Vec<TaskNotePayload>,
     pub completed: bool,
     pub status: Status,
+    pub created_at: Option<String>
 }
 
 impl Default for TaskPayload {
@@ -92,6 +94,7 @@ impl Default for TaskPayload {
             task_note: Vec::new(),
             completed: false,
             status: Status::Todo,
+            created_at: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
         }
     }
 }
@@ -109,6 +112,7 @@ pub struct LiveTaskPayload {
     pub priority: Priority,
     pub completed: bool,
     pub status: Status,
+    pub created_at: Option<String>
 }
 
 impl Default for LiveTaskPayload {
@@ -125,6 +129,7 @@ impl Default for LiveTaskPayload {
             priority: Priority::Normal,
             completed: false,
             status: Status::Todo,
+            created_at: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
         }
     }
 }
@@ -275,6 +280,7 @@ impl From<TaskPayload> for LiveTaskPayload {
             priority: task.priority,
             completed: task.completed,
             status: task.status,
+            created_at: task.created_at
         }
     }
 }
@@ -314,6 +320,7 @@ pub struct CustomerData {
     pub li_doc: String,
     pub li_amnt: String,
     pub num_inv: String,
+    pub computers: Vec<RecordId>
 }
 
 impl Default for CustomerData {
@@ -329,6 +336,7 @@ impl Default for CustomerData {
             li_doc: Default::default(),
             li_amnt: Default::default(),
             num_inv: Default::default(),
+            computers: Default::default(),
         }
     }
 }
@@ -399,7 +407,6 @@ pub struct ChatThreads {
     pub user: RecordId,
     pub images: Option<Vec<bytes::Bytes>>
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 #[allow(non_snake_case)]
@@ -538,7 +545,6 @@ pub fn find_latest_carbonite_entry(entries: &[CarboniteResponse]) -> Option<&Car
         .map(|(entry, _)| entry)
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DriveData {
     pub drive_letter: String,
@@ -576,7 +582,7 @@ impl Default for TaskNotePayload {
             id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_id: Default::default(),
             everest_initials: Default::default(),
-            created_at: Default::default(),
+            created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             note: Default::default(),
             username: Default::default(),
             id_customer_thread: Default::default(),
@@ -633,6 +639,7 @@ pub struct Notification {
     /// Has the notification been read?
     pub status: String,
 }
+
 impl Default for Notification {
     fn default() -> Self {
         Self {

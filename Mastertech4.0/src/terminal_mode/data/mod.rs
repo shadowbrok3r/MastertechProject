@@ -1,5 +1,5 @@
 
-use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone, query_user_from_email}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_TABLE, TICKET_TABLE};
+use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone, query_user_from_email}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crate::filesystem::system_info::ComputerInfo;
@@ -64,7 +64,7 @@ impl ServiceData {
         }
     }
     
-    pub fn receive(&mut self, presta_data: PrestashopPayload, recommendations: String) {
+    pub fn receive(&mut self, presta_data: PrestashopPayload) {
         log::info!("{:?}", serde_json::to_value(&presta_data).unwrap_or_default());
         let customer = &mut self.customer_data;
         let ticket = &mut self.ticket_data;
@@ -73,7 +73,6 @@ impl ServiceData {
         let computer = &mut self.computer_data;
 
         task.id = RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
-        task.task_description = recommendations.clone();
         let service_details = presta_data.order.associations.order_service.clone();
         let mut services: Vec<RecordId> = Vec::new();
 
@@ -98,14 +97,7 @@ impl ServiceData {
 
         let device = device_details.get(0).cloned().unwrap_or_default();
 
-        *computer = ComputerData {
-            device_name: Some(device.device_name),
-            device_mfg: Some(device.device_mfg),
-            device_model: Some(device.device_model),
-            device_serial: Some(device.device_serial),
-            customer: Some(customer.id.clone()),
-            ..computer.clone()
-        };
+
         
         let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
         let split_rep = presta_data.split_rep.clone().unwrap_or_default();
@@ -150,7 +142,7 @@ impl ServiceData {
                         msg.date_add.clone()
                     },
                 },
-                id: RecordId::from((TASK_TABLE, msg.id.clone())),
+                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
                 username: username.clone(),
                 user: user_id.clone(),
@@ -199,6 +191,16 @@ impl ServiceData {
             }
         }
 
+        *computer = ComputerData {
+            device_name: Some(device.device_name),
+            device_mfg: Some(device.device_mfg),
+            device_model: Some(device.device_model),
+            device_serial: Some(device.device_serial),
+            customer: Some(customer.id.clone()),
+            ..computer.clone()
+        };
+
+        ticket.computer = Some(computer.clone());
         task.service_ticket = Some(ticket.clone());
     }
     
@@ -244,10 +246,7 @@ impl ServiceData {
             .await;
             log::info!("send_payload_result: {send_payload_result:?}");
         });
-    
     }
-
-    
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize, Debug)]

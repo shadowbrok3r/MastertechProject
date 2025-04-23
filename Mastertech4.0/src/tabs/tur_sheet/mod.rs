@@ -3,7 +3,6 @@ use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, Ke
 use database::schema::{helper_traits::parse_email_user, CarboniteResponse, CustomerData, GetKeysResponse, LiveTaskPayload, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use std::{collections::BTreeSet, f32};
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use get_ticket::SendRequest;
 // use egui_file::FileDialog;
 use std::path::PathBuf; 
@@ -198,24 +197,9 @@ impl MastertechContext {
                 let tx = self.seb_channel.0.clone();
                 if !email.is_empty() {
                     tokio::spawn(async move {
-                        let json = serde_json::json!({
-                            "user_email": "logan.lees@pclaptops.com",
-                            "user_password": "Poolparty1",
-                            "application": "carbonite",
-                            "action": "search",
-                            "search": &email
-                        });
-
-                        let response = client
-                            .post("https://scaffold.pclaptops.com/api/index")
-                            .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                            .header(ACCEPT, "application/json")
-                            .json(&json)
-                            // .form(&params)
-                            .send()
+                        let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
+                            .from_customer_email(email.clone(), client)
                             .await?;
-
-                        let response_json: Vec<CarboniteResponse> = response.json().await?;
                         log::info!("SEB Response: {:?}", response_json);
                         tx.try_send(response_json)?;
                         Ok::<(), anyhow::Error>(())

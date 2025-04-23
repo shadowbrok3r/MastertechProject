@@ -2,7 +2,7 @@
 use super::{
     prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::{schema::{utilities::query_user_from_email, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
+use crate::{schema::{utilities::query_user_from_email, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::schema::deserializer::deserialize_to_string;
 use std::{collections::HashMap, fmt::Debug};
@@ -11,7 +11,7 @@ use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use structdiff::StructDiff;
 use surrealdb::RecordId;
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde_json::Value;
 use regex::Regex;
 
@@ -467,9 +467,16 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             }
             self.create_task_note_in_db().await?
 
-        } else {
-            // Handle other cases
+        } else { 
+            // The case that this happens, probably need to upsert the task note
+            // to match a new service order number than the existing note has or something.
             info!("helper_traits -> handle_note_creation -> This is an odd case... {:?}", self.clone());
+            let upsert_note_record: Option<TaskNotePayload> = DATABASE
+                .upsert(self.id.clone())
+                .content(self.clone())
+                .await?;
+
+            log::info!("upsert_note_record: {upsert_note_record:?}");
         }
         self.check_tagged_user_in_note().await?;
 
@@ -844,14 +851,33 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             "#,
             )
             .bind(("id_customer_message", msg_id.clone()))
-            // .bind(("id_customer_thread", thread_id.clone()))
             .await?
             .take(0)?;
-        info!("helper_traits -> Message existence query results: {query_results:?}");
 
-        for res in query_results.iter() {
-            if res.id != self.id {
-                return Ok(Some(res.id.clone()));
+
+        info!("helper_traits -> Message existence query results: {query_results:?}");
+        
+        for note in query_results.iter() {
+            warn!("helper_traits -> existing note Task ID: {:?}", note.task_id);
+            warn!("helper_traits -> self.note Task ID: {:?}", self.task_id);
+            if let (Some(existing_task_id), Some(task_id)) = (&note.task_id, &self.task_id) {
+                if existing_task_id != task_id {
+                    info!("helper_traits -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {existing_task_id:?}");
+                    let res: Option<TaskNotePayload> = DATABASE
+                        .query("UPDATE task_note SET task_id = $new_id WHERE id == $id")
+                        .bind(("id", note.id.clone()))
+                        .bind(("new_id", task_id.clone()))
+                        .await?
+                        .take(0)?;
+
+                    log::info!("Task note already exists: {res:#?}, but it should now have a new task id: {task_id:?}");
+                }
+            }
+
+            warn!("helper_traits -> note.id != self.id: {:?} {:?}", note.id, self.id);
+            
+            if note.id != self.id {
+                return Ok(Some(note.id.clone()));
             }
         }
         Ok(None)
@@ -1596,14 +1622,17 @@ impl From<PrestashopPayload> for TaskPayload {
             .map(|msg| msg.id_employee.clone())
             .collect::<Vec<String>>();
 
-        tokio::spawn(async move {
-            for emp in employees.iter() {
-                let employee = Employee::default().get_employee_from_id(emp).await?;
-                let user = query_user_from_email(employee.email).await?;
-                tx.try_send(user)?;
-            }
-            
-            Ok::<(), anyhow::Error>(())
+        PlatformSpawner::spawn(async move {
+            let res = async {
+                for emp in employees.iter() {
+                    let employee = Employee::default().get_employee_from_id(emp).await?;
+                    let user = query_user_from_email(employee.email).await?;
+                    tx.try_send(user)?;
+                }
+                
+                Ok::<(), anyhow::Error>(())
+            }.await;
+            log::info!("Res: {res:?}");
         });
 
         let username = &mut String::new();

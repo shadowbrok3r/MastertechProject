@@ -294,7 +294,7 @@ unsafe fn install_updates_from_collection(
 
         while !download_job.IsCompleted()?.as_bool() {
             let progress = download_job.GetProgress()?;
-            event_sender.try_send(WindowsUpdateEvent::UpdateLogs(
+            let _ = event_sender.try_send(WindowsUpdateEvent::UpdateLogs(
                 format!("Download Progress: {}%", progress.PercentComplete()?)
             ));
             // std::thread::sleep(std::time::Duration::from_secs(5));

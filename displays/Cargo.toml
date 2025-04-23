@@ -44,9 +44,9 @@ async-trait = { workspace = true }
 compact_str = { version = "0.9.0", features = ["serde"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace=true, optional = true }
 ratatui = { workspace = true }
 async-openai = { workspace = true}
-tokio = { workspace=true, optional = true }
 rusty-s3 = { workspace=true }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}# "tls"
 # tokio-tungstenite = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
