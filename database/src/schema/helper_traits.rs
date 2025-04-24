@@ -862,7 +862,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             warn!("helper_traits -> self.note Task ID: {:?}", self.task_id);
             if let (Some(existing_task_id), Some(task_id)) = (&note.task_id, &self.task_id) {
                 if existing_task_id != task_id {
-                    info!("helper_traits -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {existing_task_id:?}");
+                    info!("helper_traits -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", note.id);
                     let res: Option<TaskNotePayload> = DATABASE
                         .query("UPDATE task_note SET task_id = $new_id WHERE id == $id")
                         .bind(("id", note.id.clone()))
