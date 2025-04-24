@@ -1,10 +1,10 @@
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE
+        helper_traits::{TaskNotePayloadHelper, UserHelper}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE
     }, PlatformSpawner, Spawner, DATABASE
 };
-use anyhow::{Context, Error, Result};
+use anyhow::{Error, Result};
 use async_trait::async_trait;
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
 use crossbeam::channel::Sender;
@@ -91,22 +91,38 @@ pub async fn get_current_user_from_auth() -> Result<Option<User>, Error> {
 }
 
 pub async fn query_user_from_email(email: String) -> Result<User, Error> {
-    let query = if email.eq("checkinshelf") || email.is_empty() {
+    let query = if email.contains("checkinshelf") || email.is_empty() {
         "RETURN (SELECT * FROM user WHERE id == $auth.id)"
     } else { "SELECT * FROM user WHERE email == $email" };
 
-    if email.contains("@pclaptops.com") {
-        DATABASE.set("email", email.clone()).await?;
+    let full_email = if email.ends_with("@pclaptops.com") {
+        email.clone()
     } else {
-        DATABASE
-            .set("email", format!("{}@pclaptops.com", email.clone()))
-            .await?;
-    }
+        format!("{}@pclaptops.com", email.clone())
+    };
 
-    info!("schema/utilities.rs -> Email: {}", email);
+    info!("schema/utilities.rs -> Full Email: {full_email}");
+
+    DATABASE.set("email", full_email.clone()).await?;
     let user: Option<User> = DATABASE.query(query).await?.take(0)?;
-    // let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
-    user.clone().context("No User Found") // Ok(user.unwrap())
+
+    if let Some(usr) = user {
+        Ok(usr)
+    } else {
+        let mut usr = User::default();
+        usr.email = full_email;
+        let emp = usr.find_employee_by_email().await?;
+        Ok(User {
+            id: RecordId::from((USER_TABLE, emp.id.clone())),
+            name: format!("{} {}", emp.firstname, emp.lastname),
+            everest_initials: emp.initials,
+            email: usr.email,
+            store: Store::from_presta_store_id(&emp.id_store),
+            id_prestashop: Some(emp.id.parse::<u64>()?),
+            id_store: Some(emp.id_store),
+            ..Default::default()
+        })
+    }
 }
 
 pub async fn get_task_notes_from_db_with_service_number(service_number: String) -> Result<Vec<TaskNotePayload>, Error> {
@@ -475,7 +491,7 @@ pub async fn create_full_task_payload(
         .await?;
     info!("schema/utilities.rs -> Customer updated: {update_cust_record:?}");
 
-    info!("schema/utilities.rs -> computer_record: {computer_data:?}");
+    // panic!("");
     if send_specs {
         let create_computer_record: Option<Record> = DATABASE
             .upsert(computer_id)
@@ -590,7 +606,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
             .request_resources_wasm("addresses", query.clone())
             .await?;
 
-        println!("Addresses: {customer_addresses:#?}");
+        log::info!("Addresses: {customer_addresses:#?}");
 
         if let Some(address) = customer_addresses.get(0) {
             tmp_address = address.clone();
@@ -830,42 +846,42 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
     let order_date = match NaiveDateTime::parse_from_str(order_date_str, "%Y-%m-%d %H:%M:%S") {
         Ok(dt) => dt.date(),
         Err(e) => {
-            println!("Failed to parse order date {}: {}", order_date_str, e);
+            log::info!("Failed to parse order date {}: {}", order_date_str, e);
             return Vec::new();
         }
     };
 
     // Determine the current local date.
     let today: NaiveDate = Local::now().naive_local().date();
-    println!("Order date: {}", order_date);
-    println!("Today: {}", today);
+    log::info!("Order date: {}", order_date);
+    log::info!("Today: {}", today);
     
     // Log all customer message dates for debugging.
     let msg_dates: Vec<String> = customer_messages
         .iter()
         .map(|msg| msg.date_add.clone())
         .collect();
-    println!("Customer messages received: {:?}", msg_dates);
+    log::info!("Customer messages received: {:?}", msg_dates);
 
     let mut missing_days = Vec::new();
     let mut day = match order_date.succ_opt() {
         Some(d) => d,
         None => {
-            println!("Failed to get successor for order date: {}", order_date);
+            log::info!("Failed to get successor for order date: {}", order_date);
             return missing_days;
         }
     };
 
     // Iterate until including today.
     while day <= today {
-        println!("Checking day: {}", day.format("%Y-%m-%d"));
+        log::info!("Checking day: {}", day.format("%Y-%m-%d"));
         // Skip Sundays.
         if day.weekday() == Weekday::Sun {
-            println!("Skipping Sunday: {}", day.format("%Y-%m-%d"));
+            log::info!("Skipping Sunday: {}", day.format("%Y-%m-%d"));
             day = match day.succ_opt() {
                 Some(d) => d,
                 None => {
-                    println!("Failed to get successor for day: {}", day);
+                    log::info!("Failed to get successor for day: {}", day);
                     break;
                 }
             };
@@ -877,32 +893,32 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
         for msg in customer_messages {
             match NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S") {
                 Ok(msg_dt) => {
-                    println!("  Comparing {} with customer message date {}",
+                    log::info!("  Comparing {} with customer message date {}",
                              day.format("%Y-%m-%d"), msg_dt.date().format("%Y-%m-%d"));
                     if msg_dt.date() == day {
-                        println!("  Found matching call for day {}", day.format("%Y-%m-%d"));
+                        log::info!("  Found matching call for day {}", day.format("%Y-%m-%d"));
                         called = true;
                         break;
                     }
                 },
-                Err(e) => println!("  Failed to parse customer message date {}: {}", msg.date_add, e),
+                Err(e) => log::info!("  Failed to parse customer message date {}: {}", msg.date_add, e),
             }
         }
         
         if !called {
-            println!("No call found for day {}", day.format("%Y-%m-%d"));
+            log::info!("No call found for day {}", day.format("%Y-%m-%d"));
             missing_days.push(day.format("%Y-%m-%d").to_string());
         }
         
         day = match day.succ_opt() {
             Some(d) => d,
             None => {
-                println!("Failed to get successor for day: {}", day);
+                log::info!("Failed to get successor for day: {}", day);
                 break;
             }
         };
     }
-    println!("Missing days: {:?}", missing_days);
+    log::info!("Missing days: {:?}", missing_days);
     missing_days
 }
 
@@ -954,20 +970,20 @@ mod tests {
                 let msg_dt = NaiveDateTime::parse_from_str(&msg.date_add, "%Y-%m-%d %H:%M:%S")
                     .expect("Valid message date")
                     .date();
-                println!(
+                log::info!(
                     "Comparing day {} with customer message date {}",
                     day.format("%Y-%m-%d"),
                     msg_dt.format("%Y-%m-%d")
                 );
                 if msg_dt == day {
-                    println!("Found call on {}", day.format("%Y-%m-%d"));
+                    log::info!("Found call on {}", day.format("%Y-%m-%d"));
                     called = true;
                     break;
                 }
             }
 
             if !called {
-                println!("No call found on {}", day.format("%Y-%m-%d"));
+                log::info!("No call found on {}", day.format("%Y-%m-%d"));
                 missing_days.push(day.format("%Y-%m-%d").to_string());
             }
             day = day.succ_opt().expect("Day should have a successor");

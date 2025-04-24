@@ -30,7 +30,7 @@ impl TerminalContext {
             app_state_rx,
             url: None,
             state: AppState::default(),
-            service_data: ServiceData::default(),
+            service_data: ServiceData::new(),
             _render_sender,
             data_sender,
             new_state: false,

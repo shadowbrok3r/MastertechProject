@@ -492,7 +492,6 @@ pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Resul
     Ok(())
 }
 
-
 pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let gpu_info = Gpu::default();    
     let sys = &mut SYSINFO.lock().await;

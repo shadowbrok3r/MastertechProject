@@ -50,106 +50,134 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
             WidgetEvent::ButtonClick { widget_id, button , source: _} => {
                 log::info!("Button: {button:?}");
                 match widget_id.0.as_str() {
-                    "SubmitTur" => if let Ok(svc_data) = &mut self.service_data.lock() {
+                    "SubmitTur" => if let Ok(ctx) = &mut self.ctx.try_lock() {
                         if let Ok(recommendations) = self.recommendations.input.try_borrow() {
-                            svc_data.task_data.task_description = recommendations.lines()[0].clone();
+                            ctx.service_data.task_data.task_description = recommendations.lines()[0].clone();
                         }
-                        let description_empty = svc_data.task_data.task_description.is_empty();
+                        let description_empty = ctx.service_data.task_data.task_description.is_empty();
                         
                         if description_empty { // also check salesman here
-                            if let Ok(ctx) = self.ctx.try_lock() {
-                                ctx.data_sender.send(Box::new(Notification::new(
-                                    NotificationType::Error, 
-                                    "Missing Recommendations", 
-                                    "Please write recommendations, then submit tur sheet again", 
-                                    5
-                                ))).unwrap();
-                            }
+                            let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                NotificationType::Error, 
+                                "Missing Recommendations", 
+                                "Please write recommendations, then submit tur sheet again", 
+                                5
+                            )));
                         } else {
-                            svc_data.submit_tur_mastertech();
+                            let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                NotificationType::Info, 
+                                "Sent TUR sheet", 
+                                "", 
+                                2
+                            )));
+                            log::warn!("TICKET COMPUTER DATA: {:#?}", ctx.service_data.ticket_data.computer);
+                            log::warn!("\n\n\nCOMPUTER DATA: {:#?}", ctx.service_data.computer_data.seb_info);
+                            ctx.service_data.submit_tur_mastertech();
                         }
                     },
-                    "GetKeys" => {
+                    "GetKeys" => if let Ok(mut ctx) = self.ctx.try_lock() {
                         let (tx, rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
-                        if let Ok(svc_data) = &mut self.service_data.lock() {
-                            let cps_tx = tx.clone();
-                            let service_num = self.order_number.input.borrow().clone();
-                            svc_data.ticket_data.service_number = service_num.lines()[0].to_string();
-                            
-                            let cps_request = SendRequest::get_cps(
-                                service_num.lines()[0].to_string(), 
-                                self.client.clone()
-                            );
+                        let svc_data = &mut ctx.service_data;
+                        let cps_tx = tx.clone();
+                        let service_num = self.order_number.input.borrow().clone();
+                        svc_data.ticket_data.service_number = service_num.lines()[0].to_string();
+                        
+                        let cps_request = SendRequest::get_cps(
+                            service_num.lines()[0].to_string(), 
+                            self.client.clone()
+                        );
 
-                            tokio::spawn(async move{
-                                let req =  cps_request.await.unwrap_or_default();
-                                log::info!("Keys response: {req:?}");
-                                let _ = cps_tx.send(req);
-                            });
+                        tokio::spawn(async move{
+                            let req =  cps_request.await.unwrap_or_default();
+                            log::info!("Keys response: {req:?}");
+                            let _ = cps_tx.send(req);
+                        });
 
-                            if let Ok(keys) = rx.recv() {
-                                log::info!("Got keys: {keys:?}");
-                                self.keys = keys.clone();
-                                self.webroot_key_btn.set_label(keys.webroot_key.clone());
-                                self.superanti_key_btn.set_label(keys.superanti_key.clone());
-                            }
+                        if let Ok(keys) = rx.recv() {
+                            log::info!("Got keys: {keys:?}");
+                            self.keys = keys.clone();
+                            self.webroot_key_btn.set_label(keys.webroot_key.clone());
+                            self.superanti_key_btn.set_label(keys.superanti_key.clone());
                         }
                     },
-                    "CopyWebroot" => {                
-                        let sas = self.webroot_key_btn.get_label();
+                    "CopyWebroot" => {
+                        let wrv = self.webroot_key_btn.get_label();
                         let mut clipboard = arboard::Clipboard::new().unwrap();
-                        let set = clipboard.set().text(sas);
+                        let set = clipboard.set().text(wrv);
+                        if let Ok(ctx) = self.ctx.try_lock() {
+                            let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                NotificationType::Info, 
+                                "Copied Webroot key to clipboard", 
+                                wrv, 
+                                2
+                            )));
+                        }
                         log::info!("set text to clip: {set:?}");
                     },
                     "CopySuperAnti" => {
                         let sas = self.superanti_key_btn.get_label();
                         let mut clipboard = arboard::Clipboard::new().unwrap();
                         let set = clipboard.set().text(sas);
+                        if let Ok(ctx) = self.ctx.try_lock() {
+                            let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                NotificationType::Info, 
+                                "Copied SAS key to clipboard", 
+                                sas, 
+                                2
+                            )));
+                        }
                         log::info!("set text to clip: {set:?}");
                     },
-                    "CheckSeb" => {
-                        if let Ok(svc_data) = self.service_data.lock() {
-                            if let Ok(ctx) = &mut self.ctx.lock() {
-                                ctx.service_data = svc_data.clone();
-                            }
-                            let cust_email = svc_data.customer_data.email.clone();
-                            if !cust_email.is_empty() {
-                                log::info!("Customer email: {cust_email:?}");
-                                let client = self.client.clone();
-                                tokio::spawn(async move {
-                                    let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
-                                        .from_customer_email(cust_email.clone(), client)
-                                        .await?;
-                                    log::info!("SEB Response: {:?}", response_json);
-                                    let tx = get_event_sender();
-                                    tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
-                                    Ok::<(), anyhow::Error>(())
-                                });
-                            } else {
-                                log::info!("Customer email is empty, cannot check SEB.");
-                            }
+                    "CheckSeb" => if let Ok(ctx) = self.ctx.try_lock() {
+                        let _ = ctx.data_sender.send(Box::new(Notification::new(
+                            NotificationType::Info, 
+                            "Checking SEB info", 
+                            "", 
+                            2
+                        )));
+                         
+                        let cust_email = ctx.service_data.customer_data.email.clone();
+                        if !cust_email.is_empty() {
+                            log::info!("Customer email: {cust_email:?}");
+                            let client = self.client.clone();
+                            tokio::spawn(async move {
+                                let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
+                                    .from_customer_email(cust_email.clone(), client)
+                                    .await?;
+                                log::info!("SEB Response: {:?}", response_json);
+                                let tx = get_event_sender();
+                                tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
+                                Ok::<(), anyhow::Error>(())
+                            });
+                        } else {
+                            log::info!("Customer email is empty, cannot check SEB.");
                         }
                     },
-                    "GetTicket" => {
-                        if let Ok(svc_data) = &mut self.service_data.lock() {
-                            log::info!("ServiceFormTab handled a ButtonClick event.");
-                            if let (
-                                Ok(service_number), 
-                                Ok(phone)
-                            ) = (
-                                self.order_number.input.try_borrow(), 
-                                self.customer_phone.input.try_borrow()
-                            ) {
-                                let phone_number = phone.lines()[0].to_string();
-                                svc_data.ticket_data.service_number = service_number.lines()[0].to_string();
-                                log::info!("Current order number: {}\nPhone: {phone_number}", service_number.lines()[0]);
-                                
-                                if !phone_number.is_empty() {
-                                    log::info!("Current phone number: {}", phone_number);
-                                    svc_data.customer_data.phone_number = phone_number;
-                                }
-                                svc_data.get_ticket();
+                    "GetTicket" => if let Ok(ctx) = &mut self.ctx.try_lock() {
+                        let _ = ctx.data_sender.send(Box::new(Notification::new(
+                            NotificationType::Info, 
+                            "Pulling Ticket Info", 
+                            "", 
+                            2
+                        )));
+                        
+                        log::info!("ServiceFormTab handled a ButtonClick event.");
+                        if let (
+                            Ok(service_number), 
+                            Ok(phone)
+                        ) = (
+                            self.order_number.input.try_borrow(), 
+                            self.customer_phone.input.try_borrow()
+                        ) {
+                            let phone_number = phone.lines()[0].to_string();
+                            ctx.service_data.ticket_data.service_number = service_number.lines()[0].to_string();
+                            log::info!("Current order number: {}\nPhone: {phone_number}", service_number.lines()[0]);
+                            
+                            if !phone_number.is_empty() {
+                                log::info!("Current phone number: {}", phone_number);
+                                ctx.service_data.customer_data.phone_number = phone_number;
                             }
+                            ctx.service_data.get_ticket();
                         }
                     },
                     _ => {}
@@ -164,10 +192,10 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                             self.set_order_rows(order_rows);
                         }
 
-                        if let Ok(svc_data) = &mut self.service_data.lock() {
-                            let _ = svc_data.receive(presta_data.clone());
+                        if let Ok(ctx) = &mut self.ctx.try_lock() {
+                            let _ = ctx.service_data.receive(presta_data.clone());
                             
-                            let cust_email = svc_data.customer_data.email.clone();
+                            let cust_email = ctx.service_data.customer_data.email.clone();
                             if !cust_email.is_empty() {
                                 log::info!("Customer email: {cust_email:?}");
                                 let client = self.client.clone();
@@ -189,7 +217,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 if service_number.lines()[0].is_empty() {
                                     service_number.select_all();
                                     service_number.cut();
-                                    service_number.insert_str(svc_data.ticket_data.service_number.clone());
+                                    service_number.insert_str(ctx.service_data.ticket_data.service_number.clone());
                                 }
                             } // service_number dropped here
                             log::info!("customer_name");
@@ -198,7 +226,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 let mut customer_name = self.customer_name.input.borrow_mut();
                                 customer_name.select_all();
                                 customer_name.cut();
-                                customer_name.insert_str(svc_data.customer_data.name.clone());
+                                customer_name.insert_str(ctx.service_data.customer_data.name.clone());
                             } // customer_name dropped here
                             log::info!("customer_phone");
                             // Update customer_phone
@@ -206,7 +234,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 let mut customer_phone = self.customer_phone.input.borrow_mut();
                                 let mut formatter = PhoneNumberFormatter::default();
                                 let phone_number = formatter
-                                    .format_phone_number(&svc_data.customer_data.phone_number.clone())
+                                    .format_phone_number(&ctx.service_data.customer_data.phone_number.clone())
                                     .unwrap_or_default();
                                 customer_phone.select_all();
                                 customer_phone.cut();
@@ -218,7 +246,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 let mut salesman_name = self.salesman_name.input.borrow_mut();
                                 salesman_name.select_all();
                                 salesman_name.cut();
-                                salesman_name.insert_str(svc_data.ticket_data.salesman.clone());
+                                salesman_name.insert_str(ctx.service_data.ticket_data.salesman.clone());
                             } // salesman_name dropped here
                             log::info!("technician_name");
                             // Update technician_name
@@ -226,7 +254,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 let mut technician_name = self.technician_name.input.borrow_mut();
                                 technician_name.select_all();
                                 technician_name.cut();
-                                technician_name.insert_str(svc_data.ticket_data.tech.clone());
+                                technician_name.insert_str(ctx.service_data.ticket_data.tech.clone());
                             } // technician_name dropped here
                             log::info!("checkin_notes");
                             // Update checkin_notes
@@ -234,7 +262,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 let mut checkin_notes = self.checkin_notes.input.borrow_mut();
                                 checkin_notes.select_all();
                                 checkin_notes.cut();
-                                checkin_notes.insert_str(svc_data.ticket_data.checkin_notes.clone());
+                                checkin_notes.insert_str(ctx.service_data.ticket_data.checkin_notes.clone());
                             } // checkin_notes dropped here
                             log::info!("other_fields");
 
@@ -267,7 +295,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                         let mut input = field.input.borrow_mut();
                                         input.select_all();
                                         input.cut();
-                                        input.insert_str(svc_data.customer_data.email.clone());
+                                        input.insert_str(ctx.service_data.customer_data.email.clone());
                                     }
                                     "DeviceName" => {
                                         let mut input = field.input.borrow_mut();
@@ -308,7 +336,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                     _ => ()
                                 }
                             }
-                            log::info!("SVC DATA: {svc_data:?}");
+                            log::info!("SVC DATA: {:?}", ctx.service_data);
                         }
                     },
                     ApiEvent::GetSebResponse(carbonite_response) => {
@@ -316,12 +344,14 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         for field in self.seb_fields.iter_mut() {
                             let id = field.id();
                             let carbonite = carbonite_response.get(0).cloned().unwrap_or_default();
-                            if let Ok(mut ctx) = self.ctx.try_lock() {
-                                let svc_data = &mut ctx.service_data;
+                            if let Ok(ctx) = &mut self.ctx.try_lock() {
+                                let seb_data = &mut ctx.service_data.computer_data.seb_info;
+                                log::warn!("WE HAVE CTX");
                                 if let Ok(seb) = get_local_seb_data() {
-                                    svc_data.computer_data.seb_info = Some(seb);
+                                    log::warn!("LOCAL SEB: {seb:#?}");
+                                    *seb_data = Some(seb);
                                 } else {
-                                    svc_data.computer_data.seb_info = Some(LocalSebData {
+                                    *seb_data = Some(LocalSebData {
                                         InstalledDeviceId: carbonite.device_id.clone(),
                                         InstallInstanceId: carbonite.device_id.clone(),
                                         ActivationCode: carbonite.activation_code.clone(),
@@ -351,6 +381,8 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                         }),
                                         ..Default::default()
                                     });
+
+                                    log::warn!("svc_data.computer_data.seb_info: {:#?}", seb_data);
                                 }
                             }
                             match id.0.as_str() {

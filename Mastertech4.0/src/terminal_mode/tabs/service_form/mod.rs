@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, data::ServiceData, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
 use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
 use ratatui::{layout::Rect, style::Style};
@@ -44,9 +44,6 @@ pub struct ServiceFormTab<'a> {
 
     /// Tracks which input field is currently focused.
     pub active_field: RefCell<Option<WidgetId>>,
-
-    /// Service information (this is where all of these fields' values will be stored)
-    pub service_data: Arc<Mutex<ServiceData>>,
     
     client: Client,
 
@@ -60,7 +57,6 @@ pub struct ServiceFormTab<'a> {
 
 impl<'a> ServiceFormTab<'a> {
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
-        let service_data =  Arc::new(Mutex::new(ServiceData::new()));
         // Wrap the InputField in an Rc.
         let service_num_field = Rc::new(InputField::new("Service #", WidgetId("ServiceNumber".to_string())));
 
@@ -104,7 +100,6 @@ impl<'a> ServiceFormTab<'a> {
             order_row_fields: Vec::new(),
             order_number: service_num_field,
             other_fields,
-            service_data,
             seb_fields,
             client,
             ctx,

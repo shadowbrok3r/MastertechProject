@@ -1029,6 +1029,20 @@ impl Store {
             Store::ORE => "pclore@pclaptops.com",
         }
     }
+
+    pub fn from_presta_store_id(store_id: &str) -> Self {
+        match store_id {
+            "7" => Self::RIV,
+            "8" => Self::LTN,
+            "10" => Self::MUR,
+            "11" => Self::WJ,
+            "12" => Self::SAN,
+            "13" => Self::AF,
+            "14" => Self::ORE,
+            _ => Self::RIV,
+        }
+    }
+
     pub const VALUES: [Self; 7] = [
         Self::RIV,
         Self::LTN,

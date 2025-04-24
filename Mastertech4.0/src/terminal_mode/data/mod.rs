@@ -96,9 +96,6 @@ impl ServiceData {
         ).collect();
 
         let device = device_details.get(0).cloned().unwrap_or_default();
-
-
-        
         let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
         let split_rep = presta_data.split_rep.clone().unwrap_or_default();
 
@@ -123,17 +120,15 @@ impl ServiceData {
             Ok::<(), anyhow::Error>(())
         });
 
-        let username = &mut String::new();
-        let user_id: &mut Option<RecordId> = &mut None;
+        let user = &mut User::default();
 
         if let Ok(usr) = rx.try_recv() { 
-            *username = parse_email_user(&usr.email).to_string();
-            *user_id = Some(usr.id);
+            *user = usr;
         }
 
         for msg in presta_data.customer_messages.iter() {
             task_notes.push(TaskNotePayload {
-                everest_initials: msg.id_employee.clone(),
+                everest_initials: user.everest_initials.clone(),
                 note: msg.message.clone(),
                 created_at: match convert_date_string(&msg.date_add) {
                     Ok(date) => date,
@@ -144,8 +139,8 @@ impl ServiceData {
                 },
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
-                username: username.clone(),
-                user: user_id.clone(),
+                username: parse_email_user(&user.email).to_string(),
+                user: Some(user.id.clone()),
                 id_customer_thread: Some(msg.id_customer_thread.clone()),
                 id_customer_message: Some(msg.id.clone()),
                 id_employee: Some(msg.id_employee.clone()),
@@ -201,6 +196,7 @@ impl ServiceData {
         };
 
         ticket.computer = Some(computer.clone());
+        log::warn!("Ticket.Computer.SEB: {:#?}", computer.seb_info);
         task.service_ticket = Some(ticket.clone());
     }
     
@@ -230,7 +226,6 @@ impl ServiceData {
         let ticket_data = self.ticket_data.clone();
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
-
         task_data.due_date = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
         let send_specs = self.send_specs.clone();
 
