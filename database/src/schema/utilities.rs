@@ -409,6 +409,7 @@ impl NotificationMod for Notification {
     }
 }
 
+#[cfg(not(target_arch="wasm32"))]
 pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
     let (tx, rx) = crossbeam::channel::bounded(1);
     PlatformSpawner::spawn(async move {
@@ -443,8 +444,9 @@ pub async fn create_full_task_payload(
     send_specs: bool,
 ) -> anyhow::Result<(), anyhow::Error> {
     info!("schema/utilities.rs -> Send_Payload");
-    let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
-    let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
+    let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
+    let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
+    
     
     // let task_id = task_data.id.clone();
     let ticket_id = ticket_data.id.clone();
