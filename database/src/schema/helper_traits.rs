@@ -1626,8 +1626,10 @@ impl From<PrestashopPayload> for TaskPayload {
             let res = async {
                 for emp in employees.iter() {
                     let employee = Employee::default().get_employee_from_id(emp).await?;
-                    let user = query_user_from_email(employee.email).await?;
-                    tx.try_send(user)?;
+                    let mut usr = User::default();
+                    usr.email = employee.email;
+                    let emp = usr.find_employee_by_email().await?;
+                    tx.try_send(query_user_from_email(emp.email.clone()).await?)?;
                 }
                 
                 Ok::<(), anyhow::Error>(())
@@ -1635,18 +1637,16 @@ impl From<PrestashopPayload> for TaskPayload {
             log::info!("Res: {res:?}");
         });
 
-        let username = &mut String::new();
-        let user_id: &mut Option<RecordId> = &mut None;
+        let user = &mut User::default();
 
         if let Ok(usr) = rx.try_recv() { 
-            *username = parse_email_user(&usr.email).to_string();
-            *user_id = Some(usr.id);
+            *user = usr;
         }
 
         for msg in value.customer_messages.iter() {
             // let initials = if msg.id_employee 
             task_notes.push(TaskNotePayload {
-                everest_initials: msg.id_employee.clone(),
+                everest_initials: user.everest_initials.clone(),
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
@@ -1660,8 +1660,8 @@ impl From<PrestashopPayload> for TaskPayload {
                 id_customer_thread: Some(msg.id_customer_thread.clone()),
                 id_customer_message: Some(msg.id.clone()),
                 id_employee: Some(msg.id_employee.clone()),
-                username: username.clone(),
-                user: user_id.clone(),
+                username: parse_email_user(&user.email).to_string(),
+                user: Some(user.id.clone()),
                 service_number: Some(ticket.service_number.clone()),
                 // ..Default::default()
             })
