@@ -1,10 +1,8 @@
 use crate::app_state::MasterTechApp;
-use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, ServiceOrder}, utilities::query_user_from_email, CarboniteResponse, HardwareTests, TaskNotePayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{ComputerData, helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, ServiceOrder}, utilities::query_user_from_email, CarboniteResponse, HardwareTests, TaskNotePayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+
 #[cfg(target_os="windows")]
-use {
-    database::schema::ComputerData,
-    crate::filesystem::system_info::ComputerInfo
-};
+use crate::filesystem::system_info::ComputerInfo;
 
 impl MasterTechApp {
     pub fn receive_prestashop(&mut self) {
