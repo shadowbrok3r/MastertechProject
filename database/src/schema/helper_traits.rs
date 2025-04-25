@@ -213,7 +213,7 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    async fn handle_note_creation(&mut self) -> Result<(), anyhow::Error>
+    async fn handle_note_creation(&mut self, private: bool) -> Result<(), anyhow::Error>
     where
         anyhow::Error: Send;
 
@@ -360,7 +360,7 @@ pub trait TaskNotePayloadHelper: Send {
 }
 
 impl TaskNotePayloadHelper for TaskNotePayload {
-    async fn handle_note_creation(&mut self) -> Result<(), anyhow::Error> {
+    async fn handle_note_creation(&mut self, private: bool) -> Result<(), anyhow::Error> {
         if self.created_at.is_empty() {
             self.update_task_note_with_current_time().await?;
         }
@@ -375,6 +375,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         if self.id_customer_message.is_none()
             && !id_customer_thread.is_empty()
             && self.id_employee.is_some()
+            && !private
         {
             self.id_customer_thread = Some(id_customer_thread);
             // Is this sent from the website or mastertech?
