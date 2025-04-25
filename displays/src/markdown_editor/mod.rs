@@ -13,6 +13,7 @@ pub struct EasyMarkEditor {
     show_rendered: bool,
     pub inputs: BTreeSet<String>,
     pub highlighter: highlighter::MemoizedEasymarkHighlighter,
+    pub private_note: bool
 }
 
 impl PartialEq for EasyMarkEditor {
@@ -30,6 +31,7 @@ impl Default for EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
+            private_note: false
         }
     }
 }
@@ -42,6 +44,7 @@ impl EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
+            private_note: false
         }
     }
 
@@ -71,10 +74,11 @@ impl EasyMarkEditor {
         }
         ui.separator();
 
-        ui.columns(4, |columns| {
+        ui.columns(5, |columns| {
             let _res = columns[0].button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
             columns[1].checkbox(&mut self.show_rendered, "Show rendered");
             columns[2].checkbox(&mut self.highlight_editor, "Highlight editor");
+            columns[3].checkbox(&mut self.private_note, "Private Note");
             let res = columns[3].add(Button::new("Submit").min_size(Vec2::new(60.0, 10.0)));
             response = Some(res);
         });

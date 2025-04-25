@@ -22,7 +22,7 @@ pub struct ChatView{
     pub edit_text: HashMap<String, TaskNotePayload>,
     pub allow_edit: HashSet<String>,
     pub task_id: Option<RecordId>,
-    pub service_number: Option<String>
+    pub service_number: Option<String>,
 }
 
 impl Default for ChatView{
@@ -38,6 +38,7 @@ impl Default for ChatView{
             allow_edit: HashSet::new(),
             task_id: None,
             service_number: None,
+            
         }
     }
 }
@@ -84,7 +85,7 @@ impl ChatView {
             edit_text: note_ids,
             allow_edit: HashSet::new(),
             task_id,
-            service_number
+            service_number,
         }
     }
 
@@ -175,11 +176,11 @@ impl ChatView {
 
                         // We only need a single thread ID
                         new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
-
+                        let private = markdown_editor.private_note.clone();
                         info!("chats/mod.rs -> new_note: {new_note:?}");
                         
                         PlatformSpawner::spawn(async move {
-                            if let Err(e) = new_note.handle_note_creation().await {
+                            if let Err(e) = new_note.handle_note_creation(private).await {
                                 error!("Failed to create task note: {:?}", e);
                             } else {
                                 info!("chats/mod.rs -> Task note successfully created.");

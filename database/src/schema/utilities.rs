@@ -545,7 +545,7 @@ pub async fn create_full_task_payload(
     }
 
     for mut note in task_notes {
-        let res = note.handle_note_creation().await;
+        let res = note.handle_note_creation(false).await;
         info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
     }
 
