@@ -1,5 +1,5 @@
 use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
-use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info, terminal_mode::tabs::script_checks::check_windows_activation, utilities::scripts::InstalledProgram};
+use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Networks, System};
 use num_format::{Locale, ToFormattedString};
@@ -12,6 +12,9 @@ use log::{error, info};
 use reqwest::Client;
 use anyhow::Context;
 use super::SYSINFO;
+
+#[cfg(target_os = "windows")]
+use crate::{terminal_mode::tabs::script_checks::check_windows_activation, utilities::scripts::InstalledProgram};
 
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 

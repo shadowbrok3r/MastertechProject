@@ -1,8 +1,9 @@
 use std::fmt::Display;
 use ratatui::widgets::ListState;
 #[cfg(target_os="windows")]
-use super::{script_checks::{ScriptOutcome, ScriptTask}, ScriptsTab};
+use super::script_checks::{ScriptOutcome, ScriptTask};
 
+#[cfg(target_os = "windows")]
 pub struct TaskReport {
     pub name: String,
     pub outcome: Option<ScriptOutcome>,
@@ -10,6 +11,7 @@ pub struct TaskReport {
     pub details: String,
 }
 
+#[cfg(target_os = "windows")]
 // UPDATED REPORTABLE TASK TRAIT TO EXTEND ScriptTask
 pub trait ReportableTask: ScriptTask {
     /// Provides a detailed report based on criteria defined for this task.
@@ -128,7 +130,7 @@ pub enum Category {
     UserScripts(String), // For flexibility
 }
 
-impl<'a> ScriptsTab<'a> {
+impl<'a> super::ScriptsTab<'a> {
     pub fn update_checklist(&mut self, category: Category, item: &str, status: bool) {
         let category_str = match category {
             Category::Tuneup => "Tuneup",
