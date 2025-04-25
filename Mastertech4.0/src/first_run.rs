@@ -1,6 +1,6 @@
 use crate::{filesystem::system_info::generate_client_id, tabs::tur_sheet::scaffold::AsanaResponse};
 use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use database::{schema::{ComputerData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
+use database::{schema::{ComputerData, ExtendedSeb, LocalSebData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use super::filesystem::system_info::ComputerInfo;
 use super::app_state::{AppState, MasterTechApp};
@@ -31,7 +31,7 @@ impl MasterTechApp {
                     let (lock, cvar) = &*pair_clone;
                     let mut comp_data = lock.lock().unwrap();
                     *comp_data = data;
-                    info!("Computer Data: {comp_data:?}");
+                    // info!("Computer Data: {comp_data:?}");
                     cvar.notify_one();
                 }
                 Err(e) => error!("Error getting specs: {e:?}"),
@@ -237,8 +237,38 @@ impl MasterTechApp {
 
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
             self.context.json_editor.set_value(seb.clone()).unwrap();
-            self.context.seb_info = seb;
-
+            self.context.seb_info = seb.clone();
+            let carbonite = seb.get(0).cloned().unwrap_or_default();
+            self.context.computer_data.seb_info = Some(LocalSebData {
+                InstalledDeviceId: carbonite.device_id.clone(),
+                InstallInstanceId: carbonite.device_id.clone(),
+                ActivationCode: carbonite.activation_code.clone(),
+                InstallVersion: carbonite.client_version.clone(),
+                MachineName: carbonite.device_name.clone(),
+                ExtendedSeb: Some(ExtendedSeb {
+                    email: carbonite.email.clone(),
+                    phone: carbonite.phone.clone(),
+                    userid: carbonite.userid.clone(),
+                    device_name: carbonite.device_name.clone(),
+                    device_id: carbonite.device_id.clone(),
+                    state: carbonite.state.clone(),
+                    usage_gb: carbonite.usage_gb.clone(),
+                    date_device_created: carbonite.date_device_created.clone(),
+                    activated: carbonite.activated.clone(),
+                    activation_code: carbonite.activation_code.clone(),
+                    last_complete_backup: carbonite.last_complete_backup.clone(),
+                    last_client_status_update: carbonite.last_client_status_update.clone(),
+                    id_recurly_account: carbonite.id_recurly_account.clone(),
+                    date_last_scan: carbonite.date_last_scan.clone(),
+                    date_email_sent: carbonite.date_email_sent.clone(),
+                    date_canceled_account: carbonite.date_canceled_account.clone(),
+                    date_deleted_account: carbonite.date_deleted_account.clone(),
+                    current_period_ends_at: carbonite.current_period_ends_at.clone(),
+                    date_modified: carbonite.date_modified.clone(),
+                    date_created: carbonite.date_created.clone(),
+                }),
+                ..Default::default()
+            });
             ctx.request_repaint();
         }
     }

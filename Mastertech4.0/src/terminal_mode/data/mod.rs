@@ -39,7 +39,7 @@ impl ServiceData {
                     let (lock, cvar) = &*pair_clone;
                     let mut comp_data = lock.lock().unwrap();
                     *comp_data = data;
-                    log::info!("Computer Data: {comp_data:?}");
+                    // log::info!("Computer Data: {comp_data:?}");
                     cvar.notify_one();
                 }
                 Err(e) => log::error!("Error getting specs: {e:?}"),

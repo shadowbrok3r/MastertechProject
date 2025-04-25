@@ -112,7 +112,7 @@ impl MastertechContext {
 
             let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
 
-            if self.ticket_data.service_number.len() == 7 && accepted_by_keyboard && service_num.has_focus() {
+            if self.ticket_data.service_number.len() > 6 && accepted_by_keyboard && service_num.lost_focus() {
                 let service_num = self.ticket_data.service_number.clone();
                 self.presta_api();
                 self.ticket_data = TicketData::default();
