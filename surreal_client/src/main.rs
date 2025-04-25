@@ -47,7 +47,7 @@ impl App {
                         let (lock, cvar) = &*pair_clone;
                         let mut comp_data = lock.lock().unwrap();
                         *comp_data = data;
-                        info!("Computer Data: {comp_data:?}");
+                        // info!("Computer Data: {comp_data:?}");
                         cvar.notify_one();
                     }
                     Err(e) => println!("Error getting specs: {e:?}"),
