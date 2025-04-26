@@ -39,6 +39,7 @@ pub struct Tur {
     pub ticket_data: TicketPayload,
     pub task_data: TaskPayload,
     pub customer_data: CustomerData,
+    // pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
     pub store_users: Vec<User>,
 }

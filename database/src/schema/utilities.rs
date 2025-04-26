@@ -821,6 +821,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         name: format!("{} {}", &cust.firstname, &cust.lastname),
         phone_number: address.phone.clone().to_string(),
         email: cust.email,
+        phone_number_2: address.phone_mobile.clone().to_string(),
         ..Default::default()
     };
 
