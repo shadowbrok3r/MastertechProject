@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
 use database::schema::{Record, TaskPayload, User};
 use std::collections::{BTreeMap, HashMap};
@@ -53,7 +53,8 @@ pub enum SortField {
 
 impl TaskLayout { 
     const COL_W: f32 = 450.0; // <- single source of truth
-
+    const HEADER_H: f32 = 48.0;          // rough pixel height of the header frame
+    
     pub fn new(task_map: BTreeMap<String, Vec<TaskPayload>>, column_names: Vec<String>, ui_actions_tx: Sender<TaskUiActions>, assignees: Vec<User>) -> Self 
     {
         Self {  
@@ -149,7 +150,7 @@ impl TaskLayout {
         // Reserve enough width that the horizontal scrollbar always shows up
         ui.set_min_width(Self::COL_W * self.column_names.len() as f32);
 
-        ScrollArea::horizontal().max_height(viewport_h/1.1).auto_shrink(true).show(ui, |ui| {
+        ScrollArea::horizontal().max_height(viewport_h).auto_shrink(true).show(ui, |ui| {
             // ui.columns(self.column_names.len(), |ui| {
             ui.horizontal(|ui| {
                 let mut i = 0;
@@ -410,7 +411,11 @@ impl TaskLayout {
                             let content_w = Self::COL_W - 2.0 * 6.0; // inner margin*2
                             ui.set_min_width(content_w);
                             ui.set_max_width(content_w);
-                            ui.set_min_height(viewport_h/1.02); 
+
+                            let column_h = (viewport_h - Self::HEADER_H).at_least(0.0);
+                            ui.set_min_height(column_h);
+                            ui.set_max_height(column_h);
+
                             let row_height = 110.;
                             let total_rows = tasks.len(); 
                             ui.ctx().options_mut(|o| o.line_scroll_speed = 80.0);

@@ -13,40 +13,40 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
-                    if let Some(usr) = self.current_user.clone() {
-                        let task_modal = if task.service_ticket.is_some() {
-                            TaskModal::new(
-                                ChatView::new(
-                                    task.task_note.clone(),
-                                    usr,
-                                    self.store_users.clone(),
-                                    Some(task.id.clone()),
-                                    task.service_number.clone()
-                                ),
-                                task.clone()
-                            )
-                        } else {
-                            let mut task_modal = TaskModal::default();
-                            task_modal.chat_view = ChatView::new(
+                    let usr = self.current_user.clone().unwrap_or_default();
+                    
+                    let task_modal = if task.service_ticket.is_some() {
+                        TaskModal::new(
+                            ChatView::new(
                                 task.task_note.clone(),
                                 usr,
                                 self.store_users.clone(),
                                 Some(task.id.clone()),
                                 task.service_number.clone()
-                            );
-                            task_modal.task = task.clone();
-                            task_modal
-                        };
-                        
-                        let title = format!("{} Task View", task_modal.title);
+                            ),
+                            task.clone()
+                        )
+                    } else {
+                        let mut task_modal = TaskModal::default();
+                        task_modal.chat_view = ChatView::new(
+                            task.task_note.clone(),
+                            usr,
+                            self.store_users.clone(),
+                            Some(task.id.clone()),
+                            task.service_number.clone()
+                        );
+                        task_modal.task = task.clone();
+                        task_modal
+                    };
+                    
+                    let title = format!("{} Task View", task_modal.title);
 
-                        if self.opened_modals.get(&title).is_some() {
-                            self.opened_modals.remove_entry(&title);
-                        } else {
-                            self.opened_modals
-                                .entry(title)
-                                .or_insert(ModalType::TaskModal(task_modal));
-                        }
+                    if self.opened_modals.get(&title).is_some() {
+                        self.opened_modals.remove_entry(&title);
+                    } else {
+                        self.opened_modals
+                            .entry(title)
+                            .or_insert(ModalType::TaskModal(task_modal));
                     }
                 }
                 TaskUiActions::CreateTaskModal => {
