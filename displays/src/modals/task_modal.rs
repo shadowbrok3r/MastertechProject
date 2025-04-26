@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, Record, Store, TaskPayload}, DATABASE};
+use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload}, DATABASE};
 use crate::{chats::ChatView, DisplayModal, PlatformSpawner, Spawner};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
@@ -217,8 +217,8 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
     ui.add_space(15.0);
 
     ui.vertical_centered(|ui| {
-        let Some(ticket) = task.service_ticket.as_mut() else { return; };
-        let Some(customer) = ticket.customer.as_mut() else { return; };
+        let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
+        let customer = if let Some(customer) = ticket.customer.as_mut(){ customer }  else { &mut CustomerData::default() };
 
         ui.group(|ui| {
             Grid::new("group2")
