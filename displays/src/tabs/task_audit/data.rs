@@ -188,7 +188,7 @@ impl TaskAuditViewer {
         log::info!("Time elapsed: {elapsed:?}");
     }
 
-    pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
+    pub fn receive(&mut self, store_users: Vec<User>, _frame: &mut eframe::Frame) {
         if let Ok(missed_calls) = self.missed_calls_rx.try_recv() {
             for new_call in missed_calls {
                 if !self
@@ -235,7 +235,7 @@ impl TaskAuditViewer {
             log::info!("Got notes: {notes:?}");
             if self.services_viewer.selected.is_some() {
                 log::info!("Creating chat view");
-                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users, None, None);
+                self.services_viewer.chat_view = ChatView::new(notes, store_users, None, None);
             }
         }
 

@@ -14,7 +14,7 @@ use serde::Serialize;
 pub struct ChatView{
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
-    pub current_user: Option<User>,
+    pub current_user: User,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
     pub delete: Option<TaskNotePayload>,
@@ -27,10 +27,16 @@ pub struct ChatView{
 
 impl Default for ChatView{
     fn default() -> Self {
+        let current_user = if let Ok(Some(user)) = get_current_user_from_auth() {
+            user
+        } else {
+            User::default()
+        };
+
         Self { 
             title: "Chat".to_string(), 
-            messages: Vec::new(), 
-            current_user: None, 
+            messages: Vec::new(),
+            current_user,
             markdown_editor: EasyMarkEditor::default(),
             delete: None,
             users: BTreeSet::new(),
@@ -45,8 +51,7 @@ impl Default for ChatView{
 
 impl ChatView {
     pub fn new(
-        messages: Vec<TaskNotePayload>, 
-        current_user: User, 
+        messages: Vec<TaskNotePayload>,
         users: Vec<User>, 
         task_id: Option<RecordId>,
         service_number: Option<String>
@@ -65,18 +70,14 @@ impl ChatView {
             note_ids.insert(message.id.to_string(), message.clone());
         }
 
-        let user = if current_user.name.is_empty() {
-            if let Ok(Some(user)) = get_current_user_from_auth() {
-                user
-            } else {
-                current_user
-            }
+        let current_user = if let Ok(Some(user)) = get_current_user_from_auth() {
+            user
         } else {
-            current_user
+            User::default()
         };
 
         ChatView {
-            current_user: Some(user),
+            current_user,
             messages,
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::new(),
@@ -149,44 +150,44 @@ impl ChatView {
                     markdown_editor.clear();
                     new_msg = Some(txt.clone());
 
-                    if let Some(usr) = self.current_user.clone(){
-                        let username = parse_email_user(&usr.email).to_string();
+                    let usr = self.current_user.clone();
+                    let username = parse_email_user(&usr.email).to_string();
 
-                        // Extract the first customer thread ID if available
-                        let id_customer_thread = self
-                            .messages
-                            .iter()
-                            .filter_map(|m| m.id_customer_thread.clone())
-                            .next();
+                    // Extract the first customer thread ID if available
+                    let id_customer_thread = self
+                        .messages
+                        .iter()
+                        .filter_map(|m| m.id_customer_thread.clone())
+                        .next();
 
-                        let employee_id = usr.id_prestashop.clone().unwrap_or_default();
-                        let id_employee = Some(employee_id.to_string());
+                    let employee_id = usr.id_prestashop.clone().unwrap_or_default();
+                    let id_employee = Some(employee_id.to_string());
 
-                        let mut new_note = TaskNotePayload {
-                            everest_initials: usr.everest_initials, 
-                            note: txt, 
-                            task_id, 
-                            username,
-                            user: Some(usr.id),
-                            id_employee,
-                            id_customer_thread,
-                            service_number: self.service_number.clone(),
-                            ..Default::default() 
-                        };
+                    let mut new_note = TaskNotePayload {
+                        everest_initials: usr.everest_initials, 
+                        note: txt, 
+                        task_id, 
+                        username,
+                        user: Some(usr.id),
+                        id_employee,
+                        id_customer_thread,
+                        service_number: self.service_number.clone(),
+                        ..Default::default() 
+                    };
 
-                        // We only need a single thread ID
-                        new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
-                        let private = markdown_editor.private_note.clone();
-                        info!("chats/mod.rs -> new_note: {new_note:?}");
-                        
-                        PlatformSpawner::spawn(async move {
-                            if let Err(e) = new_note.handle_note_creation(private).await {
-                                error!("Failed to create task note: {:?}", e);
-                            } else {
-                                info!("chats/mod.rs -> Task note successfully created.");
-                            }
-                        });
-                    }
+                    // We only need a single thread ID
+                    new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
+                    let private = markdown_editor.private_note.clone();
+                    info!("chats/mod.rs -> new_note: {new_note:?}");
+                    
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = new_note.handle_note_creation(private).await {
+                            error!("Failed to create task note: {:?}", e);
+                        } else {
+                            info!("chats/mod.rs -> Task note successfully created.");
+                        }
+                    });
+                    
                 }
             }
         });
@@ -216,13 +217,11 @@ impl ChatView {
                 );
 
                 for item in self.messages.iter_mut(){
-                    let mut is_message_from_myself = false;
-                    if let Some(user) = &self.current_user {
-                        let username = parse_email_user(&user.email);
-                        is_message_from_myself = if item.username == username {
-                            true
-                        } else { false };
-                    }
+                    let user = self.current_user.clone();
+                    let username = parse_email_user(&user.email);
+                    let is_message_from_myself = if item.username == username {
+                        true
+                    } else { false };
 
                     // Messages from the user are right-aligned.
                     let layout = if is_message_from_myself {

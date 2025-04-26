@@ -13,13 +13,10 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
-                    let usr = self.current_user.clone().unwrap_or_default();
-                    
                     let task_modal = if task.service_ticket.is_some() {
                         TaskModal::new(
                             ChatView::new(
                                 task.task_note.clone(),
-                                usr,
                                 self.store_users.clone(),
                                 Some(task.id.clone()),
                                 task.service_number.clone()
@@ -30,7 +27,6 @@ impl SharedContext {
                         let mut task_modal = TaskModal::default();
                         task_modal.chat_view = ChatView::new(
                             task.task_note.clone(),
-                            usr,
                             self.store_users.clone(),
                             Some(task.id.clone()),
                             task.service_number.clone()
@@ -74,33 +70,30 @@ impl SharedContext {
                             Err(e) => info!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
                         }
                     });
-                    if let Some(current_user) = self.current_user.as_ref() {
-                        let chat_modal = ChatView::new(
-                            pld.1.to_owned(),
-                            current_user.clone(), // Some(pld.0.clone()),
-                            self.store_users.clone(),
-                            Some(pld.0.clone()),
-                            note_payload.2
-                        );
-                        let task = self
-                            .tasks
-                            .iter()
-                            .find(|task| task.id == pld.0.clone());
 
-                        let title = if let Some(task) = task {
-                            task.task_name.clone()
-                        } else {
-                            "New Chat".to_string()
-                        };
+                    let chat_modal = ChatView::new(
+                        pld.1.to_owned(),
+                        self.store_users.clone(),
+                        Some(pld.0.clone()),
+                        note_payload.2
+                    );
+                    let task = self
+                        .tasks
+                        .iter()
+                        .find(|task| task.id == pld.0.clone());
 
-                        if self.opened_modals.get(&title).is_some() {
-                            self.opened_modals.remove_entry(&title);
-                        } else {
-                            self.opened_modals
-                                .entry(title)
-                                .or_insert(ModalType::ChatView(chat_modal));
-                        }
-                        // info!("receive_ui_action -> self.opened_modals: {:?}", self.opened_modals);
+                    let title = if let Some(task) = task {
+                        task.task_name.clone()
+                    } else {
+                        "New Chat".to_string()
+                    };
+
+                    if self.opened_modals.get(&title).is_some() {
+                        self.opened_modals.remove_entry(&title);
+                    } else {
+                        self.opened_modals
+                            .entry(title)
+                            .or_insert(ModalType::ChatView(chat_modal));
                     }
                 }
                 TaskUiActions::Response(_res) => (),
@@ -111,7 +104,6 @@ impl SharedContext {
                     let modal = TaskModal::new(
                         ChatView::new(
                             task.task_note.clone(),
-                            self.current_user.clone().unwrap_or_default(),
                             self.store_users.clone(),
                             Some(task.id.clone()),
                             task.service_number.clone()

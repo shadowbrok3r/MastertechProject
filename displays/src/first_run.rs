@@ -170,6 +170,6 @@ impl SharedContext {
         }
 
         self.filesystem.receive();
-        self.task_audit_table.receive(self.current_user.clone().unwrap_or_default(), self.store_users.clone(), frame);
+        self.task_audit_table.receive(self.store_users.clone(), frame);
     }
 }

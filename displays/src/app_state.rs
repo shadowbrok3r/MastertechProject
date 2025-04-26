@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, admin_console::AdminConsole}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -96,7 +96,8 @@ pub struct SharedContext {
     ),
     #[serde(skip)]
     pub ai_thread_channel: (Sender<crate::openai::types::ThreadObject>, Receiver<crate::openai::types::ThreadObject>),
-
+    #[serde(skip)]
+    pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     // Notifications and App State
     #[serde(skip)]
     pub notification_tx: Sender<Vec<Notification>>,
@@ -209,7 +210,7 @@ impl SharedContext {
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
         // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
-        // let seb_channel = <Vec<Value>>::create_unbounded_channel();
+        let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
 
         let mut serials_viewer = SerialsViewer::default();
         serials_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -264,8 +265,8 @@ impl SharedContext {
             serial_channel,
             extra_stock_channel,
             ai_thread_channel,
+            seb_channel,
             // github_releases_channel,
-            // seb_channel,
             undock_client: HashMap::new(),
             wants_to_undock: false,
             clients: Vec::new(),

@@ -6,7 +6,6 @@ use eframe::egui::{Context, IconData, Window};
 // use terminal_mode::run_terminal_mode;
 use egui_dock::DockState;
 use log::{error, info};
-use utilities::ai::run_mcp_server_tcp;
 
 #[cfg(target_os = "windows")]
 extern crate winapi;
@@ -136,10 +135,10 @@ async fn main() -> eframe::Result<()> {
         }
     }).join();
 
-    tokio::spawn(async move {
-        run_mcp_server_tcp().await?;
-        Ok::<(), anyhow::Error>(())
-    });
+    // tokio::spawn(async move {
+    //     utilities::ai::run_mcp_server_tcp().await?;
+    //     Ok::<(), anyhow::Error>(())
+    // });
     
     log::info!("Res: {res:?}");
     // console_subscriber::init(); // for tokio console

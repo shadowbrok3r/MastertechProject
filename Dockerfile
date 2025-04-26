@@ -12,7 +12,7 @@ COPY .cargo .cargo
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
-RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.9/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.13/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
 # COPY rust-toolchain.toml rust-toolchain.toml
 ENV RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg getrandom_backend=\"wasm_js\""
