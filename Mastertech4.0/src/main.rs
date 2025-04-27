@@ -121,16 +121,17 @@ async fn main() -> eframe::Result<()> {
     let res = std::thread::spawn(move || {
         let old_exe = std::env::current_dir().unwrap().join("MasterTech.exe");
         let current_exe = std::env::current_exe();
-        let current_exe_name = current_exe.as_ref().unwrap().file_name();
-        if current_exe_name == Some(OsStr::new("git-MasterTech.exe")) && old_exe.exists() {
-            match std::fs::remove_file(old_exe) {
-                Ok(_) => {
-                    log::info!("Removed old exe");
-                    if let Ok(_) = std::fs::rename(std::env::current_exe().unwrap(), "Mastertech.exe") {
-                        log::info!("Renamed exe");
-                    }
-                },
-                Err(e) => log::info!("Error removing old exe: {e:?}"),
+        if let Ok(current) = current_exe.as_ref() {
+            if current.file_name() == Some(OsStr::new("git-MasterTech.exe")) && old_exe.exists() {
+                match std::fs::remove_file(old_exe) {
+                    Ok(_) => {
+                        log::info!("Removed old exe");
+                        if let Ok(_) = std::fs::rename(std::env::current_exe().unwrap(), "Mastertech.exe") {
+                            log::info!("Renamed exe");
+                        }
+                    },
+                    Err(e) => log::info!("Error removing old exe: {e:?}"),
+                }
             }
         }
     }).join();
@@ -142,7 +143,7 @@ async fn main() -> eframe::Result<()> {
     
     log::info!("Res: {res:?}");
     // console_subscriber::init(); // for tokio console
-    let matches = clap::Command::new("Mastertech 4")
+    let matches = clap::Command::new("Mastertech")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Shadowbroker")
         // .about("Accepts a command-line argument and prints it")
@@ -151,6 +152,13 @@ async fn main() -> eframe::Result<()> {
                 .short('t')
                 .long("term")
                 .help("Run MasterTech in Terminal Mode")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("log")
+                .short('l')
+                .long("log")
+                .help("output log to file (output.log)")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -165,15 +173,13 @@ async fn main() -> eframe::Result<()> {
     if matches.get_flag("term") {
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
+    } else if matches.get_flag("log") {
+        simplelog::WriteLogger::init(
+            log::LevelFilter::Trace,
+            simplelog::Config::default(),
+            std::fs::File::create("output.log").unwrap()
+        ).unwrap();
     } else {
-        let _x = displays::tabs::logger::logging::builder().init();
-        // let log_level = log::LevelFilter::Info;
-        // let log_file = std::fs::File::create("output.log").unwrap();
-        // simplelog::WriteLogger::init(
-        //     log_level,
-        //     simplelog::Config::default(),
-        //     log_file
-        // ).unwrap();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {
@@ -195,14 +201,17 @@ async fn main() -> eframe::Result<()> {
 
         if let Err(e) = eframe_app { 
             // displays::tabs::logger::logging::builder().init()
+            // Set max_log_level to Trace
+            // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
+            // // Set default level for unknown targets to Trace
+            // tui_logger::set_default_level(log::LevelFilter::Info);
             error!("Error running eframe_native: {e:?} \nswitching to secondary application");
             let res = terminal_mode::run_terminal_mode().await;
             if let Err(e) = res {
                 error!("Error running terminal app: {e:?}");
             }
         } else {
-            // displays::tabs::logger::logging::builder().init().unwrap();
-
+            let _x = displays::tabs::logger::logging::builder().init();
         }
     }
     
