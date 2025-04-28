@@ -118,7 +118,7 @@ async fn main() -> eframe::Result<()> {
         }
     }
 
-    let res = std::thread::spawn(move || {
+    // let res = std::thread::spawn(move || {
         let old_exe = std::env::current_dir().unwrap().join("MasterTech.exe");
         let current_exe = std::env::current_exe();
         if let Ok(current) = current_exe.as_ref() {
@@ -134,14 +134,15 @@ async fn main() -> eframe::Result<()> {
                 }
             }
         }
-    }).join();
+    // }).join();
 
     // tokio::spawn(async move {
     //     utilities::ai::run_mcp_server_tcp().await?;
     //     Ok::<(), anyhow::Error>(())
     // });
     
-    log::info!("Res: {res:?}");
+    let _ = crate::utilities::scripts::InstalledProgram::get_installed_programs();
+
     // console_subscriber::init(); // for tokio console
     let matches = clap::Command::new("Mastertech")
         .version(env!("CARGO_PKG_VERSION"))
@@ -171,6 +172,11 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
+        simplelog::WriteLogger::init(
+            log::LevelFilter::Info,
+            simplelog::Config::default(),
+            std::fs::File::create("tui-output.log").unwrap()
+        ).unwrap();
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}");
     } else if matches.get_flag("log") {
@@ -205,6 +211,11 @@ async fn main() -> eframe::Result<()> {
             // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
             // // Set default level for unknown targets to Trace
             // tui_logger::set_default_level(log::LevelFilter::Info);
+            simplelog::WriteLogger::init(
+                log::LevelFilter::Info,
+                simplelog::Config::default(),
+                std::fs::File::create("tui-output.log").unwrap()
+            ).unwrap();
             error!("Error running eframe_native: {e:?} \nswitching to secondary application");
             let res = terminal_mode::run_terminal_mode().await;
             if let Err(e) = res {

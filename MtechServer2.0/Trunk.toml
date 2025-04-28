@@ -1,10 +1,11 @@
 # An example Trunk.toml with all possible fields along with their defaults.
 
 [build]
+# command = "cargo build --target wasm32v1-none --release"
 # The index HTML file to drive the bundling process.
 target = "index.html"
 # Build in release mode.
-release = true
+release = false
 # The output dir for all final assets.
 dist = "./dist"
 # The public URL from which assets are to be served.
@@ -21,7 +22,10 @@ addresses = ["0.0.0.0"]
 port = 8080
 
 [tools] # Default wasm-opt version to download.
-wasm_opt = "version_122"
+wasm_opt = "version_123"
+
+# [hooks] 
+# post-build = "build.ps1"
 
 # [serve.headers]
 # see ./assets/_headers for more documentation

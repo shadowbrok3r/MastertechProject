@@ -105,13 +105,13 @@ pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Erro
         if let Ok(mut user_result) = query {
             let user = user_result.take::<Option<User>>(0);
             match user {
-                Ok(usr) => { let _ = tx.send(usr); },
+                Ok(usr) => { let _ = tx.try_send(usr); },
                 Err(e) => log::info!("Error getting user: {e:?}"),
             }
         }
     });
 
-    Ok(rx.recv()?)
+    Ok(rx.try_recv()?)
 }
 
 

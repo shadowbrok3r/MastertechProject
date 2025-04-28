@@ -20,17 +20,20 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn run() {
+    gloo_console::info!("STARTING APP");
     use eframe::wasm_bindgen::JsCast as _;
     // use log::LevelFilter;
     use displays::tabs::logger::logging::builder;
     use web_sys::HtmlCanvasElement;
 
+    gloo_console::info!("INIT LOGGER");
     builder().init().unwrap();
     // Redirect `log` message to `console.log` and friends:
     // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
 
+    gloo_console::info!("Spawn App");
     wasm_bindgen_futures::spawn_local(async {
         let document = web_sys::window()
             .expect("No window")
@@ -43,12 +46,15 @@ pub fn run() {
             .dyn_into::<HtmlCanvasElement>()
             .expect("the_canvas_id was not a HtmlCanvasElement");
 
+        gloo_console::info!("Starting web runner");
         let start_result = eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,
                 Box::new(|cc| {
+                    gloo_console::info!("Installing image loaders");
                     egui_extras::install_image_loaders(&cc.egui_ctx);
+                    gloo_console::info!("Init Main");
                     Ok(Box::new(MtechServer::new(cc)))
                 }),
             )

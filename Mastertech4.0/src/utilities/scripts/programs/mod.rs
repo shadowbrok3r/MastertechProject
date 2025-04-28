@@ -73,7 +73,52 @@ impl InstalledProgram {
 
             // Deserialize JSON into a Vec<GeneralProgram>
             match serde_json::from_str::<Vec<Self>>(&stdout) {
-                Ok(programs) => Ok(programs),
+                Ok(programs) => {
+                    // Helper closure to process Option<String> -> Option<String>, removing ALL null bytes from inner String
+                    let process_option_field = |opt_s: &Option<String>| -> Option<String> {
+                        // .as_ref() borrows the content of the Option without moving it.
+                        // .map() applies the closure if the Option is Some.
+                        // s.replace('\0', "") creates a new String with nulls removed.
+                        // The .map() automatically wraps the new String in Some(...).
+                        // If opt_s was None, .map() does nothing and returns None.
+                        
+                        opt_s
+                            .as_ref()
+                            .map(|s| {
+                                if s.contains('\0') {
+                                    log::info!("Removed Null byte: {s:?}");
+                                } else {
+                                    log::info!("No Nulls: {}", s);
+                                }
+                                s.replace('\0', "")
+
+                                // s.chars()
+                                //     .filter(|&c| {
+                                //         // KEEP if: Not Replacement Char AND (Is Tab OR Is Not Control Char)
+                                //         c != '\u{FFFD}' && (c == '\t' || !c.is_control())
+                                //     })
+                                //     .collect::<String>()
+                            }).filter(|s| !s.is_empty())
+                    };
+
+                    let processed_programs: Vec<InstalledProgram> = programs
+                        .iter() // Iterate over references to the original programs
+                        .map(|program| {
+                            // Create a *new* InstalledProgram instance for the results
+                            InstalledProgram {
+                                display_name: process_option_field(&program.display_name),
+                                display_version: process_option_field(&program.display_version),
+                                publisher: process_option_field(&program.publisher),
+                                uninstall_string: process_option_field(&program.uninstall_string),
+                                install_location: process_option_field(&program.install_location),
+                                install_date: process_option_field(&program.install_date),
+                                ps_path: process_option_field(&program.ps_path),
+                            }
+                        })
+                        .collect(); // Collect the new instances into a Vec
+
+                    Ok(processed_programs) // Return the new Vec wrapped in Ok
+                },
                 Err(_) => {
                     // Handle case where JSON is a single object
                     let single_program: Self = serde_json::from_str(&stdout)?;
