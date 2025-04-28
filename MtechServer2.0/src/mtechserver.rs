@@ -4,6 +4,7 @@ use crate::app_state::{AppState, MainPages, MtechServer};
 use egui_dock::DockState;
 use log::info;
 
+
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
@@ -229,9 +230,9 @@ impl eframe::App for MtechServer {
     //     true
     // }
 
-    // fn save(&mut self, storage: &mut dyn eframe::Storage) {
-    //     eframe::set_value(storage, eframe::APP_KEY, self)
-    // }
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, self)
+    }
 
     // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
     //     if let Some(window) = web_sys::window() {

@@ -155,13 +155,14 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
-            Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
-            Err(e) => {
-                let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
-                log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}\nattempting to connect to local DB: {try_local:?}");
-            },
-        }
+        // match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+        //     Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+        //     Err(e) => {
+        //         let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+        //         log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}\nattempting to connect to local DB: {try_local:?}");
+        //     },
+        // }
+        let _ = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
         match DATABASE.use_ns(NS).use_db(DB).await {
             Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
             Err(e) => log::info!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
