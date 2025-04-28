@@ -126,7 +126,7 @@ pub struct MtechServerContext {
     pub data_update: std::rc::Rc<
         std::cell::Cell<
             Option<
-                Vec<TaskPayload>
+                Vec<u8>
             >
         >
     >,

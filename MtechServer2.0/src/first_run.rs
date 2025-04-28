@@ -1,8 +1,9 @@
 use displays::{tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
-use database::{schema::prestashop_schema::PrestashopPayload, DATABASE};
+// use database::{schema::prestashop_schema::PrestashopPayload, DATABASE};
+use database::DATABASE;
 use crate::app_state::{AppState, MtechServer};
 use wasm_bindgen_futures::spawn_local;
-use egui_data_table::DataTable;
+// use egui_data_table::DataTable;
 use std::collections::HashMap;
 use log::{info, debug, error};
 use eframe::Frame;

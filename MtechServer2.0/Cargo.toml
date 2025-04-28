@@ -19,6 +19,7 @@ name = "deser_worker"
 path = "src/deser_worker.rs"
 
 [dependencies]
+zstd = "0.13"
 gloo-worker = "0.5"
 gloo-net = { version = "0.6", features = ["http"]}
 web-sys = { version = "0.3", features = ["Storage", "Window", "Location", "HtmlCanvasElement"] }
@@ -47,6 +48,7 @@ futures = { workspace=true }
 rfd = { workspace=true }
 gloo-console = { workspace=true }
 egui-data-table = { workspace=true }
+bincode = { workspace = true }
 
 [dependencies.uuid]
 version = "1.13"

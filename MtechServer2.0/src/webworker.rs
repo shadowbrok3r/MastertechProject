@@ -1,3 +1,5 @@
+use anyhow::Context;
+use bincode::{config::standard, serde::{decode_from_slice, encode_to_vec}};
 use database::{schema::TaskPayload, Database, DATABASE};
 use gloo_worker::{HandlerId, WorkerScope};
 use wasm_bindgen_futures::spawn_local;
@@ -18,7 +20,7 @@ pub struct Input(pub String);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Output {
-    pub tasks: Vec<TaskPayload>,
+    pub tasks: Vec<u8>,
 }
 
 pub struct WebWorker;
@@ -61,16 +63,39 @@ pub async fn get_completed_tasks(input: Input, scope: WorkerScope<WebWorker>, id
         "".to_string(), 
         Some(input.0.clone())
     ).await?;
+    let mut offset = 0;
+    let limit = 100; // Number of tasks per chunk
+    loop {
 
-    let tasks = get_completed_tasks_for_store().await?;
+        let tasks = get_completed_tasks_for_store(offset, limit).await?;
+        // Break the loop if no more results
+        if tasks.is_empty() {
+            break;
+        }
 
-    scope.respond(id, Output { tasks });
+        scope.respond(id, Output { tasks: encode_task_payload(&tasks)? });
+
+        offset += limit;
+    }
 
     Ok(())
 }
 
+pub fn encode_task_payload(message: &Vec<TaskPayload>) -> anyhow::Result<Vec<u8>> {
+    let bincoded = encode_to_vec(message, standard()).context("Failed to serialize buffer")?;
+    gloo_console::info!(format!("Uncompressed Completed task data: {}\n", bincoded.len()));
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), 10).context("zstd")?;
+    gloo_console::info!(format!("Compressed Completed task data: {}\n", compressed.len()));
+    Ok(compressed)
+}
 
-pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
+pub fn decode_task_payload(packet: &[u8]) -> anyhow::Result<Vec<TaskPayload>> {
+    let bincoded = zstd::decode_all(packet).context("zstd")?;
+    let (message, _) = decode_from_slice(&bincoded, standard()).context("bincode")?;
+    Ok(message)
+}
+
+pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
     let query = r#"
         SELECT *, (
             SELECT * FROM task_note 
@@ -78,6 +103,7 @@ pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<TaskPayload>,
         ) AS task_note 
         FROM task 
         WHERE $this.assignee.store == $auth.store AND $this.completed IS true
+        LIMIT $limit START $offset
         FETCH 
             service_ticket, 
             service_ticket.computer, 
@@ -89,6 +115,8 @@ pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<TaskPayload>,
 
     let query_results: Vec<TaskPayload> = DATABASE
         .query(query)
+        .bind(("limit", limit))
+        .bind(("offset", offset))        
         .await?
         .take(0)?;
 
