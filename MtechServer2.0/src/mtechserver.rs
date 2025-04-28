@@ -1,6 +1,6 @@
 use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
 use eframe::egui::{Color32, Context, Frame, Margin, Stroke, Vec2, Window};
-use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::{app_state::{AppState, MainPages, MtechServer}, webworker::decode_task_payload};
 use egui_dock::DockState;
 use log::info;
 
@@ -62,7 +62,7 @@ impl eframe::App for MtechServer {
         if let Some(items) = self.context.data_update.take() {
             let tx = self.context.shared_ctx.initial_tasks_tx.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let _ = tx.try_send(items);
+                let _ = tx.try_send(decode_task_payload(&items).unwrap_or_default());
             });
         }
 
