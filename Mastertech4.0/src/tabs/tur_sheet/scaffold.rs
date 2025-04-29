@@ -1,14 +1,6 @@
 #[allow(non_snake_case)]
-use serde::{Deserialize, Serialize};
-use async_trait::async_trait;
-use std::error::Error;
-#[async_trait]
-pub trait _SendReq<T>{
-    async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
-}
 
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default, PartialEq)]
 pub enum HardwareTest{
     RamPass,
     RamFail,
@@ -38,7 +30,7 @@ impl HardwareTest{
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[allow(non_snake_case)]
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 pub enum ScaffoldApps{
@@ -47,7 +39,7 @@ pub enum ScaffoldApps{
     CustomerRequestOrder,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[allow(non_snake_case)]
 #[serde(rename_all="snake_case")]
 pub enum ScaffoldActions {
@@ -63,7 +55,7 @@ pub enum ScaffoldActions {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[allow(non_snake_case)]
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 pub enum ScaffoldCalls{
@@ -119,7 +111,7 @@ pub enum ScaffoldCalls{
 
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct AsanaResponse{
     pub gid: Option<String>,
     //pub created_at: Option<String>,

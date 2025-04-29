@@ -8,7 +8,7 @@ use database::{
 use displays::{
     app_state::SharedContext, channel_manager::ChannelManager, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem
 };
-use eframe::egui::{Align2, Color32, Context, Stroke};
+use eframe::egui::{Align2, Color32, Stroke};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use serde::Serialize;
 use std::{
@@ -103,7 +103,6 @@ pub struct MastertechContext {
 
     pub database: Option<Database>,
     pub rx: Receiver<String>,
-    pub ctx: Context,
     pub open_tabs: HashSet<String>,
 
     pub date: DateTime<Utc>,
@@ -188,8 +187,7 @@ impl MasterTechApp {
         let tree = default_tree();
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
-        let (db_data_sender, db_data_receiver) =
-            crossbeam::channel::unbounded::<Vec<TaskPayload>>();
+        let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
@@ -255,7 +253,7 @@ impl MasterTechApp {
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
-            ctx: Context::default(),
+            // ctx: Context::default(),
             open_tabs: tree.1,
 
             date: chrono::offset::Utc::now(),
@@ -272,7 +270,7 @@ impl MasterTechApp {
             spinner: false,
             new_note: false,
             read_notifications: false,
-            notifications: Vec::new(),
+            notifications: Default::default(),
             style: None,
             text_color: Color32::from_rgb(255, 204, 230),
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
@@ -280,7 +278,7 @@ impl MasterTechApp {
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             show_ws_viewport: Arc::new(AtomicBool::new(false)),
-            added_nodes: Vec::new(),
+            added_nodes: Default::default(),
 
             current_modal: ModalType::Null,
             chat_modal: None,
@@ -302,22 +300,22 @@ impl MasterTechApp {
             github_releases_channel,
             tur_channel,
 
-            github_issue_title: String::new(),
-            github_issue_descript: String::new(),
-            scripts: Scripts::default(),
+            github_issue_title: Default::default(),
+            github_issue_descript: Default::default(),
+            scripts: Default::default(),
             progress: (0.0, 0.0),
-            special_part_order: SpecialPartOrder::default(),
+            special_part_order: Default::default(),
+            github_releases: Default::default(),
             toolbox: FileSystem::new(),
-            github_releases: Vec::new(),
             bytes_channel,
 
             // Data table shit
             seb_channel,
-            json_editor: JsonEditor::default(),
             update_settings: false,
             get_settings: true,
-            seb_email: String::new(),
-            client_title: String::new()
+            json_editor: Default::default(),
+            seb_email: Default::default(),
+            client_title: Default::default()
         };
         
         let context = mastertech_context;

@@ -25,7 +25,7 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc::error::TryRecvError};
 
-use super::email_builder::AsanaTask;
+// use super::email_builder::AsanaTask;
 
 pub struct SendRequest {
     pub tx: crossbeam::channel::Sender<String>,
@@ -102,102 +102,6 @@ impl SendRequest {
         Ok(response_keys)
     }
 
-    pub async fn send_ticket_request(
-        tx: crossbeam::channel::Sender<String>,
-        client: reqwest::Client,
-        asana_task: AsanaTask,
-        due_date: DateTime<Utc>,
-    ) -> anyhow::Result<(), anyhow::Error> {
-        let send = tx.clone();
-
-        let mut _assigned_salesman = "1202792432658520".to_string(); // Jake
-        let mut _assigned_tech = "1199992640930465".to_string(); // Logan
-
-        if asana_task.assignee.salesman == "JDH2" {
-            _assigned_salesman = "1202792432658520".to_string();
-        } else if asana_task.assignee.salesman == "DMK" {
-            _assigned_salesman = "1202791016369879".to_string();
-        }
-
-        if asana_task.assignee.tech == "LL" {
-            _assigned_tech = "1199992640930465".to_string();
-        } else if asana_task.assignee.tech == "BLK" {
-            _assigned_tech = "1202792432421640".to_string();
-        } else if asana_task.assignee.tech == "TBN" {
-            _assigned_tech = "1202792432551073".to_string();
-        }
-
-        // salesman_map.insert("Jake", "1202792432658520");
-        // salesman_map.insert("Danny", "1202791016369879");
-        // tech_map.insert("Logan", "1199992640930465");
-        // tech_map.insert("Bread", "1202792432421640");
-        // tech_map.insert("Taco", "1202792432551073");
-
-        let params = serde_json::json!({
-            "data": {
-                "name": asana_task.task_name,
-                "html_notes": asana_task.html_notes,
-                "followers": [
-                    _assigned_salesman,
-                    _assigned_tech
-                ],
-                "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
-                "workspace": "13314583095021",
-                "assignee": _assigned_salesman,
-                "projects": ["1202792139600600"]
-            }
-        });
-
-        let response = client
-            .post("https://app.asana.com/api/1.0/tasks") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
-            .header(
-                AUTHORIZATION,
-                "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2",
-            )
-            .json(&params)
-            .send()
-            .await?;
-
-        let res_body: Value = response.json().await?;
-        debug!("Asana Response Body: {res_body:?}");
-        let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
-
-        debug!("Asana Response: {gid:?}");
-
-        let file = asana_task.file_attachment.clone();
-
-        if let Some(file) = file {
-            let file_name = file
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("no file name");
-
-            let file_attachment = asana_task.file_attachment.clone();
-            let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
-
-            // let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
-            // let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
-
-            let mut form = HashMap::new();
-            form.insert("file", "part"); //part
-            form.insert("parent", "gid"); //text
-
-            let response = client
-                .post("https://app.asana.com/api/1.0/attachments")
-                .header(
-                    "Authorization",
-                    "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2",
-                )
-                .header(ACCEPT, "application/json")
-                .form(&form)
-                .send()
-                .await?;
-        }
-
-        Ok(())
-    }
 }
 
 pub async fn request_seb_info<T>(
@@ -346,3 +250,103 @@ where
         }
     }
 }
+
+
+/*
+    pub async fn send_ticket_request(
+        tx: crossbeam::channel::Sender<String>,
+        client: reqwest::Client,
+        asana_task: AsanaTask,
+        due_date: DateTime<Utc>,
+    ) -> anyhow::Result<(), anyhow::Error> {
+        let send = tx.clone();
+
+        let mut _assigned_salesman = "1202792432658520".to_string(); // Jake
+        let mut _assigned_tech = "1199992640930465".to_string(); // Logan
+
+        if asana_task.assignee.salesman == "JDH2" {
+            _assigned_salesman = "1202792432658520".to_string();
+        } else if asana_task.assignee.salesman == "DMK" {
+            _assigned_salesman = "1202791016369879".to_string();
+        }
+
+        if asana_task.assignee.tech == "LL" {
+            _assigned_tech = "1199992640930465".to_string();
+        } else if asana_task.assignee.tech == "BLK" {
+            _assigned_tech = "1202792432421640".to_string();
+        } else if asana_task.assignee.tech == "TBN" {
+            _assigned_tech = "1202792432551073".to_string();
+        }
+
+        // salesman_map.insert("Jake", "1202792432658520");
+        // salesman_map.insert("Danny", "1202791016369879");
+        // tech_map.insert("Logan", "1199992640930465");
+        // tech_map.insert("Bread", "1202792432421640");
+        // tech_map.insert("Taco", "1202792432551073");
+
+        let params = serde_json::json!({
+            "data": {
+                "name": asana_task.task_name,
+                "html_notes": asana_task.html_notes,
+                "followers": [
+                    _assigned_salesman,
+                    _assigned_tech
+                ],
+                "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
+                "workspace": "13314583095021",
+                "assignee": _assigned_salesman,
+                "projects": ["1202792139600600"]
+            }
+        });
+
+        let response = client
+            .post("https://app.asana.com/api/1.0/tasks") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .header(
+                AUTHORIZATION,
+                "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2",
+            )
+            .json(&params)
+            .send()
+            .await?;
+
+        let res_body: Value = response.json().await?;
+        debug!("Asana Response Body: {res_body:?}");
+        let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
+
+        debug!("Asana Response: {gid:?}");
+
+        let file = asana_task.file_attachment.clone();
+
+        if let Some(file) = file {
+            let file_name = file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("no file name");
+
+            let file_attachment = asana_task.file_attachment.clone();
+            let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
+
+            // let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
+            // let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
+
+            let mut form = HashMap::new();
+            form.insert("file", "part"); //part
+            form.insert("parent", "gid"); //text
+
+            let response = client
+                .post("https://app.asana.com/api/1.0/attachments")
+                .header(
+                    "Authorization",
+                    "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2",
+                )
+                .header(ACCEPT, "application/json")
+                .form(&form)
+                .send()
+                .await?;
+        }
+
+        Ok(())
+    }
+*/

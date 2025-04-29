@@ -1,4 +1,4 @@
-use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, DATABASE};
+use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO};
 use eframe::egui::{Modifiers, Response, Ui};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
@@ -95,23 +95,32 @@ mod platform {
 
 
 pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Error> {
-    let (tx, rx) = crossbeam::channel::bounded(1);
+    // let (tx, rx) = crossbeam::channel::bounded(1);
 
-    PlatformSpawner::spawn(async move {
-        let query = DATABASE
-            .query("SELECT * FROM user WHERE id == $auth.id")
-            .await;
+    // PlatformSpawner::spawn(async move {
+    //     let query = DATABASE
+    //         .query("SELECT * FROM user WHERE id == $auth.id")
+    //         .await;
 
-        if let Ok(mut user_result) = query {
-            let user = user_result.take::<Option<User>>(0);
-            match user {
-                Ok(usr) => { let _ = tx.try_send(usr); },
-                Err(e) => log::info!("Error getting user: {e:?}"),
-            }
-        }
-    });
+    //     if let Ok(mut user_result) = query {
+    //         let user = user_result.take::<Option<User>>(0);
+    //         match user {
+    //             Ok(usr) => { let _ = tx.try_send(usr); },
+    //             Err(e) => log::info!("Error getting user: {e:?}"),
+    //         }
+    //     }
+    // });
+    // Ok(rx.try_recv()?)
 
-    Ok(rx.try_recv()?)
+    // log::warn!("CURRENT_USER_INFO.try_lock(): {:?}", CURRENT_USER_INFO.try_lock());
+    if let Ok(current_user) = CURRENT_USER_INFO.try_lock() {
+        log::warn!("WE HAVE A USER FROM GLOBAL STATE");
+        Ok(current_user.clone())
+    } else {
+        log::warn!("NONE");
+        Ok(None)
+    }
+    // Ok()
 }
 
 

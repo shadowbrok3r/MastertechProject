@@ -4,18 +4,14 @@ use database::schema::{helper_traits::parse_email_user, CarboniteResponse, Custo
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use std::{collections::BTreeSet, f32};
 use get_ticket::SendRequest;
-// use egui_file::FileDialog;
-use std::path::PathBuf; 
+use std::path::PathBuf;
 use log::{debug, info};
 use tokio::spawn;
 
 pub mod get_ticket;
-pub mod submit_tur;
 pub mod submit_tur_mtech;
-pub mod email_builder;
 pub mod scaffold;
 pub mod presta_api;
-
 
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
@@ -335,22 +331,22 @@ impl MastertechContext {
                 && !self.ticket_data.salesman.is_empty()
                 && !self.ticket_data.tech.is_empty();
 
-            if ui
-            .add_enabled(
-                check,
-                Button::new(RichText::new("Submit TUR").color(Color32::from_rgb(255, 204, 255)))
-                .min_size(Vec2::new(140., 20.0))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
-            )
-            .clicked()
-            {  
-                self.submit_tur();
-            }
+            // if ui
+            // .add_enabled(
+            //     check,
+            //     Button::new(RichText::new("Submit TUR").color(Color32::from_rgb(255, 204, 255)))
+            //     .min_size(Vec2::new(140., 20.0))
+            //     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
+            // )
+            // .clicked()
+            // {  
+            //     self.submit_tur();
+            // }
 
             if ui.add_enabled(
                 check, 
                 Button::new( 
-                    RichText::new("Master-Tech.app"))
+                    RichText::new("Submit TUR"))
                     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                     .min_size(Vec2::new(140., 20.0)
                 )

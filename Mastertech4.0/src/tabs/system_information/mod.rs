@@ -133,7 +133,7 @@ impl MastertechContext{
                             );
                             ui.label(disk_space);  // Show disk space
                         });
-                        self.ctx.request_repaint();
+                        // ui.ctx().request_repaint();
                         self.spinner = false;
                     }   
 
