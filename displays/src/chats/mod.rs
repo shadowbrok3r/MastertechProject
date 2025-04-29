@@ -1,12 +1,12 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{helper_traits::{parse_email_user, TaskNotePayloadHelper}, TaskNotePayload, User}};
-use surrealdb::RecordId;
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
-use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use chrono::{DateTime, Local, Utc};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
+use surrealdb::RecordId;
 use log::{error, info};
 use serde::Serialize;
 
@@ -58,26 +58,22 @@ impl ChatView {
     ) -> Self {
         // info!("chats/mod.rs -> Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
-        for user in users {
-            let parsed_email = user.email.split_once('@');
-            if let Some(email) = parsed_email {
-                users_set.insert(format!("@{}", email.0));
-            }
-        }
         let mut note_ids = HashMap::new();
+        for user in users {
+            let parsed_email = parse_email_user(&user.email);
+            users_set.insert(format!("@{parsed_email}"));   
+        }
 
         for message in messages.iter() {
             note_ids.insert(message.id.to_string(), message.clone());
         }
 
-        let current_user = if let Ok(Some(user)) = get_current_user_from_auth() {
-            user
-        } else {
-            User::default()
-        };
-
         ChatView {
-            current_user,
+            current_user: if let Ok(Some(user)) = get_current_user_from_auth() {
+                user
+            } else {
+                User::default()
+            },
             messages,
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::new(),
@@ -89,7 +85,6 @@ impl ChatView {
             service_number,
         }
     }
-
 
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
         if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
@@ -150,7 +145,15 @@ impl ChatView {
                     markdown_editor.clear();
                     new_msg = Some(txt.clone());
 
-                    let usr = self.current_user.clone();
+                    let usr = &mut self.current_user.clone();
+                    log::warn!("USER: {usr:?}");
+                    if usr.email.is_empty() {
+                        if let Ok(Some(user)) = get_current_user_from_auth() {
+                            log::warn!("USER FROM AUTH: {user:?}");
+                            *usr = user;
+                        }
+                    }
+                    
                     let username = parse_email_user(&usr.email).to_string();
 
                     // Extract the first customer thread ID if available
@@ -160,16 +163,13 @@ impl ChatView {
                         .filter_map(|m| m.id_customer_thread.clone())
                         .next();
 
-                    let employee_id = usr.id_prestashop.clone().unwrap_or_default();
-                    let id_employee = Some(employee_id.to_string());
-
                     let mut new_note = TaskNotePayload {
-                        everest_initials: usr.everest_initials, 
+                        everest_initials: usr.everest_initials.clone(), 
                         note: txt, 
                         task_id, 
                         username,
-                        user: Some(usr.id),
-                        id_employee,
+                        user: Some(usr.id.clone()),
+                        id_employee: Some(usr.id_prestashop.clone().unwrap_or_default().to_string()),
                         id_customer_thread,
                         service_number: self.service_number.clone(),
                         ..Default::default() 
@@ -218,8 +218,7 @@ impl ChatView {
 
                 for item in self.messages.iter_mut(){
                     let user = self.current_user.clone();
-                    let username = parse_email_user(&user.email);
-                    let is_message_from_myself = if item.username == username {
+                    let is_message_from_myself = if item.username == parse_email_user(&user.email) {
                         true
                     } else { false };
 

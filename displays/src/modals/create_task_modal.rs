@@ -243,13 +243,23 @@ impl CreateTaskModal {
                 .min_size(Vec2::new(130.0, 30.0))
                 .fill(Color32::from_rgb(30, 30, 35))
                 .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)));
-            let pulling_ticket = self.tur.ticket_data.service_number.len() == 7;
+            let pulling_ticket = !self.tur.ticket_data.service_number.is_empty();
             let check = !self.task_name.is_empty() && !self.description.is_empty() && !self.assignee.is_empty();
 
             let enabled = if (pulling_ticket && check) || (check) { true } else { false };
 
             if ui.add_enabled(enabled, btn).clicked()
             {
+
+                
+                // let service_num = self.ticket_data.service_number.clone();
+                // Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
+                // self.ticket_data = TicketPayload::default();
+                // self.task_data = TaskPayload::default();
+                // self.customer_data = CustomerData::default();
+                // // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
+                // self.ticket_data.service_number = service_num;
+
                 self.current_page_state = ModalAction::Close;
                 info!("ASSIGNEE: {:?}\nSTATE: {:?}", self.assignee.clone(), self.current_page_state);
                 let time =
@@ -302,7 +312,7 @@ impl CreateTaskModal {
                         } 
 
                         info!("TicketData: {:?}", ticket_data.clone());
-
+                        // TODO: ASSIGNEE DEFAULTS TO SALESMAN 
                         info!("Attaching Customer with Ticket: {:?}", &payload.customer_data.name);
                         match create_full_task_payload(
                             ticket_data,

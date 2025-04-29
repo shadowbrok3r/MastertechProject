@@ -6,7 +6,7 @@ use crate::{schema::{utilities::query_user_from_email, CUSTOMER_TABLE, TASK_TABL
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::schema::deserializer::deserialize_to_string;
 use std::{collections::HashMap, fmt::Debug};
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use structdiff::StructDiff;
@@ -249,7 +249,7 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the update is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the update.
-    async fn update_username_if_needed(&mut self) -> Result<(), anyhow::Error>
+    async fn update_user_info_if_needed(&mut self) -> Result<(), anyhow::Error>
     where
         anyhow::Error: Send;
 
@@ -365,11 +365,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             self.update_task_note_with_current_time().await?;
         }
 
-        let thread_id = self.get_thread_id_from_order().await?;
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
-            thread_id
+            self.get_thread_id_from_order().await?
         };
 
         if self.id_customer_message.is_none()
@@ -413,7 +412,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
             self.create_task_note_in_db().await?;
 
-            self.update_username_if_needed().await?;
+            self.update_user_info_if_needed().await?;
 
         } else if id_customer_thread.is_empty() && self.service_number.is_some() {
             let create_thread_response = self.create_customer_thread().await?;
@@ -459,7 +458,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
                 self.create_task_note_in_db().await?;
 
-                self.update_username_if_needed().await?;
+                self.update_user_info_if_needed().await?;
             }
         } else if id_customer_thread.is_empty() && self.service_number.is_none() {
             info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT have a service number. creating a regular task note. {:?}", self.clone());
@@ -469,6 +468,21 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             self.create_task_note_in_db().await?
 
         } else { 
+            // let user = get_current_user_from_auth().await?;
+            // if let Some(usr) = user {
+            //     if self.username.is_empty() {
+            //         self.username = parse_email_user(&usr.email).to_string();
+            //     }
+    
+            //     if self.everest_initials.is_empty() {
+            //         self.username = usr.everest_initials;
+            //     }
+
+            //     if self.id_employee.is_none() {
+            //         self.id_employee = Some(format!("{}", usr.id_prestashop.unwrap_or(0)));
+            //     }
+            // }
+
             // The case that this happens, probably need to upsert the task note
             // to match a new service order number than the existing note has or something.
             info!("helper_traits -> handle_note_creation -> This is an odd case... {:?}", self.clone());
@@ -558,7 +572,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(())
     }
 
-    async fn update_username_if_needed(&mut self) -> Result<(), Error> {
+    async fn update_user_info_if_needed(&mut self) -> Result<(), Error> {
         // Logic to update username if needed
         Ok(())
     }
@@ -574,7 +588,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
     async fn update_task_note_with_current_time(&mut self) -> Result<(), Error> {
         // Logic to update task note with the current time
-        self.created_at = chrono::Utc::now().to_rfc3339();
+        self.created_at = chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
         info!("helper_traits -> Created_at was empty, now it is {:?}", self.created_at);
         Ok(())
     }

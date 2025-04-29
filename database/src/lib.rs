@@ -22,6 +22,13 @@ pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
 pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
 
+// The static variable holding the currently logged-in user (if any)
+// Wrapped in Mutex for safe interior mutability
+// Wrapped in Lazy for easy static initialization
+pub static CURRENT_USER_INFO: Lazy<std::sync::Mutex<Option<User>>> = Lazy::new(|| {
+    std::sync::Mutex::new(None) // Initialize with no user logged in
+});
+
 
 pub use platform::PlatformSpawner;
 pub trait Spawner {
@@ -173,6 +180,10 @@ impl Database {
                 info!("Have a JWT, attempting token auth");
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
+                    // log::warn!("SET THE USER: {:?}", user_info_guard.clone());
+                    *user_info_guard = user.clone(); // Set the user info
+                }
                 Ok( Self { jwt: Some(jwt.into()), user } )
             }
             None => {
@@ -189,6 +200,12 @@ impl Database {
                     .await?;
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+
+                if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
+                    // log::warn!("SET THE USER: {:?}", user_info_guard.clone());
+                    *user_info_guard = user.clone(); // Set the user info
+                }
+
                 Ok( Self { jwt: Some(jwt), user } )
             }
         }

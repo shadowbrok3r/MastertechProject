@@ -5,7 +5,7 @@ use crate::app_state::MastertechContext;
 
 impl MastertechContext {
     pub fn output_console(&mut self, ui: &mut Ui) {
-        self.ctx.request_repaint();
+        ui.ctx().request_repaint();
         // The layouter function that uses the above two functions
         let mut layouter = |ui: &Ui, txt: &str, wrap_width: f32| {
             let mut layout_job = LayoutJob::default();

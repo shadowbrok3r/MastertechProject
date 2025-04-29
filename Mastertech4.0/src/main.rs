@@ -141,7 +141,7 @@ async fn main() -> eframe::Result<()> {
     //     Ok::<(), anyhow::Error>(())
     // });
     
-    let _ = crate::utilities::scripts::InstalledProgram::get_installed_programs();
+    // let _ = crate::utilities::scripts::InstalledProgram::get_installed_programs();
 
     // console_subscriber::init(); // for tokio console
     let matches = clap::Command::new("Mastertech")
