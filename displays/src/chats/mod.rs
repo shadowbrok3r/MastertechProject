@@ -402,7 +402,7 @@ impl ChatView {
                                                 if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
                                                     TextEdit::multiline(&mut msg.note)
                                                         .margin(Margin::symmetric(10, 3))
-                                                        .desired_width(255.)
+                                                        .desired_width(max_msg_width)
                                                         .show(ui);
                                                 }
                                             } else {

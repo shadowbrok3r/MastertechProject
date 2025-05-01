@@ -898,30 +898,38 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(None)
     }
 
-    async fn modify_prestashop_note(&mut self) -> Result<PrestaResourceResponse, Error> {
+    async fn modify_prestashop_note(&mut self) -> Result<(), Error> {
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
             self.get_thread_id_from_order().await?
         };
 
-        // Check if id_employee or id_customer_thread is empty
-        if self.id_employee.is_none() || self.id_customer_message.is_none() || id_customer_thread.is_empty() {
+        let id_customer_message = self.id_customer_message.clone();
+        let id_employee = self.id_employee.clone();
+        // REGULAR TASK NOTE / NOT A PRESTASHOP NOTE
+        if id_customer_message.is_none() && id_customer_thread.is_empty() {
+
+        }
+        // PRESTASHOP NOTE
+        else if id_customer_message.is_some() && !id_customer_thread.is_empty() && id_employee.is_some() {
+
+        } else {
             return Err(anyhow::anyhow!("id_employee is empty")).into();
         }
 
-        let id_customer_message = self.id_customer_message.clone().unwrap_or_default();
-        let id_employee = self.id_employee.clone().unwrap_or_default();
-        let presta_api = Prestashop::default();
-
-        Ok(
-            presta_api.modify_customer_message(
+        let id_customer_message = id_customer_message.unwrap_or_default();
+        let id_employee = id_employee.unwrap_or_default();
+        let presta = Prestashop::default()
+            .modify_customer_message(
                 &id_customer_message, 
                 &id_employee,
                 &id_customer_thread,
                 &self.note
-            ).await?
-        )
+            )
+            .await?;
+
+        Ok(())
     }
 
     async fn delete_note(&mut self) -> Result<(), Error> {
