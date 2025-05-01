@@ -96,9 +96,8 @@ impl LiveUpdate for LiveTaskPayload {
     
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, _new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Deleted: {:?}", self);
-        let data = self.clone();
         if !existing_tasks.is_empty(){
-            let index = existing_tasks.iter().position(|x| *x == data.clone().into());
+            let index = existing_tasks.iter().position(|x| x.id == self.id);
             info!("Index of deleted data: {index:?}");
             if let Some(idx) = index {
                 existing_tasks.remove(idx);

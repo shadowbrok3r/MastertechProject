@@ -332,8 +332,7 @@ pub async fn delete_task(id: RecordId) -> Result<(), Error> {
     let delete_result: Option<Record> = DATABASE.delete(
         (TASK_TABLE, id.key().to_string())
     )
-    .await
-    .unwrap();
+    .await?;
 
     info!("schema/utilities.rs -> delete_result: {delete_result:?} for {:?}", x.key().to_string());
     
