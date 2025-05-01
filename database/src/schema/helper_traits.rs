@@ -336,7 +336,7 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the modification is successful.
     /// - `Err(Error)` if an error occurs during modification.
-    async fn modify_prestashop_note(&mut self) -> Result<PrestaResourceResponse, Error>;
+    async fn modify_prestashop_note(&mut self) -> Result<(), Error>;
 
     /// Deletes a note from the system.
     ///
