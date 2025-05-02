@@ -27,7 +27,7 @@ displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 # yeehaw = "0.1.0"
 tui-textarea = { version = "0.7"}
-sysinfo = {version = "0.34", features = ["serde", "multithread"]}
+sysinfo = {version = "0.35", features = ["serde", "multithread"]}
 console-subscriber = "0.4"
 futures-util = "0.3"
 walkdir = "2.5"

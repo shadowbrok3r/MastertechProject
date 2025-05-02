@@ -96,9 +96,6 @@ impl SharedContext {
                             .or_insert(ModalType::ChatView(chat_modal));
                     }
                 }
-                TaskUiActions::Response(_res) => (),
-                TaskUiActions::Editing(_record_id) => (),
-                TaskUiActions::CommitChanges(_record_id) => (),
                 TaskUiActions::OpenViewport(task) => {
                     info!("receive_ui_action -> TaskUiActions::OpenViewport");
                     let modal = TaskModal::new(

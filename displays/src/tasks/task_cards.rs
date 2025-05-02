@@ -28,14 +28,7 @@ impl Displayable for TaskPayload {
             ui.set_min_height(67.0);
 
             ui.horizontal(|ui| {
-                let response = self.interact_task_name(ui);
-                if response.has_focus() && response.changed() {
-                    info!("task_name changed");
-                    let _ = tx.try_send(TaskUiActions::Editing(self.id.clone()));
-                } else if response.lost_focus() {
-                    info!("task_name lost_focus");
-                    let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
-                }
+                let _ = self.interact_task_name(ui);
 
                 ui.style_mut().spacing.button_padding.x = 6.0;
                 ui.style_mut().spacing.button_padding.y = 4.0;
@@ -97,7 +90,6 @@ impl Displayable for TaskPayload {
                             info!("update_completed: {update:?}");
                         });
                     }
-                    let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
                 }
             });
 
@@ -105,59 +97,24 @@ impl Displayable for TaskPayload {
 
             ui.horizontal(|ui: &mut Ui| {
                 ui.push_id(format!("Assignee {}", self.id.key().to_string().clone()), |ui| {
-                    let response = self.interact_assignee_initials(ui, store_users);
-                    if response.has_focus()
-                        || response.changed()
-                        || response.clicked()
-                    {
-                        info!("assignee initials changed");
-                        let _ = tx.try_send(TaskUiActions::Editing(self.id.clone()));
-                    } else if response.lost_focus() {
-                        info!("assignee initials lost_focus");
-                        let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
-                    }
+                    let _ = self.interact_assignee_initials(ui, store_users);
                 });
 
                 ui.add_space(50.);
                 
                 ui.push_id(format!("Priority {}", self.id.key().to_string().clone()), |ui| {
-                    let response = self.interact_priority(ui);
-                    if response.has_focus()
-                        || response.changed()
-                        || response.clicked()
-                    {
-                        info!("interact_priority changed");
-                        let _ = tx.try_send(TaskUiActions::Editing(self.id.clone()));
-                    } else if response.lost_focus() {
-                        info!("interact_priority lost focus");
-                        let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
-                    }
+                    let _ = self.interact_priority(ui);
                 });
 
                 ui.add_space(50.);
 
                 ui.push_id(format!("Status {}", self.id.key().to_string().clone()), |ui| {
-                    let response = self.interact_status(ui);
-                    if response.changed() {
-                        info!("interact_status changed");
-                        let _ = tx.try_send(TaskUiActions::Editing(self.id.clone()));
-                    } else if response.lost_focus() {
-                        info!("interact_status lost focus");
-                        let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
-                    }
+                    let _ = self.interact_status(ui);
                 });
 
                 ui.add_space(50.);
 
-                let response = self.interact_due_date(ui);
-                if response.changed() {
-                    info!("interact_due_date changed");
-                    let _ = tx.try_send(TaskUiActions::Editing(self.id.clone()));
-                }
-                if response.lost_focus() {
-                    info!("interact_due_date lost focus");
-                    let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
-                }
+                let _ = self.interact_due_date(ui);
             });
 
             ui.separator();
@@ -166,13 +123,7 @@ impl Displayable for TaskPayload {
                 let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}",self.id.clone()));
                 let task_descrip_head = CollapsingHeader::new("Task Description").id_salt(task_descrip_header);
                 task_descrip_head.show_unindented(ui, |ui| {
-                    let response = self.interact_task_description(ui);
-                    if response.changed() {
-                        let _ = tx.try_send(TaskUiActions::Editing(self.id.clone()));
-                    }
-                    if response.lost_focus() {
-                        let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone()));
-                    }
+                    let _ = self.interact_task_description(ui);
                 });
             });
             

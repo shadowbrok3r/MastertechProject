@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload}, DATABASE};
-use crate::{chats::ChatView, DisplayModal, PlatformSpawner, Spawner};
+use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload, User}, DATABASE};
+use crate::{chats::ChatView, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
@@ -31,6 +31,7 @@ pub struct TaskModal {
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub spo: SpecialPartOrder,
+    store_users: Vec<User>,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -59,6 +60,7 @@ impl Default for TaskModal {
             current_page_state: ModalAction::TaskPage,
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
+            store_users: Vec::new()
         }
     }
 }
@@ -74,6 +76,14 @@ impl TaskModal {
             }
         }
 
+        let store_users = match get_database_users() {
+            Ok(users) => users,
+            Err(e) => {
+                log::info!("Couldnt get users: {e:?}");
+                Vec::new()
+            },
+        };
+
         Self {
             title: task.task_name.clone(),
             current_page_state: ModalAction::TicketInfoPage,
@@ -83,6 +93,7 @@ impl TaskModal {
             default_height: Some(800.0),
             chat_view,
             spo: SpecialPartOrder::default(),
+            store_users
         }
     }
 }
@@ -183,8 +194,9 @@ impl DisplayModal for TaskModal {
             ui.horizontal_centered(|ui| {
                 ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
+                let store_users = self.store_users.clone();
                 match self.current_page_state {
-                    ModalAction::TicketInfoPage => display_ticket_page(ui, &mut self.task, avail_size),
+                    ModalAction::TicketInfoPage => display_ticket_page(ui, &mut self.task, avail_size, &store_users),
                     ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
                     ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
                     ModalAction::JobBuilderPage => display_job_builder_page(ui),
@@ -213,21 +225,32 @@ pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload) {
     });
 }
 
-pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2) {
+pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2, store_users: &Vec<User>) {
     ui.add_space(15.0);
 
     ui.vertical_centered(|ui| {
-        let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
-        let customer = if let Some(customer) = ticket.customer.as_mut(){ customer }  else { &mut CustomerData::default() };
-
         ui.group(|ui| {
-            Grid::new("group2")
+            Grid::new("Task Modal - Task Info Page")
                 .spacing(Vec2::new(4., 6.))
                 .min_col_width(150.)
                 .max_col_width(150.)
                 .with_row_color(|num, style| return_colors(num, style))
                 .num_columns(4)
                 .show(ui, |ui| {
+                    ui.colored_label(Color32::LIGHT_RED, "Assignee:");
+                    ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {
+                        task.interact_assignee_initials(ui, store_users);
+                    });
+                    ui.colored_label(Color32::LIGHT_RED, "Status:");
+                    ui.push_id(format!("Status {}", task.status.as_str()), |ui| {
+                        task.interact_status(ui);
+                    });
+                    
+                    ui.end_row();
+
+                    let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
+                    let customer = if let Some(customer) = ticket.customer.as_mut(){ customer }  else { &mut CustomerData::default() };
+
                     ui.colored_label(Color32::LIGHT_RED, "Technician:");
                     ui.label(&ticket.tech);
                     ui.colored_label(Color32::LIGHT_RED, "ID:");
@@ -322,7 +345,8 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                     );
 
                     ui.add_space(10.);
-
+                    let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
+                    
                     TextEdit::multiline(&mut ticket.checkin_notes)
                     .margin(Margin::symmetric(10, 3))
                     .desired_rows(15)
