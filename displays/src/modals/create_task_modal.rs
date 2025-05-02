@@ -117,10 +117,13 @@ impl DisplayModal for CreateTaskModal {
                         }
                     }
                     ModalAction::ImportTask => {
+                        let store_users = self.store_users.clone();
+
                         display_ticket_page(
                             ui,
                             &mut self.tur.task_data,
                             avail_size,
+                            &store_users
                         );
                     },
                     _ => {}

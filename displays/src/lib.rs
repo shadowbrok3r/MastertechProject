@@ -3,11 +3,12 @@ use eframe::egui::{Modifiers, Response, Ui};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use async_trait::async_trait;
 use surrealdb::RecordId;
 use egui_extras::Strip;
 use std::fmt::Debug;
+use once_cell::sync::Lazy;
 
 pub mod virtual_filesystem;
 pub mod channel_manager;
@@ -42,6 +43,16 @@ pub use {
     async_openai::{self as openai}
 };
 
+// Define a global event sender (wrapped in `Arc<Mutex<T>>` for safe access)
+static GLOBAL_USERS_CHANNEL: Lazy<(Sender<Vec<User>>, Receiver<Vec<User>>)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+pub fn get_users_channel_sender() -> Sender<Vec<User>> {
+    GLOBAL_USERS_CHANNEL.0.clone()
+}
+
+pub fn get_users_channel_receiver() -> Receiver<Vec<User>> {
+    GLOBAL_USERS_CHANNEL.1.clone()
+}
 
 
 pub trait Spawner {
@@ -123,15 +134,32 @@ pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Erro
     // Ok()
 }
 
+pub fn get_database_users()  -> anyhow::Result<Vec<User>, anyhow::Error> {
+
+    
+    PlatformSpawner::spawn(async move {
+        let _ = async {
+            let users: Vec<User> = database::DATABASE
+                .query("SELECT * FROM user")
+                .await?
+                .take(0)?;
+
+            let timeout = get_users_channel_sender().try_send(users);
+
+            log::info!("Send Result: {timeout:?}");
+            Ok::<(), anyhow::Error>(())
+        }.await;
+    });
+
+    Ok(get_users_channel_receiver().try_recv()?)
+}
+
 
 #[derive(Debug, Clone)]
 pub enum TaskUiActions {
     OpenTaskModal(TaskPayload),
     CreateTaskModal,
     OpenChatModal((RecordId, Vec<TaskNotePayload>, Option<String>)),
-    Response(Response),
-    Editing(RecordId),
-    CommitChanges(RecordId),
     OpenViewport(TaskPayload),
     None,
 }
