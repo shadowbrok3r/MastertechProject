@@ -107,68 +107,25 @@ pub async fn initialize_db() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
-    let jwt = DATABASE
-        .signin(SurrealRec {
-            namespace: NS,
-            database: DB,
-            access: USER_SCOPE,
-            params: Auth { email, password },
-        })
-        .await?;
-
-    let user: User = DATABASE
-        .query("SELECT * FROM user WHERE id == $auth.id")
-        .await?
-        .take::<Option<User>>(0)?
-        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
-
-    Ok(Session { jwt, user })
-}
-
-pub async fn signup<T: Serialize>(signup_data: T) -> anyhow::Result<Session> {
-    let jwt = DATABASE
-        .signup(SurrealRec {
-            namespace: NS,
-            database: DB,
-            access: USER_SCOPE,
-            params: signup_data,
-        })
-        .await?;
-
-    let user: User = DATABASE
-        .query("SELECT * FROM user WHERE id == $auth.id")
-        .await?
-        .take::<Option<User>>(0)?
-        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
-
-    Ok(Session { jwt, user })
-}
-
-pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {
-    DATABASE.authenticate(jwt).await?;
-    let user: User = DATABASE
-        .query("SELECT * FROM user WHERE id == $auth.id")
-        .await?
-        .take::<Option<User>>(0)?
-        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
-
-    Ok(Session { jwt: jwt.into(), user })
-}
-
 impl Database {
     pub async fn new(
         email: String,
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
-            Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
-            Err(e) => {
-                let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
-                log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}\nattempting to connect to local DB: {try_local:?}");
-            },
+        if cfg!(debug_assertions) {
+            let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+            log::info!("Attempting to connect to local DB: {try_local:?}");
+        } else {
+            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+                Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+                Err(e) => {
+                    let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+                    log::info!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}\nattempting to connect to local DB: {try_local:?}");
+                },
+            }
         }
+
         // let _ = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
         match DATABASE.use_ns(NS).use_db(DB).await {
             Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
@@ -240,29 +197,55 @@ impl Database {
             user,
         })
     }
-
-    pub async fn insert<T: Serialize + 'static>(
-        &self,
-        table: &str,
-        record: T,
-    ) -> Result<Option<Record>, Error> {
-        let created: Option<Record> = DATABASE.create(table).content(record).await?;
-        Ok(created)
-    }
-
-    pub async fn select<T: DeserializeOwned>(&self, table: &str) -> Result<Vec<T>, Error> {
-        let result: Vec<T> = DATABASE.select(table).await?;
-        Ok(result)
-    }
-
-    pub async fn sql<T: DeserializeOwned>(&self, sql_query: &str) -> Result<Vec<T>, Error> {
-        let query: Vec<T> = DATABASE.query(sql_query).await?.take(0)?;
-
-        Ok(query)
-    }
-
-    pub async fn delete(&self, table: &str, id: &str) -> Result<Option<Record>, Error> {
-        let result: Option<Record> = DATABASE.delete((table, id)).await.unwrap();
-        Ok(result)
-    }
 }
+
+pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
+    let jwt = DATABASE
+        .signin(SurrealRec {
+            namespace: NS,
+            database: DB,
+            access: USER_SCOPE,
+            params: Auth { email, password },
+        })
+        .await?;
+
+    let user: User = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take::<Option<User>>(0)?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+    Ok(Session { jwt, user })
+}
+
+pub async fn signup<T: Serialize>(signup_data: T) -> anyhow::Result<Session> {
+    let jwt = DATABASE
+        .signup(SurrealRec {
+            namespace: NS,
+            database: DB,
+            access: USER_SCOPE,
+            params: signup_data,
+        })
+        .await?;
+
+    let user: User = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take::<Option<User>>(0)?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+    Ok(Session { jwt, user })
+}
+
+pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {
+    DATABASE.authenticate(jwt).await?;
+    let user: User = DATABASE
+        .query("SELECT * FROM user WHERE id == $auth.id")
+        .await?
+        .take::<Option<User>>(0)?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+    Ok(Session { jwt: jwt.into(), user })
+}
+
+
