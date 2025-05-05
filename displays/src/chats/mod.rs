@@ -305,14 +305,15 @@ impl ChatView {
                                                     if self.allow_edit.contains(&id.to_string()) {
                                                         if let Some(msg) = self.edit_text.get_mut(&id.to_string()){
                                                             let mut task_note = msg.clone();
+                                                            item.note = msg.note.clone();
                                                             // if note_pre_edit.ne(&msg.note) {
                                                             PlatformSpawner::spawn(async move {
-                                                                match task_note.modify_prestashop_note().await {
+                                                                match task_note.modify_note().await {
                                                                     Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
                                                                     Err(e) => error!("Error modifying note: {e:?}"),
                                                                 }
                                                             });
-                                                            item.note = msg.note.clone();
+                                                            
                                                         }
                                                     }
                                                     self.allow_edit.remove(&id.to_string());
