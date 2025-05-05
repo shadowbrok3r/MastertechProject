@@ -1,7 +1,6 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Error, Surreal};
-use serde::{de::DeserializeOwned, Serialize};
+use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Surreal};
 use once_cell::sync::Lazy;
-use self::schema::Record;
+use serde::Serialize;
 use std::fmt::Debug;
 use schema::User;
 use log::info;

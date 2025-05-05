@@ -336,7 +336,7 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the modification is successful.
     /// - `Err(Error)` if an error occurs during modification.
-    async fn modify_prestashop_note(&mut self) -> Result<(), Error>;
+    async fn modify_note(&mut self) -> Result<(), Error>;
 
     /// Deletes a note from the system.
     ///
@@ -898,7 +898,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(None)
     }
 
-    async fn modify_prestashop_note(&mut self) -> Result<(), Error> {
+    async fn modify_note(&mut self) -> Result<(), Error> {
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
@@ -908,26 +908,34 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         let id_customer_message = self.id_customer_message.clone();
         let id_employee = self.id_employee.clone();
         // REGULAR TASK NOTE / NOT A PRESTASHOP NOTE
-        if id_customer_message.is_none() && id_customer_thread.is_empty() {
+        if id_customer_message.is_none() {
+            let upsert_note_record: Option<TaskNotePayload> = DATABASE
+                .upsert(self.id.clone())
+                .content(self.clone())
+                .await?;
 
+            log::info!("upsert_note_record: {upsert_note_record:?}");
         }
         // PRESTASHOP NOTE
         else if id_customer_message.is_some() && !id_customer_thread.is_empty() && id_employee.is_some() {
-
+            let id_customer_message = id_customer_message.unwrap_or_default();
+            let id_employee = id_employee.unwrap_or_default();
+            let presta = Prestashop::default()
+                .modify_customer_message(
+                    &id_customer_message, 
+                    &id_employee,
+                    &id_customer_thread,
+                    &self.note
+                )
+                .await?;
+            log::info!("PrestaResource: {presta:?}");
         } else {
-            return Err(anyhow::anyhow!("id_employee is empty")).into();
+            return Err(
+                anyhow::anyhow!(
+                    "One of (id_customer_message, id_customer_thread, id_employee) is empty\n{:?}", self.clone()
+                )
+            ).into();
         }
-
-        let id_customer_message = id_customer_message.unwrap_or_default();
-        let id_employee = id_employee.unwrap_or_default();
-        let presta = Prestashop::default()
-            .modify_customer_message(
-                &id_customer_message, 
-                &id_employee,
-                &id_customer_thread,
-                &self.note
-            )
-            .await?;
 
         Ok(())
     }

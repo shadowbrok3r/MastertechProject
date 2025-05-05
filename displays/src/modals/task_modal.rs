@@ -360,8 +360,8 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
 }
 
 fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
-    let Some(ticket) = task.service_ticket.as_ref() else { return; };
-    let computer = if let Some(computer) = ticket.computer.as_ref() { computer } else { &ComputerData::default() };
+    let Some(ticket) = task.service_ticket.as_mut() else { return; };
+    let computer = if let Some(computer) = ticket.computer.as_mut() { computer } else { &mut ComputerData::default() };
 
     ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
 
@@ -378,23 +378,28 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                 .min_col_width(avail_size.x / 2.15)
                 .with_row_color(|num, style| return_colors(num, style))
                 .show(ui, |ui| {
+                    ui.colored_label(Color32::LIGHT_RED, "ID");
+                    ui.label(format!("{:?}", computer.id.clone()));
+                    ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Hostname");
-                    ui.label(&computer.hostname);
+                    TextEdit::singleline(&mut computer.hostname).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Operating System");
-                    ui.label(&computer.operating_system);
+                    TextEdit::singleline(&mut computer.operating_system).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "CPU");
-                    ui.label(&computer.cpu);
+                    TextEdit::singleline(&mut computer.cpu).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "GPU");
-                    ui.label(&computer.gpu);
+                    TextEdit::singleline(&mut computer.gpu).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "RAM");
-                    ui.label(format!("{} Gb", &computer.ram));
+                    ui.label(format!("{} Gb", &mut computer.ram));
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Name");
-                    ui.label(&format!("{:?}", computer.device_name));
+                    if let Some(device_name) = computer.device_name.as_mut() {
+                        TextEdit::singleline(device_name).ui(ui);
+                    }
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Mfg");
                     ui.label(&format!("{:?}", computer.device_mfg));
