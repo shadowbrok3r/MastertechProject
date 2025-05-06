@@ -701,41 +701,44 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 )
                                 .await?;
 
-                            let mut employee: Employee = api_call
-                                .request_subresources_by_id_wasm(
-                                    "employees",
-                                    "employee",
-                                    &customer_message.id_employee,
-                                )
-                                .await?; // Employee::default();
-                                         // employee.get_employee_from_id(&customer_message.id_employee).await?;
+                            if !customer_message.id_employee.is_empty() && customer_message.id_employee.as_str() != "0" {
+                                let mut employee: Employee = api_call
+                                    .request_subresources_by_id_wasm(
+                                        "employees",
+                                        "employee",
+                                        &customer_message.id_employee,
+                                    )
+                                    .await?; // Employee::default();
+                                            // employee.get_employee_from_id(&customer_message.id_employee).await?;
 
-                            let id = RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone()));
-                            let user = if let Some(usr) = employee.find_user().await? {
-                                Some(usr.id)
-                            } else {
-                                None
-                            };
+                                let id = RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone()));
+                                let user = if let Some(usr) = employee.find_user().await? {
+                                    Some(usr.id)
+                                } else {
+                                    None
+                                };
 
-                            let mut task_note = TaskNotePayload {
-                                id,
-                                id_customer_message: Some(customer_message.id.clone()),
-                                id_customer_thread: Some(thread.id.clone()),
-                                task_id: self.task_id.clone(),
-                                id_employee: Some(customer_message.id_employee),
-                                // Into::<surrealdb::sql::Datetime>::into(convert_date_string(&customer_message.date_add)?).to_string()
-                                created_at: convert_date_string(&customer_message.date_add)?,
-                                note: customer_message.message,
-                                username: parse_email_user(&employee.email).to_string(),
-                                everest_initials: employee.initials,
-                                user,
-                                service_number: Some(service_number.to_string())
-                            };
-                            info!("helper_traits -> Creating a new task_note: {task_note:?}");
+                                let mut task_note = TaskNotePayload {
+                                    id,
+                                    id_customer_message: Some(customer_message.id.clone()),
+                                    id_customer_thread: Some(thread.id.clone()),
+                                    task_id: self.task_id.clone(),
+                                    id_employee: Some(customer_message.id_employee),
+                                    // Into::<surrealdb::sql::Datetime>::into(convert_date_string(&customer_message.date_add)?).to_string()
+                                    created_at: convert_date_string(&customer_message.date_add)?,
+                                    note: customer_message.message,
+                                    username: parse_email_user(&employee.email).to_string(),
+                                    everest_initials: employee.initials,
+                                    user,
+                                    service_number: Some(service_number.to_string())
+                                };
+                                info!("helper_traits -> Creating a new task_note: {task_note:?}");
 
-                            task_note.create_task_note_in_db().await?;
-
-                            info!("helper_traits -> Created note: {task_note:?}");
+                                match task_note.create_task_note_in_db().await {
+                                    Ok(_) => log::info!("Created task note: {task_note:?}"),
+                                    Err(e) => log::info!("Error creating task note: {e:?}"),
+                                }
+                            }
                         } else {
                             info!("helper_traits -> Message already exists: {:?}", exists);
                         }

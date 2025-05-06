@@ -143,7 +143,7 @@ impl Displayable for TaskPayload {
 
 pub fn date_colors(date: String, _complete: bool) -> Color32 {
     let due_date = DateTime::parse_from_rfc3339(&date)
-        .expect("Invalid date format")
+        .unwrap_or_default()
         .with_timezone(&Utc);
 
     let current_date = Utc::now().date_naive();
