@@ -99,26 +99,6 @@ impl TaskModal {
 }
 
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SpecialPartOrder {
-    customer_name: String,              //  "kathleen Hoffmon",
-    customer_phone_number: String,      //  "801-888-8888",
-    application_comment: String,        //  "These are some notes",
-    system_order_number: String,        //  "123456",
-    id_location: String,                //  "Riverdale",
-    request_type: String,               //  "Any",
-    shipping_method: String,            //  "2 - 2-3 Day Express",
-    part_manufacturer: Manufacturer,    //  "PC Laptops",
-    manufacturer_model_number: String,  //  "12345Test",
-    manufacturer_serial_number: String, //  "123456789",
-    manufacturer_part_number: String,   //  "324657687",
-    part_color: String,                 //  "N/A",
-    part_description: String,           //  "Test",
-    part_lcd_toggle: bool,              //  "0"
-    spo_status: SpoStatus,
-    #[serde(skip)]
-    files: Arc<Mutex<Option<Vec<FileHandle>>>>,
-}
 
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
@@ -126,8 +106,9 @@ impl DisplayModal for TaskModal {
         ui.set_min_size(avail_size);
         
         ui.vertical_centered(|ui| {
-            
             ui.horizontal(|ui| {
+                ui.add_space(15.0);
+
                 let delete_btn = Button::new(
                     RichText::new("Delete Task").color(Color32::LIGHT_RED),
                 )
@@ -145,7 +126,7 @@ impl DisplayModal for TaskModal {
                     self.current_page_state = ModalAction::Close;
                 }
 
-                ui.add_space(200.0);
+                ui.add_space(175.0);
 
                 if self.task.service_ticket.is_some() {
                     if ui
@@ -175,25 +156,36 @@ impl DisplayModal for TaskModal {
                     };
                 }
 
-                if ui
-                    .selectable_label(self.current_page_state == ModalAction::JobBuilderPage, RichText::new("📝").heading())
+                if ui.selectable_label(self.current_page_state == ModalAction::JobBuilderPage, RichText::new("📝").heading())
                     .clicked()
                 {
                     self.current_page_state = ModalAction::JobBuilderPage;
                 };
-                if ui
-                    .selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
+                if ui.selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
                     .clicked()
                 {
                     self.current_page_state = ModalAction::TaskNotePage;
                 };
+
+                ui.add_space(125.);
+
+                ui.colored_label(Color32::LIGHT_RED, "Completed: ");
+                ui.add_space(10.0);
+                ui.push_id(format!("Completed {}", self.task.completed), |ui| {
+                    self.task.interact_completed(ui);
+                });
             });
 
-            ui.add_space(20.);
+            ui.scope(|ui| {
+                ui.set_max_width(avail_size.x / 1.1);
+                ui.add_space(10.0);
+                Separator::default().shrink(50.0).ui(ui);
+                ui.add_space(10.0);
+            });
 
             ui.horizontal_centered(|ui| {
                 ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
-
+                ui.add_space(10.0);
                 let store_users = self.store_users.clone();
                 match self.current_page_state {
                     ModalAction::TicketInfoPage => display_ticket_page(ui, &mut self.task, avail_size, &store_users),
@@ -225,83 +217,108 @@ pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload) {
     });
 }
 
-pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2, store_users: &Vec<User>) {
-    ui.add_space(15.0);
+pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>) {
+    ui.add_space(10.0);
+
+    ui.horizontal(|ui| ui.add_space(5.));
 
     ui.vertical_centered(|ui| {
+        Grid::new("Task Header Grid")
+            .spacing(Vec2::new(4., 6.))
+            .max_col_width(avail_size.x / 2.15)
+            .min_col_width(avail_size.x / 2.15)
+            .with_row_color(|num, style| return_colors(num, style))
+            .num_columns(2)
+            .show(ui, |ui| 
+        {
+            ui.colored_label(Color32::LIGHT_RED, "Task ID: ");
+            ui.label(task.id.key().to_string());
+            ui.end_row();
+        });
+
+        ui.add_space(10.0);
+
         ui.group(|ui| {
             Grid::new("Task Modal - Task Info Page")
                 .spacing(Vec2::new(4., 6.))
-                .min_col_width(150.)
-                .max_col_width(150.)
+                .max_col_width(avail_size.x / 4.4)
+                .min_col_width(avail_size.x / 4.4)
                 .with_row_color(|num, style| return_colors(num, style))
                 .num_columns(4)
-                .show(ui, |ui| {
-                    ui.colored_label(Color32::LIGHT_RED, "Assignee:");
-                    ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {
-                        task.interact_assignee_initials(ui, store_users);
-                    });
-                    ui.colored_label(Color32::LIGHT_RED, "Status:");
-                    ui.push_id(format!("Status {}", task.status.as_str()), |ui| {
-                        task.interact_status(ui);
-                    });
-                    
-                    ui.end_row();
-
-                    let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
-                    let customer = if let Some(customer) = ticket.customer.as_mut(){ customer }  else { &mut CustomerData::default() };
-
-                    ui.colored_label(Color32::LIGHT_RED, "Technician:");
-                    ui.label(&ticket.tech);
-                    ui.colored_label(Color32::LIGHT_RED, "ID:");
-                    ui.label(RichText::new(&customer.cust_code).monospace());
-                    ui.end_row();
-
-                    ui.colored_label(Color32::LIGHT_RED, "Salesman:");
-                    ui.label(&ticket.salesman);
-                    ui.colored_label(Color32::LIGHT_RED, "Name:");
-                    ui.label(&customer.name);
-                    ui.end_row();
-
-                    ui.colored_label(Color32::LIGHT_RED, "Split Rep:");
-                    ui.label(&ticket.sales_rep);
-                    ui.colored_label(Color32::LIGHT_RED, "Phone#:");
-                    ui.label(&customer.phone_number);
-                    ui.end_row();
-                    
-                    ui.colored_label(Color32::LIGHT_RED, "Terms:");
-                    ui.label(&ticket.terms);
-                    ui.colored_label(Color32::LIGHT_RED, "Phone2:");
-                    ui.label(&customer.phone_number_2);
-                    ui.end_row();
-
-                    ui.colored_label(Color32::LIGHT_RED, "Total on Order:");
-                    ui.label(&ticket.ticket_total);
-                    ui.colored_label(Color32::LIGHT_RED, "Email:");
-                    ui.label(&customer.email);
-                    ui.end_row();
-                    
-                    let created_at = ticket.created_at.as_ref();
-                    if let Some(ticket_created) = created_at {
-                        let date = ticket_created.parse::<DateTime<Utc>>();
-                        if let Ok(date) = date {
-                            ui.colored_label(
-                                Color32::LIGHT_RED,
-                                "Tur Sent:",
-                            );
-                            ui.label(date.date_naive().to_string());
-                            ui.end_row();
-                        }
-                    }
+                .show(ui, |ui| 
+            {
+                ui.colored_label(Color32::LIGHT_RED, "Assignee");
+                ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {
+                    task.interact_assignee_initials(ui, store_users);
                 });
+                
+                ui.colored_label(Color32::LIGHT_RED, "Status");
+                ui.push_id(format!("Status {}", task.status.as_str()), |ui| {
+                    task.interact_status(ui);
+                });
+                
+                ui.end_row();
+
+                let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
+                let customer = if let Some(customer) = ticket.customer.as_mut(){ customer }  else { &mut CustomerData::default() };
+
+                ui.colored_label(Color32::LIGHT_RED, "Technician");
+                ui.label(&ticket.tech);
+                ui.colored_label(Color32::LIGHT_RED, "Customer ID");
+                ui.label(RichText::new(&customer.cust_code).monospace());
+                ui.end_row();
+
+                ui.colored_label(Color32::LIGHT_RED, "Salesman");
+                ui.label(&ticket.salesman);
+                ui.colored_label(Color32::LIGHT_RED, "Name");
+                ui.label(&customer.name);
+                ui.end_row();
+
+                ui.colored_label(Color32::LIGHT_RED, "Split Rep");
+                ui.label(&ticket.sales_rep);
+                ui.colored_label(Color32::LIGHT_RED, "Phone#");
+                ui.label(&customer.phone_number);
+                ui.end_row();
+                
+                ui.colored_label(Color32::LIGHT_RED, "Terms");
+                ui.label(&ticket.terms);
+                ui.colored_label(Color32::LIGHT_RED, "Phone2");
+                ui.label(&customer.phone_number_2);
+                ui.end_row();
+
+                ui.colored_label(Color32::LIGHT_RED, "Total on Order");
+                ui.label(&ticket.ticket_total);
+                ui.colored_label(Color32::LIGHT_RED, "Email");
+                ui.label(&customer.email);
+                ui.end_row();
+                
+                let created_at = ticket.created_at.as_ref();
+                if let Some(ticket_created) = created_at {
+                    let date = ticket_created.parse::<DateTime<Utc>>();
+                    if let Ok(date) = date {
+                        ui.colored_label(
+                            Color32::LIGHT_RED,
+                            "Tur Sent:",
+                        );
+                        ui.label(date.date_naive().to_string());
+                        
+                    }
+                }
+                ui.colored_label(Color32::LIGHT_RED, "Due Date");
+                ui.push_id(format!("Due Date {}", task.due_date), |ui| {
+                    task.interact_due_date(ui);
+                });
+                ui.end_row();
+            });
         });
 
-        ui.add_space(30.);
+        ui.add_space(15.);
+
         ui.group(|ui| {
             Grid::new("Checkin Notes and Recommendations")
-            .spacing(Vec2::new(5., 6.0))
-            .max_col_width(300.0)
-            .min_col_width(300.0)
+            .spacing(Vec2::new(4., 6.))
+            .max_col_width(avail_size.x / 2.15)
+            .min_col_width(avail_size.x / 2.15)
             .num_columns(2)
             .show(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
@@ -379,37 +396,63 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                 .with_row_color(|num, style| return_colors(num, style))
                 .show(ui, |ui| {
                     ui.colored_label(Color32::LIGHT_RED, "ID");
-                    ui.label(format!("{:?}", computer.id.clone()));
+                    ui.label(computer.id.key().to_string());
                     ui.end_row();
+                    
+                    if let Some(cust) = &computer.customer {
+                        ui.colored_label(Color32::LIGHT_RED, "Linked Customer");
+                        ui.label(cust.key().to_string());
+                        ui.end_row();
+                    }
+
                     ui.colored_label(Color32::LIGHT_RED, "Hostname");
-                    TextEdit::singleline(&mut computer.hostname).ui(ui);
+                    TextEdit::singleline(&mut computer.hostname).desired_width(avail_size.x / 2.15).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Operating System");
-                    TextEdit::singleline(&mut computer.operating_system).ui(ui);
+                    TextEdit::singleline(&mut computer.operating_system).desired_width(avail_size.x / 2.15).ui(ui);
                     ui.end_row();
+                    if let Some(active) = &computer.windows_active {
+                        ui.colored_label(Color32::LIGHT_RED, "Windows Active");
+                        ui.label(format!("{active}"));
+                        ui.end_row();
+                    }
                     ui.colored_label(Color32::LIGHT_RED, "CPU");
-                    TextEdit::singleline(&mut computer.cpu).ui(ui);
+                    TextEdit::singleline(&mut computer.cpu).desired_width(avail_size.x / 2.15).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "GPU");
-                    TextEdit::singleline(&mut computer.gpu).ui(ui);
+                    TextEdit::singleline(&mut computer.gpu).desired_width(avail_size.x / 2.15).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "RAM");
-                    ui.label(format!("{} Gb", &mut computer.ram));
+                    TextEdit::singleline(&mut computer.ram).desired_width(avail_size.x / 2.15).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Name");
                     if let Some(device_name) = computer.device_name.as_mut() {
-                        TextEdit::singleline(device_name).ui(ui);
+                        TextEdit::singleline(device_name).desired_width(avail_size.x / 2.15).ui(ui);
+                    } else {
+                        ui.label(&format!(" - "));
                     }
                     ui.end_row();
+
                     ui.colored_label(Color32::LIGHT_RED, "Device Mfg");
-                    ui.label(&format!("{:?}", computer.device_mfg));
+                    if let Some(device_mfg) = computer.device_mfg.as_mut() {
+                        TextEdit::singleline(device_mfg).desired_width(avail_size.x / 2.15).ui(ui);
+                    } else {
+                        ui.label(&format!(" - "));
+                    }
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Model");
-                    ui.label(&format!("{:?}", computer.device_model));
+                    if let Some(device_model) = computer.device_model.as_mut() {
+                        TextEdit::singleline(device_model).desired_width(avail_size.x / 2.15).ui(ui);
+                    } else {
+                        ui.label(&format!(" - "));
+                    }
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Serial");
-                    ui.label(&format!("{:?}", computer.device_serial));
-
+                    if let Some(device_serial) = computer.device_serial.as_mut() {
+                        TextEdit::singleline(device_serial).desired_width(avail_size.x / 2.15).ui(ui);
+                    } else {
+                        ui.label(&format!(" - "));
+                    }
                     ui.end_row();
                     ui.end_row();
 
@@ -432,14 +475,14 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                 Grid::new("group1").max_col_width(avail_size.x / 3.2 - 2.).min_col_width(avail_size.x / 3.2-2.).with_row_color(|num, style| return_colors(num, style))
                 .show(ui, |ui| {
                     ui.colored_label(Color32::LIGHT_RED, "Letter");
-                    ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
                     ui.colored_label(Color32::LIGHT_RED, "Type");
+                    ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
                     ui.end_row();
 
                     for drive_data in &computer.drives{
                         ui.colored_label(Color32::LIGHT_RED, &drive_data.drive_letter);
-                        ui.label(format!("{} Gb / {} Gb", &drive_data.space_left, &drive_data.total_size));
                         ui.label(&drive_data.drive_type);
+                        ui.label(format!("{} Gb / {} Gb", &drive_data.space_left, &drive_data.total_size));
                         ui.end_row();
                     }
                 });
@@ -587,12 +630,15 @@ fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                 Separator::default().shrink(150.0).ui(ui);
                 ui.add_space(8.0);
             });
-            ui.group(|ui: &mut Ui| {
+
+            // ui.group(|ui: &mut Ui| {
                 Grid::new("other_software_grid").spacing(Vec2::new(0.0, 6.0))
-                .max_col_width(avail_size.x / 2.15)
-                .min_col_width(avail_size.x / 2.15)
-                .with_row_color(|num, style| return_colors(num, style))
-                .show(ui, |ui| {
+                    .max_col_width(avail_size.x / 2.15)
+                    .min_col_width(avail_size.x / 2.15)
+                    .with_row_color(|num, style| return_colors(num, style))
+                    .num_columns(2)
+                    .show(ui, |ui| 
+                {
                     ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
                     if let Some(antivirus) = ticket.current_antivirus.as_ref() {
                         if antivirus.len() == 0 {
@@ -610,9 +656,7 @@ fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                     ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
 
                 });
-            });
-
-
+            // });
         });
     });
 }
@@ -669,6 +713,28 @@ fn return_colors(num: usize, _style: &Style) -> Option<Color32> {
     }
     Some(_col)
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SpecialPartOrder {
+    customer_name: String,              //  "kathleen Hoffmon",
+    customer_phone_number: String,      //  "801-888-8888",
+    application_comment: String,        //  "These are some notes",
+    system_order_number: String,        //  "123456",
+    id_location: String,                //  "Riverdale",
+    request_type: String,               //  "Any",
+    shipping_method: String,            //  "2 - 2-3 Day Express",
+    part_manufacturer: Manufacturer,    //  "PC Laptops",
+    manufacturer_model_number: String,  //  "12345Test",
+    manufacturer_serial_number: String, //  "123456789",
+    manufacturer_part_number: String,   //  "324657687",
+    part_color: String,                 //  "N/A",
+    part_description: String,           //  "Test",
+    part_lcd_toggle: bool,              //  "0"
+    spo_status: SpoStatus,
+    #[serde(skip)]
+    files: Arc<Mutex<Option<Vec<FileHandle>>>>,
+}
+
 
 impl Default for SpecialPartOrder {
     fn default() -> Self {

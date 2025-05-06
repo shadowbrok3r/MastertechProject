@@ -32,8 +32,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Response {
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =
-            Stroke::new(2.0, Color32::from_additive_luminance(80));
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
         let mut default = TicketPayload::default();
         let ticket = self.service_ticket.as_mut().unwrap_or(&mut default);
@@ -85,7 +84,7 @@ impl Interaction for TaskPayload {
         let frame_color = date_colors(self.due_date.clone(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
         // ui.style_mut().spacing.button_padding = Vec2::new(15.0, 3.0);
-        let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
+        let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap_or_default().date_naive();
 
         let id = self.id.clone().key().to_string().to_string();
         let date_picker = DatePickerButton::new(&mut due_date)
@@ -96,13 +95,16 @@ impl Interaction for TaskPayload {
 
         if date_picker.changed() {
             // Combine the NaiveDate with a default time to create a DateTime<Utc>
-            let date_time =
-                NaiveDate::from_ymd_opt(due_date.year(), due_date.month(), due_date.day())
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_local_timezone(Utc)
-                    .unwrap();
+            let date_time = NaiveDate::from_ymd_opt(
+                due_date.year(), 
+                due_date.month(), 
+                due_date.day()
+            )
+            .unwrap_or_default()
+            .and_hms_opt(0, 0, 0)
+            .unwrap_or_default()
+            .and_local_timezone(Utc)
+            .unwrap();
 
             let rfc3339_date = date_time.to_rfc3339();
             let date = due_date.clone().to_string();

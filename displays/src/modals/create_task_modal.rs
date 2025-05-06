@@ -1,6 +1,6 @@
 use database::{schema::{helper_traits::parse_email_user, prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User},DATABASE};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
 use super::task_modal::{display_ticket_page, ModalAction};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -105,7 +105,7 @@ impl DisplayModal for CreateTaskModal {
                     ModalAction::TicketInfoPage => {
                         if let Some(tx) = self.prestashop_api_tx.clone()
                         {
-                            ui.add_space(50.0);
+                            ui.add_space(10.0);
                             let action = self
                             .create_task(
                                 ui, 
@@ -154,7 +154,7 @@ impl CreateTaskModal {
 
             let edit = TextEdit::singleline(&mut self.task_name)
                 .hint_text("Task Name")
-                .margin(Margin::symmetric(6, 4))
+                .margin(vec2(10., 3.))
                 .desired_width(200.0)
                 .ui(ui);
 
@@ -187,7 +187,7 @@ impl CreateTaskModal {
                     .hint_text("Assignee")
                     .desired_width(200.0)
                     .desired_rows(1)
-                    .font(FontId::proportional(12.0))
+                    .margin(vec2(10., 3.))
                     .frame(true)
             })
             .ui(ui);
@@ -225,16 +225,14 @@ impl CreateTaskModal {
                     .ui(ui);
             });
 
-
-
             ui.add_space(15.0);
 
             let r = TextEdit::multiline(&mut self.description)
                 .hint_text("Task Description")
-                .margin(Margin::symmetric(6, 4))
-                .desired_rows(6)
+                .margin(vec2(10., 3.))
+                .desired_rows(10)
                 .code_editor()
-                .desired_width(200.0)
+                .desired_width(350.0)
                 .ui(ui);
 
             if lost_focus {
@@ -399,7 +397,7 @@ impl Tur {
             .hint_text(" Service #  ")
             .char_limit(8)
             .vertical_align(Align::Center)
-            .margin(vec2(4.0, 4.0))
+            .margin(vec2(10., 3.))
             .desired_width(200.)
             .ui(ui);
     }
