@@ -164,7 +164,7 @@ impl ChatView {
                         .next();
 
                     let mut new_note = TaskNotePayload {
-                        everest_initials: usr.everest_initials.clone(), 
+                        // everest_initials: usr.everest_initials.clone(), 
                         note: txt, 
                         task_id, 
                         username,

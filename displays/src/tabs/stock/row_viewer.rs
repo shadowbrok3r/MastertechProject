@@ -209,7 +209,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
                 //     }
                 // },
                 4 => ui.checkbox(&mut row.4, ""),
-                _ => unreachable!(),
+                _ => ui.label(""),
             }
             .into() // To make focusing work correctly, valid response must be returned.
         })

@@ -24,7 +24,7 @@ impl MasterTechApp {
             let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
             let ram_test = format!("{:?}", &self.context.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
-            let (tx, rx) = crossbeam::channel::bounded::<User>(1);
+            let (tx, rx) = crossbeam::channel::unbounded::<User>();
             let mut services: Vec<surrealdb::RecordId> = Vec::new();
             let user = &mut User::default();
 
@@ -35,26 +35,45 @@ impl MasterTechApp {
                 .iter()
                 .map(|msg| msg.id_employee.clone())
                 .collect::<Vec<String>>();
-
+            log::warn!("receive_prestashop -> Employees: {employees:?}\nCust Messages: {:?}", data.customer_messages);
             tokio::spawn(async move {
                 if !customer_email.is_empty() {
-                    let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
-                    .from_customer_email(customer_email.clone(), client)
-                    .await?;
-                    log::info!("SEB Response: {:?}", response_json);
-                    carobonite_tx.try_send(response_json)?;
-                }
-                for emp in employees.iter() {
-                    let employee = Employee::default().get_employee_from_id(emp).await?;
-                    let user = query_user_from_email(employee.email).await?;
-                    tx.try_send(user)?;
-                }
-                Ok::<(), anyhow::Error>(())
-            });
+                    log::warn!("Spawned thread, checking for CarboniteResponse");
+                    let response_json = CarboniteResponse::default()
+                        .from_customer_email(customer_email.clone(), client)
+                        .await;
 
-            if let Ok(usr) = rx.try_recv() { 
+                    match response_json {
+                        Ok(carbonite_response) => {
+                            let _ = carobonite_tx.try_send(carbonite_response);
+                        },
+                        Err(e) => log::warn!("Error from carbonite response: {e:?}"),
+                    }
+                }
+                log::warn!("Spawned thread, checking for employees");
+                for emp in employees.iter() {
+                    log::warn!("Emp: {emp}");
+                    match Employee::default().get_employee_from_id(emp).await {
+                        Ok(employee) => {
+                            log::warn!("Queried Employee: {employee:?}");
+                            match query_user_from_email(employee.email.clone()).await {
+                                Ok(user) => { 
+                                    log::warn!("Sent user: {user:?}");
+                                    let _ = tx.send(user); 
+                                },
+                                Err(e) => log::warn!("Error pulling user: {e:?}"),
+                            }
+                        },
+                        Err(e) => log::warn!("Error getting employee: {e:?}"),
+                    }
+                }
+            });
+            // self.context.shared_ctx.store_users_tx
+            if let Ok(usr) = rx.recv() { 
+                log::warn!("receive_prestashop -> Got user: {usr:?}");
                 *user = usr;
             }
+            
             
             let device_details: Vec<ServiceOrder> = data
                 .order
@@ -79,7 +98,6 @@ impl MasterTechApp {
 
             for msg in data.customer_messages.iter() {
                 task_notes.push(TaskNotePayload {
-                    everest_initials: user.everest_initials.clone(),
                     note: msg.message.clone(),
                     created_at: match convert_date_string(&msg.date_add) {
                         Ok(date) => date,

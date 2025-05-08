@@ -186,6 +186,8 @@ async fn main() -> eframe::Result<()> {
             std::fs::File::create("output.log").unwrap()
         ).unwrap();
     } else {
+        let init = displays::tabs::logger::logging::builder().init();
+        log::info!("Init logger: {init:?}");
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {
@@ -208,14 +210,15 @@ async fn main() -> eframe::Result<()> {
         if let Err(e) = eframe_app { 
             // displays::tabs::logger::logging::builder().init()
             // Set max_log_level to Trace
-            // tui_logger::init_logger(log::LevelFilter::Info).unwrap();
+            let init = tui_logger::init_logger(log::LevelFilter::Info);
+            log::info!("Init logger: {init:?}");
             // // Set default level for unknown targets to Trace
             // tui_logger::set_default_level(log::LevelFilter::Info);
-            simplelog::WriteLogger::init(
-                log::LevelFilter::Info,
-                simplelog::Config::default(),
-                std::fs::File::create("tui-output.log").unwrap()
-            ).unwrap();
+            // simplelog::WriteLogger::init(
+            //     log::LevelFilter::Info,
+            //     simplelog::Config::default(),
+            //     std::fs::File::create("tui-output.log").unwrap()
+            // ).unwrap();
             error!("Error running eframe_native: {e:?} \nswitching to secondary application");
             let res = terminal_mode::run_terminal_mode().await;
             if let Err(e) = res {

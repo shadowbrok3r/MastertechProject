@@ -128,7 +128,6 @@ impl ServiceData {
 
         for msg in presta_data.customer_messages.iter() {
             task_notes.push(TaskNotePayload {
-                everest_initials: user.everest_initials.clone(),
                 note: msg.message.clone(),
                 created_at: match convert_date_string(&msg.date_add) {
                     Ok(date) => date,
