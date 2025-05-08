@@ -24,7 +24,8 @@ impl MasterTechApp {
             let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
             let ram_test = format!("{:?}", &self.context.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
-            let (tx, rx) = crossbeam::channel::unbounded::<User>();
+            let tx = self.context.users_tx.clone();
+            let rx = self.context.users_rx.clone();
             let mut services: Vec<surrealdb::RecordId> = Vec::new();
             let user = &mut User::default();
 
