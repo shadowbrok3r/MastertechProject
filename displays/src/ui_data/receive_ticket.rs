@@ -27,12 +27,11 @@ impl SharedContext {
                                 task,
                             ) {
                                 error!("Error updating existing task: {e:?}");
-                            } else {
-                                self.rerun_filtering_my_tasks = true;
-                                self.rerun_filtering_store_tasks = true;
-                                self.rerun_filtering_completed = true;
-                                info!("Updated existing task");
                             }
+                            self.rerun_filtering_my_tasks = true;
+                            self.rerun_filtering_store_tasks = true;
+                            self.rerun_filtering_completed = true;
+                            info!("Updated existing task");
                             break;
                         }
                     }
@@ -51,12 +50,12 @@ impl SharedContext {
                     Some(channel.new_ticket.clone()),
                 ) {
                     error!("Error updating existing task: {e:?}");
-                } else {
-                    self.rerun_filtering_my_tasks = true;
-                    self.rerun_filtering_store_tasks = true;
-                    self.rerun_filtering_completed = true;
-                    info!("Inserted new task");
-                }
+                } 
+                self.rerun_filtering_my_tasks = true;
+                self.rerun_filtering_store_tasks = true;
+                self.rerun_filtering_completed = true;
+                info!("Inserted new task");
+                
             }
         }
     }

@@ -12,21 +12,21 @@ impl SharedContext {
                     let new_task = new_task.clone();
                     PlatformSpawner::spawn(async move {
                         match get_associated_ticket(tx, new_task.clone()).await {
-                            Ok(_) => {} // info!("Got associated ticket"),
+                            Ok(_) => info!("Got associated ticket"),
                             Err(e) => error!("Error getting associated ticket: {e:?}"),
                         }
                     });
                 }
-            } else {
+            } // else {
 
-                if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.tasks, None)
-                {
-                    error!("Error handling live data: {e:?}");
-                }
-                self.rerun_filtering_completed = true;
-                self.rerun_filtering_my_tasks = true;
-                self.rerun_filtering_store_tasks = true;
+            if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.tasks, None)
+            {
+                error!("Error handling live data: {e:?}");
             }
+            self.rerun_filtering_completed = true;
+            self.rerun_filtering_my_tasks = true;
+            self.rerun_filtering_store_tasks = true;
+            // }
         }
     }
 }

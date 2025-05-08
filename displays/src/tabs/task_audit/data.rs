@@ -311,7 +311,6 @@ impl TaskRowViewer {
 
         for msg in value.customer_messages.iter() {
             task_notes.push(TaskNotePayload {
-                everest_initials: msg.id_employee.clone(),
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),

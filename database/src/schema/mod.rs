@@ -158,7 +158,6 @@ pub struct TicketPayload {
     pub created_at: Option<String>,
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
-    pub service_ticket: Option<RecordId>,
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
@@ -193,7 +192,6 @@ impl Default for TicketPayload {
             doc_alias: Default::default(),
             current_antivirus: Default::default(),
             hardware_test_results: Default::default(),
-            service_ticket: Default::default(),
             jobs: Default::default()
         }
     }
@@ -564,7 +562,7 @@ pub struct HardwareTests {
 pub struct TaskNotePayload {
     pub id: RecordId,
     pub task_id: Option<RecordId>,
-    pub everest_initials: String,
+    // pub everest_initials: String,
     pub created_at: String,
     pub note: String,
     pub username: String,
@@ -581,7 +579,7 @@ impl Default for TaskNotePayload {
         Self {
             id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_id: Default::default(),
-            everest_initials: Default::default(),
+            // everest_initials: Default::default(),
             created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             note: Default::default(),
             username: Default::default(),

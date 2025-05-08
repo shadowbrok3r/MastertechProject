@@ -1,4 +1,4 @@
-use database::{schema::{helper_traits::parse_email_user, prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User},DATABASE};
+use database::{schema::{helper_traits::parse_email_user, prestashop_schema::PrestashopPayload, ComputerData, CustomerData, Priority, Status, TaskNotePayload, TaskPayload, TicketPayload, User},DATABASE};
 use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
@@ -7,7 +7,7 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use egui_extras::DatePickerButton;
 use crossbeam::channel::Sender;
 use std::collections::BTreeSet;
-use log::{error, info, warn};
+use log::{error, info};
 use surrealdb::RecordId;
 use serde::Serialize;
 
@@ -68,6 +68,16 @@ impl CreateTaskModal {
 
     pub fn update_tur_info(&mut self, tur: Tur) {
         self.tur = tur;
+        let name = self.tur.customer_data.name.clone();
+        let service_num = self.tur.ticket_data.service_number.clone();
+        if !service_num.is_empty() && !name.is_empty()
+        {
+            self.task_name = format!(
+                "{} - {}",
+                self.tur.customer_data.name,
+                self.tur.ticket_data.service_number
+            );
+        }
     }
 }
 
@@ -150,28 +160,16 @@ impl CreateTaskModal {
 
             ui.add_space(15.0);
 
-            let service_num = self.tur.ticket_data.service_number.clone();
-
-            let edit = TextEdit::singleline(&mut self.task_name)
+            let _ = TextEdit::singleline(&mut self.task_name)
                 .hint_text("Task Name")
                 .margin(vec2(10., 3.))
                 .desired_width(200.0)
                 .ui(ui);
 
-            let name = self.tur.customer_data.name.clone();
-            if !service_num.is_empty() && edit.lost_focus() && !name.is_empty()
-            {
-                self.task_name = format!(
-                    "{} - {}",
-                    self.tur.customer_data.name,
-                    self.tur.ticket_data.service_number
-                );
-            }
-
             ui.add_space(15.0);
             let mut inputs = BTreeSet::new();
 
-            for user in self.store_users.iter_mut() {
+            for user in self.store_users.iter() {
                 let parsed = parse_email_user(&user.email);
                 inputs.insert(parsed.to_string());
             }
@@ -263,63 +261,68 @@ impl CreateTaskModal {
 
                 self.current_page_state = ModalAction::Close;
                 info!("ASSIGNEE: {:?}\nSTATE: {:?}", self.assignee.clone(), self.current_page_state);
-                let time =
-                    NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap();
-                let date = NaiveDateTime::new(self.due_date, time);
-                let y = date.and_utc().to_rfc3339();
-                let so = self.tur.ticket_data.service_number.clone();
-                let service_number = if !so.is_empty() { Some(so) } else { None };
-
                 let assignee = self.assignee.clone();
                 let mut payload = self.tur.clone();                   
                 payload.task_data.priority = self.task_priority.clone();
-                payload.task_data.due_date = y.clone();
+                let date = NaiveDateTime::new(
+                    self.due_date, 
+                    NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap()
+                ).and_utc().to_rfc3339();
+                
+                payload.task_data.due_date = date.clone();
                 payload.task_data.completed = false;
                 payload.task_data.status = Status::Todo;
                 payload.task_data.task_name = self.task_name.clone();
                 payload.task_data.task_description = self.description.clone();
+                payload.task_data.service_number = Some(payload.ticket_data.service_number.clone());
                 
-                let live_task_payload = LiveTaskPayload {
-                    task_name: self.task_name.clone(),
-                    task_description: self.description.clone(),
-                    due_date: y.clone(),
-                    priority: self.task_priority.clone(),
-                    completed: false,
-                    status: Status::Todo,
-                    service_number: service_number.clone(),
-                    service_ticket: Some(self.tur.ticket_data.id.clone()),
-                    ..Default::default()
-                };
                 
-                warn!("--> SELF.TUR: {:#?}\n--> LIVE TASK PAYLOAD: {:#?}\n--> TASK PAYLOAD: {:#?}", 
-                    payload.clone(), 
-                    live_task_payload.clone(),
-                    payload.task_data.clone()
-                );
+                let mut usr = User::default();
+                for user in self.store_users.iter() {
+                    if assignee == parse_email_user(&user.email) {
+                        log::info!("Got {:?} from assignee: {assignee:?}", user.name);
+                        usr = user.clone();
+                    }
+                }
 
+                payload.task_data.everest_initials = usr.everest_initials.clone();
+
+                // let live_task_payload = LiveTaskPayload {
+                //     task_name: self.task_name.clone(),
+                //     task_description: self.description.clone(),
+                //     due_date: date,
+                //     priority: self.task_priority.clone(),
+                //     completed: false,
+                //     status: Status::Todo,
+                //     service_number: service_number.clone(),
+                //     service_ticket: if let Some(ticket) = &payload.task_data.service_ticket {
+                //         Some(ticket.id.clone())
+                //     } else {
+                //         None
+                //     },
+                //     everest_initials: usr.everest_initials,
+                //     assignee: usr.id,
+                //     ..Default::default()
+                // };
+
+                let task = payload.task_data.clone();
                 PlatformSpawner::spawn(async move {
-                    if payload.ticket_data.service_number.len() == 7 {
-                        warn!("Submitting Ticket\n=====> PRE CONVERTED: {:?}\n\n", payload.ticket_data.clone());
-                        let mut ticket_data: TicketData = payload.ticket_data.into();
-                        warn!("=====> POST CONVERTED: {:?}\n\n", ticket_data.clone());
+                    if !payload.ticket_data.service_number.is_empty() {
 
-                        if ticket_data.salesman.is_empty() {
+                        if payload.ticket_data.salesman.is_empty() {
                             info!("Salesman was empty, assigning current user");
-                            ticket_data.salesman = assignee.clone();
+                            payload.ticket_data.salesman = assignee.clone();
                             info!("TicketData.Salesman: {:?}\nAssignee: {:?}", 
-                                ticket_data.salesman.clone(), 
+                                payload.ticket_data.salesman.clone(), 
                                 assignee.clone()
                             );
                         } 
-
-                        info!("TicketData: {:?}", ticket_data.clone());
-                        // TODO: ASSIGNEE DEFAULTS TO SALESMAN 
-                        info!("Attaching Customer with Ticket: {:?}", &payload.customer_data.name);
+                        
                         match create_full_task_payload(
-                            ticket_data,
+                            payload.ticket_data.into(),
                             payload.customer_data.clone(),
                             ComputerData::default(),
-                            live_task_payload.clone(),
+                            task.into(),
                             payload.task_notes,
                             false,
                         )
@@ -339,6 +342,7 @@ impl CreateTaskModal {
                                     payload.task_data.assignee = usr.id;
                                     payload.task_data.everest_initials = usr.everest_initials;
 
+                                    log::info!("Payload: {payload:?}");
                                     let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE
                                         .query("CREATE task CONTENT $content")
                                         .bind(("content", payload.task_data))
@@ -350,7 +354,6 @@ impl CreateTaskModal {
                                         },
                                         Err(e) => error!("Error creating task: {e:?}")
                                     }
-                                        
                                 }
                             }
                             Err(e) => error!("Error getting user: {e:?}"),

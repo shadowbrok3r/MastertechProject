@@ -153,24 +153,23 @@ pub fn update_or_insert_anything<T: StructDiff + PartialEq + Debug>(current_data
 pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload, new_ticket: Option<TicketPayload>) 
     -> anyhow::Result<(), anyhow::Error>
 {
-    let id = &new_task.id;
     let mut updated = false;
 
-    for task in tasks.iter_mut() {
-        let existing_id = &task.id;
-        if existing_id == id{
-            info!("ID's match: {:?} // {:?}", existing_id, id);
-            let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
+    for existing_task in tasks.iter_mut() {
+        if existing_task.id.clone() == new_task.id {
+            info!("ID's match: {:?} // {:?}", &existing_task.id, &new_task.id);
+            let mut updated_task: TaskPayload = new_task.clone().into();
 
             updated_task.service_ticket = if let Some(service) = new_ticket {
                 Some(service)
-            } else { task.service_ticket.clone() };
-            updated_task.task_note = task.task_note.clone();
+            } else { existing_task.service_ticket.clone() };
+            updated_task.task_note = existing_task.task_note.clone();
+            
             // Calculate the diff and apply it to the existing task
-            let diffs = task.diff(&updated_task);
-            task.apply_mut(diffs);
+            let diffs = existing_task.diff(&updated_task);
+            existing_task.apply_mut(diffs);
 
-            *task = updated_task;
+            *existing_task = updated_task;
             updated = true;
             break;
         }

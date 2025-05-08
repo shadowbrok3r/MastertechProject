@@ -689,10 +689,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
                 for thread in customer_threads {
                     for msg in thread.associations.customer_messages.iter() {
-                        info!("helper_traits -> Checking if msg ID exists in database: {:?}", &msg);
+                        info!("helper_traits -> get_thread_id_from_order -> Checking if msg ID exists in database: {:?}", &msg);
                         let exists = self.check_existing_note_record(&msg.id).await?;
                         if exists.is_none() {
-                            info!("helper_traits -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                            info!("helper_traits -> get_thread_id_from_order -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
                             let customer_message: CustomerMessage = api_call
                                 .request_subresources_by_id_wasm(
                                     "customer_messages",
@@ -708,18 +708,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                         "employee",
                                         &customer_message.id_employee,
                                     )
-                                    .await?; // Employee::default();
-                                            // employee.get_employee_from_id(&customer_message.id_employee).await?;
-
-                                let id = RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone()));
-                                let user = if let Some(usr) = employee.find_user().await? {
-                                    Some(usr.id)
-                                } else {
-                                    None
-                                };
+                                    .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
 
                                 let mut task_note = TaskNotePayload {
-                                    id,
+                                    id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
                                     id_customer_message: Some(customer_message.id.clone()),
                                     id_customer_thread: Some(thread.id.clone()),
                                     task_id: self.task_id.clone(),
@@ -728,21 +720,22 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                     created_at: convert_date_string(&customer_message.date_add)?,
                                     note: customer_message.message,
                                     username: parse_email_user(&employee.email).to_string(),
-                                    everest_initials: employee.initials,
-                                    user,
+                                    user: if let Some(usr) = employee.find_user().await? { Some(usr.id) } else { None },
                                     service_number: Some(service_number.to_string())
                                 };
-                                info!("helper_traits -> Creating a new task_note: {task_note:?}");
+
+                                info!("helper_traits -> get_thread_id_from_order -> Creating a new task_note: {task_note:?}");
 
                                 match task_note.create_task_note_in_db().await {
                                     Ok(_) => log::info!("Created task note: {task_note:?}"),
                                     Err(e) => log::info!("Error creating task note: {e:?}"),
                                 }
+                            } else {
+                                info!("helper_traits -> get_thread_id_from_order -> Customer Message contains some bad data: {customer_message:#?}");
                             }
                         } else {
-                            info!("helper_traits -> Message already exists: {:?}", exists);
+                            info!("helper_traits -> get_thread_id_from_order -> Message already exists: {:?}", exists);
                         }
-                        info!("helper_traits -> Message existence in database: {exists:?}");
                     }
                     threads.push(thread);
                 }
@@ -769,7 +762,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
     async fn get_notes_from_service_number(&mut self, service_number: &str) -> Result<Vec<TaskNotePayload>> {
         let mut notes = Vec::new();
-        info!("helper_traits -> Calling get_notes_from_service_number");
+        info!("helper_traits -> get_notes_from_service_number -> Calling get_notes_from_service_number");
         
         if !service_number.is_empty() {
             let api_call = Prestashop::default();
@@ -785,10 +778,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             info!("helper_traits -> get_notes_from_service_number -> Got customer threads: {customer_threads:?}");
             for thread in customer_threads {
                 for msg in thread.associations.customer_messages.iter() {
-                    info!("helper_traits -> Checking if msg ID exists in database: {:?}", &msg);
+                    info!("helper_traits -> get_notes_from_service_number -> Checking if msg ID exists in database: {:?}", &msg);
                     let exists = self.check_existing_note_record(&msg.id).await?;
                     if exists.is_none() {
-                        info!("helper_traits -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                        info!("helper_traits -> get_notes_from_service_number -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
                         let customer_message: CustomerMessage = api_call
                             .request_subresources_by_id_wasm(
                                 "customer_messages",
@@ -803,18 +796,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 "employee",
                                 &customer_message.id_employee,
                             )
-                            .await?; // Employee::default();
-                                        // employee.get_employee_from_id(&customer_message.id_employee).await?;
-
-                        let id = RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone()));
-                        let user = if let Some(usr) = employee.find_user().await? {
-                            Some(usr.id)
-                        } else {
-                            None
-                        };
+                            .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
 
                         let task_note = TaskNotePayload {
-                            id,
+                            id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
                             id_customer_message: Some(customer_message.id.clone()),
                             id_customer_thread: Some(thread.id.clone()),
                             task_id: self.task_id.clone(),
@@ -822,12 +807,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                             created_at: convert_date_string(&customer_message.date_add)?,
                             note: customer_message.message,
                             username: parse_email_user(&employee.email).to_string(),
-                            everest_initials: employee.initials,
                             service_number: Some(service_number.to_string()),
-                            user,
+                            user: if let Some(usr) = employee.find_user().await? { Some(usr.id) } else { None },
                         };
-                        info!("helper_traits -> Creating a new task_note: {task_note:?}");
-                        
+                        warn!("helper_traits -> get_notes_from_service_number -> Creating a new task_note: {task_note:?}");
 
                         let note: Option<Record> = DATABASE
                             .query("CREATE task_note CONTENT $task_note")
@@ -837,14 +820,15 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
                         notes.push(task_note);
 
-                        info!("helper_traits -> Created note: {note:?}");
+                        warn!("helper_traits -> get_notes_from_service_number -> Created note: {note:?}");
                     } else {
-                        info!("helper_traits -> Message already exists: {:?}", exists);
+                        warn!("helper_traits -> get_notes_from_service_number -> Message already exists: {:?}", exists);
                         let query_results: Vec<TaskNotePayload> = DATABASE
                             .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
                             .bind(("id_customer_message", msg.id.clone()))
                             .await?
                             .take(0)?;
+
                         for note in query_results.iter() {
                             notes.push(note.clone());
                         }
@@ -852,8 +836,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 }
             }
         } else {
-            info!("helper_traits -> Order number is still empty? {service_number:?}");
+            info!("helper_traits -> get_notes_from_service_number -> Order number is still empty? {service_number:?}");
         }
+
         Ok(notes)
     }
 
@@ -1017,6 +1002,7 @@ impl EmployeeHelper for Employee {
                 firstname: employee.firstname.clone(),
                 id_store: employee.id_store.clone(),
                 lastname: employee.lastname.clone(),
+                id: employee.id.clone(),
                 ..Default::default() // ..self.clone()
             })
         } else if !self.email.is_empty() {
@@ -1680,7 +1666,6 @@ impl From<PrestashopPayload> for TaskPayload {
         for msg in value.customer_messages.iter() {
             // let initials = if msg.id_employee 
             task_notes.push(TaskNotePayload {
-                everest_initials: user.everest_initials.clone(),
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),

@@ -73,7 +73,7 @@ impl SharedContext {
                             task.id == id.clone() && task.assignee == user.id && !task.completed
                         }) {
                             // This should work with ID and not initials
-                            if note.everest_initials != user.everest_initials {
+                            if note.user != Some(user.id.clone()) {
                                 let toast = &mut self.toasts;
                                 let new_msg_toast = Toast {
                                     kind: ToastKind::Success,
