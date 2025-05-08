@@ -36,7 +36,8 @@ impl MastertechContext {
     pub fn mini_dump(&mut self, ui: &mut Ui){ 
         
         self.minidump_app.poll_processor_state();
-        self.minidump_app.update_ui(&self.ctx, ui);
+        let ctx = ui.ctx().clone();
+        self.minidump_app.update_ui(&ctx, ui);
         self.minidump_app.last_status = self.minidump_app.cur_status;
     }
 }

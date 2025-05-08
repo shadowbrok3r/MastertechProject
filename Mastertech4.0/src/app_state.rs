@@ -1,7 +1,7 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketData, CONNECTED_CLIENT_TABLE
+        prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketData, User, CONNECTED_CLIENT_TABLE
     },
     Database,
 };
@@ -157,6 +157,9 @@ pub struct MastertechContext {
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
 
+    pub users_rx: Receiver<User>,
+    pub users_tx: Sender<User>,
+
     pub cps_keys_tx: Sender<GetKeysResponse>,
     pub cps_keys_rx: Receiver<GetKeysResponse>,
 
@@ -194,6 +197,8 @@ impl MasterTechApp {
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
+        let (users_tx, users_rx) = crossbeam::channel::unbounded();
+        
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
@@ -285,6 +290,7 @@ impl MasterTechApp {
 
             db_data_receiver,
             db_data_sender,
+            users_tx, users_rx,
             prestashop_api_tx,
             prestashop_api_rx,
             computer_specs_tx,
