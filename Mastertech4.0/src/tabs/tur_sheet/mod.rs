@@ -80,6 +80,17 @@ impl MastertechContext {
                 ui.horizontal_top(|ui| {
                     ui.add_space(10.);
                     ui.group(|ui| self.recommendations_grid(ui) );
+                    
+                        ui.add_space(10.);
+
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(135.);
+                            ui.label(RichText::new("Products").strong().heading());
+                        });
+                        
+                        ui.group(|ui| self.product_info_grid(ui) );
+                    });
                 });
 
             });
@@ -331,17 +342,16 @@ impl MastertechContext {
                 && !self.ticket_data.salesman.is_empty()
                 && !self.ticket_data.tech.is_empty();
 
-            // if ui
-            // .add_enabled(
-            //     check,
-            //     Button::new(RichText::new("Submit TUR").color(Color32::from_rgb(255, 204, 255)))
-            //     .min_size(Vec2::new(140., 20.0))
-            //     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
-            // )
-            // .clicked()
-            // {  
-            //     self.submit_tur();
-            // }
+            if ui.add_enabled(
+                false, 
+                Button::new( 
+                    RichText::new("Complete QC"))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
+                    .min_size(Vec2::new(140., 20.0)
+                )
+            ).clicked() {
+                
+            }
 
             if ui.add_enabled(
                 check, 
@@ -368,20 +378,7 @@ impl MastertechContext {
                     toast.add(error_toast);
                 }
             }
-
-            ui.label("");
             ui.end_row();
-            if ui.add_enabled(
-                false, 
-                Button::new( 
-                    RichText::new("Complete QC"))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
-                    .min_size(Vec2::new(140., 20.0)
-                )
-            ).clicked() {
-                
-            }
-
             ui.end_row();
         }); // grid
     }
@@ -449,6 +446,28 @@ impl MastertechContext {
         });
     }
 
+    fn product_info_grid(&mut self, ui: &mut Ui) {
+        Grid::new("Product Detail Grid")
+            .spacing(vec2(4.0, 7.0))
+            .min_col_width(150.)
+            .max_col_width(150.)
+            .num_columns(2)
+            .show(ui, |ui| 
+        {
+            ui.colored_label(Color32::LIGHT_RED, "Product");
+            ui.colored_label(Color32::LIGHT_RED, "Price");
+            ui.end_row();
+
+            for item in self.order_rows.iter() {
+                ui.label(format!("{} (x{})", item.product_name.clone(), item.product_quantity.clone()));
+                match item.product_price.clone().parse::<f64>() {
+                    Ok(price_num) => ui.label(format!("${:.2}", price_num)),
+                    Err(_) => ui.label(format!("${}", item.product_price.clone()))
+                };
+                ui.end_row();
+            }
+        });
+    }
     fn seb_info_grid(&mut self, ui: &mut Ui) {
         let text_edit_size = vec2( 140., 15.0);
 

@@ -1,4 +1,4 @@
-use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::Employee, utilities::query_user_from_email, CarboniteResponse, TaskNotePayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{helper_traits::parse_email_user, CarboniteResponse, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
 use crate::{app_state::SharedContext, modals::ModalType, PlatformSpawner, Spawner};
 use log::info;
 
@@ -21,61 +21,29 @@ impl SharedContext {
             let customer_email = data.customer.email.clone();
             let client = reqwest::Client::new();
             let carobonite_tx = self.seb_channel.0.clone();
-            let (tx, rx) = crossbeam::channel::bounded::<User>(1);
             let mut services: Vec<surrealdb::RecordId> = Vec::new();
-            let user = &mut User::default();
 
             task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
 
-            let employees = data
-                .customer_messages
-                .iter()
-                .map(|msg| msg.id_employee.clone())
-                .collect::<Vec<String>>();
-
             PlatformSpawner::spawn(async move {
-                let _ = async {
-                    if !customer_email.is_empty() {
-                        let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
+                if !customer_email.is_empty() {
+                    log::warn!("Spawned thread, checking for CarboniteResponse");
+                    let response_json = CarboniteResponse::default()
                         .from_customer_email(customer_email.clone(), client)
-                        .await?;
-                        log::info!("SEB Response: {:?}", response_json);
-                        carobonite_tx.try_send(response_json)?;
+                        .await;
+
+                    match response_json {
+                        Ok(carbonite_response) => { let _ = carobonite_tx.try_send(carbonite_response); },
+                        Err(e) => log::warn!("Error from carbonite response: {e:?}"),
                     }
-                    
-                    for emp in employees.iter() {
-                        let employee = Employee::default().get_employee_from_id(emp).await?;
-                        let user = query_user_from_email(employee.email).await?;
-                        tx.try_send(user)?;
-                    }
-                    Ok::<(), anyhow::Error>(())
-                }.await;
+                }
             });
 
-            if let Ok(usr) = rx.try_recv() { 
-                *user = usr;
-            }
-            
-
-            for msg in data.customer_messages.iter() {
+            for msg in data.task_notes.iter() {
                 task_notes.push(TaskNotePayload {
-                    note: msg.message.clone(),
-                    created_at: match convert_date_string(&msg.date_add) {
-                        Ok(date) => date,
-                        Err(e) => {
-                            log::info!("Parse error: {e:?}");
-                            msg.date_add.clone()
-                        },
-                    },
-                    id: surrealdb::RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                     task_id: Some(task.id.clone()),
-                    username: parse_email_user(&user.email).to_string(),
-                    user: Some(user.id.clone()),
-                    id_customer_thread: Some(msg.id_customer_thread.clone()),
-                    id_customer_message: Some(msg.id.clone()),
-                    id_employee: Some(msg.id_employee.clone()),
-                    service_number: Some(ticket.service_number.clone()),
-                })
+                    ..msg.clone()
+                });
             }
 
             customer.id = data.customer.id.clone();
@@ -96,7 +64,7 @@ impl SharedContext {
             log::info!("Salesman: {:?}\nTech: {:?}",ticket.salesman.clone(),ticket.tech.clone());
             services.push(ticket.id.clone());
             if !service_details.is_empty() {
-                if service_details.len() == 1 {
+                if service_details.len() >= 1 {
                     let svc = service_details.get(0);
                     if let Some(service) = svc {
                         ticket.checkin_notes = service.check_in_notes.clone();

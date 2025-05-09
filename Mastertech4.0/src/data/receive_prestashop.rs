@@ -1,5 +1,5 @@
 use crate::app_state::MasterTechApp;
-use database::schema::{ComputerData, helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, ServiceOrder}, utilities::query_user_from_email, CarboniteResponse, HardwareTests, TaskNotePayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{ComputerData, helper_traits::parse_email_user, prestashop_schema::ServiceOrder, CarboniteResponse, HardwareTests, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
 
 #[cfg(target_os="windows")]
 use crate::filesystem::system_info::ComputerInfo;
@@ -24,19 +24,12 @@ impl MasterTechApp {
             let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
             let ram_test = format!("{:?}", &self.context.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
-            let tx = self.context.users_tx.clone();
-            let rx = self.context.users_rx.clone();
             let mut services: Vec<surrealdb::RecordId> = Vec::new();
-            let user = &mut User::default();
+            let order_rows: Vec<database::schema::prestashop_schema::OrderRow> = data.order.associations.order_rows.clone();
+            self.context.order_rows = order_rows;
 
             task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
 
-            let employees = data
-                .customer_messages
-                .iter()
-                .map(|msg| msg.id_employee.clone())
-                .collect::<Vec<String>>();
-            log::warn!("receive_prestashop -> Employees: {employees:?}\nCust Messages: {:?}", data.customer_messages);
             tokio::spawn(async move {
                 if !customer_email.is_empty() {
                     log::warn!("Spawned thread, checking for CarboniteResponse");
@@ -45,37 +38,12 @@ impl MasterTechApp {
                         .await;
 
                     match response_json {
-                        Ok(carbonite_response) => {
-                            let _ = carobonite_tx.try_send(carbonite_response);
-                        },
+                        Ok(carbonite_response) => { let _ = carobonite_tx.try_send(carbonite_response); },
                         Err(e) => log::warn!("Error from carbonite response: {e:?}"),
                     }
                 }
-                log::warn!("Spawned thread, checking for employees");
-                for emp in employees.iter() {
-                    log::warn!("Emp: {emp}");
-                    match Employee::default().get_employee_from_id(emp).await {
-                        Ok(employee) => {
-                            log::warn!("Queried Employee: {employee:?}");
-                            match query_user_from_email(employee.email.clone()).await {
-                                Ok(user) => { 
-                                    log::warn!("Sent user: {user:?}");
-                                    let _ = tx.send(user); 
-                                },
-                                Err(e) => log::warn!("Error pulling user: {e:?}"),
-                            }
-                        },
-                        Err(e) => log::warn!("Error getting employee: {e:?}"),
-                    }
-                }
             });
-            // self.context.shared_ctx.store_users_tx
-            if let Ok(usr) = rx.recv() { 
-                log::warn!("receive_prestashop -> Got user: {usr:?}");
-                *user = usr;
-            }
-            
-            
+
             let device_details: Vec<ServiceOrder> = data
                 .order
                 .associations
@@ -97,26 +65,14 @@ impl MasterTechApp {
 
             let device = device_details.get(0).cloned().unwrap_or_default();
 
-            for msg in data.customer_messages.iter() {
+            for msg in data.task_notes.iter() {
                 task_notes.push(TaskNotePayload {
-                    note: msg.message.clone(),
-                    created_at: match convert_date_string(&msg.date_add) {
-                        Ok(date) => date,
-                        Err(e) => {
-                            log::info!("Parse error: {e:?}");
-                            msg.date_add.clone()
-                        },
-                    },
-                    id: surrealdb::RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                     task_id: Some(task.id.clone()),
-                    username: parse_email_user(&user.email).to_string(),
-                    user: Some(user.id.clone()),
-                    id_customer_thread: Some(msg.id_customer_thread.clone()),
-                    id_customer_message: Some(msg.id.clone()),
-                    id_employee: Some(msg.id_employee.clone()),
-                    service_number: Some(ticket.service_number.clone()),
-                })
+                    ..msg.clone()
+                });
             }
+
+            log::warn!("receive_prestashop -> NOTES: {task_notes:#?}");
 
             customer.id = data.customer.id.clone();
             customer.cust_code = data.customer.cust_code.clone();
@@ -139,7 +95,7 @@ impl MasterTechApp {
             services.push(ticket.id.clone());
             
             if !service_details.is_empty() {
-                if service_details.len() == 1 {
+                if service_details.len() >= 1 {
                     let svc = service_details.get(0);
                     if let Some(service) = svc {
                         ticket.checkin_notes = service.check_in_notes.clone();
@@ -167,6 +123,7 @@ impl MasterTechApp {
                 let installed_antivirus = ComputerData::get_antivirus()
                     .map_err(|e| *cps += format!("Error checking antivirus: {e}\n").as_str())
                     .unwrap_or(Vec::new());
+                
                 let x: Vec<String> = installed_antivirus
                     .iter()
                     .map(|cps| {

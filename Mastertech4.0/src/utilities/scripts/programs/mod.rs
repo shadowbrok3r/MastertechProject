@@ -88,7 +88,7 @@ impl InstalledProgram {
                                 if s.contains('\0') {
                                     log::info!("Removed Null byte: {s:?}");
                                 } else {
-                                    log::info!("No Nulls: {}", s);
+                                    // log::info!("No Nulls: {}", s);
                                 }
                                 s.replace('\0', "")
 

@@ -6,7 +6,7 @@ use surrealdb::Action;
 impl SharedContext {
     pub fn receive_notes(&mut self) {
         if let Ok(note_payload) = self.notes_rx.try_recv() {
-            info!("receive_notes -> New note: {:?}", note_payload);
+            info!("receive_notes -> self.notes_rx.try_recv() -> New note: {:?}", note_payload);
             self.new_note = true;
             let mut note = note_payload.1.clone();
             let action = note_payload.0.clone();
@@ -21,6 +21,7 @@ impl SharedContext {
                         .flat_map(|tasks| tasks.iter_mut())
                         .find(|task| task.id == *task_id) // short-circuit on the match
                     {
+                        log::warn!("receive_notes -> self.notes_rx.try_recv() -> Found associated task to insert note into: {:?}", task.id.clone());
                         task.task_note.push(note.clone());       // `note` is moved here
                     }
                 }
@@ -88,6 +89,31 @@ impl SharedContext {
                     }
                 }
             }
+        
+            self.rerun_filtering_completed = true;
+            self.rerun_filtering_my_tasks = true;
+            self.rerun_filtering_store_tasks = true;
+        }
+
+        if let Ok(notes) = self.associated_notes_rx.try_recv() {
+            for note in notes.iter() {
+                if let Some(task_id) = &note.task_id {
+                    // Walk every `Task` mutably, stop at the first hit, and push the note.
+                    if let Some(task) = self
+                        .task_layouts
+                        .values_mut()                    // throw away the outer map keys
+                        .flat_map(|layout| layout.task_map.values_mut())
+                        .flat_map(|tasks| tasks.iter_mut())
+                        .find(|task| task.id == *task_id) // short-circuit on the match
+                    {
+                        log::warn!("receive_notes -> self.associated_notes_rx.try_recv() -> Found associated task to insert note into: {:?}", task.id.clone());
+                        task.task_note.push(note.clone());       // `note` is moved here
+                    }
+                }
+            }
+            self.rerun_filtering_completed = true;
+            self.rerun_filtering_my_tasks = true;
+            self.rerun_filtering_store_tasks = true;
         }
     }
 }

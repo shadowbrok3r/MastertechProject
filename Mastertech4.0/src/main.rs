@@ -22,6 +22,10 @@ pub mod data;
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        ctx.options_mut(|options| {
+            options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+        });
+
         // most important part of the whole app.. setting up our styling
         if self.context.shared_ctx.modify_theme {
             Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {

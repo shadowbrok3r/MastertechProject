@@ -1,5 +1,5 @@
 
-use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{Employee, PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone, query_user_from_email}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{helper_traits::parse_email_user, prestashop_schema::{PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE};
 use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crate::filesystem::system_info::ComputerInfo;
@@ -102,49 +102,11 @@ impl ServiceData {
         let email = parse_email_user(&sales_rep.email).to_string();
         let email_split_rep = parse_email_user(&split_rep.email).to_string();
 
-        let (tx, rx) = crossbeam::channel::bounded::<User>(1);
-        
-        let employees = presta_data
-            .customer_messages
-            .iter()
-            .map(|msg| msg.id_employee.clone())
-            .collect::<Vec<String>>();
-
-        tokio::spawn(async move {
-            for emp in employees.iter() {
-                let employee = Employee::default().get_employee_from_id(emp).await?;
-                let user = query_user_from_email(employee.email).await?;
-                tx.try_send(user)?;
-            }
-            
-            Ok::<(), anyhow::Error>(())
-        });
-
-        let user = &mut User::default();
-
-        if let Ok(usr) = rx.try_recv() { 
-            *user = usr;
-        }
-
-        for msg in presta_data.customer_messages.iter() {
+        for msg in presta_data.task_notes.iter() {
             task_notes.push(TaskNotePayload {
-                note: msg.message.clone(),
-                created_at: match convert_date_string(&msg.date_add) {
-                    Ok(date) => date,
-                    Err(e) => {
-                        log::info!("Parse error: {e:?}");
-                        msg.date_add.clone()
-                    },
-                },
-                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
-                username: parse_email_user(&user.email).to_string(),
-                user: Some(user.id.clone()),
-                id_customer_thread: Some(msg.id_customer_thread.clone()),
-                id_customer_message: Some(msg.id.clone()),
-                id_employee: Some(msg.id_employee.clone()),
-                service_number: Some(ticket.service_number.clone()),
-            })
+                ..msg.clone()
+            });
         }
 
         task.task_note = task_notes.clone();
@@ -156,11 +118,6 @@ impl ServiceData {
         ticket.salesman = email_split_rep;
         ticket.sales_rep = email.clone();
         ticket.tech = email.clone();
-        log::info!(
-            "Salesman: {:?}\nTech: {:?}",
-            ticket.salesman.clone(),
-            ticket.tech.clone()
-        );
         ticket.customer = Some(customer.clone());
         ticket.checkin_rep = email;
         ticket.terms = presta_data.order.payment.clone();
