@@ -1,5 +1,5 @@
 
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, Store, TaskPayload, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::HashMap;
@@ -100,13 +100,12 @@ impl SharedContext {
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, _ctx: &Context) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            // Indicate that filtering needs to be rerun
-            self.rerun_filtering_store_tasks = true;
-            self.rerun_filtering_completed = true;
-            self.rerun_filtering_my_tasks = true;
-        
-            
-            // Clear layout-related data for specific pages
+        info!("Received initial task payload with {} tasks", tasks.len());
+
+            // Initialize layout_configs if store_users is available
+            self.init_layout_configs();
+
+            // Clear layout-related data for specific pages when switching stores
             self.task_layouts
                 .iter_mut()
                 .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
@@ -121,16 +120,73 @@ impl SharedContext {
                             layout.loading = false;
                         }
                     }
-            });
-            // Filter and append new tasks
-            let existing_tasks = &mut self.tasks;
-            // Process new tasks in parallel
+                });
+
+            // Process new tasks
+            let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
+            let layout_configs = self.layout_configs.as_ref();
+
             tasks.drain(..).for_each(|new_task| {
-                // Avoid duplicates by checking if the new task already exists
-                if !existing_tasks.iter().any(|task| task == &new_task) {
-                    existing_tasks.push(new_task); // Add the task if it's unique
+                // Check for duplicates using task ID
+                if !self
+                    .tasks
+                    .iter()
+                    .any(|task| task.id.key().to_string() == new_task.id.key().to_string())
+                {
+                    // Add to global tasks
+                    let new_task_payload: TaskPayload = new_task.clone();
+                    self.tasks.push(new_task_payload.clone());
+
+                    // Distribute to layouts if layout_configs is initialized
+                    if let Some(layout_configs) = layout_configs {
+                        for (layout_key, layout) in self.task_layouts.iter_mut() {
+                            let Some(config) = layout_configs.get(layout_key) else {
+                                log::warn!("No config defined for layout: {}", layout_key);
+                                continue;
+                            };
+
+                            // Check if the task belongs in this layout
+                            let should_include = (config.filter)(
+                                &new_task.clone().into(),
+                                &self.current_user,
+                                &self.store_users,
+                                &store_selection,
+                            );
+
+                            // Determine the task_map key
+                            let key = if layout_key == "MyTasks" {
+                                new_task.status.as_str().to_string()
+                            } else {
+                                self.store_users
+                                    .iter()
+                                    .find(|u| u.id == new_task.assignee)
+                                    .map(|u| u.everest_initials.to_string())
+                                    .unwrap_or_default()
+                            };
+
+                            // Add task to task_map if it belongs
+                            if should_include && (config.valid_keys.is_empty() || config.valid_keys.contains(&key)) {
+                                let task_list = layout
+                                    .task_map
+                                    .entry(key.clone())
+                                    .or_insert_with(Vec::new);
+                                if !task_list
+                                    .iter()
+                                    .any(|t| t.id.key().to_string() == new_task.id.key().to_string())
+                                {
+                                    task_list.push(new_task_payload.clone());
+                                    info!("Added initial task to layout: {}", layout_key);
+                                }
+                            }
+                        }
+                    }
                 }
             });
+
+            // Reset switching_store flag if set
+            if self.switching_store {
+                self.switching_store = false;
+            }
         }
 
         if let Ok(users) = self.store_users_rx.try_recv() {

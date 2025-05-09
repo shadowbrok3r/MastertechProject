@@ -1,4 +1,6 @@
-use super::{deserializer::deserialize_to_string, CustomerData};
+use crate::schema::{helper_traits::{convert_date_string, parse_email_user}, TASK_NOTE_TABLE};
+
+use super::{deserializer::deserialize_to_string, helper_traits::EmployeeHelper, utilities::query_user_from_email, CustomerData, TaskNotePayload};
 use log::info;
 use reqwest::{
     header::{ACCEPT, CONTENT_TYPE},
@@ -486,6 +488,40 @@ impl<'a> Prestashop<'a> {
     }
 }
 
+impl CustomerMessage {
+    pub async fn into_task_note(&self, service_number: &str) -> anyhow::Result<TaskNotePayload, anyhow::Error> {
+        match Employee::default().get_employee_from_id(&self.id_employee).await {
+            Ok(employee) => {
+                match query_user_from_email(employee.email.clone()).await {
+                    Ok(user) => { 
+                        log::warn!("Pulled user: {}", user.name);
+                        return Ok(TaskNotePayload {
+                            note: self.message.clone(),
+                            created_at: match convert_date_string(&self.date_add) {
+                                Ok(date) => date,
+                                Err(e) => {
+                                    log::info!("Parse error: {e:?}");
+                                    self.date_add.clone()
+                                },
+                            },
+                            id: surrealdb::RecordId::from((TASK_NOTE_TABLE, self.id.clone())),
+                            username: parse_email_user(&user.email).to_string(),
+                            user: Some(user.id.clone()),
+                            id_customer_thread: Some(self.id_customer_thread.clone()),
+                            id_customer_message: Some(self.id.clone()),
+                            id_employee: Some(self.id_employee.clone()),
+                            service_number: Some(service_number.to_string()),
+                            ..Default::default()
+                        });
+                    },
+                    Err(e) => Err(anyhow::anyhow!("Error querying user from email: {e:?}")),
+                }
+            },
+            Err(e) => Err(anyhow::anyhow!("Error converting customer message into task note: {e:?}")),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct PrestashopPayload {
     pub customer: CustomerData,
@@ -495,6 +531,7 @@ pub struct PrestashopPayload {
     pub address: Address,
     pub customer_threads: Vec<CustomerThread>,
     pub customer_messages: Vec<CustomerMessage>,
+    pub task_notes: Vec<TaskNotePayload>
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
@@ -746,7 +783,6 @@ impl SubResource for Employee {
         "employee".to_string()
     }
 }
-
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MissedCallOrder {

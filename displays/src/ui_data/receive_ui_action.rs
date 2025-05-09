@@ -35,13 +35,13 @@ impl SharedContext {
                         task_modal
                     };
                     
-                    let title = format!("{} Task View", task_modal.title);
+                    let title = &task_modal.title;
 
-                    if self.opened_modals.get(&title).is_some() {
-                        self.opened_modals.remove_entry(&title);
+                    if self.opened_modals.get(title).is_some() {
+                        self.opened_modals.remove_entry(title);
                     } else {
                         self.opened_modals
-                            .entry(title)
+                            .entry(title.to_string())
                             .or_insert(ModalType::TaskModal(task_modal));
                     }
                 }

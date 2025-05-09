@@ -38,6 +38,22 @@ pub async fn get_associated_ticket(
     Ok(())
 }
 
+pub async fn get_associated_notes(
+    tx: Sender<Vec<TaskNotePayload>>,
+    task_id: RecordId
+) -> Result<(), Error> {
+    debug!("get_associated_notes");
+    DATABASE.set("task_id", task_id.clone()).await?;
+    let notes: Vec<TaskNotePayload> = DATABASE.query(
+        "SELECT * FROM task_note WHERE task_id == $task_id"
+    )
+    .await?
+    .take(0)?;
+
+    tx.try_send(notes)?;
+    Ok(())
+}
+
 // pub async fn get_customer_data(tx: Sender<LiveOutput>) -> Result<(), Error> {
 // tx: Sender<CustomerData>
 // debug!("get_customers");

@@ -1,6 +1,6 @@
 #![allow(async_fn_in_trait)]
 use super::{
-    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
+    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, Notification, Record, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
 use crate::{schema::{utilities::query_user_from_email, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -113,39 +113,6 @@ pub trait ComputerDataHelper {
     ) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Find PrestaShop Customer associated with this Computer
     async fn find_prestashop_customer(&mut self) -> Result<prestashop_schema::Customer, Error>;
-}
-
-/// A trait for assisting with operations involving Customer Records.
-#[async_trait(?Send)]
-pub trait CustomerHelper {
-    /// Finds and retrieves the associated address for a customer.
-    ///
-    /// # Returns
-    /// - `Ok(Address)` containing the customer's address on success.
-    /// - `Err(Error)` if the address cannot be found or an error occurs.
-    async fn find_associated_addr(&mut self) -> Result<prestashop_schema::Address, Error>;
-
-    /// Finds and retrieves special part orders for a customer.
-    ///
-    /// # Returns
-    /// - `Ok(Vec<SpecialPartOrder>)` containing a list of special part orders.
-    /// - `Err(Error)` if an error occurs during the retrieval of orders.
-    async fn find_part_orders(&mut self) -> Result<Vec<SpecialPartOrder>, Error>;
-
-    /// Finds and retrieves a customer record from Prestashop.
-    ///
-    /// # Returns
-    /// - `Ok(Customer)` containing the Prestashop customer record on success.
-    /// - `Err(Error)` if an error occurs during retrieval.
-    async fn find_prestashop_customer(&mut self) -> Result<prestashop_schema::Customer, Error>;
-
-    /// Retrieves and returns extended SEB data for a customer.
-    ///
-    /// # Returns
-    /// - `Ok(ExtendedSeb)` containing the extended SEB data.
-    /// - `Err(Error)` if an error occurs during retrieval.
-    async fn get_seb_data(&mut self) -> Result<ExtendedSeb, Error>;
-
 }
 
 /// A trait for assisting with operations involving orders.
@@ -1377,31 +1344,6 @@ impl UserHelper for User {
         Ok(store)
     }
 }
-
-#[async_trait(?Send)]
-impl CustomerHelper for prestashop_schema::Customer {
-    async fn find_associated_addr(&mut self) -> Result<prestashop_schema::Address, Error> {
-
-        todo!()
-    }
-
-    async fn find_part_orders(&mut self) -> Result<Vec<SpecialPartOrder>, Error> {
-
-        todo!()
-    }
-
-    async fn find_prestashop_customer(&mut self) -> Result<prestashop_schema::Customer, Error> {
-
-        todo!()
-    }
-
-    async fn get_seb_data(&mut self) -> Result<ExtendedSeb, Error> {
-
-        todo!()
-    }
-
-}
-
 
 #[async_trait(?Send)]
 impl ComputerDataHelper for ComputerData {

@@ -1,6 +1,6 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
-use database::schema::{Record, TaskPayload, User};
+use database::schema::{LiveTaskPayload, Record, Status, Store, TaskPayload, User};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
 use std::collections::BTreeSet;
@@ -36,6 +36,14 @@ pub struct TaskLayout{
     new_status: String,
 }
 
+pub struct LayoutConfig {
+    // Valid keys for task_map (statuses or user initials)
+    pub valid_keys: Vec<String>,
+    pub key_provider: Box<dyn Fn(&[User]) -> Vec<String>>, // Generate keys from store_users
+    pub filter: Box<dyn Fn(&LiveTaskPayload, &Option<User>, &[User], &Store) -> bool>,
+    // Whether to call update_assignees
+    pub update_assignees: bool,
+}
 
 #[derive(Clone, Default, PartialEq, Serialize)]
 pub struct SortOptions {
@@ -78,46 +86,9 @@ impl TaskLayout {
         self
     }
 
-    pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
-        for (key, new_payloads) in new_map.into_iter() {
-            if let Some(existing_payloads) = self.task_map.get_mut(&key) {
-                // Ensure we have the same length of vectors, or handle mismatches
-                for (existing, new) in existing_payloads.iter_mut().zip(new_payloads.iter()) {
-                    // Compute the diffs between the existing and new payloads
-                    let diffs = existing.diff(&new);
-                    // Apply the diffs to the existing payload
-                    existing.apply_mut(diffs);
-                }
-                
-                // If new_payloads has more items than existing_payloads, add them
-                if new_payloads.len() > existing_payloads.len() {
-                    existing_payloads.extend(new_payloads[existing_payloads.len()..].iter().cloned());
-                }
-            } else {
-                // Insert new key and its associated task payloads if it does not exist
-                self.task_map.insert(key, new_payloads);
-            }
-        }
-        self
-    }
-
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         self.column_names = column_names;
         self
-    }
-
-    pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
-        info!("Finding ID: {task_id:?}");
-        // Search for the task by ID
-        for (_, tasks) in self.task_map.iter_mut(){
-            for task in tasks.iter_mut(){
-                if task.id.key().to_string() == *task_id{
-                    info!("Got a match");
-                    return Some(task);
-                }
-            }
-        }
-        None
     }
     
     pub fn layout_cols(&mut self, ui: &mut Ui) {

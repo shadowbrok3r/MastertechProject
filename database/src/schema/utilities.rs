@@ -484,11 +484,19 @@ pub async fn create_full_task_payload(
     // }
 
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
-    let update_cust_record: Option<Record> = DATABASE
+    let update_customer: Result<Option<Record>, surrealdb::Error> = DATABASE
         .upsert(customer_id)
         .content(customer_data.clone())
-        .await?;
-    info!("schema/utilities.rs -> Customer updated: {update_cust_record:?}");
+        .await;
+    
+    match update_customer {
+        Ok(record) => log::info!("Updated Customer {record:?}"),
+        Err(e) => {
+            log::warn!("Error updating Customer {e:?}");
+            // if i have a customer from everest, i will need to delete
+            // and recreate the record.. 
+        }
+    }
 
     // panic!("");
     if send_specs {
@@ -556,7 +564,45 @@ impl PrestashopPayload {
 }
 
 impl TaskNotePayload {
+    pub fn set_task_id(&mut self, task_id: RecordId) -> &mut Self {
+        self.task_id = Some(task_id);
+        self
+    }
+}
 
+impl CustomerData {
+    pub async fn find_customer_by_id(id_customer: &str) -> anyhow::Result<Self, anyhow::Error> {
+        let api_call = Prestashop::default();
+        let mut query = HashMap::new();
+        let mut tmp_address = Address::default();
+        query.insert("filter[id_customer]", id_customer);
+        query.insert("output_format", "JSON");
+
+        let addresses: Vec<Address> = api_call
+            .request_resources_wasm("addresses", query.clone())
+            .await?;
+
+        if let Some(address) = addresses.get(0) {
+            tmp_address = address.clone();
+        }
+
+        let cust: Customer = api_call
+            .request_subresources_by_id_wasm("customers", "customer", id_customer)
+            .await?;
+
+        Ok(CustomerData { 
+            id: RecordId::from((
+                CUSTOMER_TABLE.to_string(),
+                id_customer,
+            )),
+            cust_code: id_customer.to_string(),
+            name: format!("{} {}", &cust.firstname, &cust.lastname),
+            phone_number: tmp_address.phone.clone().to_string(),
+            email: cust.email,
+            phone_number_2: tmp_address.phone_mobile.clone().to_string(),
+            ..Default::default()
+        })
+    }
 }
 
 impl TaskPayload {
@@ -648,17 +694,23 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
         .await?;
 
     let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+    let mut task_notes: Vec<TaskNotePayload> = Vec::new();
 
     if !customer_threads.is_empty() {
         for thread in customer_threads.iter() {
             for msg in thread.associations.customer_messages.iter() {
-                let msg =  api_call
+                let msg: CustomerMessage =  api_call
                     .request_subresources_by_id_wasm(
                         "customer_messages",
                         "customer_message",
                         msg.id.as_str(),
                     )
                     .await?;
+
+                match msg.into_task_note(potential_order.id.as_str()).await {
+                    Ok(task_note) => task_notes.push(task_note),
+                    Err(e) => info!("Error converting cust msg into task note: {e:?}"),
+                }
                 customer_messages.push(msg)
             }
         }
@@ -728,6 +780,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
             address: tmp_address,
             customer_threads,
             customer_messages,
+            task_notes
         }
     )
 }
@@ -744,17 +797,24 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         .await?;
 
     let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+    let mut task_notes: Vec<TaskNotePayload> = Vec::new();
 
     if !customer_threads.is_empty() {
         for thread in customer_threads.iter() {
             for msg in thread.associations.customer_messages.iter() {
-                let msg =  api_call
+                let msg: CustomerMessage =  api_call
                     .request_subresources_by_id_wasm(
                         "customer_messages",
                         "customer_message",
                         msg.id.as_str(),
                     )
                     .await?;
+
+                match msg.into_task_note(order_number).await {
+                    Ok(task_note) => task_notes.push(task_note),
+                    Err(e) => info!("Error converting cust msg into task note: {e:?}"),
+                }
+
                 customer_messages.push(msg)
             }
         }
@@ -833,10 +893,10 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
             address,
             customer_threads,
             customer_messages,
+            task_notes,
         }
     )
 }
-
 
 /// Returns a vector of missing call days (formatted as "YYYY-MM-DD")
 /// for days (between the day after check‑in and today, skipping Sundays)

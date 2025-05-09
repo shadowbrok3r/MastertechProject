@@ -104,7 +104,7 @@ impl EasyMarkEditor {
 
             TextEdit::multiline(message)
                 .margin(Margin::symmetric(6, 3))
-                .desired_rows(10)
+                .desired_rows(5)
                 .desired_width(f32::INFINITY)
                 .layouter(&mut layouter)
                 .ui(ui)
@@ -126,7 +126,7 @@ impl EasyMarkEditor {
         } else {
             TextEdit::multiline(message)
                 .margin(Margin::symmetric(6, 3))
-                .desired_rows(10)
+                .desired_rows(5)
                 .desired_width(f32::INFINITY)
                 .ui(ui)
         };

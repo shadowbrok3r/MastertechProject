@@ -97,10 +97,10 @@ impl TabViewer for MastertechContext {
             #[cfg(target_os = "windows")]
             "Minidump Analysis" => self.mini_dump(ui),
             "QC ☑️" => self.quality_check(ui),
-            "My Tasks" => self.shared_ctx.my_tasks(ui),
             "Ai" => self.shared_ctx.ai_playground(ui),
-            "Store Tasks" => self.shared_ctx.store_tasks(ui),
-            "Completed Tasks" => self.shared_ctx.completed_tasks(ui),
+            "Store Tasks" => self.shared_ctx.render_layout(ui, "StoreTasks"),
+            "My Tasks" => self.shared_ctx.render_layout(ui, "MyTasks"),
+            "Completed Tasks" => self.shared_ctx.render_layout(ui, "CompletedTasks"),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),

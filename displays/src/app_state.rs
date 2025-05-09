@@ -1,5 +1,5 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, admin_console::AdminConsole}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -179,6 +179,12 @@ pub struct SharedContext {
     #[serde(skip)]
     pub web_console_layout: AdminConsole,
     pub room_id: String,
+    #[serde(skip)]
+    pub associated_notes_tx: Sender<Vec<TaskNotePayload>>,
+    #[serde(skip)]
+    pub associated_notes_rx: Receiver<Vec<TaskNotePayload>>,
+    #[serde(skip)]
+    pub layout_configs: Option<HashMap<String, LayoutConfig>>, // Lazy initialization
 }
 
 impl SharedContext {
@@ -192,7 +198,7 @@ impl SharedContext {
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
-        
+        let (associated_notes_tx, associated_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();
         let (connected_clients_tx, connected_clients_rx) =
             channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
@@ -221,6 +227,7 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
+            layout_configs: None,
             current_user: None,
             tasks: Vec::new(),
             store_users: Vec::new(),
@@ -242,6 +249,7 @@ impl SharedContext {
             live_clients_rx,
             tasks_tx,
             tasks_rx,
+            associated_notes_tx, associated_notes_rx,
             initial_tasks_tx,
             initial_tasks_rx,
             store_users_tx,
@@ -298,6 +306,82 @@ impl SharedContext {
             filesystem,
             web_console_layout,
             room_id: String::new(),
+        }
+    }
+
+    pub fn init_layout_configs(&mut self) {
+        if self.layout_configs.is_none() && !self.store_users.is_empty() {
+            let mut layout_configs = HashMap::new();
+
+            // MyTasks: Current user's tasks, non-Complete, keyed by status
+            layout_configs.insert(
+                "MyTasks".to_string(),
+                LayoutConfig {
+                    valid_keys: vec!["Todo".to_string(), "InRepair".to_string()],
+                    key_provider: Box::new(|_| {
+                        vec!["Todo".to_string(), "InRepair".to_string()]
+                    }),
+                    filter: Box::new(|task, current_user, _store_users, _store| {
+                        current_user
+                            .as_ref()
+                            .map(|user| task.assignee == user.id && task.status != Status::Complete)
+                            .unwrap_or(false)
+                    }),
+                    update_assignees: false,
+                },
+            );
+
+            // StoreTasks: Incomplete tasks for store users, keyed by initials
+            layout_configs.insert(
+                "StoreTasks".to_string(),
+                LayoutConfig {
+                    valid_keys: self
+                        .store_users
+                        .iter()
+                        .map(|u| u.everest_initials.to_string())
+                        .collect(),
+                    key_provider: Box::new(|users| {
+                        users.iter().map(|u| u.everest_initials.to_string()).collect()
+                    }),
+                    filter: Box::new(|task, current_user, store_users, store| {
+                        current_user
+                            .as_ref()
+                            .map(|current| {
+                                store_users.iter().any(|u| {
+                                    u.store == *store
+                                        && u.email != current.email
+                                        && task.assignee == u.id
+                                        && !task.completed
+                                })
+                            })
+                            .unwrap_or(false)
+                    }),
+                    update_assignees: true,
+                },
+            );
+
+            // CompletedTasks: Completed tasks for store users, keyed by initials
+            layout_configs.insert(
+                "CompletedTasks".to_string(),
+                LayoutConfig {
+                    valid_keys: self
+                        .store_users
+                        .iter()
+                        .map(|u| u.everest_initials.to_string())
+                        .collect(),
+                    key_provider: Box::new(|users| {
+                        users.iter().map(|u| u.everest_initials.to_string()).collect()
+                    }),
+                    filter: Box::new(|task, _current_user, store_users, store| {
+                        store_users.iter().any(|u| {
+                            u.store == *store && task.assignee == u.id && task.completed
+                        })
+                    }),
+                    update_assignees: true,
+                },
+            );
+
+            self.layout_configs = Some(layout_configs);
         }
     }
 

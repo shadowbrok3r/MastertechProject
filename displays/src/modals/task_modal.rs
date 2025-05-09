@@ -1,5 +1,6 @@
-use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload, User}, DATABASE};
+use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
+use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload, User, COMPUTER_TABLE}, DATABASE};
+use surrealdb::RecordId;
 use crate::{chats::ChatView, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
@@ -10,7 +11,9 @@ use serde::Serialize;
 use std::sync::Arc;
 use bytes::Bytes;
 use core::f32;
-use log::info; // error, 
+use log::info;
+use egui_taffy::{taffy::{self, prelude::line}, tui, TuiBuilderLogic};
+use taffy::{prelude::{fr, length, percent}, Style as TaffyStyle};
 
 #[cfg(target_arch="wasm32")]
 use std::sync::Mutex;
@@ -98,106 +101,158 @@ impl TaskModal {
     }
 }
 
-
-
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
-        let avail_size = Vec2::new(680.0, 620.0);
+        let avail_size = Vec2::new(710.0, 620.0);
         ui.set_min_size(avail_size);
-        
-        ui.vertical_centered(|ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(15.0);
+        ui.set_max_size(Vec2::new(710.0, 800.0));
+        ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
-                let delete_btn = Button::new(
-                    RichText::new("Delete Task").color(Color32::LIGHT_RED),
-                )
-                .ui(ui)
-                .on_hover_text("Double Click To Delete Task");
+        TopBottomPanel::top(format!("Top panel header {}", self.task.id.key().to_string())).exact_height(28.).show_inside(ui, |ui| {
+            tui(ui, format!("Grid  layout 4 {}", self.task.id.key().to_string()))
+            .reserve_available_space()
+            .style(TaffyStyle {
+                display: taffy::Display::Flex,
+                flex_direction: taffy::FlexDirection::Row,
+                justify_content: Some(taffy::JustifyContent::SpaceBetween),
+                size: percent(1.),
+                gap: length(0.0),  
+                ..Default::default()
+            })
+            .show(|tui| {
+                tui.style(TaffyStyle {
+                    flex_grow: 1.0,                  // ← equal slice of row
+                    flex_basis: percent(0.0),        // ← ignore intrinsic width
+                    align_self: Some(taffy::AlignItems::Stretch), // stretch to full row height
+                    flex_direction: taffy::FlexDirection::Column,
+                    align_content: Some(taffy::AlignContent::Center),
+                    ..Default::default()
+                }).add(|tui| {
+                    tui.ui(|ui| {
+                        let full_w = ui.available_width();
+                        let delete_btn = Button::new(
+                            RichText::new("Delete Task").color(Color32::LIGHT_RED),
+                        )
+                        .min_size([full_w/1.7, 22.0].into())
+                        .ui(ui)
+                        .on_hover_text("Double Click To Delete Task");
 
-                if delete_btn.double_clicked() {
-                    let task_id = self.task.id.clone();
-                    PlatformSpawner::spawn(async move {
-                        match delete_task(task_id).await {
-                            Ok(_) => info!("Deleted task"),
-                            Err(e) => info!("Error: {e:?}"),
+                        if delete_btn.double_clicked() {
+                            let task_id = self.task.id.clone();
+                            PlatformSpawner::spawn(async move {
+                                match delete_task(task_id).await {
+                                    Ok(_) => info!("Deleted task"),
+                                    Err(e) => info!("Error: {e:?}"),
+                                }
+                            });
+                            self.current_page_state = ModalAction::Close;
                         }
                     });
-                    self.current_page_state = ModalAction::Close;
-                }
+                });
 
-                ui.add_space(175.0);
+                tui.style(TaffyStyle {
+                    flex_grow: 1.0,                  // ← equal slice of row
+                    flex_basis: percent(0.0),        // ← ignore intrinsic width
+                    align_self: Some(taffy::AlignItems::Center), // stretch to full row height
+                    flex_direction: taffy::FlexDirection::Column,
+                    align_content: Some(taffy::AlignContent::Center),
+                    align_items: Some(taffy::AlignItems::Center),
+                    ..Default::default()
+                }).add_with_border(|tui| {
+                    tui.ui(|ui| {
+                        ui.with_layout(
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                macro_rules! icon {
+                                    ($state:expr, $page:expr, $glyph:literal) => {
+                                        if ui
+                                            .add_sized(
+                                                [22., 22.],
+                                                eframe::egui::SelectableLabel::new(
+                                                    $state == $page,
+                                                    RichText::new($glyph).heading(),
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            $state = $page;
+                                        }
+                                    };
+                                }
 
-                if self.task.service_ticket.is_some() {
-                    if ui
-                        .selectable_label(self.current_page_state == ModalAction::TicketInfoPage, RichText::new("🖹").heading())
-                        .clicked()
-                    {
-                        self.current_page_state = ModalAction::TicketInfoPage;
-                    };
-                    if ui
-                        .selectable_label(self.current_page_state == ModalAction::ComputerInfoPage,RichText::new("🖥").heading())
-                        .clicked()
-                    {
-                        self.current_page_state = ModalAction::ComputerInfoPage;
-                    };
-                    if ui
-                        .selectable_label(self.current_page_state == ModalAction::SoftwareInfoPage,RichText::new("💾").heading())
-                        .clicked()
-                    {
-                        self.current_page_state = ModalAction::SoftwareInfoPage;
-                    };
-                } else {
-                    if ui
-                        .selectable_label(self.current_page_state == ModalAction::TaskPage, RichText::new("🖹").heading())
-                        .clicked()
-                    {
-                        self.current_page_state = ModalAction::TaskPage;
-                    };
-                }
+                                if self.task.service_ticket.is_some() {
+                                    icon!(self.current_page_state, ModalAction::TicketInfoPage,   "🖹");
+                                    icon!(self.current_page_state, ModalAction::ComputerInfoPage, "🖥");
+                                    icon!(self.current_page_state, ModalAction::SoftwareInfoPage, "💾");
+                                } else {
+                                    icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
+                                }
+                                icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
+                                icon!(self.current_page_state, ModalAction::TaskNotePage,  "💬");
+                            },
+                        );
+                    });
+                });
 
-                if ui.selectable_label(self.current_page_state == ModalAction::JobBuilderPage, RichText::new("📝").heading())
-                    .clicked()
-                {
-                    self.current_page_state = ModalAction::JobBuilderPage;
-                };
-                if ui.selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
-                    .clicked()
-                {
-                    self.current_page_state = ModalAction::TaskNotePage;
-                };
-
-                ui.add_space(125.);
-
-                ui.colored_label(Color32::LIGHT_RED, "Completed: ");
-                ui.add_space(10.0);
-                ui.push_id(format!("Completed {}", self.task.completed), |ui| {
-                    self.task.interact_completed(ui);
+                tui.style(TaffyStyle {
+                    flex_grow: 1.0,                  // ← equal slice of row
+                    flex_basis: percent(0.0),        // ← ignore intrinsic width
+                    align_self: Some(taffy::AlignItems::Stretch), // stretch to full row height
+                    flex_direction: taffy::FlexDirection::Column,
+                    align_content: Some(taffy::AlignContent::Center),
+                    ..Default::default()
+                }).add(|tui| {
+                    tui.ui(|ui| {
+                        ui.with_layout(
+                            Layout::right_to_left(Align::Center),
+                            |ui| 
+                        {
+                            ui.push_id(
+                                format!("Completed {}", self.task.completed),
+                                |ui| self.task.interact_completed(ui),
+                            );
+                            ui.add_space(6.0);
+                            ui.colored_label(Color32::LIGHT_RED, "Completed:");
+                        });
+                    });
                 });
             });
-
-            ui.scope(|ui| {
-                ui.set_max_width(avail_size.x / 1.1);
-                ui.add_space(10.0);
-                Separator::default().shrink(50.0).ui(ui);
-                ui.add_space(10.0);
-            });
-
-            ui.horizontal_centered(|ui| {
-                ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
-                ui.add_space(10.0);
-                let store_users = self.store_users.clone();
-                match self.current_page_state {
-                    ModalAction::TicketInfoPage => display_ticket_page(ui, &mut self.task, avail_size, &store_users),
-                    ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
-                    ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
-                    ModalAction::JobBuilderPage => display_job_builder_page(ui),
-                    ModalAction::TaskNotePage => { let _ = self.chat_view.ui(ui); },
-                    ModalAction::TaskPage => display_task_page(ui, &mut self.task),
-                    _ => {}
-                };
-            });
         });
+
+        ui.add_space(20.);
+        tui(ui, format!("Grid layout {}", self.task.id.key().to_string()))
+            .reserve_available_space()
+            .style(TaffyStyle {
+                display: taffy::Display::Grid,
+                grid_template_columns: vec![
+                    length(15.),   // left gutter
+                    fr(1.0),      // stretchy middle track
+                    length(10.),   // right gutter
+                ],
+                size: percent(1.0),
+                ..Default::default()
+            })
+            .show(|tui| {
+                // put the page body in column 2 (1‑based index)
+                tui.style(TaffyStyle {
+                    grid_column: line(2),
+                    ..Default::default()
+                })
+                .add(|tui| {
+                    tui.ui(|ui| {
+                        let store_users = self.store_users.clone();
+                        match self.current_page_state {
+                            ModalAction::TicketInfoPage   => display_ticket_page   (ui, &mut self.task, avail_size, &store_users),
+                            ModalAction::ComputerInfoPage => display_computer_page (ui, &mut self.task, avail_size),
+                            ModalAction::SoftwareInfoPage => display_software_page (ui, &mut self.task, avail_size),
+                            ModalAction::JobBuilderPage   => display_job_builder_page(ui),
+                            ModalAction::TaskNotePage     => { let _ = self.chat_view.ui(ui); },
+                            ModalAction::TaskPage         => display_task_page(ui, &mut self.task),
+                            _ => {}
+                        }
+                    });
+                });
+            });
 
         if self.current_page_state == ModalAction::Close {
             action_handler(ModalAction::Close);
@@ -218,31 +273,16 @@ pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload) {
 }
 
 pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>) {
-    ui.add_space(10.0);
-
-    ui.horizontal(|ui| ui.add_space(5.));
-
-    ui.vertical_centered(|ui| {
-        Grid::new("Task Header Grid")
-            .spacing(Vec2::new(4., 6.))
-            .max_col_width(avail_size.x / 2.15)
-            .min_col_width(avail_size.x / 2.15)
-            .with_row_color(|num, style| return_colors(num, style))
-            .num_columns(2)
-            .show(ui, |ui| 
-        {
-            ui.colored_label(Color32::LIGHT_RED, "Task ID: ");
-            ui.label(task.id.key().to_string());
-            ui.end_row();
-        });
+    ui.vertical_centered_justified(|ui| {
+        ui.colored_label(Color32::LIGHT_GREEN, format!("ID: {}", task.id.key().to_string()));
 
         ui.add_space(10.0);
 
         ui.group(|ui| {
             Grid::new("Task Modal - Task Info Page")
-                .spacing(Vec2::new(4., 6.))
-                .max_col_width(avail_size.x / 4.4)
-                .min_col_width(avail_size.x / 4.4)
+                .spacing(Vec2::new(2., 4.))
+                .max_col_width(avail_size.x / 4.35)
+                .min_col_width(avail_size.x / 4.35)
                 .with_row_color(|num, style| return_colors(num, style))
                 .num_columns(4)
                 .show(ui, |ui| 
@@ -265,7 +305,19 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 ui.colored_label(Color32::LIGHT_RED, "Technician");
                 ui.label(&ticket.tech);
                 ui.colored_label(Color32::LIGHT_RED, "Customer ID");
-                ui.label(RichText::new(&customer.cust_code).monospace());
+                ui.horizontal(|ui| {
+                    TextEdit::singleline(&mut customer.cust_code).desired_width(50.).ui(ui);
+
+                    if Button::new("Save").ui(ui).clicked() {
+                        let id_customer = customer.cust_code.clone();
+                        PlatformSpawner::spawn(async move {
+                            let cust_data = CustomerData::find_customer_by_id(&id_customer).await;
+                            log::info!("Cust Data {cust_data:?}");
+                        });
+                    }
+                });
+
+
                 ui.end_row();
 
                 ui.colored_label(Color32::LIGHT_RED, "Salesman");
@@ -316,7 +368,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
 
         ui.group(|ui| {
             Grid::new("Checkin Notes and Recommendations")
-            .spacing(Vec2::new(4., 6.))
+            .spacing(Vec2::new(2., 4.))
             .max_col_width(avail_size.x / 2.15)
             .min_col_width(avail_size.x / 2.15)
             .num_columns(2)
@@ -378,7 +430,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
 
 fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
     let Some(ticket) = task.service_ticket.as_mut() else { return; };
-    let computer = if let Some(computer) = ticket.computer.as_mut() { computer } else { &mut ComputerData::default() };
+    let computer = if let Some(computer) = ticket.computer.as_mut() { computer } else { &mut ComputerData{ id: RecordId::from((COMPUTER_TABLE, "")), ..Default::default() } };
 
     ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
 
@@ -499,11 +551,11 @@ fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
     let computer = if let Some(computer) = ticket.computer.as_ref() { computer } else { &ComputerData::default() };
 
     let seb_info = computer.seb_info.as_ref();
-    ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
+    ui.horizontal(|ui: &mut Ui| ui.add_space(15.0));
 
     ScrollArea::vertical()
         .max_height(f32::INFINITY)
-        .max_width(680.0)
+        .max_width(avail_size.x)
         .auto_shrink(Vec2b::new(false, false))
         .show(ui, |ui|
     {
@@ -631,32 +683,31 @@ fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                 ui.add_space(8.0);
             });
 
-            // ui.group(|ui: &mut Ui| {
-                Grid::new("other_software_grid").spacing(Vec2::new(0.0, 6.0))
-                    .max_col_width(avail_size.x / 2.15)
-                    .min_col_width(avail_size.x / 2.15)
-                    .with_row_color(|num, style| return_colors(num, style))
-                    .num_columns(2)
-                    .show(ui, |ui| 
-                {
-                    ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
-                    if let Some(antivirus) = ticket.current_antivirus.as_ref() {
-                        if antivirus.len() == 0 {
-                            ui.end_row();
-                        }
-        
+            if let Some(antivirus) = ticket.current_antivirus.as_ref() {
+                ui.group(|ui: &mut Ui| {
+                    Grid::new("other_software_grid")
+                        .spacing(Vec2::new(0.0, 6.0))
+                        .spacing(Vec2::new(2., 4.))
+                        .max_col_width(avail_size.x / 2.15)
+                        .min_col_width(avail_size.x / 2.15)
+                        .with_row_color(|num, style| return_colors(num, style))
+                        .num_columns(2)
+                        .show(ui, |ui| 
+                    {
+                        ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
+                        ui.label("");
+                        ui.end_row();
                         for antivirus in antivirus.iter() {
                             ui.label(antivirus);
                             ui.end_row();
                         }
-                    } else {
+
+                        ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
+                        ui.label("");
                         ui.end_row();
-                    }
-
-                    ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
-
+                    });
                 });
-            // });
+            }
         });
     });
 }

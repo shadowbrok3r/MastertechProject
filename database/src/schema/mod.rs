@@ -732,6 +732,14 @@ impl Status {
             Status::CustomStatus(status) => &status
         }
     }
+    pub fn from_str(status: &str) -> Self {
+        match status {
+            "Todo" => Status::Todo,
+            "In Repair" => Status::InRepair,
+            "Complete" => Status::Complete,
+            _ => Status::CustomStatus(status.to_string())
+        }
+    }
 }
 
 impl User {

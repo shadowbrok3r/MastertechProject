@@ -40,7 +40,7 @@ impl ModalWindow for ModalType {
         shadow.blur = 1;
         shadow.spread = 3;
         shadow.color = style.window_stroke.color;
-        let title_color = RichText::new(title.clone()).color(style.warn_fg_color);
+        let title_color = RichText::new(title.clone()).heading().color(style.warn_fg_color);
 
         let mut handle_action = |action: ModalAction| {
             if let ModalAction::Close = action {
@@ -58,11 +58,15 @@ impl ModalWindow for ModalType {
                 .corner_radius(style.menu_corner_radius)
                 .shadow(shadow)
             )
-            .pivot(Align2::CENTER_TOP)
-            .default_width(680.0)
+            .pivot(Align2::CENTER_CENTER)
+            // .max_width(722.)
+            // .resizable([false, false])
+            .max_height(800.)
+            .default_width(722.0)
             .open(&mut open)
             .title_bar(true);
 
+        
         window.show(ctx, |ui| {
             match self {
                 ModalType::CreateTaskModal(create_task_modal) => create_task_modal.display(ui, &mut handle_action),
@@ -75,6 +79,7 @@ impl ModalWindow for ModalType {
             }
         });
 
+        
         // Synchronize the `open` state after the window logic is processed
         if close_requested {
             open = false; // Close the modal based on the flag

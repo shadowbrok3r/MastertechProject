@@ -43,7 +43,7 @@ bytes = { workspace=true }
 regex = { workspace=true }
 async-trait = { workspace = true }
 once_cell = { workspace=true }
-
+egui_taffy = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace=true, optional = true }
