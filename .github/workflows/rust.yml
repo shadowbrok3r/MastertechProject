@@ -62,13 +62,13 @@ jobs:
           tags: shadowbrok3r/mtechserver:beta
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
 
-  deploy:
-    name: Deploy
-    needs: docker
-    runs-on: self-hosted
-    steps:
-      - uses: ghostzero/kubectl@v1
-        env:
-          KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
-        with:
-          args: '"rollout restart deployment mtechserver-beta -n rust"'
+  # deploy:
+  #   name: Deploy
+  #   needs: docker
+  #   runs-on: self-hosted
+  #   steps:
+  #     - uses: ghostzero/kubectl@v1
+  #       env:
+  #         KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
+  #       with:
+  #         args: '"rollout restart deployment mtechserver-beta -n rust"'
