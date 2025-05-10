@@ -122,23 +122,11 @@ async fn main() -> eframe::Result<()> {
         }
     }
 
-    // let res = std::thread::spawn(move || {
-        let old_exe = std::env::current_dir().unwrap().join("MasterTech.exe");
-        let current_exe = std::env::current_exe();
-        if let Ok(current) = current_exe.as_ref() {
-            if current.file_name() == Some(OsStr::new("git-MasterTech.exe")) && old_exe.exists() {
-                match std::fs::remove_file(old_exe) {
-                    Ok(_) => {
-                        log::info!("Removed old exe");
-                        if let Ok(_) = std::fs::rename(std::env::current_exe().unwrap(), "Mastertech.exe") {
-                            log::info!("Renamed exe");
-                        }
-                    },
-                    Err(e) => log::info!("Error removing old exe: {e:?}"),
-                }
-            }
-        }
-    // }).join();
+    match check_old_exe() {
+        Ok(_) => log::info!("check_old_exe ran ok"),
+        Err(e) => log::info!("check_old_exe Err: {e:?}"),
+    }
+
 
     // tokio::spawn(async move {
     //     utilities::ai::run_mcp_server_tcp().await?;
@@ -233,6 +221,29 @@ async fn main() -> eframe::Result<()> {
         }
     }
     
+    Ok(())
+}
+
+fn check_old_exe() -> anyhow::Result<(), anyhow::Error> {
+    let old_exe = std::env::current_dir()?;
+    // for dir in old_exe.read_dir()? {
+    //     let entry = dir?;
+    //     let file_name = entry.file_name().into_string().unwrap_or_default();
+    //     let file = entry.path();
+    //     if file_name.contains("__selfdelete__") {
+    //         std::fs::remove_file(file)?;
+    //     }
+    // }
+
+    if std::env::current_exe()?.file_name() == Some(OsStr::new("git-MasterTech.exe")) && old_exe.join("MasterTech.exe").exists() {
+        match std::fs::remove_file(old_exe) {
+            Ok(_) => {
+                log::info!("Removed old exe");
+                std::fs::rename(std::env::current_exe()?, "Mastertech.exe")?;
+            },
+            Err(e) => log::info!("Error removing old exe: {e:?}"),
+        }
+    }
     Ok(())
 }
 

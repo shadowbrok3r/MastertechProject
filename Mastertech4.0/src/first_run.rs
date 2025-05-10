@@ -1,4 +1,4 @@
-use crate::{filesystem::system_info::generate_client_id, tabs::tur_sheet::scaffold::AsanaResponse};
+use crate::{filesystem::system_info::generate_client_id, tabs::{github::get_github_releases, tur_sheet::scaffold::AsanaResponse}};
 use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use database::{schema::{ComputerData, ExtendedSeb, LocalSebData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
@@ -16,8 +16,15 @@ use tokio::spawn;
 impl MasterTechApp {
     pub fn first_run(&mut self) {
         self.context.first_run = false;
-        // let x = std::env::current_exe().unwrap();
-        // std::fs::rename( x, "Mastertech1").unwrap();
+        let github_tx = self.context.github_releases_channel.0.clone();
+        let client = self.context.client.clone();
+        spawn(async move {
+            match get_github_releases(github_tx, client).await {
+                Ok(_) => info!("get_github_releases ran ok"),
+                Err(e) => error!("Error getting github releases: {e:?}"),
+            }
+        });
+        
         let tx = self.context.shared_ctx.db_tx.clone();
         let pair = Arc::new(
             (Mutex::new(ComputerData::default()), Condvar::new())
@@ -179,30 +186,23 @@ impl MasterTechApp {
                 self.context.progress = (0.0, 0.0);
                 self.context.output_text += "\nFinished";
                 let current_exe = std::env::current_dir().unwrap().join("git-MasterTech.exe");
-                // #[cfg(target_os = "windows")]
-                // {
-                //     use std::os::windows::process::CommandExt;
-                //     std::process::Command::new("cmd")
-                //         .arg("/C")
-                //         .arg(&current_exe)
-                //         .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
-                //         .creation_flags(0x00000008) // DETACHED_PROCESS flag
-                //         .spawn()
-                //         .unwrap();
-                // }
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    std::process::Command::new("cmd")
+                        .arg("/C")
+                        .arg(&current_exe)
+                        .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
+                        .creation_flags(0x00000008) // DETACHED_PROCESS flag
+                        .spawn()
+                        .unwrap();
+                }
                 let replacement = self_replace::self_replace(&current_exe);
                 log::info!("Replacement: {replacement:?}");
                 let rm = std::fs::remove_file(&current_exe);
                 log::info!("Removal: {rm:?}");
 
                 ctx.send_viewport_cmd(ViewportCommand::Close);
-                // else if mtech_linux_path.exists() {
-                //     let mut mtech_cmd = std::process::Command::new(mtech_linux_path);
-                //     if mtech_cmd.status().is_ok() {
-                //         info!("Mtech opened, closing current window");
-                //         ctx.send_viewport_cmd(ViewportCommand::Close);
-                //     }
-                // }
             }
         }
 
