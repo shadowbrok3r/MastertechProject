@@ -146,6 +146,7 @@ pub struct MastertechContext {
 
     pub github_issue_title: String,
     pub github_issue_descript: String,
+    pub github_issue_user: String,
 
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
 
@@ -157,8 +158,8 @@ pub struct MastertechContext {
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
 
-    pub cps_keys_tx: Sender<GetKeysResponse>,
-    pub cps_keys_rx: Receiver<GetKeysResponse>,
+    pub cps_keys_tx: Sender<Vec<GetKeysResponse>>,
+    pub cps_keys_rx: Receiver<Vec<GetKeysResponse>>,
 
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
@@ -190,7 +191,7 @@ impl MasterTechApp {
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
-        let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
+        let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<Vec<GetKeysResponse>>();
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
@@ -304,6 +305,7 @@ impl MasterTechApp {
 
             github_issue_title: Default::default(),
             github_issue_descript: Default::default(),
+            github_issue_user: Default::default(),
             scripts: Default::default(),
             progress: (0.0, 0.0),
             special_part_order: Default::default(),

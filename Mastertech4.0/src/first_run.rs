@@ -208,7 +208,8 @@ impl MasterTechApp {
 
         if let Ok(keys) = self.context.cps_keys_rx.try_recv() {
             ctx.request_repaint();
-            if keys.webroot_key.contains("Error") {
+            let key = keys.get(0).cloned().unwrap_or_default();
+            if key.webroot_key.contains("Error") {
                 let toast = &mut self.context.shared_ctx.toasts;
                 self.context.output_text =
                     "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
@@ -221,7 +222,7 @@ impl MasterTechApp {
                 };
                 toast.add(error_toast);
             }
-            self.context.keys = keys;
+            self.context.keys = key;
         }
 
         if let Ok(state) = self.context.app_state_rx.try_recv() {

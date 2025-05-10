@@ -1,3 +1,4 @@
+use database::schema::User;
 use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
 use log::{error, info};
 use reqwest::{
@@ -14,6 +15,7 @@ pub const TOKEN: &str =
 pub struct GithubIssue {
     pub github_issue_descript: String,
     pub github_issue_title: String,
+    pub user: Option<User>,
 }
 
 impl MtechServerContext {
@@ -32,7 +34,12 @@ impl MtechServerContext {
         ui.style_mut().visuals.widgets.hovered.bg_stroke =
             Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
-        self.github_issue.display(ui);
+        if let Some(user) = &self.shared_ctx.current_user {
+            if self.github_issue.user.is_none() {
+                self.github_issue.set_user(user.clone());
+            }
+            self.github_issue.display(ui);
+        }
     }
 }
 
@@ -41,7 +48,12 @@ impl GithubIssue {
         Self {
             github_issue_descript: String::new(),
             github_issue_title: String::new(),
+            user: None
         }
+    }
+
+    pub fn set_user(&mut self, user: User) {
+        self.user = Some(user);
     }
 
     fn display(&mut self, ui: &mut Ui) {
@@ -67,7 +79,13 @@ impl GithubIssue {
 
             if submit.clicked() {
                 let github_issue_title = self.github_issue_title.clone();
-                let github_issue_descript = self.github_issue_descript.clone();
+                let current_user = self.user.clone().unwrap_or_default();
+                let github_issue_descript = format!(
+                    "{}\nUser: {} - {}", 
+                    self.github_issue_descript.clone(), 
+                    current_user.name, 
+                    current_user.email
+                );
 
                 spawn_local(async move {
                     let client = Client::new();

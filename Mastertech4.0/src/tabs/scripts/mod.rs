@@ -3,7 +3,6 @@ use crate::{app_state::MastertechContext, tabs::tur_sheet::get_ticket::SendReque
 use displays::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use std::{collections::HashMap, sync::Arc};
-use database::schema::GetKeysResponse;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -236,7 +235,7 @@ impl Scripts {
 
             if downloaded_bytes == total_length {
                 let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
-                let cps_keys = cps_request.await.unwrap_or(GetKeysResponse::default());
+                let cps_keys = cps_request.await.unwrap_or(vec![]);
 
                 info!("cps_keys: {:?}", cps_keys.clone());
 
@@ -295,7 +294,7 @@ impl Scripts {
 
             if downloaded_bytes == total_length {
                 let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
-                let cps_keys = cps_request.await.unwrap_or(GetKeysResponse::default());
+                let cps_keys = cps_request.await.unwrap_or(vec![]);
 
                 info!("cps_keys: {:?}", cps_keys.clone());
 

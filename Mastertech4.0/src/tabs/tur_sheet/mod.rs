@@ -1,6 +1,6 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
-use database::schema::{helper_traits::parse_email_user, CarboniteResponse, CustomerData, GetKeysResponse, LiveTaskPayload, TicketData};
+use database::schema::{helper_traits::parse_email_user, CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use std::{collections::BTreeSet, f32};
 use get_ticket::SendRequest;
@@ -242,15 +242,20 @@ impl MastertechContext {
             Button::new("Get Keys").min_size(vec2(140., 3.0))
             )
             .clicked(){ 
-                let service_num = self.ticket_data.service_number.clone();
                 self.spinner = true;
-
-                let cps_request = SendRequest::get_cps(service_num, self.client.clone());
+                let client = self.client.clone();
                 let cps_tx = self.cps_keys_tx.clone();
+                let service_num = self.ticket_data.service_number.clone();
 
                 spawn(async move{
-                    let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
-                    match cps_tx.try_send(unwrapped_request){
+                    match cps_tx.try_send(
+                            SendRequest::get_cps(
+                                service_num, 
+                                client
+                            )
+                            .await
+                            .unwrap_or(vec![])
+                        ) {
                         Ok(_) => info!("GetKeysClick -> sent keys successfully"),
                         Err(err) => debug!("GetKeysClick -> Error propogating GetKeysResponse to callee -> {err:?}")
                     }

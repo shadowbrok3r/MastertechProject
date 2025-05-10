@@ -28,6 +28,9 @@ pub static CURRENT_USER_INFO: Lazy<std::sync::Mutex<Option<User>>> = Lazy::new(|
     std::sync::Mutex::new(None) // Initialize with no user logged in
 });
 
+pub static STORE_USERS: Lazy<std::sync::Mutex<Vec<User>>> = Lazy::new(|| {
+    std::sync::Mutex::new(vec![]) 
+});
 
 pub use platform::PlatformSpawner;
 pub trait Spawner {
@@ -136,6 +139,12 @@ impl Database {
                 info!("Have a JWT, attempting token auth");
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
+                if !users.is_empty() {
+                    if let Ok(mut users_guard) = STORE_USERS.try_lock() {
+                        *users_guard = users.clone(); 
+                    }
+                }
                 if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
                     // log::warn!("SET THE USER: {:?}", user_info_guard.clone());
                     *user_info_guard = user.clone(); // Set the user info
@@ -156,6 +165,12 @@ impl Database {
                     .await?;
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
+                if !users.is_empty() {
+                    if let Ok(mut users_guard) = STORE_USERS.try_lock() {
+                        *users_guard = users.clone(); 
+                    }
+                }
 
                 if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
                     // log::warn!("SET THE USER: {:?}", user_info_guard.clone());

@@ -42,7 +42,7 @@ impl SendRequest {
     pub async fn get_cps(
         so_number: String,
         client: reqwest::Client,
-    ) -> anyhow::Result<GetKeysResponse, anyhow::Error> {
+    ) -> anyhow::Result<Vec<GetKeysResponse>, anyhow::Error> {
         let json = serde_json::json!({
             "user_email": "logan.lees@pclaptops.com",
             "user_password": "Poolparty1",
@@ -62,44 +62,35 @@ impl SendRequest {
             .await?;
 
         let response_text: Vec<License> = response.json().await?;
+        info!("Response: {:?}", response_text);
 
-        log::info!("Response: {:?}", response_text);
+        // Separate SAS and WRAV keys
+        let mut sas_keys = Vec::new();
+        let mut wrav_keys = Vec::new();
 
-        let mut _webroot_key = "";
-        let mut _superanti_key = "";
-
-        let sas_key = response_text.get(0);
-        let wrsa_key = response_text.get(1);
-
-        if let Some(sas) = sas_key {
-            _superanti_key = &sas.key;
-        } else {
-            _superanti_key = "Error";
-        }
-        if let Some(wrsa) = wrsa_key {
-            _webroot_key = &wrsa.key;
-        } else {
-            _webroot_key = "Error";
+        for license in response_text {
+            match license.r#type.as_str() {
+                "SAS" => sas_keys.push(license.key),
+                "WRAV" => wrav_keys.push(license.key),
+                other => log::warn!("Unexpected license type: {}", other),
+            }
         }
 
-        // if response_text.contains("WRAV: ") || response_text.contains("SAS: ") {
-        //     let re =
-        //         Regex::new(r"SAS: (\w{4}-\w{4}-\w{5})\nWRAV: (\w{4}-\w{4}-\w{4}-\w{4}-\w{4})\n")
-        //             .unwrap();
-        //     let captures = re.captures(&response_text).expect("Regex did not match");
-        //     _webroot_key = captures.get(2).map_or("", |m| m.as_str());
-        //     _superanti_key = captures.get(1).map_or("", |m| m.as_str());
-        // } else {
-        //     _webroot_key = "Error";
-        //     _superanti_key = "Check console";
-        // }
+        // Pair keys, padding with empty strings if uneven
+        let max_len = sas_keys.len().max(wrav_keys.len());
+        let mut result = Vec::new();
 
-        let response_keys = GetKeysResponse {
-            webroot_key: _webroot_key.to_string(),
-            superanti_key: _superanti_key.to_string(),
-        };
+        for i in 0..max_len {
+            let sas_key = sas_keys.get(i).cloned().unwrap_or_default();
+            let wrav_key = wrav_keys.get(i).cloned().unwrap_or_default();
+            result.push(GetKeysResponse {
+                superanti_key: sas_key,
+                webroot_key: wrav_key,
+            });
+        }
 
-        Ok(response_keys)
+        info!("Processed keys: {:?}", result);
+        Ok(result)
     }
 
 }
