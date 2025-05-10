@@ -1,6 +1,6 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
-use database::schema::{LiveTaskPayload, Record, Status, Store, TaskPayload, User};
+use database::schema::{LiveTaskPayload, Record, Store, TaskPayload, User};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
 use std::collections::BTreeSet;

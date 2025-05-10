@@ -25,9 +25,6 @@ pub struct SharedContext {
     /// {Task layouts for different tabs}
     #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
-    pub rerun_filtering_my_tasks: bool,
-    pub rerun_filtering_store_tasks: bool,
-    pub rerun_filtering_completed: bool,
     /// {All task data}
     pub tasks: Vec<TaskPayload>,
 
@@ -234,9 +231,6 @@ impl SharedContext {
             ui_actions_tx,
             ui_actions_rx,
             task_layouts: HashMap::new(),
-            rerun_filtering_my_tasks: false,
-            rerun_filtering_store_tasks: false,
-            rerun_filtering_completed: false,
             store_selection: 76,
 
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),

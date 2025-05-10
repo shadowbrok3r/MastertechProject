@@ -1,6 +1,4 @@
-pub mod my_tasks;
-pub mod store_tasks;
-pub mod completed_tasks;
+pub mod tasks;
 pub mod aging_tasks;
 pub mod all_tasks;
 pub mod logger;

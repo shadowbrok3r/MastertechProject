@@ -100,19 +100,19 @@ impl Displayable for TaskPayload {
                     let _ = self.interact_assignee_initials(ui, store_users);
                 });
 
-                ui.add_space(50.);
+                ui.add_space(35.);
                 
                 ui.push_id(format!("Priority {}", self.id.key().to_string().clone()), |ui| {
                     let _ = self.interact_priority(ui);
                 });
 
-                ui.add_space(50.);
+                ui.add_space(35.);
 
                 ui.push_id(format!("Status {}", self.id.key().to_string().clone()), |ui| {
                     let _ = self.interact_status(ui);
                 });
 
-                ui.add_space(50.);
+                ui.add_space(35.);
 
                 let _ = self.interact_due_date(ui);
             });

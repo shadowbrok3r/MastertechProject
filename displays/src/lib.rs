@@ -1,4 +1,4 @@
-use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO};
+use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO, STORE_USERS};
 use eframe::egui::{Modifiers, Response, Ui};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
@@ -106,24 +106,6 @@ mod platform {
 
 
 pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Error> {
-    // let (tx, rx) = crossbeam::channel::bounded(1);
-
-    // PlatformSpawner::spawn(async move {
-    //     let query = DATABASE
-    //         .query("SELECT * FROM user WHERE id == $auth.id")
-    //         .await;
-
-    //     if let Ok(mut user_result) = query {
-    //         let user = user_result.take::<Option<User>>(0);
-    //         match user {
-    //             Ok(usr) => { let _ = tx.try_send(usr); },
-    //             Err(e) => log::info!("Error getting user: {e:?}"),
-    //         }
-    //     }
-    // });
-    // Ok(rx.try_recv()?)
-
-    // log::warn!("CURRENT_USER_INFO.try_lock(): {:?}", CURRENT_USER_INFO.try_lock());
     if let Ok(current_user) = CURRENT_USER_INFO.try_lock() {
         log::warn!("WE HAVE A USER FROM GLOBAL STATE");
         Ok(current_user.clone())
@@ -131,27 +113,16 @@ pub fn get_current_user_from_auth() -> anyhow::Result<Option<User>, anyhow::Erro
         log::warn!("NONE");
         Ok(None)
     }
-    // Ok()
 }
 
 pub fn get_database_users()  -> anyhow::Result<Vec<User>, anyhow::Error> {
-
-    
-    PlatformSpawner::spawn(async move {
-        let _ = async {
-            let users: Vec<User> = database::DATABASE
-                .query("SELECT * FROM user")
-                .await?
-                .take(0)?;
-
-            let timeout = get_users_channel_sender().try_send(users);
-
-            log::info!("Send Result: {timeout:?}");
-            Ok::<(), anyhow::Error>(())
-        }.await;
-    });
-
-    Ok(get_users_channel_receiver().try_recv()?)
+    if let Ok(users) = STORE_USERS.try_lock() {
+        log::warn!("WE HAVE STORE USERS FROM GLOBAL STATE");
+        Ok(users.clone())
+    } else {
+        log::warn!("NONE");
+        Ok(vec![])
+    }
 }
 
 

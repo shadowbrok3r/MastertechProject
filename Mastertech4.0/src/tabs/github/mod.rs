@@ -36,8 +36,7 @@ impl MastertechContext {
         ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
         ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
         ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
             // vertical_centered(|ui| {
@@ -61,11 +60,20 @@ impl MastertechContext {
 
             if submit.clicked() {
                 let github_issue_title = self.github_issue_title.clone();
-                let github_issue_descript = self.github_issue_descript.clone();
+                let current_user = self.shared_ctx.current_user.clone().unwrap_or_default();
+                let github_issue_descript = format!(
+                    "{}\nUser: {} - {}", 
+                    self.github_issue_descript.clone(), 
+                    current_user.name, 
+                    current_user.email
+                );
                 let client = self.client.clone();
                 spawn(async move {
-                    let create_issue =
-                        create_new_issue(github_issue_title, github_issue_descript, client).await;
+                    let create_issue = create_new_issue(
+                        github_issue_title, 
+                        github_issue_descript, 
+                        client
+                    ).await;
 
                     match create_issue {
                         Ok(val) => info!("Sent request ok: {val:?}"),

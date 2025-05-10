@@ -187,7 +187,7 @@ impl Interaction for TaskPayload {
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
         ComboBox::from_id_salt(Id::new(&self.id.clone().key().to_string()))
             .selected_text(&self.everest_initials)
-            .width(70.)
+            .width(100.)
             .height(ui.available_height())
             .show_ui(ui, |ui| {
                 for user in *&store_users {

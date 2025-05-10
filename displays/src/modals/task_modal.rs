@@ -63,7 +63,13 @@ impl Default for TaskModal {
             current_page_state: ModalAction::TaskPage,
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
-            store_users: Vec::new()
+            store_users: match get_database_users() {
+                Ok(users) => users,
+                Err(e) => {
+                    log::info!("Couldnt get users: {e:?}");
+                    Vec::new()
+                },
+            }
         }
     }
 }
@@ -79,14 +85,6 @@ impl TaskModal {
             }
         }
 
-        let store_users = match get_database_users() {
-            Ok(users) => users,
-            Err(e) => {
-                log::info!("Couldnt get users: {e:?}");
-                Vec::new()
-            },
-        };
-
         Self {
             title: task.task_name.clone(),
             current_page_state: ModalAction::TicketInfoPage,
@@ -96,7 +94,16 @@ impl TaskModal {
             default_height: Some(800.0),
             chat_view,
             spo: SpecialPartOrder::default(),
-            store_users
+            store_users: match get_database_users() {
+                Ok(users) => {
+                    log::info!("Users: {users:?}");
+                    users
+                },
+                Err(e) => {
+                    log::info!("Couldnt get users: {e:?}");
+                    Vec::new()
+                },
+            }
         }
     }
 }
@@ -187,7 +194,7 @@ impl DisplayModal for TaskModal {
                                 } else {
                                     icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
                                 }
-                                icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
+                                // icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
                                 icon!(self.current_page_state, ModalAction::TaskNotePage,  "💬");
                             },
                         );
@@ -367,62 +374,67 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
         ui.add_space(15.);
 
         ui.group(|ui| {
-            Grid::new("Checkin Notes and Recommendations")
-            .spacing(Vec2::new(2., 4.))
-            .max_col_width(avail_size.x / 2.15)
-            .min_col_width(avail_size.x / 2.15)
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.label(
-                        RichText::new("Recommendations:")
-                            .font(FontId::proportional(15.0))
-                    );
+            ScrollArea::vertical()
+            .max_height(avail_size.y/1.3)
+            .show(ui, |ui| 
+            {
+                Grid::new("Checkin Notes and Recommendations")
+                .spacing(Vec2::new(2., 4.))
+                .max_col_width(avail_size.x / 2.15)
+                .min_col_width(avail_size.x / 2.15)
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        ui.label(
+                            RichText::new("Recommendations:")
+                                .font(FontId::proportional(15.0))
+                        );
 
-                    ui.add_space(10.);
+                        ui.add_space(10.);
 
-                    let res = TextEdit::multiline(&mut task.task_description)
+                        let res = TextEdit::multiline(&mut task.task_description)
+                            .margin(Margin::symmetric(10, 3))
+                            .desired_rows(15)
+                            .desired_width(ui.available_width())
+                            .ui(ui);
+
+                        if res.lost_focus() {
+                            let task_description = task.task_description.clone();
+                            let task_id = task.id.clone();
+                            PlatformSpawner::spawn(async move {
+                                // let _result = task.update_task_description().await;
+                                match DATABASE
+                                .query("UPDATE $id SET task_description=$description")
+                                .bind(("id", task_id))
+                                .bind(("description", task_description.clone()))
+                                .await {
+                                    Ok(mut r) => { 
+                                        let res = r.take::<Option<Record>>(0);
+                                        log::info!("updating description: {res:?}");
+                                    },
+                                    Err(e) => log::info!("Error updating description: {e:?}"),
+                                };
+                            });
+                        }
+                    });
+
+                    ui.vertical_centered_justified(|ui| {
+                        ui.label(
+                            RichText::new("Checkin Notes:")
+                                .font(FontId::proportional(15.0)),
+                        );
+
+                        ui.add_space(10.);
+                        let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
+                        
+                        TextEdit::multiline(&mut ticket.checkin_notes)
                         .margin(Margin::symmetric(10, 3))
                         .desired_rows(15)
                         .desired_width(ui.available_width())
                         .ui(ui);
-
-                    if res.lost_focus() {
-                        let task_description = task.task_description.clone();
-                        let task_id = task.id.clone();
-                        PlatformSpawner::spawn(async move {
-                            // let _result = task.update_task_description().await;
-                            match DATABASE
-                            .query("UPDATE $id SET task_description=$description")
-                            .bind(("id", task_id))
-                            .bind(("description", task_description.clone()))
-                            .await {
-                                Ok(mut r) => { 
-                                    let res = r.take::<Option<Record>>(0);
-                                    log::info!("updating description: {res:?}");
-                                 },
-                                Err(e) => log::info!("Error updating description: {e:?}"),
-                            };
-                        });
-                    }
+                    });
+                    ui.end_row();
                 });
-
-                ui.vertical_centered_justified(|ui| {
-                    ui.label(
-                        RichText::new("Checkin Notes:")
-                            .font(FontId::proportional(15.0)),
-                    );
-
-                    ui.add_space(10.);
-                    let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
-                    
-                    TextEdit::multiline(&mut ticket.checkin_notes)
-                    .margin(Margin::symmetric(10, 3))
-                    .desired_rows(15)
-                    .desired_width(ui.available_width())
-                    .ui(ui);
-                });
-                ui.end_row();
             });
         });
     });

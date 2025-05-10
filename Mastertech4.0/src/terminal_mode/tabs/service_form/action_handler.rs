@@ -76,7 +76,7 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         }
                     },
                     "GetKeys" => if let Ok(mut ctx) = self.ctx.try_lock() {
-                        let (tx, rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
+                        let (tx, rx) = crossbeam::channel::unbounded::<Vec<GetKeysResponse>>();
                         let svc_data = &mut ctx.service_data;
                         let cps_tx = tx.clone();
                         let service_num = self.order_number.input.borrow().clone();
@@ -95,9 +95,10 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
 
                         if let Ok(keys) = rx.recv() {
                             log::info!("Got keys: {keys:?}");
-                            self.keys = keys.clone();
-                            self.webroot_key_btn.set_label(keys.webroot_key.clone());
-                            self.superanti_key_btn.set_label(keys.superanti_key.clone());
+                            let key = keys.get(0).cloned().unwrap_or_default();
+                            self.keys = key.clone();
+                            self.webroot_key_btn.set_label(key.webroot_key.clone());
+                            self.superanti_key_btn.set_label(key.superanti_key.clone());
                         }
                     },
                     "CopyWebroot" => {

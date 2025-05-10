@@ -1,8 +1,8 @@
 
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, Store, TaskPayload, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
-use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, Status, Store, TaskPayload, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
+use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, FilterTasks, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use eframe::egui::Context;
 use log::info;
 
@@ -100,7 +100,7 @@ impl SharedContext {
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, _ctx: &Context) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-        info!("Received initial task payload with {} tasks", tasks.len());
+            // info!("Received initial task payload with {} tasks", tasks.len());
 
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
@@ -175,7 +175,7 @@ impl SharedContext {
                                     .any(|t| t.id.key().to_string() == new_task.id.key().to_string())
                                 {
                                     task_list.push(new_task_payload.clone());
-                                    info!("Added initial task to layout: {}", layout_key);
+                                    // info!("Added initial task to layout: {}", layout_key);
                                 }
                             }
                         }
@@ -190,22 +190,79 @@ impl SharedContext {
         }
 
         if let Ok(users) = self.store_users_rx.try_recv() {
-            for (page, layout) in self.task_layouts.iter_mut() {
-                match page.as_str() {  
-                    "CompletedTasks" | "StoreTasks" => {
-                        layout.task_map.clear();
-                        layout.assignees.clear();
-                        layout.search_inputs.clear();
-                    }
-                    _ => {}
-                }
-                layout.update_assignees(users.clone());
-            }
-            // log::info!("Reruning filtering for store/completed tasks, got new users");
-            self.rerun_filtering_store_tasks = true;
-            self.rerun_filtering_completed = true;
+            info!("Received new store users: {} users", users.len());
+
+            // Update store_users
             self.store_users.clear();
             self.store_users = users;
+
+            // Initialize layout_configs now that store_users is available
+            self.init_layout_configs();
+
+            // Get layout_configs, if initialized
+            let layout_configs = match &self.layout_configs {
+                Some(configs) => configs,
+                None => {
+                    log::warn!("layout_configs not initialized; skipping task_map updates");
+                    return;
+                }
+            };
+
+            // Update layouts
+            let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
+            let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
+
+            for (page, layout) in self.task_layouts.iter_mut() {
+                let config = match layout_configs.get(page) {
+                    Some(config) => config,
+                    None => {
+                        log::warn!("No config defined for layout: {}", page);
+                        continue;
+                    }
+                };
+
+                // Clear task_map, assignees, and search_inputs for StoreTasks and CompletedTasks
+                if page == "StoreTasks" || page == "CompletedTasks" {
+                    layout.task_map.clear();
+                    layout.assignees.clear();
+                    layout.search_inputs.clear();
+                }
+
+                // Rebuild task_map
+                let mut new_task_map = BTreeMap::new();
+                if page == "MyTasks" {
+                    // Initialize by status
+                    for status_str in &config.valid_keys {
+                        let status = Status::from_str(status_str);
+                        let filtered = self
+                            .tasks
+                            .filter_by_status(&status)
+                            .filter_by_assignee(&current_user);
+                        new_task_map.entry(status_str.clone()).or_insert(filtered);
+                    }
+                } else {
+                    // Initialize by user initials
+                    for user in self.store_users.iter() {
+                        let filtered = self
+                            .tasks
+                            .filter_by_assignee(user)
+                            .filter_by_completion(page == "CompletedTasks")
+                            .filter_by_store(user, &store_selection);
+                        if !filtered.is_empty() {
+                            new_task_map
+                                .entry(user.everest_initials.to_string())
+                                .or_insert(filtered);
+                        }
+                    }
+                }
+
+                layout.task_map = new_task_map;
+
+                // Update assignees if required
+                if config.update_assignees {
+                    layout.update_assignees(self.store_users.clone());
+                }
+            }
         }
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
