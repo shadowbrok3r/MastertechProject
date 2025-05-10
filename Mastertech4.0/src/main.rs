@@ -29,6 +29,7 @@ pub mod viewports;
 pub mod first_run;
 pub mod data;
 
+//ah yess, good coding, im too sober for this sht
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
