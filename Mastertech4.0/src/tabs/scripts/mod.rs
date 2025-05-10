@@ -235,7 +235,7 @@ impl Scripts {
 
             if downloaded_bytes == total_length {
                 let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
-                let cps_keys = cps_request.await.unwrap_or(vec![]);
+                let cps_keys = cps_request.await.unwrap_or(vec![]).get(0).cloned().unwrap_or_default();
 
                 info!("cps_keys: {:?}", cps_keys.clone());
 
@@ -294,7 +294,7 @@ impl Scripts {
 
             if downloaded_bytes == total_length {
                 let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
-                let cps_keys = cps_request.await.unwrap_or(vec![]);
+                let cps_keys = cps_request.await.unwrap_or(vec![]).get(0).cloned().unwrap_or_default();
 
                 info!("cps_keys: {:?}", cps_keys.clone());
 

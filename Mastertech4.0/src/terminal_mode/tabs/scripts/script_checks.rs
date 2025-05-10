@@ -434,12 +434,12 @@ impl <'a> ScriptsTab <'a> {
         let client = self.client.clone();
         
         tokio::spawn(async move {
-            let cps_request = SendRequest::get_cps(so.clone(), client.clone()).await;
-            log::info!("CPS Request: {cps_request:?}");
-            let cps_keys = cps_request.unwrap_or_default();
-            let res = install_webroot(cps_keys.webroot_key.clone(), client.clone(), tx.clone()).await;
+            let cps_keys = SendRequest::get_cps(so.clone(), client.clone()).await.unwrap_or_default();
+            log::info!("CPS Request: {cps_keys:?}");
+            let key = cps_keys.get(0).cloned().unwrap_or_default();
+            let res = install_webroot(key.webroot_key.clone(), client.clone(), tx.clone()).await;
             log::info!("install_webroot Result: {res:?}");
-            let res = install_sas(cps_keys.superanti_key.clone(), client.clone(), tx).await;
+            let res = install_sas(key.superanti_key.clone(), client.clone(), tx).await;
             log::info!("install_sas Result: {res:?}");
         });
 
