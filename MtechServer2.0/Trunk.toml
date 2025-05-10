@@ -2,6 +2,7 @@
 
 [build]
 # command = "cargo build --target wasm32v1-none --release"
+# addresses = ["127.0.0.1"]
 # The index HTML file to drive the bundling process.
 target = "index.html"
 # Build in release mode.

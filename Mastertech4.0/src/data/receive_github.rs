@@ -21,8 +21,6 @@ impl MasterTechApp {
                 info!("TagName: {:?}", release.tag_name);
 
                 if current_version < github_release_version {
-                    // ctx.send_viewport_cmd(ViewportCommand::Close);
-
                     let client = self.context.client.clone();
                     info!("Found a new release! {:?}", &github_release_version);
                     // let asset = asset.clone();
