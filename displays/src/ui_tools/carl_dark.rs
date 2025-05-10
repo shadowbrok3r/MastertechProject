@@ -218,7 +218,7 @@ pub trait Aesthetix {
             icon_spacing: 6.0,
             tooltip_width: 600.0,
             indent_ends_with_horizontal_line: false,
-            combo_height: 200.0,
+            combo_height: 300.0,
             scroll: ScrollStyle {
                 bar_width: self.scroll_bar_width_style(),
                 handle_min_length: 12.0,
