@@ -48,7 +48,7 @@ pub enum ModalAction {
     TaskNotePage,
     ImportTask,
     Close,
-    TaskPage,
+    // TaskPage,
     None,
 }
 
@@ -60,7 +60,7 @@ impl Default for TaskModal {
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
-            current_page_state: ModalAction::TaskPage,
+            current_page_state: ModalAction::default(),
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
             store_users: match get_database_users() {
@@ -96,7 +96,7 @@ impl TaskModal {
             spo: SpecialPartOrder::default(),
             store_users: match get_database_users() {
                 Ok(users) => {
-                    log::info!("Users: {users:?}");
+                    log::info!("Users Len: {:?}", users.len());
                     users
                 },
                 Err(e) => {
@@ -187,13 +187,13 @@ impl DisplayModal for TaskModal {
                                     };
                                 }
 
-                                if self.task.service_ticket.is_some() {
+                                // if self.task.service_ticket.is_some() {
                                     icon!(self.current_page_state, ModalAction::TicketInfoPage,   "🖹");
                                     icon!(self.current_page_state, ModalAction::ComputerInfoPage, "🖥");
                                     icon!(self.current_page_state, ModalAction::SoftwareInfoPage, "💾");
-                                } else {
-                                    icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
-                                }
+                                // } else {
+                                    // icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
+                                // }
                                 // icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
                                 icon!(self.current_page_state, ModalAction::TaskNotePage,  "💬");
                             },
@@ -240,12 +240,21 @@ impl DisplayModal for TaskModal {
                 ..Default::default()
             })
             .show(|tui| {
+                tui.style(TaffyStyle {
+                    grid_column: line(1),
+                    ..Default::default()
+                })
+                .add_empty();
                 // put the page body in column 2 (1‑based index)
                 tui.style(TaffyStyle {
                     grid_column: line(2),
                     ..Default::default()
                 })
                 .add(|tui| {
+                    // tui.ui(|ui| {
+                    //     ui.set_min_width(ui.available_width());
+                    // });
+
                     tui.ui(|ui| {
                         let store_users = self.store_users.clone();
                         match self.current_page_state {
@@ -254,11 +263,16 @@ impl DisplayModal for TaskModal {
                             ModalAction::SoftwareInfoPage => display_software_page (ui, &mut self.task, avail_size),
                             ModalAction::JobBuilderPage   => display_job_builder_page(ui),
                             ModalAction::TaskNotePage     => { let _ = self.chat_view.ui(ui); },
-                            ModalAction::TaskPage         => display_task_page(ui, &mut self.task),
+                            // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
                             _ => {}
                         }
                     });
                 });
+                tui.style(TaffyStyle {
+                    grid_column: line(3),
+                    ..Default::default()
+                })
+                .add_empty();
             });
 
         if self.current_page_state == ModalAction::Close {
@@ -268,16 +282,22 @@ impl DisplayModal for TaskModal {
     }
 }
 
-pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload) {
-    ui.vertical_centered(|ui| {
-        ui.label(RichText::new("Task Description:").font(FontId::proportional(15.0)));
-        TextEdit::multiline(&mut task.task_description.to_string())
-            .margin(Margin::same(5))
-            .desired_rows(8)
-            .desired_width(400.)
-            .ui(ui);
-    });
-}
+// pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
+//     ui.set_min_width(ui.available_width()); 
+//     ui.vertical_centered_justified(|ui| {
+//         ui.label(RichText::new("Task Description:").font(FontId::proportional(15.0)));
+//         ScrollArea::vertical()
+//             .max_height(avail_size.y/1.3)
+//             .show(ui, |ui| 
+//         {
+//             TextEdit::multiline(&mut task.task_description.to_string())
+//                 .margin(Margin::same(5))
+//                 .desired_rows(8)
+//                 .desired_width(400.)
+//                 .ui(ui);
+//         });
+//     });
+// }
 
 pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>) {
     ui.vertical_centered_justified(|ui| {
