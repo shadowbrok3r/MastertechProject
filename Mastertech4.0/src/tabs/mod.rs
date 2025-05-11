@@ -88,6 +88,7 @@ impl TabViewer for MastertechContext {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
+            "Scene Editor" => self.shared_ctx.scene_editor.ui(ui),
             "Console" => self.output_console(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
