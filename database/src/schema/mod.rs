@@ -16,6 +16,9 @@ pub mod deserializer;
 pub mod utilities;
 pub mod get_data;
 pub mod buckets;
+pub mod task;
+pub mod task_note;
+
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
