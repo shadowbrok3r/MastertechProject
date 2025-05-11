@@ -20,6 +20,7 @@ impl MasterTechApp {
                             &"TUR Sheet".to_string(),
                             &"Console".to_string(),
                             // &"Part Order".to_string(),
+                            &"Scene Editor".to_string(),
                             &"Scripts".to_string(),
                             &"File Browser 📂".to_string(),
                             &"SysInfo".to_string(),

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use database::DATABASE;
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::to_vec;
@@ -76,6 +76,8 @@ pub struct ThemeConfig {
     pub window_stroke_color: Color32,
     /// Uniform rounding for visuals
     pub rounding: eframe::egui::CornerRadius,
+    pub font: FontFamily,
+    pub font_size: f32
 }
 
 impl Default for ThemeConfig {
@@ -111,6 +113,8 @@ impl Default for ThemeConfig {
             link_color: Color32::from_rgb(155, 104, 227),
             window_stroke_color: Color32::from_rgb(42, 195, 222),
             rounding: eframe::egui::CornerRadius::same(4),
+            font: FontFamily::Proportional,
+            font_size: 12.0
         }
     }
 }
@@ -227,8 +231,34 @@ impl ThemeConfig {
             .show(ui, |ui| 
         {
 
+            ui.horizontal(|ui| {
+                ui.label("Font Selection"); 
+            
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ComboBox::new("Font Selection", "")
+                        .selected_text(self.font.to_string())
+                        .show_ui(ui, |ui| {
+                            let fonts = ui.fonts(|f| f.clone());
+                            for font in fonts.families() {
+                                ui.selectable_value(
+                                    &mut self.font,
+                                    font.clone(),
+                                    font.to_string(),
+                                );
+                            }
+                        });
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Font Size"); 
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    DragValue::new(&mut self.font_size).range(std::ops::RangeInclusive::new(10., 16.)).ui(ui);
+                });
+            });
+
             ui.vertical_centered(|ui| {
-                ui.heading("Widget Colors:");
+                ui.heading("Widget Colors");
             });
 
             // Widget Colors
@@ -506,8 +536,9 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
     let mut custom_style: Style = theme.custom_style();
     // Font settings
     let mut font = FontId::default();
-    font.size = 10.5;
-    font.family = FontFamily::Proportional;
+    font.size = config.font_size;
+    // font.family = FontFamily::Proportional;
+    font.family = config.font.clone();
 
     // Assign custom font
     custom_style.override_font_id = Some(font);
