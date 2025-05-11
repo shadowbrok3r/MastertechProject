@@ -214,9 +214,10 @@ impl MastertechContext {
                 }
             }
             
+            let success_color = ui.style().visuals.warn_fg_color;
             if Button::new(
             RichText::new(format!("{}", self.keys.webroot_key))
-                .color(Color32::from_rgb(102, 255, 153))
+                .color(success_color)
             )
             .min_size(vec2(140., 15.0))
             .ui(ui)
@@ -226,9 +227,11 @@ impl MastertechContext {
                 ui.ctx().copy_text(webroot);
             }
                 
+            let err_color = ui.style().visuals.error_fg_color;
+
             if Button::new(
                 RichText::new(format!("{}", self.keys.superanti_key))
-                .color(Color32::from_rgb(255, 61, 126))
+                .color(err_color)
             )
             .min_size(vec2(140., 15.0))
             .ui(ui)

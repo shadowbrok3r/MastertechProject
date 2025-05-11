@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -182,6 +182,7 @@ pub struct SharedContext {
     pub associated_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
     pub layout_configs: Option<HashMap<String, LayoutConfig>>, // Lazy initialization
+    pub scene_editor: SceneEditor
 }
 
 impl SharedContext {
@@ -232,7 +233,7 @@ impl SharedContext {
             ui_actions_rx,
             task_layouts: HashMap::new(),
             store_selection: 76,
-
+            scene_editor: SceneEditor::default(),
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
             db_tx,
@@ -403,13 +404,29 @@ fn setup_custom_fonts(ctx: &Context) {
         std::sync::Arc::new(
             FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf"))
         ),
-    ); // .ttf and .otf supported
+    );
+
+    fonts.font_data.insert(
+        "UbuntuSansMono".to_owned(),
+        std::sync::Arc::new(
+            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/UbuntuSansMono-Regular.otf"))
+        ),
+    );
+
+    fonts.font_data.insert(
+        "UbuntuMonoNerdFont".to_owned(),
+        std::sync::Arc::new(
+            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/UbuntuMonoNerdFont-Regular.ttf"))
+        ),
+    ); 
+    
     // Put my font first (highest priority):
     fonts
         .families
-        .get_mut(&FontFamily::Proportional)
+        .get_mut(&FontFamily::Monospace)
         .unwrap()
-        .insert(0, "Monaspace".to_owned());
+        .insert(0, "UbuntuMonoNerdFont".to_owned()); // "Monaspace"
+
     fonts.font_data.insert(
         "Regular".to_owned(),
         std::sync::Arc::new(

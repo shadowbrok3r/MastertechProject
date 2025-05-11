@@ -12,7 +12,7 @@ impl eframe::App for MtechServer {
         // future i will be making this the setup to allow user customization
         // to the style of any part of the app
         if self.context.shared_ctx.modify_theme {
-            Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
+            Window::new("Theme Mods").max_height(600.).default_width(600.).title_bar(true).show(ctx, |ui| {
                 // info!("Settings: {:?}", self.context.theme_config);
                 let theme = self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone());
                 if theme.0 {
