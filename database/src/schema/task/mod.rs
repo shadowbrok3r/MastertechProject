@@ -1,29 +1,121 @@
-use log::Record;
+use crate::{schema::{utilities::query_user_from_email, Priority, Record, TASK_TABLE}, DATABASE};
+use chrono::{SecondsFormat, Utc};
+use structdiff::{Difference, StructDiff};
+use surrealdb::RecordId;
 
-use crate::schema::{helper_traits::TaskNotePayloadHelper, TASK_TABLE};
+use super::{ComputerData, CustomerData, Status, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
 
-use super::{ComputerData, CustomerData, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketData};
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
+pub struct TaskPayload {
+    pub id: RecordId,
+    pub task_name: String,
+    pub service_ticket: Option<TicketPayload>,
+    pub everest_initials: String,
+    pub task_description: String,
+    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
+    pub service_number: Option<String>,
+    pub due_date: String, // optional because if not provided, set due date to creation date
+    pub priority: Priority,
+    #[difference(collection_strategy = "ordered_array_like")]
+    pub task_note: Vec<TaskNotePayload>,
+    pub completed: bool,
+    pub status: Status,
+    pub created_at: Option<String>
+}
 
-impl TaskPayload {
-    pub fn from_prestashop_payload(data: PrestashopPayload) -> Self {
-
+impl Default for TaskPayload {
+    fn default() -> Self {
         Self {
-            id: RecordId,
-            task_name: String,
-            service_ticket: Option<TicketPayload>,
-            everest_initials: String,
-            task_description: String,
-            assignee: RecordId,
-            service_number: Option<String>,
-            due_date: String,
-            priority: Priority,
-            task_note: Vec<TaskNotePayload>,
-            completed: bool,
-            status: Status,
-            created_at: Option<String>
+            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            task_name: String::new(),
+            service_ticket: None,
+            everest_initials: String::new(),
+            task_description: String::new(),
+            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            service_number: None,
+            due_date: String::new(),
+            priority: Priority::Normal,
+            task_note: Vec::new(),
+            completed: false,
+            status: Status::Todo,
+            created_at: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
         }
     }
+}
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
+pub struct LiveTaskPayload {
+    pub id: RecordId,
+    pub task_name: String,
+    pub service_ticket: Option<RecordId>,
+    pub everest_initials: String,
+    pub task_description: String,
+    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
+    pub service_number: Option<String>,
+    pub due_date: String, // optional because if not provided, set due date to creation date
+    pub priority: Priority,
+    pub completed: bool,
+    pub status: Status,
+    pub created_at: Option<String>
+}
+
+impl Default for LiveTaskPayload {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            task_name: String::new(),
+            service_ticket: None,
+            everest_initials: String::new(),
+            task_description: String::new(),
+            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            service_number: None,
+            due_date: String::new(),
+            priority: Priority::Normal,
+            completed: false,
+            status: Status::Todo,
+            created_at: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
+        }
+    }
+}
+
+impl From<LiveTaskPayload> for TaskPayload {
+    fn from(live_task: LiveTaskPayload) -> Self {
+        Self {
+            id: live_task.id,
+            task_name: live_task.task_name,
+            everest_initials: live_task.everest_initials,
+            task_description: live_task.task_description,
+            assignee: live_task.assignee,
+            service_number: live_task.service_number,
+            due_date: live_task.due_date,
+            priority: live_task.priority,
+            completed: live_task.completed,
+            status: live_task.status,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<TaskPayload> for LiveTaskPayload {
+    fn from(task: TaskPayload) -> Self {
+        Self {
+            id: task.id,
+            task_name: task.task_name,
+            service_ticket: Some(task.service_ticket.unwrap_or_default().id),
+            everest_initials: task.everest_initials,
+            task_description: task.task_description,
+            assignee: task.assignee,
+            service_number: task.service_number,
+            due_date: task.due_date,
+            priority: task.priority,
+            completed: task.completed,
+            status: task.status,
+            created_at: task.created_at
+        }
+    }
+}
+
+impl LiveTaskPayload {
     pub async fn create_task_payload(
         mut task_data: Self,
         ticket_data: TicketData,
@@ -34,7 +126,7 @@ impl TaskPayload {
         send_specs: bool,
     ) -> anyhow::Result<(), anyhow::Error> {
         // let mut task_data = self;
-        info!("schema/utilities.rs -> Send_Payload");
+        log::info!("schema/utilities.rs -> Send_Payload");
         let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
         let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
         
@@ -59,7 +151,7 @@ impl TaskPayload {
         //     ticket_data.computer = Some(computer_data.id.clone());
         // }
     
-        info!("schema/utilities.rs -> cust_record: {customer_data:?}");
+        log::info!("schema/utilities.rs -> cust_record: {customer_data:?}");
         let update_customer: Result<Option<Record>, surrealdb::Error> = DATABASE
             .upsert(customer_id)
             .content(customer_data.clone())
@@ -80,17 +172,17 @@ impl TaskPayload {
                 .upsert(computer_id)
                 .content(computer_data)
                 .await?;
-            info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
+            log::info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
         }
     
-        info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
+        log::info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
         let service_ticket_record: Option<Record> = DATABASE
             .upsert(ticket_id)
             .content(ticket_data)
             .await?;
-        info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
+        log::info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
     
-        info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
+        log::info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
     
         
         let check_task_record: Vec<LiveTaskPayload> = DATABASE
@@ -99,7 +191,7 @@ impl TaskPayload {
             .await?
             .take(0)?;
     
-        info!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
+        log::info!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
     
         if !check_task_record.is_empty() {
             for task in check_task_record.iter() {
@@ -116,7 +208,7 @@ impl TaskPayload {
                             note.task_id = Some(task.id.clone());
                         }
                     }
-                    info!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
+                    log::info!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
                 }
     
             } 
@@ -124,12 +216,12 @@ impl TaskPayload {
             let create_task_record: Option<Record> = DATABASE
                 .create(TASK_TABLE)
                 .content(task_data).await?;
-            info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
+            log::info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
         }
     
         for mut note in task_notes {
             let res = note.handle_note_creation(false).await;
-            info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
+            log::info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
         }
     
         Ok(())
