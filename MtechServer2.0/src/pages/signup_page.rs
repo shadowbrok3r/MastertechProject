@@ -1,7 +1,7 @@
 use serde::Serialize;
 use crate::app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
-use database::{schema::{helper_traits::UserHelper, Store, User}, Database};
+use database::{schema::{Store, User}, Database};
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
@@ -44,11 +44,7 @@ impl Signup{
 
         let email = signup.email.clone();
         spawn_local(async move {
-            let mut user = User::default();
-            user.email = email.clone();
-            let usr = user.find_employee_by_email().await;
-
-            if let Ok(employee) = usr {
+            if let Ok(employee) = User::default().set_email(&email).find_employee_by_email().await {
                 signup = Signup {
                     id_prestashop: Some(employee.id.parse::<u64>().unwrap_or_default()),
                     id_store: Some(employee.id_store),
@@ -57,10 +53,7 @@ impl Signup{
                 };
             }
 
-            let database = Database::signup(signup.clone(), email).await;
-
-            // #[cfg(target_arch="wasm32-unknown-unknown")]
-            match database{
+            match Database::signup(signup.clone(), email).await {
                 Ok(db) => {
                     #[allow(unused_variables)]
                     if let Some(ref cookie) = db.jwt{
@@ -139,7 +132,7 @@ impl MtechServer{
                                     ui.style_mut().override_font_id = Some(font);
     
                                     ui.add_space(20.0);
-                                    if let Some(signup) = self.signup_mut(){
+                                    if let Some(signup) = self.signup_mut() {
                                         let width = ui.available_width() / 5.9;
                                         ui.horizontal_top(|ui| {
                                             ui.add_space(width);

@@ -32,9 +32,9 @@ impl eframe::App for MasterTechApp {
                 let theme = self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone());
                 if theme.0 {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.user_settings.color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
+                        user.set_color_scheme(serde_json::to_value(theme.1.clone()).unwrap());
                         if let Some(storage) = frame.storage_mut() {
-                            storage.set_string("user_settings", serde_json::to_string(&user.user_settings).unwrap_or_default());
+                            storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
                         }
                     }
                     self.context.shared_ctx.theme_config = theme.1;
@@ -52,7 +52,7 @@ impl eframe::App for MasterTechApp {
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;
-                match serde_json::from_value::<DockState<String>>(user.user_settings.ui_layout.mastertech.clone()){
+                match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mastertech()){
                     Ok(tree) => self.tree = tree,
                     Err(e) => info!("Could not get UI layout from user: {e:?}"),
                 }

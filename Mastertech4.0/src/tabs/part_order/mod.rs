@@ -7,7 +7,7 @@ impl MastertechContext{
         let avail_size = [size_before_wrap.x - 30.0, size_before_wrap.y - 30.0];
         if let Some(usr) = &self.shared_ctx.current_user {
 
-            self.special_part_order.display_part_order_page(ui, avail_size.into(), usr.store);
+            self.special_part_order.display_part_order_page(ui, avail_size.into(), usr.get_store());
             
             let name = &self.customer_data.name;
             let phone_number = &self.customer_data.phone_number;

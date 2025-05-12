@@ -104,7 +104,7 @@ impl ScriptEditor {
 
                 if self.first_run {
                     self.first_run = false;
-                    if self.filesystem.user.name.len() > 0 {
+                    if !self.filesystem.user.get_name().is_empty() {
                         info!("We have a user, requesting contents");
                         info!("request: {:?}", self.filesystem.request_contents("/"));
                         info!("Contents: {:?}", self.filesystem.root);

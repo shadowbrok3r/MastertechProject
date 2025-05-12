@@ -1,7 +1,7 @@
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        helper_traits::UserHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE
+        prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_TABLE
     }, PlatformSpawner, Spawner, DATABASE
 };
 use anyhow::{Error, Result};
@@ -81,49 +81,7 @@ pub trait Task {
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
 }
 
-pub async fn get_current_user_from_auth() -> Result<Option<User>, Error> {
-    let user_record: Option<User> = DATABASE
-        .query("SELECT * FROM user WHERE id == $auth.id")
-        .await?
-        .take(0)?;
 
-    Ok(user_record)
-}
-
-pub async fn query_user_from_email(email: String) -> Result<User, Error> {
-    let query = if email.contains("checkinshelf") || email.is_empty() {
-        "RETURN (SELECT * FROM user WHERE id == $auth.id)"
-    } else { "SELECT * FROM user WHERE email == $email" };
-
-    let full_email = if email.ends_with("@pclaptops.com") {
-        email.clone()
-    } else {
-        format!("{}@pclaptops.com", email.clone())
-    };
-
-    info!("schema/utilities.rs -> Full Email: {full_email}");
-
-    DATABASE.set("email", full_email.clone()).await?;
-    let user: Option<User> = DATABASE.query(query).await?.take(0)?;
-
-    if let Some(usr) = user {
-        Ok(usr)
-    } else {
-        let mut usr = User::default();
-        usr.email = full_email;
-        let emp = usr.find_employee_by_email().await?;
-        Ok(User {
-            id: RecordId::from((USER_TABLE, emp.id.clone())),
-            name: format!("{} {}", emp.firstname, emp.lastname),
-            everest_initials: emp.initials,
-            email: usr.email,
-            store: Store::from_presta_store_id(&emp.id_store),
-            id_prestashop: Some(emp.id.parse::<u64>()?),
-            id_store: Some(emp.id_store),
-            ..Default::default()
-        })
-    }
-}
 
 pub async fn get_task_notes_from_db_with_service_number(service_number: String) -> Result<Vec<TaskNotePayload>, Error> {
     debug!("get_task_from_service_number");
@@ -440,8 +398,8 @@ pub async fn create_full_task_payload(
     send_specs: bool,
 ) -> anyhow::Result<(), anyhow::Error> {
     info!("schema/utilities.rs -> Send_Payload");
-    let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
-    let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
+    let queried_salesman = User::query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
+    let _queried_tech = User::query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
     
     
     // let task_id = task_data.id.clone();
@@ -457,8 +415,8 @@ pub async fn create_full_task_payload(
     task_data.service_ticket = Some(ticket_id.clone());
     task_data.service_number = Some(service_number.clone());
     task_data.priority = Priority::Normal;
-    task_data.everest_initials = queried_salesman.everest_initials;
-    task_data.assignee = queried_salesman.id;
+    task_data.everest_initials = queried_salesman.get_initials().to_string();
+    task_data.assignee = queried_salesman.get_id();
 
     // if ticket_data.computer.is_none() {
     //     ticket_data.computer = Some(computer_data.id.clone());

@@ -102,7 +102,7 @@ impl <'a> LoginTab <'a> {
                         data_tx.send(Box::new(Notification::new(
                             NotificationType::Info, 
                             "Logged in", 
-                            &format!("Welcome, {}", &usr.name), 
+                            &format!("Welcome, {}", &usr.get_username()), 
                             5
                         ))).unwrap();
 
@@ -139,7 +139,7 @@ impl <'a> LoginTab <'a> {
                             let res1 = data_tx.send(Box::new(Notification::new(
                                 NotificationType::Info, 
                                 "Logged in", 
-                                &format!("Welcome, {}", usr.name), 
+                                &format!("Welcome, {}", usr.get_username()), 
                                 5
                             )));
 

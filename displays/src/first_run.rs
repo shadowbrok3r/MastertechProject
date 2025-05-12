@@ -17,9 +17,9 @@ impl SharedContext {
         let live_notif_tx = self.live_notification_tx.clone();        
 
         if let Some(usr) = self.current_user.as_ref() {
-            self.store_selection = std::convert::Into::<u64>::into(usr.store);
+            self.store_selection = std::convert::Into::<u64>::into(usr.get_store());
             let user = usr.clone();
-            let name = user.name.clone();
+            let name = user.get_name().clone();
             info!("Getting Initial data: {}", self.store_selection);
             if self.filesystem.paths.is_empty() {
                 self.filesystem.set_user(user.clone());
@@ -34,15 +34,15 @@ impl SharedContext {
             if self.tasks.is_empty() || self.store_users.is_empty() {
                 let initial_tasks_tx = self.initial_tasks_tx.clone();
                 let store_users_tx = self.store_users_tx.clone();
-                let store = usr.store.as_str().to_string().clone();
+                let store = usr.get_store();
                 let notifs_tx = self.notification_tx.clone();
                 PlatformSpawner::spawn(async move {
-                    let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                    let get_store_users = get_store_users(store_users_tx, store).await;
                     info!("get_store_users: {get_store_users:?}");
                 });
 
                 PlatformSpawner::spawn(async move {
-                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store).await;
+                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store.as_str().to_string()).await;
                     info!("get_tasks: {get_tasks:?}");
                 });
 
@@ -74,7 +74,7 @@ impl SharedContext {
                 info!("listen_notifications: {listen_data:?}");
             });
 
-            match serde_json::from_value::<ThemeConfig>(usr.user_settings.color_scheme.clone()) {
+            match serde_json::from_value::<ThemeConfig>(usr.get_color_scheme()) {
                 Ok(color_settings) => {
                     self.theme_config = color_settings.clone();
                     ctx.request_repaint();
@@ -159,8 +159,8 @@ impl SharedContext {
                             } else {
                                 self.store_users
                                     .iter()
-                                    .find(|u| u.id == new_task.assignee)
-                                    .map(|u| u.everest_initials.to_string())
+                                    .find(|u| u.get_id() == new_task.assignee)
+                                    .map(|u| u.get_initials().to_string())
                                     .unwrap_or_default()
                             };
 
@@ -250,7 +250,7 @@ impl SharedContext {
                             .filter_by_store(user, &store_selection);
                         if !filtered.is_empty() {
                             new_task_map
-                                .entry(user.everest_initials.to_string())
+                                .entry(user.get_initials().to_string())
                                 .or_insert(filtered);
                         }
                     }

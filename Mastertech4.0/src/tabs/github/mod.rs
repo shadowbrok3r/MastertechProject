@@ -64,8 +64,8 @@ impl MastertechContext {
                 let github_issue_descript = format!(
                     "{}\nUser: {} - {}", 
                     self.github_issue_descript.clone(), 
-                    current_user.name, 
-                    current_user.email
+                    current_user.get_name(), 
+                    current_user.get_email()
                 );
                 let client = self.client.clone();
                 spawn(async move {

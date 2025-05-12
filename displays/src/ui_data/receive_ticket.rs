@@ -40,8 +40,8 @@ impl SharedContext {
                     } else {
                         self.store_users
                             .iter()
-                            .find(|u| u.id == new_task.assignee)
-                            .map(|u| u.everest_initials.to_string())
+                            .find(|u| u.get_id() == new_task.assignee)
+                            .map(|u| u.get_initials().to_string())
                             .unwrap_or_default()
                     };
 

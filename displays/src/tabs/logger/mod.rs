@@ -14,7 +14,7 @@ where
     }
 }
 
-fn try_get_log<F, T>(f: F) -> Option<T>
+pub fn try_get_log<F, T>(f: F) -> Option<T>
 where
     F: FnOnce(&GlobalLog) -> T,
 {
@@ -245,9 +245,6 @@ impl LoggerUi {
                                 if ui.button("Copy").clicked() {
                                     ui.ctx().copy_text(string.to_string());
                                 }
-
-                                    // if ui.button("Scroll to Bottom").clicked() {}
-                                
                             });
                         }
 
@@ -264,20 +261,18 @@ impl LoggerUi {
             ui.label(format!("Displayed: {}", logs_displayed));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Copy").clicked() {
-                    ui.output_mut(|o| {
-                        if let Some(txt) = try_get_log(|logs| {
-                            let mut out_string = String::new();
-                            logs.iter()
-                                .take(self.max_log_length)
-                                .for_each(|(_, string, _)| {
-                                    out_string.push_str(string);
-                                    out_string.push_str(" \n");
-                                });
-                            out_string
-                        }) {
-                            ui.ctx().copy_text(txt);
-                        }
-                    });
+                    if let Some(txt) = try_get_log(|logs| {
+                        let mut out_string = String::new();
+                        logs.iter()
+                            .take(self.max_log_length)
+                            .for_each(|(_, string, _)| {
+                                out_string.push_str(string);
+                                out_string.push_str(" \n");
+                            });
+                        out_string
+                    }) {
+                        ui.ctx().copy_text(txt);
+                    }
                 }
             });
         });

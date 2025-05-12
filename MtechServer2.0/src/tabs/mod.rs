@@ -118,7 +118,7 @@ impl TabViewer for MtechServerContext {
                     if self.shared_ctx.serials_table.len() == 0 {
                         if let Some(usr) = &self.shared_ctx.current_user {
                             let stock_tx = self.shared_ctx.stock_channel.0.clone();
-                            let store_selection = match usr.clone().store {
+                            let store_selection = match usr.get_store() {
                                 Store::RIV => 76,
                                 Store::LTN => 73,
                                 Store::MUR => 74,

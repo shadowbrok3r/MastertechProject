@@ -59,7 +59,7 @@ impl SharedContext {
                         .filter_by_completion(page == "CompletedTasks")
                         .filter_by_store(user, &store_selection);
                     if !filtered.is_empty() {
-                        map.entry(user.everest_initials.to_string())
+                        map.entry(user.get_initials().to_string())
                             .or_insert(filtered);
                     }
                 }

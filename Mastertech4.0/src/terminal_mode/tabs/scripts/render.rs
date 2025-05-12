@@ -519,7 +519,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         let mut init = self.init.borrow_mut();
         if *init {
-            if self.filesystem.user.name.len() > 0 {
+            if self.filesystem.user.get_name().len() > 0 {
                 log::info!("We have a user, requesting contents");
                 log::info!("request: {:?}", self.filesystem.request_contents("Scripts"));
                 log::info!("Contents: {:?}", self.filesystem.root);

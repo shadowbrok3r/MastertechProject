@@ -1,4 +1,4 @@
-use crate::{schema::{utilities::query_user_from_email, Priority, Record, TASK_TABLE}, DATABASE};
+use crate::{schema::{Priority, Record, User, TASK_TABLE}, DATABASE};
 use chrono::{SecondsFormat, Utc};
 use structdiff::{Difference, StructDiff};
 use surrealdb::RecordId;
@@ -127,8 +127,8 @@ impl LiveTaskPayload {
     ) -> anyhow::Result<(), anyhow::Error> {
         // let mut task_data = self;
         log::info!("schema/utilities.rs -> Send_Payload");
-        let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
-        let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
+        let queried_salesman = User::query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
+        let _queried_tech = User::query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
         
         
         // let task_id = task_data.id.clone();
@@ -144,8 +144,8 @@ impl LiveTaskPayload {
         task_data.service_ticket = Some(ticket_id.clone());
         task_data.service_number = Some(service_number.clone());
         task_data.priority = Priority::Normal;
-        task_data.everest_initials = queried_salesman.everest_initials;
-        task_data.assignee = queried_salesman.id;
+        task_data.everest_initials = queried_salesman.get_initials().to_string();
+        task_data.assignee = queried_salesman.get_id();
     
         // if ticket_data.computer.is_none() {
         //     ticket_data.computer = Some(computer_data.id.clone());

@@ -65,13 +65,11 @@ impl Updatable for TaskPayload {
         let mut _query = String::new();
         match status {
             Status::Todo => {
-                _query =
-                    format!("UPDATE $id SET status=$status, completed=false");
+                _query = format!("UPDATE $id SET status=$status, completed=false");
                 DATABASE.set("status", Status::Todo).await?;
             }
             Status::InRepair => {
-                _query =
-                    format!("UPDATE $id SET status=$status, completed=false");
+                _query = format!("UPDATE $id SET status=$status, completed=false");
                 DATABASE.set("status", Status::InRepair).await?;
             }
             Status::Complete => {
@@ -79,7 +77,11 @@ impl Updatable for TaskPayload {
                 DATABASE.set("status", Status::Complete).await?;
             },
             Status::CustomStatus(status) => {
-                _query = format!("UPDATE $id SET status=$status, completed=true");
+                _query = format!("UPDATE $id SET status=$status");
+                DATABASE.set("status", status).await?;
+            }
+            _ => {
+                _query = format!("UPDATE $id SET status=$status");
                 DATABASE.set("status", status).await?;
             }
         }

@@ -1,4 +1,4 @@
-use database::{schema::{helper_traits::parse_email_user, prestashop_schema::PrestashopPayload, ComputerData, CustomerData, Priority, Status, TaskNotePayload, TaskPayload, TicketPayload, User},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, Priority, Status, TaskNotePayload, TaskPayload, TicketPayload, User},DATABASE};
 use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
@@ -170,8 +170,7 @@ impl CreateTaskModal {
             let mut inputs = BTreeSet::new();
 
             for user in self.store_users.iter() {
-                let parsed = parse_email_user(&user.email);
-                inputs.insert(parsed.to_string());
+                inputs.insert(user.get_username().to_string());
             }
 
             let r = AutoCompleteTextEdit::new(
@@ -279,13 +278,13 @@ impl CreateTaskModal {
                 
                 let mut usr = User::default();
                 for user in self.store_users.iter() {
-                    if assignee == parse_email_user(&user.email) {
-                        log::info!("Got {:?} from assignee: {assignee:?}", user.name);
+                    if assignee == user.get_username() {
+                        log::info!("Got {:?} from assignee: {assignee:?}", user.get_name());
                         usr = user.clone();
                     }
                 }
 
-                payload.task_data.everest_initials = usr.everest_initials.clone();
+                payload.task_data.everest_initials = usr.get_initials().to_string();
 
                 // let live_task_payload = LiveTaskPayload {
                 //     task_name: self.task_name.clone(),
@@ -339,8 +338,8 @@ impl CreateTaskModal {
                             Ok(user) => {
                                 if let Some(usr) = user {
 
-                                    payload.task_data.assignee = usr.id;
-                                    payload.task_data.everest_initials = usr.everest_initials;
+                                    payload.task_data.assignee = usr.get_id();
+                                    payload.task_data.everest_initials = usr.get_initials().to_string();
 
                                     log::info!("Payload: {payload:?}");
                                     let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE

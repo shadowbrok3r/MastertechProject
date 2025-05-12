@@ -1,4 +1,4 @@
-use database::{live_data::listen_data, schema::{helper_traits::UserHelper, utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{live_data::listen_data, schema::{utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
@@ -166,7 +166,7 @@ impl MtechServer {
 
                     let selected = &mut self.context.shared_ctx.store_selection;
                     let current = selected.clone();
-            
+                    let usr_store = usr.get_store();
                     let selected_text = match selected {
                         76 => Store::RIV.as_str(),
                         73 => Store::LTN.as_str(),
@@ -175,7 +175,7 @@ impl MtechServer {
                         75 => Store::ORE.as_str(),
                         72 => Store::AF.as_str(),
                         77 => Store::SAN.as_str(),
-                        _ => usr.store.as_str(),
+                        _ => usr_store.as_str(),
                     };
             
                     ui.label("Show tasks in: ");
@@ -217,7 +217,7 @@ impl MtechServer {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(8.0);
                         let txt =
-                            RichText::new(format!(" {} ", usr.name.clone())).color(Color32::from_rgb(191, 33, 101));
+                            RichText::new(format!(" {} ", usr.get_name())).color(Color32::from_rgb(191, 33, 101));
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
@@ -455,8 +455,8 @@ impl MtechServer {
                         let tree = default_tree();
                         if reset_ui.clicked() {
                             let default_layout = serde_json::to_value(&tree).unwrap();
-                            self.context.user_settings.ui_layout.mtechserver = default_layout.clone();
-                            usr.user_settings.ui_layout.mtechserver = default_layout.clone();
+                            self.context.user_settings.set_ui_layout_mtechserver(default_layout.clone());
+                            usr.set_ui_layout_mtechserver(default_layout.clone());
                             #[cfg(target_arch = "wasm32")]
                             {
                                 use brotli::CompressorReader;
@@ -500,9 +500,9 @@ impl MtechServer {
                         
                         if submit.clicked() {
                             let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
-                            self.context.user_settings.ui_layout.mtechserver = val.clone();
-                            usr.user_settings.ui_layout.mtechserver = val.clone();
-                            info!("user_settings: {:#?}", usr.user_settings.ui_layout);
+                            self.context.user_settings.set_ui_layout_mtechserver(val.clone());
+                            usr.set_ui_layout_mtechserver(val.clone());
+                            log::debug!("user_settings: {:#?}", usr.get_user_settings());
                             #[cfg(target_arch = "wasm32")]
                             {
                                 use brotli::CompressorReader;
