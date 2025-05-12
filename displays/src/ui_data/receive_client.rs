@@ -14,7 +14,7 @@ impl SharedContext {
             if let (Some(usr), Some(current_user)) =
                 (&new_client.assigned_user, &self.current_user)
             {
-                if usr == &current_user.id {
+                if usr == &current_user.get_id() {
                     let toast = &mut self.toasts;
                     let txt = match action {
                         Action::Create => RichText::new(format!(

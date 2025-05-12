@@ -80,7 +80,7 @@ impl TaskModal {
         if let Some(ticket) = task.service_ticket.as_mut() {
             if let Some(customer) = ticket.customer.as_mut() {
                 let mut formatter = PhoneNumberFormatter::default();
-                let phone_num = customer.phone_number.clone();
+                let phone_num = customer.phone_number.to_string();
                 customer.phone_number = formatter.format_phone_number(&phone_num).unwrap_or(phone_num);
             }
         }
@@ -281,23 +281,6 @@ impl DisplayModal for TaskModal {
         Some(self.current_page_state.clone())
     }
 }
-
-// pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
-//     ui.set_min_width(ui.available_width()); 
-//     ui.vertical_centered_justified(|ui| {
-//         ui.label(RichText::new("Task Description:").font(FontId::proportional(15.0)));
-//         ScrollArea::vertical()
-//             .max_height(avail_size.y/1.3)
-//             .show(ui, |ui| 
-//         {
-//             TextEdit::multiline(&mut task.task_description.to_string())
-//                 .margin(Margin::same(5))
-//                 .desired_rows(8)
-//                 .desired_width(400.)
-//                 .ui(ui);
-//         });
-//     });
-// }
 
 pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>) {
     ui.vertical_centered_justified(|ui| {

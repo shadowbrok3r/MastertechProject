@@ -5,7 +5,7 @@ use crate::app_state::SharedContext;
 use crate::viewports::ViewportData;
 use crate::{PlatformSpawner, Spawner};
 use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
-use database::schema::{TaskNotePayload, helper_traits::TaskNotePayloadHelper};
+use database::schema::TaskNotePayload;
 use log::info;
 
 impl SharedContext {

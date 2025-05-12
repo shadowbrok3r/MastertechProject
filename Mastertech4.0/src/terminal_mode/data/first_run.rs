@@ -1,5 +1,5 @@
 use crate::{app_state::{AppState, MainPages}, pages::login_page::HASH, terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
-use database::{schema::utilities::get_current_user_from_auth, Database, DATABASE};
+use database::{schema::User, Database, DATABASE};
 
 impl <'a>TerminalApp<'a> {
     pub fn first_run(&mut self) -> anyhow::Result<(), anyhow::Error> {
@@ -27,7 +27,7 @@ impl <'a>TerminalApp<'a> {
                                     data_tx.send(Box::new(Notification::new(
                                         NotificationType::Info, 
                                         "Logged in", 
-                                        &format!("Welcome, {}", &usr.name), 
+                                        &format!("Welcome, {}", &usr.get_name()), 
                                         5
                                     )))?;
             
@@ -52,7 +52,7 @@ impl <'a>TerminalApp<'a> {
                                 let check = e.to_string().contains("Already connected");
                                 log::info!("db check: {check}");
                                 if check { 
-                                    let user = get_current_user_from_auth().await;
+                                    let user = User::get_current_user_from_auth().await;
                                     log::info!("user: {user:?}");
                                     if let Ok(Some(usr)) = user {
             
@@ -63,7 +63,7 @@ impl <'a>TerminalApp<'a> {
                                         data_tx.send(Box::new(Notification::new(
                                             NotificationType::Info, 
                                             "Logged in", 
-                                            &format!("Welcome, {}", usr.name), 
+                                            &format!("Welcome, {}", usr.get_name()), 
                                             5
                                         )))?;
                                     }

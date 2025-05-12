@@ -1,4 +1,4 @@
-use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use chrono::{SecondsFormat, Utc};
@@ -20,10 +20,10 @@ impl TaskAuditViewer {
     ) {
         let time = web_time::Instant::now();
         let usr = current_user.clone().unwrap_or_default();
-        let id = usr.id_prestashop.unwrap_or_default();
+        let id = usr.get_employee_id().unwrap_or_default();
         let mut employee = Employee::default();
         employee.id = format!("{id}");
-        employee.id_store = usr.id_store.unwrap_or_default();
+        employee.id_store = usr.get_store_id().unwrap_or_default();
         PlatformSpawner::spawn(async move {
             match selected {
                 TaskAudit::CheckinShelf => {

@@ -1,6 +1,6 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
-use database::schema::{helper_traits::parse_email_user, CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
+use database::schema::{CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use std::{collections::BTreeSet, f32};
 use get_ticket::SendRequest;
@@ -155,9 +155,8 @@ impl MastertechContext {
 
             let mut inputs = BTreeSet::new();
 
-            for user in self.shared_ctx.store_users.iter(){
-                let parsed = parse_email_user(&user.email);
-                inputs.insert(parsed.to_string());
+            for user in self.shared_ctx.store_users.iter() {
+                inputs.insert(user.get_username().to_string());
             }
             
             let _ = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
