@@ -1,4 +1,3 @@
-use chrono::{SecondsFormat, Utc};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
@@ -19,6 +18,8 @@ pub mod buckets;
 pub mod task;
 pub mod task_note;
 
+pub use task::*;
+pub use task_note::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -64,96 +65,7 @@ pub struct RecordSuccess {
     pub success: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
-pub struct TaskPayload {
-    pub id: RecordId,
-    pub task_name: String,
-    pub service_ticket: Option<TicketPayload>,
-    pub everest_initials: String,
-    pub task_description: String,
-    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
-    pub service_number: Option<String>,
-    pub due_date: String, // optional because if not provided, set due date to creation date
-    pub priority: Priority,
-    #[difference(collection_strategy = "ordered_array_like")]
-    pub task_note: Vec<TaskNotePayload>,
-    pub completed: bool,
-    pub status: Status,
-    pub created_at: Option<String>
-}
 
-impl Default for TaskPayload {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            task_name: String::new(),
-            service_ticket: None,
-            everest_initials: String::new(),
-            task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            service_number: None,
-            due_date: String::new(),
-            priority: Priority::Normal,
-            task_note: Vec::new(),
-            completed: false,
-            status: Status::Todo,
-            created_at: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
-pub struct LiveTaskPayload {
-    pub id: RecordId,
-    pub task_name: String,
-    pub service_ticket: Option<RecordId>,
-    pub everest_initials: String,
-    pub task_description: String,
-    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
-    pub service_number: Option<String>,
-    pub due_date: String, // optional because if not provided, set due date to creation date
-    pub priority: Priority,
-    pub completed: bool,
-    pub status: Status,
-    pub created_at: Option<String>
-}
-
-impl Default for LiveTaskPayload {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            task_name: String::new(),
-            service_ticket: None,
-            everest_initials: String::new(),
-            task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            service_number: None,
-            due_date: String::new(),
-            priority: Priority::Normal,
-            completed: false,
-            status: Status::Todo,
-            created_at: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true))
-        }
-    }
-}
-
-impl From<LiveTaskPayload> for TaskPayload {
-    fn from(live_task: LiveTaskPayload) -> Self {
-        Self {
-            id: live_task.id,
-            task_name: live_task.task_name,
-            everest_initials: live_task.everest_initials,
-            task_description: live_task.task_description,
-            assignee: live_task.assignee,
-            service_number: live_task.service_number,
-            due_date: live_task.due_date,
-            priority: live_task.priority,
-            completed: live_task.completed,
-            status: live_task.status,
-            ..Default::default()
-        }
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TicketPayload {
@@ -263,25 +175,6 @@ impl From<TicketData> for TicketPayload {
             current_antivirus: ticket.current_antivirus,
             hardware_test_results: ticket.hardware_test_results,
             ..Default::default()
-        }
-    }
-}
-
-impl From<TaskPayload> for LiveTaskPayload {
-    fn from(task: TaskPayload) -> Self {
-        Self {
-            id: task.id,
-            task_name: task.task_name,
-            service_ticket: Some(task.service_ticket.unwrap_or_default().id),
-            everest_initials: task.everest_initials,
-            task_description: task.task_description,
-            assignee: task.assignee,
-            service_number: task.service_number,
-            due_date: task.due_date,
-            priority: task.priority,
-            completed: task.completed,
-            status: task.status,
-            created_at: task.created_at
         }
     }
 }
@@ -561,39 +454,7 @@ pub struct HardwareTests {
     pub ram_test: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
-pub struct TaskNotePayload {
-    pub id: RecordId,
-    pub task_id: Option<RecordId>,
-    // pub everest_initials: String,
-    pub created_at: String,
-    pub note: String,
-    pub username: String,
-    pub id_customer_thread: Option<String>,
-    pub id_customer_message: Option<String>,
-    pub id_employee: Option<String>,
-    pub user: Option<RecordId>,
-    // #[serde(deserialize_with = "deserialize_to_string")]
-    pub service_number: Option<String>
-}
 
-impl Default for TaskNotePayload {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            task_id: Default::default(),
-            // everest_initials: Default::default(),
-            created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            note: Default::default(),
-            username: Default::default(),
-            id_customer_thread: Default::default(),
-            id_customer_message: Default::default(),
-            id_employee: Default::default(),
-            user: Default::default(),
-            service_number: Default::default()
-        }
-    }
-}
 
 #[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Difference)]
 pub struct ConnectedClient {
