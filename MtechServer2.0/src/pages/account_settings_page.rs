@@ -84,7 +84,7 @@ impl MtechServer{
                                             // let user_pre_mod = usr.clone();
                                             // let width = ui.available_width() / 3.0 + 10.0;
 
-                                            TextEdit::singleline(&mut usr.name)
+                                            TextEdit::singleline(&mut usr.get_name())
                                                 .hint_text(" Name")
                                                 .vertical_align(Align::Center)
                                                 .desired_width(230.)
@@ -92,7 +92,7 @@ impl MtechServer{
 
                                             ui.add_space(5.0);
 
-                                            TextEdit::singleline(&mut usr.email)
+                                            TextEdit::singleline(&mut usr.get_email())
                                                 .hint_text(" Email")
                                                 .vertical_align(Align::Center)
                                                 .desired_width(230.)

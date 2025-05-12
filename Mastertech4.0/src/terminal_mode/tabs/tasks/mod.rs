@@ -39,14 +39,14 @@ impl TasksTab {
             if ctx.new_tasks {
                 ctx.new_tasks = false;
                 for task in ctx.tasks.iter() {
-                    if task.assignee == self.current_user.id && !task.completed {
+                    if task.assignee == self.current_user.get_id() && !task.completed {
                         self.items.push(task.clone());
                     }
                 }
         
                 self.widths = Self::calculate_widths(&self.items);
             }
-            if !ctx.user.name.is_empty() {
+            if !ctx.user.get_name().is_empty() {
                 self.current_user = ctx.user.clone();
             }
         }

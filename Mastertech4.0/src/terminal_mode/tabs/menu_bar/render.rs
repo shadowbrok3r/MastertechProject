@@ -41,9 +41,9 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let title = &mut self.client_title;
         let user = &mut User::default();
 
-        if user.name.is_empty() {
+        if user.get_name().is_empty() {
             if let Ok(ctx) = self.ctx.lock() {
-                if !ctx.user.name.is_empty() {
+                if !ctx.user.get_name().is_empty() {
                     *user = ctx.user.clone();
                 }
             }
@@ -59,7 +59,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                         .title_alignment(ratatui::layout::Alignment::Center)
                         .border_type(ratatui::widgets::BorderType::Rounded)
                         .fg(CATPPUCCIN.lavender)
-                        .title(user.name.clone())
+                        .title(user.get_name())
                 )
                 .right_aligned()
                 .wrap(Wrap{ trim: false})

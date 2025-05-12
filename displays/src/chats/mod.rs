@@ -1,5 +1,5 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
-use database::{live_data::handle_live_delete, schema::{helper_traits::{parse_email_user, TaskNotePayloadHelper}, TaskNotePayload, User}};
+use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -25,7 +25,7 @@ pub struct ChatView{
     pub service_number: Option<String>,
 }
 
-impl Default for ChatView{
+impl Default for ChatView {
     fn default() -> Self {
         let current_user = if let Ok(Some(user)) = get_current_user_from_auth() {
             user
@@ -60,7 +60,7 @@ impl ChatView {
         let mut users_set = BTreeSet::new();
         let mut note_ids = HashMap::new();
         for user in users {
-            let parsed_email = parse_email_user(&user.email);
+            let parsed_email = user.get_username();
             users_set.insert(format!("@{parsed_email}"));   
         }
 
@@ -147,14 +147,12 @@ impl ChatView {
 
                     let usr = &mut self.current_user.clone();
                     log::warn!("USER: {usr:?}");
-                    if usr.email.is_empty() {
+                    if usr.get_email().is_empty() {
                         if let Ok(Some(user)) = get_current_user_from_auth() {
                             log::warn!("USER FROM AUTH: {user:?}");
                             *usr = user;
                         }
                     }
-                    
-                    let username = parse_email_user(&usr.email).to_string();
 
                     // Extract the first customer thread ID if available
                     let id_customer_thread = self
@@ -167,9 +165,9 @@ impl ChatView {
                         // everest_initials: usr.everest_initials.clone(), 
                         note: txt, 
                         task_id, 
-                        username,
-                        user: Some(usr.id.clone()),
-                        id_employee: Some(usr.id_prestashop.clone().unwrap_or_default().to_string()),
+                        username: usr.get_username().to_string(),
+                        user: Some(usr.get_id()),
+                        id_employee: Some(usr.get_employee_id().clone().unwrap_or_default().to_string()),
                         id_customer_thread,
                         service_number: self.service_number.clone(),
                         ..Default::default() 
@@ -218,7 +216,7 @@ impl ChatView {
 
                 for item in self.messages.iter_mut(){
                     let user = self.current_user.clone();
-                    let is_message_from_myself = if item.username == parse_email_user(&user.email) {
+                    let is_message_from_myself = if item.username == user.get_username() {
                         true
                     } else { false };
 
@@ -308,7 +306,7 @@ impl ChatView {
                                                             item.note = msg.note.clone();
                                                             // if note_pre_edit.ne(&msg.note) {
                                                             PlatformSpawner::spawn(async move {
-                                                                match task_note.modify_note().await {
+                                                                match task_note.update_note().await {
                                                                     Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
                                                                     Err(e) => error!("Error modifying note: {e:?}"),
                                                                 }

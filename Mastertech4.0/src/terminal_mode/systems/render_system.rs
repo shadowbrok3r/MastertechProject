@@ -62,8 +62,8 @@ impl RenderSystem {
                                 if let Ok(mut ctx) = self.ctx.lock() {
                                     let tx = ctx.tasks_tx.clone();
                                     ctx.user = user.0.clone();
-                                    let store = user.0.clone().store.as_str().to_string();
-                                    let usr_id = user.0.id.clone();
+                                    let store = user.0.get_store().as_str().to_string();
+                                    let usr_id = user.0.get_id().clone();
                                     let mut client = get_client_hash();
                                     let connection_url = format!(
                                         "{WS_CLIENT_URL}&room_id={}",

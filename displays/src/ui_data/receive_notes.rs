@@ -138,9 +138,9 @@ impl SharedContext {
             if action == Action::Create {
                 if let (Some(id), Some(user)) = (note.task_id.clone(), &self.current_user) {
                     if let Some(task) = self.tasks.iter().find(|task| {
-                        task.id == id && task.assignee == user.id && !task.completed
+                        task.id == id && task.assignee == user.get_id() && !task.completed
                     }) {
-                        if note.user != Some(user.id.clone()) {
+                        if note.user != Some(user.get_id().clone()) {
                             let toast = Toast {
                                 kind: ToastKind::Success,
                                 text: format!("New Message for {}", task.task_name).into(),

@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.4.3"
+version = "4.4.4"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2024"
-ProductVersion = "4.4.3"
+ProductVersion = "4.4.4"
 FileDescription = "Mastertech"
 
 [features]

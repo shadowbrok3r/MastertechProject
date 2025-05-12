@@ -50,7 +50,7 @@ impl SharedContext {
                         } else {
                             info!("Task name not found");
                         }
-                        if notification.user == usr.id {
+                        if notification.user == usr.get_id() {
                             self.read_notifications = false;
                             let toast = &mut self.toasts;
                             let auth_toast = Toast {

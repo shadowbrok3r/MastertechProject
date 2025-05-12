@@ -319,7 +319,7 @@ impl SharedContext {
                     filter: Box::new(|task, current_user, _store_users, _store| {
                         current_user
                             .as_ref()
-                            .map(|user| task.assignee == user.id && task.status != Status::Complete)
+                            .map(|user| task.assignee == user.get_id() && task.status != Status::Complete)
                             .unwrap_or(false)
                     }),
                     update_assignees: false,
@@ -333,19 +333,19 @@ impl SharedContext {
                     valid_keys: self
                         .store_users
                         .iter()
-                        .map(|u| u.everest_initials.to_string())
+                        .map(|u| u.get_initials().to_string())
                         .collect(),
                     key_provider: Box::new(|users| {
-                        users.iter().map(|u| u.everest_initials.to_string()).collect()
+                        users.iter().map(|u| u.get_initials().to_string()).collect()
                     }),
                     filter: Box::new(|task, current_user, store_users, store| {
                         current_user
                             .as_ref()
                             .map(|current| {
                                 store_users.iter().any(|u| {
-                                    u.store == *store
-                                        && u.email != current.email
-                                        && task.assignee == u.id
+                                    u.get_store() == *store
+                                        && u.get_email() != current.get_email()
+                                        && task.assignee == u.get_id()
                                         && !task.completed
                                 })
                             })
@@ -362,14 +362,14 @@ impl SharedContext {
                     valid_keys: self
                         .store_users
                         .iter()
-                        .map(|u| u.everest_initials.to_string())
+                        .map(|u| u.get_initials().to_string())
                         .collect(),
                     key_provider: Box::new(|users| {
-                        users.iter().map(|u| u.everest_initials.to_string()).collect()
+                        users.iter().map(|u| u.get_initials().to_string()).collect()
                     }),
                     filter: Box::new(|task, _current_user, store_users, store| {
                         store_users.iter().any(|u| {
-                            u.store == *store && task.assignee == u.id && task.completed
+                            u.get_store() == *store && task.assignee == u.get_id() && task.completed
                         })
                     }),
                     update_assignees: true,
