@@ -43,6 +43,17 @@ impl Default for TaskNotePayload {
 }
 
 impl TaskNotePayload {
+    pub async fn delete_note(&mut self) -> anyhow::Result<(), anyhow::Error> {
+        let id = self.id.clone();
+        log::info!("schema/utilities.rs -> deleting id: {:?}", id.clone());
+        DATABASE.set("id", id.key().to_string().clone()).await?;
+        let y: Option<Record> = DATABASE
+            .delete((TASK_NOTE_TABLE, id.key().to_string()))
+            .await?;
+        log::info!("schema/utilities.rs -> Deleted note: {:?}", y);
+        Ok(())
+    }
+
     pub async fn handle_note_creation(&mut self, private: bool) -> Result<(), anyhow::Error> {
         if self.created_at.is_empty() {
             self.update_task_note_with_current_time().await?;

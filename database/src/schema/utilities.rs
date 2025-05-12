@@ -1,7 +1,7 @@
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        helper_traits::{TaskNotePayloadHelper, UserHelper}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE
+        helper_traits::UserHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE
     }, PlatformSpawner, Spawner, DATABASE
 };
 use anyhow::{Error, Result};
@@ -361,25 +361,6 @@ pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<
 //     tx.try_send(chnnl)?;
 //     Ok(())
 // }
-
-#[async_trait]
-pub trait TaskNoteMod {
-    async fn delete_note(&mut self) -> Result<(), Error>;
-}
-
-#[async_trait]
-impl TaskNoteMod for TaskNotePayload {
-    async fn delete_note(&mut self) -> Result<(), Error> {
-        let id = self.id.clone();
-        info!("schema/utilities.rs -> deleting id: {:?}", id.clone());
-        DATABASE.set("id", id.key().to_string().clone()).await?;
-        let y: Option<Record> = DATABASE
-            .delete((TASK_NOTE_TABLE, id.key().to_string()))
-            .await?;
-        info!("schema/utilities.rs -> Deleted note: {:?}", y);
-        Ok(())
-    }
-}
 
 pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(), Error> {
     let id = task_id.clone();
