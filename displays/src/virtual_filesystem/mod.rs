@@ -602,12 +602,11 @@ impl FileSystem {
     pub fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
         let folder_pref = folder_prefix.trim_start_matches('/').to_string();
         let tx = self.paths_channel.0.clone();
-        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let name = self.user.email.clone();
+        let access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         PlatformSpawner::spawn(async move {
-            let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
-            let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
+            let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &name);
             match s3_fetcher.request_bucket_contents(&folder_pref).await {
                 Ok(node) => { let _ = tx.send(node); },
                 Err(e) => log::warn!("Error getting node: {e:?}"),
@@ -755,9 +754,9 @@ impl FileSystem {
 
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
-        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let name = self.user.email.clone();
+        let access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
         PlatformSpawner::spawn(async move {
@@ -776,9 +775,9 @@ impl FileSystem {
     #[cfg(feature="tokio")]
     pub fn upload_folder(&self, _path: String) {
         let _task = rfd::AsyncFileDialog::new().pick_folders();
-        let _secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let _access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let name = self.user.email.clone();
+        let _access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let _secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         let _parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         // tokio::spawn(async move {
         //     let result = Self::perform_upload(
@@ -795,9 +794,9 @@ impl FileSystem {
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
-        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let name = self.user.email.to_lowercase().clone();
+        let access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         PlatformSpawner::spawn(async move {
             let result = Self::perform_download(
@@ -817,9 +816,9 @@ impl FileSystem {
     pub fn preview_selection(&self, path: String) {
         let tx = self.bytes_tx.clone();
         let preview_tx = self.file_preview_channel.0.clone();
-        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let name = self.user.email.to_lowercase().clone();
+        let access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
         PlatformSpawner::spawn(async move {
@@ -840,9 +839,9 @@ impl FileSystem {
 
     fn delete_selection(&self, path: String) {
         // let tx = self.bytes_tx.clone();
-        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let name = self.user.email.clone();
+        let access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         let parsed = name.split_once('@').unwrap_or_default().0.to_string();
     
         PlatformSpawner::spawn(async move {
@@ -971,9 +970,9 @@ impl FileSystem {
     }
 
     pub fn upload_script(&self, file_name: String, script_contents: String) {
-        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        let name = self.user.email.clone();
+        let access_key = self.user.get_minio_access_key().unwrap_or_default();
+        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+        let name = self.user.get_username().to_string();
         let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
 

@@ -93,7 +93,7 @@ impl MastertechContext{
             id: self.client_uuid.clone(),
             client_hash,
             connected: false,
-            assigned_user: Some(self.shared_ctx.current_user.as_ref().cloned().unwrap_or_default().id),
+            assigned_user: Some(self.shared_ctx.current_user.as_ref().cloned().unwrap_or_default().get_id()),
             connection_string: self.client_title.clone(),
             customer: cust_id,
             computer: Some(computer_id.clone()),

@@ -36,7 +36,7 @@ impl<'a> ActionHandler for MenuBar<'a> {
                     "Tasks" => { 
                         if let Ok(ctx) = self.ctx.try_lock() {
                             let tx = ctx.tasks_tx.clone();
-                            let store = ctx.user.store.as_str().to_string();
+                            let store = ctx.user.get_store().as_str().to_string();
                             if !store.is_empty() {
                                 tokio::spawn(async move {
                                     let tasks_result = get_tasks_for_store(tx, store).await;

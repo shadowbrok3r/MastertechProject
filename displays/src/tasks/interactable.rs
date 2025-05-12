@@ -202,12 +202,12 @@ impl Interaction for TaskPayload {
                 for user in *&store_users {
                     let assignee_selection = ui.selectable_value(
                         &mut self.everest_initials,
-                        user.everest_initials.to_owned(),
-                        &user.everest_initials,
+                        user.get_initials().to_owned(),
+                        user.get_initials(),
                     );
                     if assignee_selection.clicked() {
                         let task = self.clone(); 
-                        let initials = user.everest_initials.clone();
+                        let initials = user.get_initials().to_string();
                         PlatformSpawner::spawn(async move { 
                             let update = task.update_assignee_initials(initials).await;
                             info!("Update: {update:?}"); 

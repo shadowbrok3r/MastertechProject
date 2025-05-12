@@ -140,7 +140,7 @@ impl MasterTechApp {
 
     pub fn load_data(&mut self, ctx: &Context) {
         if let Some(usr) = self.context.shared_ctx.current_user.clone() {
-            match serde_json::from_value::<ThemeConfig>(usr.user_settings.color_scheme.clone()) {
+            match serde_json::from_value::<ThemeConfig>(usr.get_color_scheme()) {
                 Ok(color_settings) => self.context.shared_ctx.theme_config = color_settings.clone(),
                 Err(e) => info!("Error setting theme config: {e:?}"),
             }

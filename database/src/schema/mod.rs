@@ -9,7 +9,6 @@ use serde_json::Value;
 use crate::DATABASE;
 use anyhow::Error;
 
-pub mod prestashop_schema;
 pub mod helper_traits;
 pub mod deserializer;
 pub mod utilities;
@@ -17,9 +16,9 @@ pub mod get_data;
 pub mod buckets;
 pub mod task;
 pub mod task_note;
-
-pub use task::*;
-pub use task_note::*;
+pub mod user;
+pub mod ticket;
+pub mod prestashop;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -34,6 +33,12 @@ pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 pub const CHAT_THREADS_TABLE: &str = "threads";
+
+pub use task::*;
+pub use task_note::*;
+pub use user::*;
+pub use ticket::*;
+pub use prestashop as prestashop_schema;
 
 #[async_trait(?Send)]
 impl<D> GetAssociatedDataFromId<D> for RecordId {
@@ -63,143 +68,6 @@ pub struct RecordResult {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordSuccess {
     pub success: bool,
-}
-
-
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
-pub struct TicketPayload {
-    pub id: RecordId,
-    pub created_at: Option<String>,
-    pub customer: Option<CustomerData>,
-    pub computer: Option<ComputerData>,
-    pub service_number: String,
-    /// Person that checked computer in
-    pub checkin_rep: String,
-    /// This is main initials on ticket
-    pub sales_rep: String,
-    pub checkin_notes: String,
-    pub tech: String,
-    pub salesman: String,
-    pub terms: String,
-    pub ticket_total: String,
-    pub doc_alias: String, // type of order (service,sales,transfer)
-    pub current_antivirus: Option<Vec<String>>,
-    pub hardware_test_results: HardwareTests,
-    pub jobs: Option<Vec<Job>>
-}
-
-impl Default for TicketPayload {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            created_at: Default::default(),
-            customer: Default::default(),
-            computer: Default::default(),
-            service_number: Default::default(),
-            checkin_rep: Default::default(),
-            sales_rep: Default::default(),
-            checkin_notes: Default::default(),
-            tech: Default::default(),
-            salesman: Default::default(),
-            terms: Default::default(),
-            ticket_total: Default::default(),
-            doc_alias: Default::default(),
-            current_antivirus: Default::default(),
-            hardware_test_results: Default::default(),
-            jobs: Default::default()
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
-pub struct TicketData {
-    // Live Ticket Payload
-    pub id: RecordId,
-    pub created_at: Option<String>,
-    pub customer: Option<RecordId>,
-    pub computer: Option<RecordId>,
-    pub service_number: String,
-    /// Person that checked computer in
-    pub checkin_rep: String,
-    /// This is main initials on ticket
-    pub sales_rep: String,
-    pub checkin_notes: String,
-    pub tech: String,
-    pub salesman: String,
-    pub terms: String,
-    pub ticket_total: String,
-    pub doc_alias: String, // type of order (service,sales,transfer)
-    pub current_antivirus: Option<Vec<String>>,
-    pub hardware_test_results: HardwareTests,
-    pub jobs: Option<Vec<Job>>
-}
-
-impl Default for TicketData {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            created_at: Default::default(),
-            customer: Default::default(),
-            computer: Default::default(),
-            service_number: Default::default(),
-            checkin_rep: Default::default(),
-            sales_rep: Default::default(),
-            checkin_notes: Default::default(),
-            tech: Default::default(),
-            salesman: Default::default(),
-            terms: Default::default(),
-            ticket_total: Default::default(),
-            doc_alias: Default::default(),
-            current_antivirus: Default::default(),
-            hardware_test_results: Default::default(),
-            jobs: Default::default(),
-        }
-    }
-}
-
-impl From<TicketData> for TicketPayload {
-    fn from(ticket: TicketData) -> Self {
-        Self {
-            id: ticket.id,
-            created_at: ticket.created_at,
-            service_number: ticket.service_number,
-            checkin_rep: ticket.checkin_rep,
-            sales_rep: ticket.sales_rep,
-            checkin_notes: ticket.checkin_notes,
-            tech: ticket.tech,
-            salesman: ticket.salesman,
-            terms: ticket.terms,
-            ticket_total: ticket.ticket_total,
-            doc_alias: ticket.doc_alias,
-            current_antivirus: ticket.current_antivirus,
-            hardware_test_results: ticket.hardware_test_results,
-            ..Default::default()
-        }
-    }
-}
-
-impl From<TicketPayload> for TicketData {
-    fn from(ticket: TicketPayload) -> Self {
-        Self {
-            id: ticket.id,
-            created_at: ticket.created_at,
-            service_number: ticket.service_number,
-            checkin_rep: ticket.checkin_rep,
-            sales_rep: ticket.sales_rep,
-            checkin_notes: ticket.checkin_notes,
-            tech: ticket.tech,
-            salesman: ticket.salesman,
-            terms: ticket.terms,
-            ticket_total: ticket.ticket_total,
-            doc_alias: ticket.doc_alias,
-            current_antivirus: ticket.current_antivirus,
-            hardware_test_results: ticket.hardware_test_results,
-            customer: Some(ticket.customer.unwrap_or_default().id),
-            computer: Some(ticket.computer.unwrap_or_default().id),
-            jobs: ticket.jobs,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
@@ -546,8 +414,11 @@ pub enum Status {
     Todo,
     InRepair,
     Complete,
+    Sales,
+    Qc,
     CustomStatus(String),
 }
+
 // Trait that all statuses (including user-defined ones) can implement
 // trait TaskStatuses {
 //     fn get_user_statuses(&self) -> Vec<Status>;
@@ -562,7 +433,6 @@ pub enum Status {
 //             Status::CustomStatus(_) => todo!(),
 //         }
 //     }
-
 //     fn add_new_user_status(&self) -> Vec<Status> {
 //         todo!()
 //     }
@@ -575,24 +445,23 @@ pub enum Status {
 //             Status::InRepair => "In Repair",
 //             Status::Complete => "Complete",
 //             Status::CustomStatuses(user_statuses) => {
-
 //             }
 //         }
-//     }
-    
-//     fn add_new_user_status(&self) -> Vec<Status> {
-        
+//     }  
+//     fn add_new_user_status(&self) -> Vec<Status> {    
 //         self.user_statuses.push(value);
 //     }
 // }
 
 impl Status {
-    pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
+    pub const VALUES: [Self; 6] = [Self::Todo, Self::InRepair, Self::Complete, Self::Sales, Self::Qc, Status::CustomStatus(String::new())];
     pub fn as_str(&self) -> &str {
         match self {
             Status::Todo => "Todo",
             Status::InRepair => "In Repair",
             Status::Complete => "Complete",
+            Status::Sales => "Sales",
+            Status::Qc => "QC",
             Status::CustomStatus(status) => &status
         }
     }
@@ -601,16 +470,10 @@ impl Status {
             "Todo" => Status::Todo,
             "In Repair" => Status::InRepair,
             "Complete" => Status::Complete,
+            "Sales" => Status::Sales,
+            "QC" => Status::Qc,
             _ => Status::CustomStatus(status.to_string())
         }
-    }
-}
-
-impl User {
-    pub fn add_custom_status(&mut self, _new_status: &str) {
-        // if let Status::CustomStatus(ref mut user_statuses) = self {
-        //     user_statuses.push(new_status.to_string());
-        // }
     }
 }
 
@@ -624,12 +487,6 @@ pub enum Priority {
     Normal,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum Category {
-    StoreTasks,
-    MyTasks,
-    CompletedTasks,
-}
 
 #[derive(Deserialize)]
 struct CommandRequest {
@@ -922,56 +779,6 @@ impl Store {
         Self::ORE,
         Self::SAN,
     ];
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct User {
-    pub id: RecordId,
-    pub name: String,
-    pub everest_initials: String,
-    pub email: String,
-    pub store: Store,
-    // pub notifications: Option<Vec<NotificationId>>,
-    pub minio_access_key: Option<String>,
-    pub minio_secret_key: Option<String>,
-    pub user_settings: UserSettings,
-    pub id_prestashop: Option<u64>,
-    pub id_store: Option<String>,
-    pub chat_threads: Option<Vec<ChatThreads>>,
-    pub user_statuses: Option<Vec<Status>>
-}
-
-impl Default for User {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            name: String::new(),
-            everest_initials: String::new(),
-            email: String::new(),
-            store: Store::default(),
-            minio_access_key: None,
-            minio_secret_key: None,
-            user_settings: UserSettings::default(),
-            id_store: None,
-            id_prestashop: None,
-            chat_threads: None,
-            user_statuses: None,
-        }
-    }
-}
-
-impl Eq for User {}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
-pub struct UserSettings {
-    pub color_scheme: Value,
-    pub ui_layout: UiLayout
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
-pub struct UiLayout {
-    pub mtechserver: Value,
-    pub mastertech: Value,
 }
 
 impl Priority {

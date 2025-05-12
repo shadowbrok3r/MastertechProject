@@ -1,5 +1,5 @@
 
-use database::{schema::{helper_traits::UserHelper, utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
+use database::{schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
 use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
 use crate::{app_state::{default_tree, MainPages}, tabs::github::{get_github_releases, self_updater::run}};
 use crate::app_state::{AppState, MasterTechApp};
@@ -58,7 +58,7 @@ impl MasterTechApp {
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);
                         let txt =
-                            RichText::new(usr.name.clone()).color(Color32::from_rgb(191, 33, 101));
+                            RichText::new(usr.get_username()).color(Color32::from_rgb(191, 33, 101));
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
@@ -304,7 +304,7 @@ impl MasterTechApp {
                         if reset_ui.clicked() {
                             let tree = default_tree();
                             let default_layout = serde_json::to_value(&tree).unwrap_or_default();
-                            usr.user_settings.ui_layout.mastertech = default_layout.clone();
+                            usr.set_ui_layout_mastertech(default_layout.clone());
                             let mut user = usr.clone();
                             spawn(async move {
                                 match user.save_mastertech_ui_layout(default_layout.clone()).await {
@@ -319,9 +319,7 @@ impl MasterTechApp {
                         let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
                         if submit.clicked() {
                             let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
-                            usr.user_settings.ui_layout.mastertech = val.clone();
-
-                            info!("user_settings: {:#?}", usr.user_settings.ui_layout);
+                            usr.set_ui_layout_mastertech(val.clone());
                             
                             let mut user = usr.clone();
                             spawn(async move {

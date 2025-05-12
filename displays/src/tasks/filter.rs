@@ -6,7 +6,7 @@ use std::cmp::Reverse;
 impl FilterTasks for Vec<TaskPayload> {
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload> {
         self.into_iter()
-            .filter(|task| task.assignee == assignee.id)
+            .filter(|task| task.assignee == assignee.get_id())
             .cloned()
             .collect()
     }
@@ -42,7 +42,7 @@ impl FilterTasks for Vec<TaskPayload> {
     fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| {
-                assignee.store == *store && task.assignee.key().to_string() == assignee.id.key().to_string()
+                assignee.get_store() == *store && task.assignee.key().to_string() == assignee.get_id().key().to_string()
             })
             .cloned()
             .collect()
