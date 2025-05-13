@@ -19,7 +19,7 @@ impl SharedContext {
         if let Some(usr) = self.current_user.as_ref() {
             self.store_selection = std::convert::Into::<u64>::into(usr.get_store());
             let user = usr.clone();
-            let name = user.get_name().clone();
+            let name = user.get_name();
             info!("Getting Initial data: {}", self.store_selection);
             if self.filesystem.paths.is_empty() {
                 self.filesystem.set_user(user.clone());

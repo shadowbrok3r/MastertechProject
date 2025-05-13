@@ -36,7 +36,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
             total_height += height;
             
             Row::new(vec![
-                Cell::from(Text::from(Self::center_text_with_borders(Self::format_due_date(&task.due_date), widths[0] as usize, height))),
+                Cell::from(Text::from(Self::center_text_with_borders(task.due_date.format("%m/%d/%y").to_string(), widths[0] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.status.as_str().to_string(), widths[1] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.task_name.clone(), widths[2] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.everest_initials.clone(), widths[3] as usize, height))),
@@ -45,12 +45,8 @@ impl<'a> HandleWidget <'a> for TasksTab {
                 Cell::from(Text::from(wrapped_desc)),
             ])
             .style(Style::default()
-                .fg(
-                    if i % 2 == 0 { CATPPUCCIN.subtext0 } else { CATPPUCCIN.text }
-                )
-                .bg(
-                    if i % 2 == 0 { CATPPUCCIN.base } else { Color::Rgb(14, 14, 18) }
-                )
+                .fg( if i % 2 == 0 { CATPPUCCIN.subtext0 } else { CATPPUCCIN.text } )
+                .bg( if i % 2 == 0 { CATPPUCCIN.base } else { Color::Rgb(14, 14, 18) } )
             )
             .height(height)
         }).collect();
@@ -178,22 +174,6 @@ impl TasksTab {
         widths[5] = max(widths[5], headers[5].len() as u16).min(60);
         widths[6] = max(widths[6], headers[6].len() as u16).min(80);
         widths
-    }
-
-    fn format_due_date(due_date: &str) -> String {
-        // Parse ISO 8601 (e.g., "2025-02-08T22:39:45Z" or "2025-02-08") and format as MM/DD/YY
-        let parsed = NaiveDateTime::parse_from_str(due_date, "%Y-%m-%dT%H:%M:%SZ")
-            .or_else(|_| NaiveDateTime::parse_from_str(due_date, "%Y-%m-%d"));
-        
-        match parsed {
-            Ok(naive_dt) => DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc)
-                .format("%m/%d/%y")
-                .to_string(),
-            Err(e) => {
-                log::warn!("Failed to parse due_date '{}': {}. Using default.", due_date, e);
-                "N/A".to_string() // Return a placeholder instead of default date
-            }
-        }
     }
 
     pub fn next_row(&mut self) {

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload}, DATABASE};
+use async_trait::async_trait;
 use surrealdb::RecordId;
 use crate::Updatable;
 use log::info;
@@ -19,11 +19,11 @@ impl Updatable for TaskPayload {
         Ok(())
     }
 
-    async fn update_due_date(&self, due_date: String) -> anyhow::Result<(), anyhow::Error> {
+    async fn update_due_date(&self) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
                 .query("UPDATE $id SET due_date=$date")
                 .bind(("id", self.id.clone()))
-                .bind(("date", due_date))
+                .bind(("date", self.due_date))
                 .await?
                 .take(0)?;
         Ok(())
