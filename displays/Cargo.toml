@@ -17,7 +17,6 @@ derivative = "2"
 parking_lot = "0.12"
 itertools = "0.14"
 zstd = "0.13"
-rfd = "0.15"
 tap = "1"
 compact_str = { version = "0.9.0", features = ["serde"] }
 
@@ -44,6 +43,7 @@ regex = { workspace=true }
 async-trait = { workspace = true }
 once_cell = { workspace=true }
 egui_taffy = { workspace = true }
+rfd = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace=true, optional = true }
@@ -59,3 +59,6 @@ rusty-s3 = { workspace=true, features = ["wasm_bindgen"]}
 web-time = { workspace=true, optional = true }
 wasm-bindgen-futures = { workspace=true, optional = true }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]} # "tls"
+
+[dependencies.zvariant_derive]
+version = "=5.5.1" 

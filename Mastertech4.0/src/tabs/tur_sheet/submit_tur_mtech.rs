@@ -11,7 +11,7 @@ impl MastertechContext {
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
 
-        task_data.due_date = self.date;
+        task_data.due_date = self.date.into();
         let send_specs = self.send_specs.clone();
 
         spawn(async move {

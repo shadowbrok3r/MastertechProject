@@ -322,7 +322,7 @@ impl TaskRowViewer {
             })
         }
         task.task_note = task_notes.clone();
-        task.due_date = Utc::now();
+        task.due_date = Utc::now().into();
 
         services.push(ticket.id.clone());
         let mut computer_data = ComputerData::default();

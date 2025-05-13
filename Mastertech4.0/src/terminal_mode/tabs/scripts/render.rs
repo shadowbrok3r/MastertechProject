@@ -527,14 +527,13 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 log::info!("We need a user");
                 let user = get_current_user_from_auth();
                 match user {
-                    Ok(Some(usr)) => {
+                    Some(usr) => {
                         let _ = self.filesystem.set_user(usr);
                         let _ = self.filesystem.request_contents("Scripts");
                         log::info!("insert_user_scripts");
                         self.check_for_scripts = true;
                     },
-                    Ok(None) => log::info!("Could not retrieve user."),
-                    Err(e) => log::info!("Error retrieving user: {e:?}"),
+                    None => log::info!("Could not retrieve user."),
                 };
             }
             *init = false;

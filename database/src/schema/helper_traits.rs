@@ -699,7 +699,7 @@ impl From<PrestashopPayload> for TaskPayload {
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
-                created_at:  DateTime::parse_from_rfc3339(&msg.date_add).unwrap_or_default().with_timezone(&Utc),
+                created_at:  DateTime::parse_from_rfc3339(&msg.date_add).unwrap_or_default().with_timezone(&Utc).into(),
                 id_customer_thread: Some(msg.id_customer_thread.clone()),
                 id_customer_message: Some(msg.id.clone()),
                 id_employee: Some(msg.id_employee.clone()),

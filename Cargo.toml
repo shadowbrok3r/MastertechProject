@@ -44,6 +44,7 @@ chrono = { version = "0.4", default-features = false, features = ["now"] } # fea
 async-openai-wasm = { version = "0.27" }
 async-openai = {version = "0.28.1"}
 egui_taffy = "0.7"
+egui_colors = "0.8"
 
 [profile.dev]
 debug = true
@@ -58,7 +59,7 @@ panic = "unwind"
 debug = false
 opt-level = 3
 
-# [patch.crates-io]
+
 # tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
 # socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }
 # libc = { git = "https://github.com/wasix-org/libc.git", branch = "master" }

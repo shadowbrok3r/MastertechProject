@@ -1,18 +1,19 @@
+use chrono::{DateTime, Utc};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload, User, COMPUTER_TABLE}, DATABASE};
-use surrealdb::RecordId;
 use crate::{chats::ChatView, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
+use egui_taffy::{taffy::{self, prelude::line}, tui, TuiBuilderLogic};
+use taffy::{prelude::{fr, length, percent}, Style as TaffyStyle};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
+use surrealdb::RecordId;
 use serde_json::Value;
 use serde::Serialize;
 use std::sync::Arc;
 use bytes::Bytes;
 use core::f32;
 use log::info;
-use egui_taffy::{taffy::{self, prelude::line}, tui, TuiBuilderLogic};
-use taffy::{prelude::{fr, length, percent}, Style as TaffyStyle};
 
 #[cfg(target_arch="wasm32")]
 use std::sync::Mutex;
@@ -62,13 +63,7 @@ impl Default for TaskModal {
             current_page_state: ModalAction::default(),
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
-            store_users: match get_database_users() {
-                Ok(users) => users,
-                Err(e) => {
-                    log::info!("Couldnt get users: {e:?}");
-                    Vec::new()
-                },
-            }
+            store_users: get_database_users(),
         }
     }
 }
@@ -93,16 +88,7 @@ impl TaskModal {
             default_height: Some(800.0),
             chat_view,
             spo: SpecialPartOrder::default(),
-            store_users: match get_database_users() {
-                Ok(users) => {
-                    log::info!("Users Len: {:?}", users.len());
-                    users
-                },
-                Err(e) => {
-                    log::info!("Couldnt get users: {e:?}");
-                    Vec::new()
-                },
-            }
+            store_users: get_database_users(),
         }
     }
 }
@@ -354,7 +340,8 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 ui.end_row();
                 
                 ui.colored_label(Color32::LIGHT_RED, "Tur Sent:");
-                ui.label(ticket.created_at.date_naive().to_string());
+                let date: DateTime<Utc> = ticket.created_at.clone().into();
+                ui.label(date.date_naive().to_string());
 
                 ui.colored_label(Color32::LIGHT_RED, "Due Date");
                 ui.push_id(format!("Due Date {}", task.due_date), |ui| {

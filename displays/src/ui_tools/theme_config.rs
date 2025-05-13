@@ -633,3 +633,106 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
 
     Arc::new(custom_style)
 }
+
+// use egui_colors::{Colorix, tokens::ThemeColor};
+// // use egui_fontcfg::{CustomFontPaths, FontCfgUi, FontDefsUiMsg};
+
+// fn style_ui(
+//     app: &mut App,
+//     ui: &mut egui::Ui,
+//     opt_colorix: &mut Option<Colorix>,
+//     msg_dia: &mut MessageDialog,
+// ) {
+//     ui.group(|ui| {
+//         let style = &mut app.cfg.style;
+//         ui.heading("Font sizes");
+//         let mut any_changed = false;
+//         ui.horizontal(|ui| {
+//             ui.label("heading");
+//             any_changed |= ui
+//                 .add(egui::DragValue::new(&mut style.font_sizes.heading).range(3..=100))
+//                 .changed();
+//         });
+//         ui.horizontal(|ui| {
+//             ui.label("body");
+//             any_changed |= ui
+//                 .add(egui::DragValue::new(&mut style.font_sizes.body).range(3..=100))
+//                 .changed();
+//         });
+//         ui.horizontal(|ui| {
+//             ui.label("monospace");
+//             any_changed |= ui
+//                 .add(egui::DragValue::new(&mut style.font_sizes.monospace).range(3..=100))
+//                 .changed();
+//         });
+//         ui.horizontal(|ui| {
+//             ui.label("button");
+//             any_changed |= ui
+//                 .add(egui::DragValue::new(&mut style.font_sizes.button).range(3..=100))
+//                 .changed();
+//         });
+//         ui.horizontal(|ui| {
+//             ui.label("small");
+//             any_changed |= ui
+//                 .add(egui::DragValue::new(&mut style.font_sizes.small).range(3..=100))
+//                 .changed();
+//         });
+//         if ui.button("Reset default").clicked() {
+//             *style = config::Style::default();
+//             any_changed = true;
+//         }
+//         if any_changed {
+//             crate::gui::set_font_sizes_ctx(ui.ctx(), style);
+//         }
+//     });
+//     ui.group(|ui| {
+//         let colorix = match opt_colorix {
+//             Some(colorix) => colorix,
+//             None => {
+//                 if ui.button("Activate custom colors").clicked() {
+//                     opt_colorix.insert(Colorix::global(ui.ctx(), egui_colors::utils::EGUI_THEME))
+//                 } else {
+//                     return;
+//                 }
+//             }
+//         };
+//         let mut clear = false;
+//         ui.horizontal(|ui| {
+//             colorix.themes_dropdown(ui, None, false);
+//             ui.group(|ui| {
+//                 ui.label("light dark toggle");
+//                 colorix.light_dark_toggle_button(ui, 30.0);
+//             });
+//             if ui.button("Random theme").clicked() {
+//                 let mut rng = rand::rng();
+//                 *colorix = Colorix::global(
+//                     ui.ctx(),
+//                     std::array::from_fn(|_| ThemeColor::Custom(rng.random::<[u8; 3]>())),
+//                 );
+//             }
+//         });
+//         ui.separator();
+//         colorix.ui_combo_12(ui, true);
+//         if let Some(dirs) = config::project_dirs() {
+//             ui.separator();
+//             ui.horizontal(|ui| {
+//                 if ui.button("Save").clicked() {
+//                     let data: [[u8; 3]; 12] = colorix.theme().map(|theme| theme.rgb());
+//                     if let Err(e) = std::fs::write(dirs.color_theme_path(), data.as_flattened()) {
+//                         msg_dia.open(Icon::Error, "Failed to save theme", e.to_string());
+//                     }
+//                 };
+//                 if ui.button("Remove custom colors").clicked() {
+//                     if let Err(e) = std::fs::remove_file(dirs.color_theme_path()) {
+//                         msg_dia.open(Icon::Error, "Failed to delete theme file", e.to_string());
+//                     }
+//                     clear = true;
+//                 }
+//             });
+//         }
+//         if clear {
+//             ui.ctx().set_visuals(egui::Visuals::dark());
+//             *opt_colorix = None;
+//         }
+//     });
+// }
