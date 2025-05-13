@@ -263,12 +263,11 @@ impl CreateTaskModal {
                 let assignee = self.assignee.clone();
                 let mut payload = self.tur.clone();                   
                 payload.task_data.priority = self.task_priority.clone();
-                let date = NaiveDateTime::new(
+                payload.task_data.created_at = Utc::now().into();
+                payload.task_data.due_date = NaiveDateTime::new(
                     self.due_date, 
                     NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap()
-                ).and_utc();
-                
-                payload.task_data.due_date = date.clone();
+                ).and_utc().into();
                 payload.task_data.completed = false;
                 payload.task_data.status = Status::Todo;
                 payload.task_data.task_name = self.task_name.clone();

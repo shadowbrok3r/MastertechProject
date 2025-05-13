@@ -1,5 +1,5 @@
 use crate::{SortDirection, Sortable};
-use chrono::{DateTime, Timelike};
+use chrono::{DateTime, Timelike, Utc};
 use database::schema::{ConnectedClient, Priority, TaskPayload};
 
 impl Sortable<TaskPayload> for Vec<TaskPayload> {
@@ -15,8 +15,8 @@ impl Sortable<TaskPayload> for Vec<TaskPayload> {
         };
 
         self.sort_by(|a, b| {
-            let date_a = a.due_date;
-            let date_b = b.due_date;
+            let date_a: DateTime<Utc> = a.due_date.clone().into();
+            let date_b: DateTime<Utc> = b.due_date.clone().into();
 
             if date_a < date_b {
                 match sort_direction {
@@ -43,8 +43,8 @@ impl Sortable<TaskPayload> for Vec<TaskPayload> {
     }
     fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload>{
         self.sort_by(|a: &TaskPayload, b: &TaskPayload| {
-            let date_a = a.due_date;
-            let date_b = b.due_date;
+            let date_a: DateTime<Utc> = a.due_date.clone().into();
+            let date_b: DateTime<Utc> = b.due_date.clone().into();
             
             let ordering = date_a.cmp(&date_b);
             

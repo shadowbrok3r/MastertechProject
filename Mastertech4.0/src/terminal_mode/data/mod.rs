@@ -182,7 +182,7 @@ impl ServiceData {
         let ticket_data = self.ticket_data.clone();
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
-        task_data.due_date = Utc::now();
+        task_data.due_date = Utc::now().into();
         let send_specs = self.send_specs.clone();
 
         tokio::spawn(async move {

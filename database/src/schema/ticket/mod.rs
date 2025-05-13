@@ -1,14 +1,12 @@
-use chrono::{DateTime, Utc};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
-use surrealdb::RecordId;
-
+use surrealdb::{sql::Datetime, RecordId};
 use super::{ComputerData, CustomerData, HardwareTests, Job, TICKET_TABLE};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TicketPayload {
     pub id: RecordId,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Datetime,
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
     pub service_number: String,
@@ -54,7 +52,7 @@ impl Default for TicketPayload {
 pub struct TicketData {
     // Live Ticket Payload
     pub id: RecordId,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Datetime,
     pub customer: Option<RecordId>,
     pub computer: Option<RecordId>,
     pub service_number: String,

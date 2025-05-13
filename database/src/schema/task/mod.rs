@@ -1,7 +1,7 @@
 use crate::{schema::{Priority, Record, User, TASK_TABLE}, DATABASE};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use structdiff::{Difference, StructDiff};
-use surrealdb::RecordId;
+use surrealdb::{sql::Datetime, RecordId};
 
 use super::{ComputerData, CustomerData, Status, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
 
@@ -14,13 +14,13 @@ pub struct TaskPayload {
     pub task_description: String,
     pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
-    pub due_date: DateTime<Utc>, // optional because if not provided, set due date to creation date
+    pub due_date: Datetime, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     #[difference(collection_strategy = "ordered_array_like")]
     pub task_note: Vec<TaskNotePayload>,
     pub completed: bool,
     pub status: Status,
-    pub created_at: DateTime<Utc>
+    pub created_at: Datetime
 }
 
 impl Default for TaskPayload {
@@ -33,12 +33,12 @@ impl Default for TaskPayload {
             task_description: String::new(),
             assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
-            due_date: Utc::now(),
+            due_date: Utc::now().into(),
             priority: Priority::Normal,
             task_note: Vec::new(),
             completed: false,
             status: Status::Todo,
-            created_at: Utc::now()
+            created_at: Utc::now().into()
         }
     }
 }
@@ -52,11 +52,11 @@ pub struct LiveTaskPayload {
     pub task_description: String,
     pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
-    pub due_date: DateTime<Utc>, // optional because if not provided, set due date to creation date
+    pub due_date: Datetime, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     pub completed: bool,
     pub status: Status,
-    pub created_at: DateTime<Utc>
+    pub created_at: Datetime
 }
 
 impl Default for LiveTaskPayload {
@@ -69,11 +69,11 @@ impl Default for LiveTaskPayload {
             task_description: String::new(),
             assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
-            due_date: Utc::now(),
+            due_date: Utc::now().into(),
             priority: Priority::Normal,
             completed: false,
             status: Status::Todo,
-            created_at: Utc::now()
+            created_at: Utc::now().into()
         }
     }
 }
