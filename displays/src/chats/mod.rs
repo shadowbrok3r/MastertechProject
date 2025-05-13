@@ -3,7 +3,6 @@ use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use chrono::{DateTime, Local, Utc};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
 use surrealdb::RecordId;
@@ -208,11 +207,7 @@ impl ChatView {
                 let min_width = 200.;
                 let other = min_width - 30.;
                 
-                self.messages.sort_by_key(|message| 
-                    DateTime::parse_from_rfc3339(&message.created_at.clone())
-                        .unwrap_or_default()
-                        .with_timezone(&Utc)
-                );
+                self.messages.sort_by_key(|message| message.created_at.clone() );
 
                 for item in self.messages.iter_mut(){
                     let user = self.current_user.clone();
@@ -284,12 +279,9 @@ impl ChatView {
                                             Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30., 20.)).sense(Sense::hover()).ui(ui);
                                             
                                             ui.add_space(20.);
-                                            let parsed_date = DateTime::parse_from_rfc3339(&item.created_at.clone())
-                                                .unwrap_or_default()
-                                                .with_timezone(&Local);
+                                            // let parsed_date = item.created_at.clone();
                                         
-                                            let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                                            ui.label(RichText::new(formatted_date).weak());
+                                            ui.label(RichText::new(item.created_at.format("%Y/%m/%d @ %I:%M%p").to_string()).weak());
                                             ui.add_space(20.);
                                             ui.add_space(other);
 
@@ -374,12 +366,8 @@ impl ChatView {
                                             ui.add_space(8.);
                                             Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30., 20.)).sense(Sense::hover()).ui(ui);
                                             ui.add_space(35.);
-                                            let parsed_date = DateTime::parse_from_rfc3339(&item.created_at.clone())
-                                                .unwrap_or_default()
-                                                .with_timezone(&Local);
                                         
-                                            let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                                            ui.label(RichText::new(formatted_date).weak());
+                                            ui.label(RichText::new(item.created_at.format("%Y/%m/%d @ %I:%M%p").to_string()).weak());
                                             
                                             ui.add_space(10.);
                                             let copy_btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))

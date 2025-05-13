@@ -266,7 +266,7 @@ impl CreateTaskModal {
                 let date = NaiveDateTime::new(
                     self.due_date, 
                     NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap()
-                ).and_utc().to_rfc3339();
+                ).and_utc();
                 
                 payload.task_data.due_date = date.clone();
                 payload.task_data.completed = false;

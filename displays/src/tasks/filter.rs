@@ -1,4 +1,5 @@
 use crate::{FilterClients, FilterTasks};
+use chrono::{DateTime, Utc};
 use database::schema::{ConnectedClient, Priority, Status, Store, TaskPayload, User};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use std::cmp::Reverse;
@@ -32,9 +33,9 @@ impl FilterTasks for Vec<TaskPayload> {
             .collect()
     }
 
-    fn filter_by_date(&self, date: &String) -> Vec<TaskPayload> {
+    fn filter_by_date(&self, date: DateTime<Utc>) -> Vec<TaskPayload> {
         self.into_iter()
-            .filter(|task| task.due_date >= *date)
+            .filter(|task| task.due_date >= date)
             .cloned()
             .collect()
     }
@@ -48,7 +49,7 @@ impl FilterTasks for Vec<TaskPayload> {
             .collect()
     }
 
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
+    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug> (
         &self,
         search: T,
         search_input: String,

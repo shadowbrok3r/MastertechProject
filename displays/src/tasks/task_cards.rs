@@ -141,21 +141,17 @@ impl Displayable for TaskPayload {
     }
 }
 
-pub fn date_colors(date: String, _complete: bool) -> Color32 {
-    let due_date = DateTime::parse_from_rfc3339(&date)
-        .unwrap_or_default()
-        .with_timezone(&Utc);
-
+pub fn date_colors(due_date: DateTime<Utc>, _complete: bool) -> Color32 {
     let current_date = Utc::now().date_naive();
-    let mut overdue: Option<String> = None;
-    let mut due_today: Option<String> = None;
-    let mut due_tomorrow: Option<String> = None;
+    let mut overdue: Option<DateTime<Utc>> = None;
+    let mut due_today: Option<DateTime<Utc>> = None;
+    let mut due_tomorrow: Option<DateTime<Utc>> = None;
     if due_date.date_naive() == current_date.pred_opt().unwrap() {
-        overdue = Some(date.clone());
+        overdue = Some(due_date.clone());
     } else if due_date.date_naive() == current_date {
-        due_today = Some(date.clone());
+        due_today = Some(due_date.clone());
     } else if due_date.date_naive() == current_date.succ_opt().unwrap() {
-        due_tomorrow = Some(date.clone());
+        due_tomorrow = Some(due_date.clone());
     }
     if let Some(_) = overdue {
         Color32::from_rgb(199, 30, 60)

@@ -15,8 +15,8 @@ impl Sortable<TaskPayload> for Vec<TaskPayload> {
         };
 
         self.sort_by(|a, b| {
-            let date_a = get_date_without_time(&a.due_date);
-            let date_b = get_date_without_time(&b.due_date);
+            let date_a = a.due_date;
+            let date_b = b.due_date;
 
             if date_a < date_b {
                 match sort_direction {
@@ -43,8 +43,8 @@ impl Sortable<TaskPayload> for Vec<TaskPayload> {
     }
     fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload>{
         self.sort_by(|a: &TaskPayload, b: &TaskPayload| {
-            let date_a = get_date_without_time(&a.due_date);
-            let date_b = get_date_without_time(&b.due_date);
+            let date_a = a.due_date;
+            let date_b = b.due_date;
             
             let ordering = date_a.cmp(&date_b);
             

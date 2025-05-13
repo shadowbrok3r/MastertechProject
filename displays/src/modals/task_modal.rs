@@ -5,7 +5,6 @@ use crate::{chats::ChatView, get_database_users, DisplayModal, Interaction, Plat
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use serde::Serialize;
 use std::sync::Arc;
@@ -354,18 +353,9 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 ui.label(&customer.email);
                 ui.end_row();
                 
-                let created_at = ticket.created_at.as_ref();
-                if let Some(ticket_created) = created_at {
-                    let date = ticket_created.parse::<DateTime<Utc>>();
-                    if let Ok(date) = date {
-                        ui.colored_label(
-                            Color32::LIGHT_RED,
-                            "Tur Sent:",
-                        );
-                        ui.label(date.date_naive().to_string());
-                        
-                    }
-                }
+                ui.colored_label(Color32::LIGHT_RED, "Tur Sent:");
+                ui.label(ticket.created_at.date_naive().to_string());
+
                 ui.colored_label(Color32::LIGHT_RED, "Due Date");
                 ui.push_id(format!("Due Date {}", task.due_date), |ui| {
                     task.interact_due_date(ui);
