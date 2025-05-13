@@ -75,11 +75,10 @@ impl EasyMarkEditor {
         ui.separator();
 
         ui.columns(5, |columns| {
-            let _res = columns[0].button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
+            let _res = columns[0].add(Button::new("Hotkeys").min_size(Vec2::new(60.0, 10.0))).on_hover_ui(nested_hotkeys_ui);
             columns[1].checkbox(&mut self.show_rendered, "Show rendered");
-            columns[2].checkbox(&mut self.highlight_editor, "Highlight editor");
             columns[3].checkbox(&mut self.private_note, "Private Note");
-            let res = columns[3].add(Button::new("Submit").min_size(Vec2::new(60.0, 10.0)));
+            let res = columns[4].add(Button::new("Submit").min_size(Vec2::new(60.0, 10.0)));
             response = Some(res);
         });
 

@@ -26,7 +26,7 @@ pub struct ChatView{
 
 impl Default for ChatView {
     fn default() -> Self {
-        let current_user = if let Ok(Some(user)) = get_current_user_from_auth() {
+        let current_user = if let Some(user) = get_current_user_from_auth() {
             user
         } else {
             User::default()
@@ -55,7 +55,6 @@ impl ChatView {
         task_id: Option<RecordId>,
         service_number: Option<String>
     ) -> Self {
-        // info!("chats/mod.rs -> Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
         let mut note_ids = HashMap::new();
         for user in users {
@@ -68,7 +67,7 @@ impl ChatView {
         }
 
         ChatView {
-            current_user: if let Ok(Some(user)) = get_current_user_from_auth() {
+            current_user: if let Some(user) = get_current_user_from_auth() {
                 user
             } else {
                 User::default()
@@ -126,6 +125,15 @@ impl ChatView {
 
         let id = ui.auto_id_with(format!("Chat {:?}", task_id));
 
+        TopBottomPanel::top(format!("Top panel header {:?}", task_id)).exact_height(28.).show_inside(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(""); 
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    Button::new("Refresh").ui(ui);
+                });
+            });
+        });
+
         TopBottomPanel::bottom(id)
             .default_height(ui.available_height()/1.2)
             .resizable(true)
@@ -147,7 +155,7 @@ impl ChatView {
                     let usr = &mut self.current_user.clone();
                     log::warn!("USER: {usr:?}");
                     if usr.get_email().is_empty() {
-                        if let Ok(Some(user)) = get_current_user_from_auth() {
+                        if let Some(user) = get_current_user_from_auth() {
                             log::warn!("USER FROM AUTH: {user:?}");
                             *usr = user;
                         }
@@ -161,7 +169,6 @@ impl ChatView {
                         .next();
 
                     let mut new_note = TaskNotePayload {
-                        // everest_initials: usr.everest_initials.clone(), 
                         note: txt, 
                         task_id, 
                         username: usr.get_username().to_string(),
@@ -184,7 +191,6 @@ impl ChatView {
                             info!("chats/mod.rs -> Task note successfully created.");
                         }
                     });
-                    
                 }
             }
         });

@@ -110,15 +110,12 @@ impl ScriptEditor {
                         info!("Contents: {:?}", self.filesystem.root);
                     } else {
                         info!("We need a user");
-                        let user = get_current_user_from_auth();
-                        info!("get_current_user_from_auth: {user:?}");
-                        match user {
-                            Ok(Some(usr)) => {
+                        match get_current_user_from_auth() {
+                            Some(usr) => {
                                 let _ = self.filesystem.set_user(usr);
                                 let _ = self.filesystem.request_contents("/");
                             },
-                            Ok(None) => log::info!("Could not retrieve user."),
-                            Err(e) => log::info!("Error retrieving user: {e:?}"),
+                            None => log::info!("Could not retrieve user."),
                         };
                     }
                 }
