@@ -1,9 +1,9 @@
 use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
-use chrono::{SecondsFormat, Utc};
 use itertools::Itertools;
 use surrealdb::RecordId;
+use chrono::Utc;
 
 use crate::{chats::ChatView, PlatformSpawner, Spawner};
 
@@ -322,13 +322,8 @@ impl TaskRowViewer {
             })
         }
         task.task_note = task_notes.clone();
-        // Get the current time in UTC
-        let now = Utc::now();
+        task.due_date = Utc::now();
 
-        // Format the date in the desired format
-        let formatted_date = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-        
-        task.due_date = formatted_date;
         services.push(ticket.id.clone());
         let mut computer_data = ComputerData::default();
         if !service_details.is_empty() {

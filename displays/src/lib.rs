@@ -5,6 +5,7 @@ use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::{Receiver, Sender};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use surrealdb::RecordId;
 use egui_extras::Strip;
 use std::fmt::Debug;
@@ -152,7 +153,7 @@ pub trait ColumnLayout {
 pub trait Updatable {
     // This is correctly implemented
     async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error>;
-    async fn update_due_date(&self, due_date: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_due_date(&self) -> anyhow::Result<(), anyhow::Error>;
     async fn update_assignee_initials(&self, initials: String) -> anyhow::Result<(), anyhow::Error>;
     async fn update_task_name(&self, name: String) -> anyhow::Result<(), anyhow::Error>;
     async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error>;
@@ -180,7 +181,7 @@ pub trait FilterTasks {
     fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
-    fn filter_by_date(&self, date: &String) -> Vec<TaskPayload>;
+    fn filter_by_date(&self, date: DateTime<Utc>) -> Vec<TaskPayload>;
     fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload>;
     /// Filters a list of tasks by their name based on a fuzzy search input.
     /// # Parameters

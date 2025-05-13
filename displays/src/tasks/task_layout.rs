@@ -6,10 +6,10 @@ use crossbeam::channel::Sender;
 use std::collections::BTreeSet;
 use database::{self, DATABASE};
 use structdiff::Difference;
-use chrono::{DateTime, Utc};
 use structdiff::StructDiff;
 use surrealdb::RecordId;
 use serde::Serialize;
+use chrono::Utc;
 use log::info;
 use crate::{PlatformSpawner, Spawner};
 
@@ -165,18 +165,17 @@ impl TaskLayout {
                                     let mut count = 0;
                                     let current_date = Utc::now().date_naive();
                                     let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
+                                    
                                     for task in &mut *tasks {
-                                        let due_date = DateTime::parse_from_rfc3339(&task.due_date);
-                                        if let Ok(date) = due_date {
-                                            let date = date.with_timezone(&Utc).date_naive();
-                                            if date < current_date && !task.completed{ count += 1; }
-                                        }
+                                        if task.due_date.date_naive() < current_date && !task.completed { count += 1; }
                                     }
+
                                     if count > 0 {
                                         ui.small("Overdue");
                                         ui.add_space(5.0);
                                         ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
                                     }
+
                                     ui.add_space(15.);
                                     let response = Button::new(RichText::new(name.to_owned())
                                             .color(style.visuals.warn_fg_color)

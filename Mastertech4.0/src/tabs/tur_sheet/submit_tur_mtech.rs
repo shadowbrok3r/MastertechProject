@@ -1,6 +1,5 @@
 use database::schema::utilities::create_full_task_payload;
 use crate::app_state::MastertechContext;
-use chrono::SecondsFormat;
 use tokio::spawn;
 use log::info;
 
@@ -12,7 +11,7 @@ impl MastertechContext {
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
 
-        task_data.due_date = self.date.to_rfc3339_opts(SecondsFormat::Secs, true);
+        task_data.due_date = self.date;
         let send_specs = self.send_specs.clone();
 
         spawn(async move {
