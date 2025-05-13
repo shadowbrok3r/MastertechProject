@@ -23,7 +23,7 @@ impl Updatable for TaskPayload {
         let _update_task: Vec<Record> = DATABASE
                 .query("UPDATE $id SET due_date=$date")
                 .bind(("id", self.id.clone()))
-                .bind(("date", self.due_date))
+                .bind(("date", self.due_date.clone()))
                 .await?
                 .take(0)?;
         Ok(())

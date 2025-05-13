@@ -35,7 +35,7 @@ impl FilterTasks for Vec<TaskPayload> {
 
     fn filter_by_date(&self, date: DateTime<Utc>) -> Vec<TaskPayload> {
         self.into_iter()
-            .filter(|task| task.due_date >= date)
+            .filter(|task| task.due_date >= date.into())
             .cloned()
             .collect()
     }
