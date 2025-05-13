@@ -1,7 +1,7 @@
-use crate::{schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
+use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use surrealdb::RecordId;
 use regex::Regex;
@@ -13,7 +13,7 @@ pub struct TaskNotePayload {
     pub id: RecordId,
     pub task_id: Option<RecordId>,
     // pub everest_initials: String,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
     pub note: String,
     pub username: String,
     pub id_customer_thread: Option<String>,
@@ -30,7 +30,7 @@ impl Default for TaskNotePayload {
             id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_id: Default::default(),
             // everest_initials: Default::default(),
-            created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            created_at: Utc::now(),
             note: Default::default(),
             username: Default::default(),
             id_customer_thread: Default::default(),
@@ -49,7 +49,7 @@ impl TaskNotePayload {
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
     pub async fn handle_note_creation(&mut self, private: bool) -> Result<(), anyhow::Error> {
-        if self.created_at.is_empty() {
+        if self.created_at != Utc::now() {
             self.update_task_note_with_current_time().await?;
         }
 
@@ -104,7 +104,8 @@ impl TaskNotePayload {
             let create_thread_response = self.create_customer_thread().await?;
             log::info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
             self.id_customer_thread = Some(create_thread_response.id.clone());
-            self.created_at = create_thread_response.date_add;
+            let utc_dt: DateTime<Utc> = DateTime::parse_from_rfc3339(&create_thread_response.date_add)?.with_timezone(&Utc);   
+            self.created_at = utc_dt;
             if self.id_customer_message.is_none()
                 && !create_thread_response.id.is_empty()
                 && self.id_employee.is_some()
@@ -408,7 +409,7 @@ impl TaskNotePayload {
     /// - `Err(anyhow::Error)` if an error occurs during the update.
     pub async fn update_task_note_with_current_time(&mut self) -> anyhow::Result<(), anyhow::Error> {
         // Logic to update task note with the current time
-        self.created_at = chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+        self.created_at = Utc::now();
         log::info!("helper_traits -> Created_at was empty, now it is {:?}", self.created_at);
         Ok(())
     }
@@ -576,7 +577,8 @@ impl TaskNotePayload {
                     let create_thread_response = self.create_customer_thread().await?;
                     log::info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
                     self.id_customer_thread = Some(create_thread_response.id);
-                    self.created_at = create_thread_response.date_add;
+                    let utc_dt: DateTime<Utc> = DateTime::parse_from_rfc3339(&create_thread_response.date_add)?.with_timezone(&Utc);   
+                    self.created_at = utc_dt;
                 }
 
                 for thread in customer_threads {
@@ -609,7 +611,7 @@ impl TaskNotePayload {
                                     task_id: self.task_id.clone(),
                                     id_employee: Some(customer_message.id_employee),
                                     // Into::<surrealdb::sql::Datetime>::into(convert_date_string(&customer_message.date_add)?).to_string()
-                                    created_at: convert_date_string(&customer_message.date_add)?,
+                                    created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc),
                                     note: customer_message.message,
                                     username: parse_email_user(&employee.email).to_string(),
                                     user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
@@ -701,7 +703,7 @@ impl TaskNotePayload {
                             id_customer_thread: Some(thread.id.clone()),
                             task_id: self.task_id.clone(),
                             id_employee: Some(customer_message.id_employee),
-                            created_at: convert_date_string(&customer_message.date_add)?,
+                            created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc),
                             note: customer_message.message,
                             username: parse_email_user(&employee.email).to_string(),
                             service_number: Some(service_number.to_string()),

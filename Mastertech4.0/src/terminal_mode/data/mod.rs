@@ -3,7 +3,7 @@ use database::schema::{helper_traits::parse_email_user, prestashop_schema::{Pres
 use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crate::filesystem::system_info::ComputerInfo;
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use std::sync::{Arc, Condvar, Mutex};
 use surrealdb::RecordId;
 use egui::{Key, Modifiers};
@@ -182,7 +182,7 @@ impl ServiceData {
         let ticket_data = self.ticket_data.clone();
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
-        task_data.due_date = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+        task_data.due_date = Utc::now();
         let send_specs = self.send_specs.clone();
 
         tokio::spawn(async move {

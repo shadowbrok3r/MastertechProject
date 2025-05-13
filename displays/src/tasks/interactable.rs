@@ -2,7 +2,7 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
 use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use log::info;
 
@@ -83,8 +83,7 @@ impl Interaction for TaskPayload {
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response {
         let frame_color = date_colors(self.due_date.clone(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
-        // ui.style_mut().spacing.button_padding = Vec2::new(15.0, 3.0);
-        let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap_or_default().date_naive();
+        let mut due_date = self.due_date.date_naive();
 
         let id = self.id.clone().key().to_string().to_string();
         let date_picker = DatePickerButton::new(&mut due_date)
@@ -105,15 +104,14 @@ impl Interaction for TaskPayload {
             .unwrap_or_default()
             .and_local_timezone(Utc)
             .unwrap();
-
-            let rfc3339_date = date_time.to_rfc3339();
-            let date = due_date.clone().to_string();
+            self.due_date = date_time.clone();
             let task = self.clone(); 
+            info!("new date: {date_time:?}"); 
             PlatformSpawner::spawn(async move { 
-                let update = task.update_due_date(rfc3339_date.clone()).await;
+                let update = task.update_due_date().await;
                 info!("Update: {update:?}"); 
             });
-            info!("date_widget changed: {:?}// {:?} ", self.task_name, date);
+            info!("date_widget changed: {:?}// {:?} ", self.task_name, due_date);
         }
 
         date_picker

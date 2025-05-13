@@ -128,7 +128,6 @@ mod test {
     mod tests {
         use crate::utilities::windows::drivers::enum_problem_devices;
 
-        use super::*;
 
         #[test]
         fn test_problem_code_to_description() {

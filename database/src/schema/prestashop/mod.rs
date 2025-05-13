@@ -1,6 +1,7 @@
-use crate::schema::{helper_traits::convert_date_string, TASK_NOTE_TABLE};
+use crate::schema::TASK_NOTE_TABLE;
 
 use super::{deserializer::deserialize_to_string, helper_traits::EmployeeHelper, CustomerData, TaskNotePayload, User};
+use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::{
     header::{ACCEPT, CONTENT_TYPE},
@@ -497,13 +498,7 @@ impl CustomerMessage {
                         log::warn!("Pulled user: {}", user.get_name());
                         return Ok(TaskNotePayload {
                             note: self.message.clone(),
-                            created_at: match convert_date_string(&self.date_add) {
-                                Ok(date) => date,
-                                Err(e) => {
-                                    log::info!("Parse error: {e:?}");
-                                    self.date_add.clone()
-                                },
-                            },
+                            created_at: DateTime::parse_from_rfc3339(&self.date_add)?.with_timezone(&Utc),
                             id: surrealdb::RecordId::from((TASK_NOTE_TABLE, self.id.clone())),
                             username: user.get_username().to_string(),
                             user: Some(user.get_id()),
