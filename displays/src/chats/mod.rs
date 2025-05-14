@@ -85,6 +85,7 @@ impl ChatView {
     }
 
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
+        todo!("I need to check that ALL ID's MATCH, not just one, including id_customer_thread, task_id");
         if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
             // Apply diffs to the existing note
             let diffs = existing_note.diff(&new_note);

@@ -49,10 +49,6 @@ impl TaskNotePayload {
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
     pub async fn handle_note_creation(&mut self, private: bool) -> Result<(), anyhow::Error> {
-        if self.created_at != Utc::now().into() {
-            self.update_task_note_with_current_time().await?;
-        }
-
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
@@ -399,18 +395,6 @@ impl TaskNotePayload {
             .bind(("id", self.id.clone()))
             .await?
             .take(0)?;
-        Ok(())
-    }
-
-    /// Updates the `created_at` field of a task note to the current time.
-    ///
-    /// # Returns
-    /// - `Ok(())` if the update is successful.
-    /// - `Err(anyhow::Error)` if an error occurs during the update.
-    pub async fn update_task_note_with_current_time(&mut self) -> anyhow::Result<(), anyhow::Error> {
-        // Logic to update task note with the current time
-        self.created_at = Utc::now().into();
-        log::info!("helper_traits -> Created_at was empty, now it is {:?}", self.created_at);
         Ok(())
     }
 
