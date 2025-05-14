@@ -220,7 +220,7 @@ impl LiveTaskPayload {
         }
     
         for mut note in task_notes {
-            let res = note.handle_note_creation(false).await;
+            let res = note.handle_note_creation().await;
             log::info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
         }
     

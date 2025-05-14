@@ -706,6 +706,7 @@ impl From<PrestashopPayload> for TaskPayload {
                 username: user.get_username().to_string(),
                 user: Some(user.get_id().clone()),
                 service_number: Some(ticket.service_number.clone()),
+                private: false
                 // ..Default::default()
             })
         }
