@@ -21,7 +21,8 @@ pub struct TaskNotePayload {
     pub id_employee: Option<String>,
     pub user: Option<RecordId>,
     // #[serde(deserialize_with = "deserialize_to_string")]
-    pub service_number: Option<String>
+    pub service_number: Option<String>,
+    pub private: bool,
 }
 
 impl Default for TaskNotePayload {
@@ -37,7 +38,8 @@ impl Default for TaskNotePayload {
             id_customer_message: Default::default(),
             id_employee: Default::default(),
             user: Default::default(),
-            service_number: Default::default()
+            service_number: Default::default(),
+            private: false,
         }
     }
 }
@@ -48,7 +50,7 @@ impl TaskNotePayload {
     /// # Returns
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    pub async fn handle_note_creation(&mut self, private: bool) -> Result<(), anyhow::Error> {
+    pub async fn handle_note_creation(&mut self) -> Result<(), anyhow::Error> {
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
@@ -58,7 +60,7 @@ impl TaskNotePayload {
         if self.id_customer_message.is_none()
             && !id_customer_thread.is_empty()
             && self.id_employee.is_some()
-            && !private
+            && !self.private
         {
             self.id_customer_thread = Some(id_customer_thread);
             // Is this sent from the website or mastertech?
@@ -518,19 +520,15 @@ impl TaskNotePayload {
     /// - `Err(Error)` if the order cannot be found or an error occurs.
     pub async fn get_order_by_task_id(&mut self) -> anyhow::Result<String> {
         if let Some(id) = self.task_id.clone() {
-            // I cannot do this at the moment because GetAssociatedData requires + Send
-            // let task: TaskPayload = id.get_associated_data::<TaskPayload>().await?;
-            // let service_number = task.service_number;
             let service_number: Option<String> = DATABASE
                 .query("SELECT VALUE service_number FROM task WHERE id == $task_id")
                 .bind(("task_id", id.clone()))
                 .await?
                 .take(0)?;
-            log::info!("Order number pulled from service_number: {service_number:?} using task id: {id:?}");
+            log::info!("service_number ({service_number:?}) pulled from task.id using: {id:?}");
             Ok(service_number.unwrap_or_default())
         } else {
-            log::info!("helper_traits -> No order number found");
-            Ok(String::new())
+            Err(anyhow::anyhow!("helper_traits -> get_order_by_task_id -> No order number found"))
         }
     }
 
@@ -541,89 +539,89 @@ impl TaskNotePayload {
     /// - `Err(Error)` if the thread ID cannot be found or an error occurs.
     pub async fn get_thread_id_from_order(&mut self) -> anyhow::Result<String> {
         let mut threads = Vec::new();
-        if let Ok(service_number) = self.get_order_by_task_id().await {
-            log::info!("helper_traits -> Calling API for thread ID");
+        match self.get_order_by_task_id().await {
+            Ok(service_number) => {
+                log::info!("helper_traits -> Calling API for thread ID");
             
-            if !service_number.is_empty() {
-                let api_call = Prestashop::default();
-                let mut query: HashMap<&str, &str> = HashMap::new();
+                if !service_number.is_empty() {
+                    let api_call = Prestashop::default();
+                    let mut query: HashMap<&str, &str> = HashMap::new();
+        
+                    query.insert("filter[id_order]", &service_number);
+                    query.insert("output_format", "JSON");
     
-                query.insert("filter[id_order]", &service_number);
-                query.insert("output_format", "JSON");
-
-                let customer_threads: Vec<CustomerThread> = api_call
-                    .request_resources_wasm("customer_threads", query.clone())
-                    .await?;
-                
-                log::info!("helper_traits -> get_thread_id_from_order -> Got customer threads: {customer_threads:?}");
-                if customer_threads.is_empty() && self.id_customer_thread.is_none() && self.service_number.is_some() {
-
-                    let create_thread_response = self.create_customer_thread().await?;
-                    log::info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
-                    self.id_customer_thread = Some(create_thread_response.id);
-                    let utc_dt: Datetime = DateTime::parse_from_rfc3339(&create_thread_response.date_add)?.with_timezone(&Utc).into();   
-                    self.created_at = utc_dt;
-                }
-
-                for thread in customer_threads {
-                    for msg in thread.associations.customer_messages.iter() {
-                        log::info!("helper_traits -> get_thread_id_from_order -> Checking if msg ID exists in database: {:?}", &msg);
-                        let exists = self.check_existing_note_record(&msg.id).await?;
-                        if exists.is_none() {
-                            log::info!("helper_traits -> get_thread_id_from_order -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
-                            let customer_message: CustomerMessage = api_call
-                                .request_subresources_by_id_wasm(
-                                    "customer_messages",
-                                    "customer_message",
-                                    &msg.id,
-                                )
-                                .await?;
-
-                            if !customer_message.id_employee.is_empty() && customer_message.id_employee.as_str() != "0" {
-                                let mut employee: Employee = api_call
+                    let customer_threads: Vec<CustomerThread> = api_call
+                        .request_resources_wasm("customer_threads", query.clone())
+                        .await?;
+                    
+                    log::info!("helper_traits -> get_thread_id_from_order -> Got customer threads: {customer_threads:?}");
+                    if customer_threads.is_empty() && self.id_customer_thread.is_none() && self.service_number.is_some() {
+                        let create_thread_response = self.create_customer_thread().await?;
+                        log::info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
+                        self.id_customer_thread = Some(create_thread_response.id);
+                        let utc_dt: Datetime = DateTime::parse_from_rfc3339(&create_thread_response.date_add)?.with_timezone(&Utc).into();   
+                        self.created_at = utc_dt;
+                    }
+    
+                    for thread in customer_threads {
+                        for msg in thread.associations.customer_messages.iter() {
+                            log::info!("helper_traits -> get_thread_id_from_order -> Checking if msg ID exists in database: {:?}", &msg);
+                            let exists = self.check_existing_note_record(&msg.id).await?;
+                            if exists.is_none() {
+                                log::info!("helper_traits -> get_thread_id_from_order -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                                let customer_message: CustomerMessage = api_call
                                     .request_subresources_by_id_wasm(
-                                        "employees",
-                                        "employee",
-                                        &customer_message.id_employee,
+                                        "customer_messages",
+                                        "customer_message",
+                                        &msg.id,
                                     )
-                                    .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
-
-                                let mut task_note = TaskNotePayload {
-                                    id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
-                                    id_customer_message: Some(customer_message.id.clone()),
-                                    id_customer_thread: Some(thread.id.clone()),
-                                    task_id: self.task_id.clone(),
-                                    id_employee: Some(customer_message.id_employee),
-                                    // Into::<surrealdb::sql::Datetime>::into(convert_date_string(&customer_message.date_add)?).to_string()
-                                    created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc).into(),
-                                    note: customer_message.message,
-                                    username: parse_email_user(&employee.email).to_string(),
-                                    user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
-                                    service_number: Some(service_number.to_string())
-                                };
-
-                                log::info!("helper_traits -> get_thread_id_from_order -> Creating a new task_note: {task_note:?}");
-
-                                match task_note.create_task_note_in_db().await {
-                                    Ok(_) => log::info!("Created task note: {task_note:?}"),
-                                    Err(e) => log::info!("Error creating task note: {e:?}"),
+                                    .await?;
+    
+                                if !customer_message.id_employee.is_empty() && customer_message.id_employee.as_str() != "0" {
+                                    let mut employee: Employee = api_call
+                                        .request_subresources_by_id_wasm(
+                                            "employees",
+                                            "employee",
+                                            &customer_message.id_employee,
+                                        )
+                                        .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
+    
+                                    let mut task_note = TaskNotePayload {
+                                        id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
+                                        id_customer_message: Some(customer_message.id.clone()),
+                                        id_customer_thread: Some(thread.id.clone()),
+                                        task_id: self.task_id.clone(),
+                                        id_employee: Some(customer_message.id_employee),
+                                        // Into::<surrealdb::sql::Datetime>::into(convert_date_string(&customer_message.date_add)?).to_string()
+                                        created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc).into(),
+                                        note: customer_message.message,
+                                        username: parse_email_user(&employee.email).to_string(),
+                                        user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
+                                        service_number: Some(service_number.to_string()),
+                                        private: false
+                                    };
+    
+                                    log::info!("helper_traits -> get_thread_id_from_order -> Creating a new task_note: {task_note:?}");
+    
+                                    match task_note.create_task_note_in_db().await {
+                                        Ok(_) => log::info!("Created task note: {task_note:?}"),
+                                        Err(e) => log::info!("Error creating task note: {e:?}"),
+                                    }
+                                } else {
+                                    log::info!("helper_traits -> get_thread_id_from_order -> Customer Message contains some bad data: {customer_message:#?}");
                                 }
                             } else {
-                                log::info!("helper_traits -> get_thread_id_from_order -> Customer Message contains some bad data: {customer_message:#?}");
+                                log::info!("helper_traits -> get_thread_id_from_order -> Message already exists: {:?}", exists);
                             }
-                        } else {
-                            log::info!("helper_traits -> get_thread_id_from_order -> Message already exists: {:?}", exists);
                         }
+                        threads.push(thread);
                     }
-                    threads.push(thread);
+                } else {
+                    log::info!("helper_traits -> Service number is empty. not querying Presta {service_number:?}");
+                    // return Err(anyhow::anyhow!("service number is empty")).into();
                 }
-            } else {
-                log::info!("helper_traits -> Service number is empty. not querying Presta {service_number:?}");
-                // return Err(anyhow::anyhow!("service number is empty")).into();
             }
-        } else {
-            log::info!("helper_traits -> Error getting order number from task id\nIs there a task ID??");
-            return Err(anyhow::anyhow!("helper_traits -> Error getting order number from task id\nIs there a task ID??")).into();
+            Err(e) => { return Err(anyhow::anyhow!("helper_traits -> {e:?}")).into(); }
         }
 
         // Extract the first customer thread ID if available
@@ -692,6 +690,7 @@ impl TaskNotePayload {
                             username: parse_email_user(&employee.email).to_string(),
                             service_number: Some(service_number.to_string()),
                             user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
+                            private: false,
                         };
                         log::warn!("helper_traits -> get_notes_from_service_number -> Creating a new task_note: {task_note:?}");
 
