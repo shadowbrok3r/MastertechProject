@@ -58,12 +58,8 @@ impl ModalWindow for ModalType {
                 .corner_radius(style.menu_corner_radius)
                 .shadow(shadow)
             )
-            // .scroll([false, true])
             .drag_to_scroll(false)
-            // .scroll_bar_visibility(eframe::egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
             .pivot(Align2::CENTER_CENTER)
-            // .max_width(722.)
-            // .resizable([false, false])
             .max_height(800.)
             .default_width(722.0)
             .open(&mut open)
@@ -92,21 +88,6 @@ impl ModalWindow for ModalType {
             return Some(ModalAction::Close);
         }
         modal_action
-        // if let Some(x) = &response {
-        //     if let Some(y) = &x.inner {
-        //         if let Some(action) = &y {
-        //             if let &ModalAction::Close = action {
-        //                 open = false;
-        //             }
-        //         }
-        //     }
-        // }
-
-        // if !open {
-        //     return Some(ModalAction::Close);
-        // }
-
-        // response.and_then(|response| response.inner.and(Some(ModalAction::None)))
     }
 }
 
