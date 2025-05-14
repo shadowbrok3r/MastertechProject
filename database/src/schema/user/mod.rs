@@ -23,7 +23,8 @@ pub struct User {
     id_prestashop: Option<u64>,
     id_store: Option<String>,
     chat_threads: Option<Vec<ChatThreads>>,
-    user_statuses: Option<Vec<Status>>
+    user_statuses: Option<Vec<Status>>,
+    authorization: UserAuthorization
 }
 
 impl Default for User {
@@ -41,11 +42,19 @@ impl Default for User {
             id_prestashop: None,
             chat_threads: None,
             user_statuses: None,
+            authorization: UserAuthorization::User
         }
     }
 }
 
 impl Eq for User {}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+pub enum UserAuthorization {
+    #[default]
+    User,
+    Admin
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
@@ -79,9 +88,29 @@ impl UserSettings {
     }
 }
 
+impl UserAuthorization {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::User => "User",
+            Self::Admin => "Admin",
+        }
+    }
+    pub fn from_str(authorization: &str) -> Self {
+        match authorization {
+            "User" => Self::User,
+            "Admin" => Self::Admin,
+            _ => Self::User
+        }
+    }
+}
+
 impl User {
     pub fn get_id(&self) -> RecordId {
         self.id.clone()
+    }
+
+    pub fn get_authorization(&self) -> UserAuthorization {
+        self.authorization.clone()
     }
 
     pub fn get_employee_id(&self) -> Option<u64> {

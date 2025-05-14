@@ -86,15 +86,30 @@ impl ChatView {
     }
 
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
-        todo!("I need to check that ALL ID's MATCH, not just one, including id_customer_thread, task_id");
-        if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
+        // todo!("I need to check that ALL ID's MATCH, not just one, including id_customer_thread, task_id");
+        let all_notes_match = self
+            .messages
+            .iter()
+            .all(|n| 
+                n.id_customer_thread == new_note.id_customer_thread.clone()
+                && n.service_number == new_note.service_number.clone()
+                && n.task_id == new_note.task_id.clone()
+            );
 
-            // Apply diffs to the existing note
-            let diffs = existing_note.diff(&new_note);
-            existing_note.apply_mut(diffs);
-            info!("chats/mod.rs -> Updated existing note: {:?}", existing_note);
+        if all_notes_match {
+            log::info!("chats/mod.rs -> id_customer_thread, service_number, task_id all match");
+            if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
+                // Apply diffs to the existing note
+                let diffs = existing_note.diff(&new_note);
+                existing_note.apply_mut(diffs);
+                info!("chats/mod.rs -> Updated existing note: {:?}", existing_note.id);
+            } else {
+                info!("chats/mod.rs -> Inserting new note: {:#?}", new_note.id);
+                self.messages.push(new_note.clone());
+            }
         } else {
-            self.messages.push(new_note.clone());
+            log::warn!("chats/mod.rs -> id_customer_thread, service_number, or task_id do not match\nOr self.messages is empty");
+            log::warn!("chats/mod.rs -> self.messages: {:#?}\nnew_note: {:#?}", self.messages.clone(), new_note.clone());
         }
     }
 
@@ -106,9 +121,7 @@ impl ChatView {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
-        let mut new_msg: Option<String> = None;
-
+    pub fn ui(&mut self, ui: &mut Ui) {
         if let Some(note) = std::mem::take(&mut self.delete) {
             let deletion = handle_live_delete(&mut self.messages, note.clone());
             if let Err(e) = deletion {
@@ -133,7 +146,7 @@ impl ChatView {
                 ui.label(""); 
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                     if Button::new("Refresh").ui(ui).clicked() {
-                        
+                        // TaskNotePayload::
                     }
                 });
             });
@@ -155,7 +168,6 @@ impl ChatView {
                     let txt = markdown_editor.submit();
                     info!("chats/mod.rs -> Txt: {txt}");
                     markdown_editor.clear();
-                    new_msg = Some(txt.clone());
 
                     let usr = &mut self.current_user.clone();
                     log::warn!("USER: {usr:?}");
@@ -176,27 +188,32 @@ impl ChatView {
                         .next()
                         .cloned();
 
-                    let mut new_note = TaskNotePayload {
-                        note: txt, 
-                        task_id, 
-                        username: usr.get_username().to_string(),
-                        user: Some(usr.get_id()),
-                        id_employee: Some(usr.get_employee_id().clone().unwrap_or_default().to_string()),
-                        id_customer_thread,
-                        service_number: self.service_number.clone(),
-                        private: markdown_editor.private_note.clone(),
-                        ..Default::default() 
-                    };
+                    match usr.get_employee_id().clone() {
+                        Some(id_employee) => {
+                            let mut new_note = TaskNotePayload {
+                                note: txt, 
+                                task_id, 
+                                username: usr.get_username().to_string(),
+                                user: Some(usr.get_id()),
+                                id_employee: Some(id_employee.to_string()),
+                                id_customer_thread,
+                                service_number: self.service_number.clone(),
+                                private: markdown_editor.private_note.clone(),
+                                ..Default::default() 
+                            };
 
-                    info!("chats/mod.rs -> new_note: {new_note:?}");
-                    
-                    PlatformSpawner::spawn(async move {
-                        if let Err(e) = new_note.handle_note_creation().await {
-                            error!("Failed to create task note: {:?}", e);
-                        } else {
-                            info!("chats/mod.rs -> Task note successfully created.");
-                        }
-                    });
+                            info!("chats/mod.rs -> new_note: {new_note:?}");
+                            
+                            PlatformSpawner::spawn(async move {
+                                if let Err(e) = new_note.handle_note_creation().await {
+                                    error!("Failed to create task note: {:?}", e);
+                                } else {
+                                    info!("chats/mod.rs -> Task note successfully created.");
+                                }
+                            });
+                        },
+                        None => log::info!("No employee ID found"),
+                    }
                 }
             }
         });
@@ -446,8 +463,6 @@ impl ChatView {
                 };
             });
         });
-
-        new_msg
     }
 }
 
