@@ -361,7 +361,7 @@ impl MastertechContext {
             }
 
             if ui.add_enabled(
-                check, 
+                check, // TODO: Make this false for several seconds upon click
                 Button::new( 
                     RichText::new("Submit TUR"))
                     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
