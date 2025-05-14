@@ -86,13 +86,14 @@ impl MasterTechApp{
                             ui.vertical_centered(|ui| 
                             { 
                                 ui.add_space(ui.available_height() / 2.5);
-                                let font = FontId::proportional(18.0);
+                                let font = FontId::monospace(18.0);
                                 ui.style_mut().override_font_id = Some(font.clone());
 
                                 ui.label("Please Login");
                                 ui.add_space(20.0);
                                 if let Some(login) = self.login_mut(){
                                     let text_edit = TextEdit::singleline(&mut login.username)
+                                        .font(font)
                                         .desired_width(180.0);
                                     
                                     let output = text_edit.show(ui);
@@ -105,7 +106,16 @@ impl MasterTechApp{
                                         text_color,
                                         f32::INFINITY
                                     );
-                                    painter.galley(Pos2::new(output.galley_pos.x + (chars as f32 * 11.75), output.galley_pos.y), galley, text_color);
+
+                                    painter.galley(
+                                        Pos2::new(
+                                            output.galley_pos.x + (chars as f32 * 11.5) / 1.25, 
+                                            output.galley_pos.y
+                                        ), 
+                                        galley, 
+                                        text_color
+                                    );
+
                                     ui.add_space(4.0);
 
                                     let enter = ui.input_mut(|i| i.key_pressed(Key::Enter));
