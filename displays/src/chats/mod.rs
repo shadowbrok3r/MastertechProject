@@ -1,5 +1,6 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User}};
+use itertools::Itertools;
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -87,6 +88,7 @@ impl ChatView {
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
         todo!("I need to check that ALL ID's MATCH, not just one, including id_customer_thread, task_id");
         if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
+
             // Apply diffs to the existing note
             let diffs = existing_note.diff(&new_note);
             existing_note.apply_mut(diffs);
@@ -130,7 +132,9 @@ impl ChatView {
             ui.horizontal(|ui| {
                 ui.label(""); 
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                    Button::new("Refresh").ui(ui);
+                    if Button::new("Refresh").ui(ui).clicked() {
+                        
+                    }
                 });
             });
         });
@@ -167,7 +171,10 @@ impl ChatView {
                         .messages
                         .iter()
                         .filter_map(|m| m.id_customer_thread.clone())
-                        .next();
+                        .all_equal_value()
+                        .iter()
+                        .next()
+                        .cloned();
 
                     let mut new_note = TaskNotePayload {
                         note: txt, 
@@ -177,16 +184,14 @@ impl ChatView {
                         id_employee: Some(usr.get_employee_id().clone().unwrap_or_default().to_string()),
                         id_customer_thread,
                         service_number: self.service_number.clone(),
+                        private: markdown_editor.private_note.clone(),
                         ..Default::default() 
                     };
 
-                    // We only need a single thread ID
-                    new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
-                    let private = markdown_editor.private_note.clone();
                     info!("chats/mod.rs -> new_note: {new_note:?}");
                     
                     PlatformSpawner::spawn(async move {
-                        if let Err(e) = new_note.handle_note_creation(private).await {
+                        if let Err(e) = new_note.handle_note_creation().await {
                             error!("Failed to create task note: {:?}", e);
                         } else {
                             info!("chats/mod.rs -> Task note successfully created.");
@@ -370,13 +375,18 @@ impl ChatView {
                                             Align::Min,
                                         ), |ui| {
                                             // ui.set_max_width(max_msg_width);
-                                            ui.add_space(8.);
+                                            ui.add_space(4.);
                                             Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30., 20.)).sense(Sense::hover()).ui(ui);
-                                            ui.add_space(35.);
+                                            ui.add_space(10.);
                                         
                                             ui.label(RichText::new(item.created_at.format("%Y/%m/%d @ %I:%M%p").to_string()).weak());
                                             
                                             ui.add_space(10.);
+
+                                            ui.label(if item.private { "🕶️" } else { "🗸" });
+
+                                            ui.add_space(10.);
+
                                             let copy_btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
                                                 .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
 
