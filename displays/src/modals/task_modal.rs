@@ -243,11 +243,11 @@ impl DisplayModal for TaskModal {
                     tui.ui(|ui| {
                         let store_users = self.store_users.clone();
                         match self.current_page_state {
-                            ModalAction::TicketInfoPage   => display_ticket_page   (ui, &mut self.task, avail_size, &store_users),
-                            ModalAction::ComputerInfoPage => display_computer_page (ui, &mut self.task, avail_size),
-                            ModalAction::SoftwareInfoPage => display_software_page (ui, &mut self.task, avail_size),
+                            ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users),
+                            ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
+                            ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
                             ModalAction::JobBuilderPage   => display_job_builder_page(ui),
-                            ModalAction::TaskNotePage     => { let _ = self.chat_view.ui(ui); },
+                            ModalAction::TaskNotePage     => self.chat_view.ui(ui),
                             // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
                             _ => {}
                         }

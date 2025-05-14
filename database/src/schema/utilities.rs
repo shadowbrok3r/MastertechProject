@@ -81,30 +81,6 @@ pub trait Task {
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
 }
 
-
-
-pub async fn get_task_notes_from_db_with_service_number(service_number: String) -> Result<Vec<TaskNotePayload>, Error> {
-    debug!("get_task_from_service_number");
-    let query_results: Vec<TaskNotePayload> = DATABASE
-        .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number PARALLEL")
-        .bind(("service_number", service_number.clone()))
-        .await?
-        .take(0)?;
-
-    if query_results.is_empty() {
-        let alt_query: Vec<TaskNotePayload> = DATABASE
-            .query("SELECT * FROM task_note WHERE service_number == $service_number PARALLEL")
-            .bind(("service_number", service_number))
-            .await?
-            .take(0)?;
-        info!("schema/utilities.rs -> get_task_notes_from_service_number: {alt_query:?}");
-        Ok(alt_query)
-    } else {
-        info!("schema/utilities.rs -> get_task_notes_from_service_number: {query_results:?}");
-        Ok(query_results)
-    }
-}
-
 pub async fn query_id<T>(table: String, id: RecordId) -> Result<Option<T>, Error>
 where
     T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de>
@@ -320,21 +296,6 @@ pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<
 //     Ok(())
 // }
 
-pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(), Error> {
-    let id = task_id.clone();
-    let task_note = TaskNotePayload {
-        task_id: Some(id),
-        note: new_msg,
-        ..Default::default()
-    };
-
-    let query = format!("CREATE task_note CONTENT $note");
-    DATABASE.set("note", task_note).await.unwrap();
-    let update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-
-    info!("schema/utilities.rs -> Updated notes: {update_task:?}");
-    Ok(())
-}
 
 #[async_trait]
 pub trait NotificationMod {
@@ -500,13 +461,6 @@ pub async fn create_full_task_payload(
 
 impl PrestashopPayload {
 
-}
-
-impl TaskNotePayload {
-    pub fn set_task_id(&mut self, task_id: RecordId) -> &mut Self {
-        self.task_id = Some(task_id);
-        self
-    }
 }
 
 impl CustomerData {

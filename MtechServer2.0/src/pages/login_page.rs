@@ -126,7 +126,7 @@ impl MtechServer {
                                     s.cell(|ui| {
                                         ui.vertical_centered(|ui| {
                                             ui.add_space(ui.available_height() / 2.5);
-                                            let font = FontId::proportional(18.0);
+                                            let font = FontId::monospace(18.0);
                                             ui.style_mut().override_font_id = Some(font.clone());
 
                                             ui.label("Please Login");
@@ -135,24 +135,28 @@ impl MtechServer {
                                             if let Some(login) = self.login_mut() {
                                                 let text_edit =
                                                     TextEdit::singleline(&mut login.username)
+                                                        .font(font.clone())
                                                         .desired_width(180.0);
 
                                                 let output = text_edit.show(ui);
+
                                                 let chars = login.username.chars().count() as f32;
                                                 let painter = ui.painter_at(output.response.rect);
                                                 let text_color = Color32::from_rgba_premultiplied(
                                                     100, 100, 100, 100,
                                                 );
+
                                                 let galley = painter.layout(
                                                     String::from("@pclaptops.com"),
                                                     font,
                                                     text_color,
                                                     f32::INFINITY,
                                                 );
+
                                                 painter.galley(
                                                     Pos2::new(
                                                         output.galley_pos.x
-                                                            + (chars as f32 * 11.75),
+                                                            + (chars as f32 * 11.5) / 1.25,
                                                         output.galley_pos.y,
                                                     ),
                                                     galley,
