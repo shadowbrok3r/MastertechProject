@@ -51,10 +51,6 @@ impl TaskNotePayload {
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
     pub async fn handle_note_creation(&mut self) -> Result<(), anyhow::Error> {
-        // If we are creating a prestashop note, then we NEED a service_number, & id_customer_thread, and also assure the
-        // note is NOT private.
-        let is_prestashop_note = self.id_customer_thread.is_some() && self.service_number.is_some();
-
         if self.id_employee.is_none() {
             return Err(anyhow::anyhow!("We need an employee ID to create notes"));
         }
@@ -62,91 +58,56 @@ impl TaskNotePayload {
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
-            self.get_thread_id_from_order().await?
+            match self.get_thread_id_from_order().await {
+                Ok(id) => id,
+                Err(e) => { return Err(anyhow::anyhow!("Could not get thread ID from service: {e:?}")); },
+            }
         };
+
+        let is_prestashop_note = !id_customer_thread.is_empty() && self.service_number.is_some();
 
         if is_prestashop_note && !self.private
         {
             self.id_customer_thread = Some(id_customer_thread);
-            // Is this sent from the website or mastertech?
-            log::info!("task_note/mod.rs -> Sent from website, {:?} - {:?}", self.id_customer_thread, self.id_employee);
             let response = self.create_customer_message().await?;
             log::info!("task_note/mod.rs -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
             // Update task note with Prestashop details
-            let id = if self.id.key().to_string().is_empty() {
-                let task_note_default = TaskNotePayload::default();
-                log::info!("task_note/mod.rs -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
-                task_note_default.id
-            } else {
-                if !response.id.to_string().is_empty() {
-                    let id = RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone()));
-                    log::info!("task_note/mod.rs -> handle_note_creation -> id is not empty, creating with cust message id: {id:?}");
-                    id
-                } else {
-                    let task_note_default = TaskNotePayload::default();
-                    log::info!("task_note/mod.rs -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
-                    task_note_default.id
-                }
-            };
-
-            let updated_value = TaskNotePayload {
-                id,
-                id_customer_message: Some(response.id.to_string().clone()),
-                id_customer_thread: self.id_customer_thread.clone(),
-                ..self.clone() // Keep other fields the same
-            };
-
-            let diffs = self.diff(&updated_value);
-            self.apply_mut(diffs);
-
-            log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
-
-            self.create_task_note_in_db().await?;
+            if !response.id.to_string().is_empty() {
+                let updated_value = TaskNotePayload {
+                    id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
+                    id_customer_message: Some(response.id.to_string().clone()),
+                    id_customer_thread: self.id_customer_thread.clone(),
+                    created_at: DateTime::parse_from_rfc3339(&response.date_add)?.with_timezone(&Utc).into(),
+                    ..self.clone() // Keep other fields the same
+                };
+                let diffs = self.diff(&updated_value);
+                self.apply_mut(diffs);
+                log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
+                self.create_task_note_in_db().await?;
+            }
 
         } else if id_customer_thread.is_empty() && self.service_number.is_some() {
             let create_thread_response = self.create_customer_thread().await?;
             log::info!("task_note/mod.rs -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
             self.id_customer_thread = Some(create_thread_response.id.clone());
-            let utc_dt: Datetime = DateTime::parse_from_rfc3339(&create_thread_response.date_add)?.with_timezone(&Utc).into();   
-            self.created_at = utc_dt;
-            if self.id_customer_message.is_none()
-                && !create_thread_response.id.is_empty()
-                && self.id_employee.is_some()
-            {
-                // Is this sent from the website or mastertech?
+
+            if !create_thread_response.id.is_empty() {
                 log::info!("task_note/mod.rs -> Sent from website, {:?} - {:?}", self.id_customer_thread, self.id_employee);
-                let response = self.create_customer_message().await?;
                 log::info!("task_note/mod.rs -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
-                // Update task note with Prestashop details
-                let id = if self.id.key().to_string().is_empty() {
-                    let task_note_default = TaskNotePayload::default();
-                    log::info!("task_note/mod.rs -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
-                    task_note_default.id
-                } else {
-                    if !response.id.to_string().is_empty() {
-                        let id = RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone()));
-                        log::info!("task_note/mod.rs -> handle_note_creation -> id is not empty, creating with cust message id: {id:?}");
-                        id
-                    } else {
-                        let task_note_default = TaskNotePayload::default();
-                        log::info!("task_note/mod.rs -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
-                        task_note_default.id
-                    }
-                };
-
-                let updated_value = TaskNotePayload {
-                    id,
-                    id_customer_message: Some(response.id.to_string().clone()),
-                    id_customer_thread: self.id_customer_thread.clone(),
-                    ..self.clone() // Keep other fields the same
-                };
-
-                let diffs = self.diff(&updated_value);
-                self.apply_mut(diffs);
-
-                log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
-
-                self.create_task_note_in_db().await?;
+                let response = self.create_customer_message().await?;
+                if !response.id.to_string().is_empty() {
+                    let updated_value = TaskNotePayload {
+                        id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
+                        id_customer_message: Some(response.id.to_string().clone()),
+                        id_customer_thread: self.id_customer_thread.clone(),
+                        created_at: DateTime::parse_from_rfc3339(&response.date_add)?.with_timezone(&Utc).into(),
+                        ..self.clone() // Keep other fields the same
+                    };
+                    let diffs = self.diff(&updated_value);
+                    self.apply_mut(diffs);
+                    log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
+                    self.create_task_note_in_db().await?;
+                }
             }
         } else if id_customer_thread.is_empty() && self.service_number.is_none() {
             log::info!("task_note/mod.rs -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT have a service number. creating a regular task note. {:?}", self.clone());
@@ -154,32 +115,28 @@ impl TaskNotePayload {
                 return Err(anyhow::anyhow!("Task ID is empty"));
             }
             self.create_task_note_in_db().await?
-
         } else { 
+            return Err(anyhow::anyhow!("An unknown case occurred. Please check the data: {:#?}", self.clone()));
             // let user = get_current_user_from_auth().await?;
             // if let Some(usr) = user {
             //     if self.username.is_empty() {
             //         self.username = parse_email_user(&usr.email).to_string();
             //     }
-    
             //     if self.everest_initials.is_empty() {
             //         self.username = usr.everest_initials;
             //     }
-
             //     if self.id_employee.is_none() {
             //         self.id_employee = Some(format!("{}", usr.id_prestashop.unwrap_or(0)));
             //     }
             // }
-
             // The case that this happens, probably need to upsert the task note
             // to match a new service order number than the existing note has or something.
-            log::info!("task_note/mod.rs -> handle_note_creation -> This is an odd case... {:?}", self.clone());
-            let upsert_note_record: Option<TaskNotePayload> = DATABASE
-                .upsert(self.id.clone())
-                .content(self.clone())
-                .await?;
-
-            log::info!("upsert_note_record: {upsert_note_record:?}");
+            // log::info!("task_note/mod.rs -> handle_note_creation -> This is an odd case... {:?}", self.clone());
+            // let upsert_note_record: Option<TaskNotePayload> = DATABASE
+            //     .upsert(self.id.clone())
+            //     .content(self.clone())
+            //     .await?;
+            // log::info!("upsert_note_record: {upsert_note_record:?}");
         }
         self.check_tagged_user_in_note().await?;
 
@@ -253,7 +210,7 @@ impl TaskNotePayload {
     /// in the database with the given criteria, or None if we need to create
     /// a task_note with that message id
     /// - `Err(Error)` if an error occurs during checks
-    /// / queries in SurrealDB to find existing notes
+    /// queries in SurrealDB to find existing notes
     pub async fn check_existing_note_record(&mut self, msg_id: &String) -> anyhow::Result<Option<RecordId>, anyhow::Error> {
         let query_results: Vec<TaskNotePayload> = DATABASE
             .query(
@@ -266,30 +223,28 @@ impl TaskNotePayload {
             .await?
             .take(0)?;
 
-
-        log::info!("task_note/mod.rs -> Message existence query results: {query_results:?}");
+        log::warn!("task_note/mod.rs -> Message existence query results: {query_results:#?}");
         
         for note in query_results.iter() {
-            log::warn!("task_note/mod.rs -> existing note Task ID: {:?}", note.task_id);
-            log::warn!("task_note/mod.rs -> self.note Task ID: {:?}", self.task_id);
+            log::info!("task_note/mod.rs -> existing note Task ID: {:?}", note.task_id);
+            log::info!("task_note/mod.rs -> self.note Task ID: {:?}", self.task_id);
             if let (Some(existing_task_id), Some(task_id)) = (&note.task_id, &self.task_id) {
+                log::info!("self.task_id: {}\nqueried_note.task_id: {}", existing_task_id.key().to_string(), task_id.key().to_string());
                 if existing_task_id != task_id {
-                    log::info!("task_note/mod.rs -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", note.id);
-                    let res: Option<TaskNotePayload> = DATABASE
-                        .query("UPDATE task_note SET task_id = $new_id WHERE id == $id")
-                        .bind(("id", note.id.clone()))
-                        .bind(("new_id", task_id.clone()))
-                        .await?
-                        .take(0)?;
-
-                    log::info!("Task note already exists: {res:#?}, but it should now have a new task id: {task_id:?}");
+                    log::error!("task_note/mod.rs -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", note.id);
+                    // let res: Option<TaskNotePayload> = DATABASE.query("UPDATE task_note SET task_id = $new_id WHERE id == $id").bind(("id", note.id.clone())).bind(("new_id", task_id.clone())).await?.take(0)?;
+                    // log::info!("Task note already exists: {res:#?}, but it should now have a new task id: {task_id:?}");
                 }
             }
 
-            log::warn!("task_note/mod.rs -> note.id != self.id: {:?} {:?}", note.id, self.id);
+            log::warn!("task_note/mod.rs -> note.id != self.id: {:?} {:?} {}", note.id, self.id, note.id !=self.id);
             
-            if note.id != self.id {
-                return Ok(Some(note.id.clone()));
+            if note.id_customer_message == self.id_customer_message {
+                // note already exists, and it IS the current note (Self) DO NOT CREATE THIS
+                return Ok(Some(note.id.clone()))
+            } else {
+                // note does NOT exist, and we need to create it.
+                return Err(anyhow::anyhow!("Task Note does NOT exist. {:?}", self.id));
             }
         }
         Ok(None)
@@ -358,27 +313,20 @@ impl TaskNotePayload {
     /// - `Ok(PrestaResourceResponse)` on successful creation.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
     pub async fn create_customer_message(&mut self) -> anyhow::Result<PrestaResourceResponse, anyhow::Error> {
-        if self.id_employee.is_none() {
+        let id_customer_thread = self.id_customer_thread.clone().unwrap_or_default();
+        let id_employee = self.id_employee.clone().unwrap_or_default();
+        let id_customer_message = self.id_customer_message.clone().unwrap_or_default();
+
+        if id_employee.is_empty() || id_customer_thread.is_empty() {
             return Err(anyhow::anyhow!("create_customer_message -> We need a employee ID"))
         }
 
-        let thread_id = self.get_thread_id_from_order().await?;
-        let id_employee = self.id_employee.as_deref();
-
-        let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
-            thread_id.clone()
-        } else {
-            thread_id
-        };
-
-        // Check if id_employee or id_customer_thread is empty
-        if id_employee.is_empty() || id_customer_thread.is_empty(){
-            return Err(anyhow::anyhow!("id_employee or id_customer_thread is empty: {}\n{}", id_employee, id_customer_thread)).into();
+        if !id_customer_message.is_empty() {
+            return Err(anyhow::anyhow!("create_customer_message -> id_customer_message is not empty...? {id_customer_message}"))
         }
 
-        let presta_api = Prestashop::default();
         Ok(
-            presta_api.create_customer_message(
+            Prestashop::default().create_customer_message(
                 &id_employee, 
                 &id_customer_thread,
                 &self.note
@@ -524,7 +472,7 @@ impl TaskNotePayload {
     /// # Returns
     /// - `Ok(String)` containing the order ID on success.
     /// - `Err(Error)` if the order cannot be found or an error occurs.
-    pub async fn get_order_by_task_id(&mut self) -> anyhow::Result<String> {
+    pub async fn get_service_number_by_task_id(&mut self) -> anyhow::Result<String> {
         if let Some(id) = self.task_id.clone() {
             let service_number: Option<String> = DATABASE
                 .query("SELECT VALUE service_number FROM task WHERE id == $task_id")
@@ -532,9 +480,13 @@ impl TaskNotePayload {
                 .await?
                 .take(0)?;
             log::info!("service_number ({service_number:?}) pulled from task.id using: {id:?}");
-            Ok(service_number.unwrap_or_default())
+            if let Some(so) = service_number {
+                Ok(so)
+            } else {
+                Err(anyhow::anyhow!("task_note/mod.rs -> get_service_number_by_task_id -> No order number found"))
+            }
         } else {
-            Err(anyhow::anyhow!("task_note/mod.rs -> get_order_by_task_id -> No order number found"))
+            Err(anyhow::anyhow!("task_note/mod.rs -> get_service_number_by_task_id -> No order number found"))
         }
     }
 
@@ -544,14 +496,14 @@ impl TaskNotePayload {
     /// - `Ok(String)` containing the thread ID on success.
     /// - `Err(Error)` if the thread ID cannot be found or an error occurs.
     pub async fn get_thread_id_from_order(&mut self) -> anyhow::Result<String> {
-        let mut threads = Vec::new();
-        match self.get_order_by_task_id().await {
+        match self.get_service_number_by_task_id().await {
             Ok(service_number) => {
                 log::info!("task_note/mod.rs -> Calling API for thread ID");
             
                 if service_number.is_empty() {
-                    log::info!("task_note/mod.rs -> Service number is empty. not querying Presta {service_number:?}");
-                    return Err(anyhow::anyhow!("service number is empty")).into();
+                    return Err(anyhow::anyhow!("Service number is empty")).into();
+                } else {
+                    self.service_number = Some(service_number.clone());
                 }
                 
                 let api_call = Prestashop::default();
@@ -560,85 +512,54 @@ impl TaskNotePayload {
                 query.insert("filter[id_order]", &service_number);
                 query.insert("output_format", "JSON");
 
-                let customer_threads: Vec<CustomerThread> = api_call
+                let customer_threads_result: Result<Vec<CustomerThread>, anyhow::Error> = api_call
                     .request_resources_wasm("customer_threads", query.clone())
-                    .await?;
+                    .await;
                 
-                log::info!("task_note/mod.rs -> get_thread_id_from_order -> Got customer threads: {customer_threads:?}");
-                if customer_threads.is_empty() && self.id_customer_thread.is_none() && self.service_number.is_some() {
-                    let create_thread_response = self.create_customer_thread().await?;
-                    log::info!("task_note/mod.rs -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
-                    self.id_customer_thread = Some(create_thread_response.id);
-                    let utc_dt: Datetime = DateTime::parse_from_rfc3339(&create_thread_response.date_add)?.with_timezone(&Utc).into();   
-                    self.created_at = utc_dt;
-                }
+                log::info!("task_note/mod.rs -> get_thread_id_from_order -> Got customer threads: {customer_threads_result:?}");
 
-                for thread in customer_threads {
-                    threads.push(thread);
-                    for msg in thread.associations.customer_messages.iter() {
-                        log::info!("task_note/mod.rs -> get_thread_id_from_order -> Checking if msg ID exists in database: {:?}", &msg);
-                        let exists = self.check_existing_note_record(&msg.id).await?;
-                        if exists.is_none() {
-                            log::info!("task_note/mod.rs -> get_thread_id_from_order -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
-                            let customer_message: CustomerMessage = api_call
-                                .request_subresources_by_id_wasm(
-                                    "customer_messages",
-                                    "customer_message",
-                                    &msg.id,
-                                )
-                                .await?;
+                match customer_threads_result {
+                    Ok(customer_threads) => {
 
-                            if !customer_message.id_employee.is_empty() && customer_message.id_employee.as_str() != "0" {
-                                let mut employee: Employee = api_call
-                                    .request_subresources_by_id_wasm(
-                                        "employees",
-                                        "employee",
-                                        &customer_message.id_employee,
-                                    )
-                                    .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
+                        let empty_or_default = customer_threads.is_empty() || customer_threads.iter().any(|c| c.id.is_empty());
+                        log::warn!("Empty Or Default: {}", empty_or_default);
 
-                                let mut task_note = TaskNotePayload {
-                                    id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
-                                    id_customer_message: Some(customer_message.id.clone()),
-                                    id_customer_thread: Some(thread.id.clone()),
-                                    task_id: self.task_id.clone(),
-                                    id_employee: Some(customer_message.id_employee),
-                                    created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc).into(),
-                                    note: customer_message.message,
-                                    username: parse_email_user(&employee.email).to_string(),
-                                    user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
-                                    service_number: Some(service_number.to_string()),
-                                    private: false
-                                };
+                        let final_check = empty_or_default && self.id_customer_thread.is_none() && self.service_number.is_some();
+                        log::warn!(
+                            "FINAL_CHECK\nempty_or_default: {}\nself.id_customer_thread.is_none(): {}\nself.service_number.is_some(): {}", 
+                            empty_or_default, self.id_customer_thread.is_none(), self.service_number.is_some()
+                        );
 
-                                log::info!("task_note/mod.rs -> get_thread_id_from_order -> Creating a new task_note: {task_note:?}");
-
-                                match task_note.create_task_note_in_db().await {
-                                    Ok(_) => log::info!("Created task note: {task_note:?}"),
-                                    Err(e) => log::info!("Error creating task note: {e:?}"),
-                                }
-                            } else {
-                                log::info!("task_note/mod.rs -> get_thread_id_from_order -> Customer Message contains some bad data: {customer_message:#?}");
-                            }
+                        if final_check {
+                            let create_thread_response = self.create_customer_thread().await?;
+                            log::info!(
+                                "task_note/mod.rs -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, created thread: {:#?}",
+                                create_thread_response
+                            );
+                            Ok(create_thread_response.id)
                         } else {
-                            log::info!("task_note/mod.rs -> get_thread_id_from_order -> Message already exists: {:?}", exists);
+                            match self.check_or_create_notes_from_thread(&service_number, api_call, customer_threads.clone()).await {
+                                Ok(notes) => log::info!("get_thread_id_from_order -> check_or_create_notes_from_thread -> Ok({notes:?})"),
+                                Err(e) => log::error!("get_thread_id_from_order -> check_or_create_notes_from_thread -> Err({e:?})"),
+                            };
+
+                            // Extract the first customer thread ID if available
+                            let id_customer_thread = customer_threads
+                                .first()
+                                .cloned()
+                                .unwrap_or_default()
+                                .id
+                                .clone();
+
+                            log::info!("task_note/mod.rs -> Customer thread id from order: {id_customer_thread:?}");
+                            Ok(id_customer_thread)
                         }
-                    }
+                    },
+                    Err(e) => Err(anyhow::anyhow!("Error getting customer_threads from service number: {e:?}")),
                 }
             }
-            Err(e) => { return Err(anyhow::anyhow!("task_note/mod.rs -> {e:?}")).into(); }
+            Err(e) => Err(anyhow::anyhow!("task_note/mod.rs -> {e:?}"))
         }
-
-        // Extract the first customer thread ID if available
-        let id_customer_thread = threads
-            .iter()
-            .filter_map(|m| Some(m.id.clone()))
-            .next()
-            .unwrap_or_default();
-
-        log::info!("task_note/mod.rs -> Customer thread id from order: {id_customer_thread:?}");
-
-        Ok(id_customer_thread)
     }
 
     /// Retrieves the thread ID based on an order NUMBER.
@@ -647,27 +568,56 @@ impl TaskNotePayload {
     /// - `Ok(Vec<TaskNotePayload>)` containing the notes from an order.
     /// - `Err(Error)` if the thread ID cannot be found or an error occurs.
     pub async fn get_notes_from_service_number(&mut self, service_number: &str) -> anyhow::Result<Vec<TaskNotePayload>> {
-        let mut notes = Vec::new();
         log::info!("task_note/mod.rs -> get_notes_from_service_number -> Calling get_notes_from_service_number");
         
         if !service_number.is_empty() {
-            let api_call = Prestashop::default();
-            let mut query: HashMap<&str, &str> = HashMap::new();
+            return Err(anyhow::anyhow!("Service Number is empty"));
+        }
 
-            query.insert("filter[id_order]", &service_number);
-            query.insert("output_format", "JSON");
+        let api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+        query.insert("filter[id_order]", &service_number);
+        query.insert("output_format", "JSON");
 
-            let customer_threads: Vec<CustomerThread> = api_call
-                .request_resources_wasm("customer_threads", query.clone())
-                .await?;
-            
-            log::info!("task_note/mod.rs -> get_notes_from_service_number -> Got customer threads: {customer_threads:?}");
-            for thread in customer_threads {
-                for msg in thread.associations.customer_messages.iter() {
-                    log::info!("task_note/mod.rs -> get_notes_from_service_number -> Checking if msg ID exists in database: {:?}", &msg);
-                    let exists = self.check_existing_note_record(&msg.id).await?;
-                    if exists.is_none() {
-                        log::info!("task_note/mod.rs -> get_notes_from_service_number -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+        let customer_threads_result: Result<Vec<CustomerThread>, anyhow::Error> = api_call
+            .request_resources_wasm("customer_threads", query.clone())
+            .await;
+
+        match customer_threads_result {
+            Ok(threads) => {
+                match self.check_or_create_notes_from_thread(service_number, api_call, threads.clone()).await {
+                    Ok(notes) => Ok(notes.clone()),
+                    Err(e) => Err(anyhow::anyhow!("get_notes_from_service_number -> check_or_create_notes_from_thread -> Err({e:?})")),
+                }
+            },
+            Err(e) => Err(anyhow::anyhow!("Error getting customer_threads from service number: {e:?}")),
+        }
+    }
+
+    pub async fn check_or_create_notes_from_thread(
+        &mut self, 
+        service_number: &str,
+        api_call: Prestashop<'_>, 
+        customer_threads: Vec<CustomerThread>
+    ) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
+        let notes = &mut vec![];
+        for thread in customer_threads {
+            for msg in thread.associations.customer_messages.iter() {
+                log::info!("task_note/mod.rs -> check_or_create_notes_from_thread -> Checking if msg ID exists in database: {:?}", &msg);
+                match self.check_existing_note_record(&msg.id).await {
+                    Ok(Some(note)) => {
+                        log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Message already exists: {note:?}\nNOT CREATING NOTE");
+                        let query_results: Vec<TaskNotePayload> = DATABASE
+                            .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
+                            .bind(("id_customer_message", msg.id.clone()))
+                            .await?
+                            .take(0)?;
+
+                        *notes = query_results.clone();
+                    },
+                    Ok(None) => {
+                        log::error!("task_note/mod.rs -> check_or_create_notes_from_thread -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                        
                         let customer_message: CustomerMessage = api_call
                             .request_subresources_by_id_wasm(
                                 "customer_messages",
@@ -676,57 +626,44 @@ impl TaskNotePayload {
                             )
                             .await?;
 
-                        let mut employee: Employee = api_call
-                            .request_subresources_by_id_wasm(
-                                "employees",
-                                "employee",
-                                &customer_message.id_employee,
-                            )
-                            .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
+                        if !customer_message.id_employee.is_empty() && customer_message.id_employee.as_str() != "0" {
+                            let mut employee: Employee = api_call
+                                .request_subresources_by_id_wasm(
+                                    "employees",
+                                    "employee",
+                                    &customer_message.id_employee,
+                                )
+                                .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
 
-                        let task_note = TaskNotePayload {
-                            id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
-                            id_customer_message: Some(customer_message.id.clone()),
-                            id_customer_thread: Some(thread.id.clone()),
-                            task_id: self.task_id.clone(),
-                            id_employee: Some(customer_message.id_employee),
-                            created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc).into(),
-                            note: customer_message.message,
-                            username: parse_email_user(&employee.email).to_string(),
-                            service_number: Some(service_number.to_string()),
-                            user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
-                            private: false,
-                        };
-                        log::warn!("task_note/mod.rs -> get_notes_from_service_number -> Creating a new task_note: {task_note:?}");
+                            let mut task_note = TaskNotePayload {
+                                id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
+                                id_customer_message: Some(customer_message.id.clone()),
+                                id_customer_thread: Some(thread.id.clone()),
+                                task_id: self.task_id.clone(),
+                                id_employee: Some(customer_message.id_employee),
+                                created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc).into(),
+                                note: customer_message.message,
+                                username: parse_email_user(&employee.email).to_string(),
+                                service_number: Some(service_number.to_string()),
+                                user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
+                                private: false,
+                            };
+                            log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Creating a new task_note: {task_note:?}");
 
-                        let note: Option<Record> = DATABASE
-                            .query("CREATE task_note CONTENT $task_note")
-                            .bind(("task_note", task_note.clone()))
-                            .await?
-                            .take(0)?;
+                            match task_note.create_task_note_in_db().await {
+                                Ok(_) => log::info!("Created task note: {task_note:?}"),
+                                Err(e) => log::info!("Error creating task note: {e:?}"),
+                            }
+                            log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Created note: {task_note:?}");
 
-                        notes.push(task_note);
-
-                        log::warn!("task_note/mod.rs -> get_notes_from_service_number -> Created note: {note:?}");
-                    } else {
-                        log::warn!("task_note/mod.rs -> get_notes_from_service_number -> Message already exists: {:?}", exists);
-                        let query_results: Vec<TaskNotePayload> = DATABASE
-                            .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
-                            .bind(("id_customer_message", msg.id.clone()))
-                            .await?
-                            .take(0)?;
-
-                        for note in query_results.iter() {
-                            notes.push(note.clone());
+                            notes.push(task_note);
                         }
-                    }
+                    },
+                    Err(e) => log::error!("Error checking note record: {e:?}"),
                 }
             }
-        } else {
-            log::info!("task_note/mod.rs -> get_notes_from_service_number -> Order number is still empty? {service_number:?}");
         }
-
-        Ok(notes)
+        Ok(notes.clone())
     }
 
     pub fn set_task_id(&mut self, task_id: RecordId) -> &mut Self {
@@ -758,6 +695,19 @@ impl TaskNotePayload {
             log::info!("schema/utilities.rs -> get_task_notes_from_service_number: {query_results:?}");
             Ok(query_results)
         }
+    }
+
+    pub async fn get_db_notes_from_task_id(task_id: RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        log::debug!("get_db_notes_from_task_id");
+        
+        let query_results: Vec<Self> = DATABASE
+            .query("SELECT * FROM task_note WHERE task_id == $task_id PARALLEL")
+            .bind(("task_id", task_id.clone()))
+            .await?
+            .take(0)?;
+
+        log::info!("schema/utilities.rs -> get_db_notes_from_task_id: {query_results:?}");
+        Ok(query_results)
     }
 }
 
