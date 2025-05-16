@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, Record, Store, TaskPayload, TicketPayload, User, COMPUTER_TABLE}, DATABASE};
-use crate::{chats::ChatView, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
+use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use egui_taffy::{taffy::{self, prelude::line}, tui, TuiBuilderLogic};
 use taffy::{prelude::{fr, length, percent}, Style as TaffyStyle};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
@@ -35,6 +35,7 @@ pub struct TaskModal {
     pub default_height: Option<f32>,
     pub spo: SpecialPartOrder,
     store_users: Vec<User>,
+    user: User
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -64,6 +65,11 @@ impl Default for TaskModal {
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
             store_users: get_database_users(),
+            user: if let Some(user) = get_current_user_from_auth() {
+                user
+            } else {
+                User::default()
+            }
         }
     }
 }
@@ -89,6 +95,11 @@ impl TaskModal {
             chat_view,
             spo: SpecialPartOrder::default(),
             store_users: get_database_users(),
+            user: if let Some(user) = get_current_user_from_auth() {
+                user
+            } else {
+                User::default()
+            }
         }
     }
 }
@@ -243,7 +254,7 @@ impl DisplayModal for TaskModal {
                     tui.ui(|ui| {
                         let store_users = self.store_users.clone();
                         match self.current_page_state {
-                            ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users),
+                            ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users, self.user.clone()),
                             ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
                             ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
                             ModalAction::JobBuilderPage   => display_job_builder_page(ui),
@@ -267,7 +278,7 @@ impl DisplayModal for TaskModal {
     }
 }
 
-pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>) {
+pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>, current_user: User) {
     ui.vertical_centered_justified(|ui| {
         ui.colored_label(Color32::LIGHT_GREEN, format!("ID: {}", task.id.key().to_string()));
 
@@ -282,6 +293,18 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 .num_columns(4)
                 .show(ui, |ui| 
             {
+                if current_user.get_authorization().as_str() == "Admin" {
+                    ui.colored_label(Color32::LIGHT_RED, "Service#");
+                    ui.push_id(format!("Service #{:?}", task.service_number), |ui| {
+                        task.interact_service_number(ui);
+                    });
+                    
+                    ui.colored_label(Color32::LIGHT_RED, "Other");
+                    ui.label("");
+
+                    ui.end_row();
+                }
+
                 ui.colored_label(Color32::LIGHT_RED, "Assignee");
                 ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {
                     task.interact_assignee_initials(ui, store_users);
