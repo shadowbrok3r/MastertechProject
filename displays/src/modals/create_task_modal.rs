@@ -1,7 +1,7 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, Priority, Status, TaskNotePayload, TaskPayload, TicketPayload, User},DATABASE};
 use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
+use crate::{get_current_user_from_auth, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
 use super::task_modal::{display_ticket_page, ModalAction};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use egui_extras::DatePickerButton;
@@ -29,6 +29,7 @@ pub struct CreateTaskModal {
     pub tur: Tur,
     #[serde(skip)]
     pub prestashop_api_tx: Option<Sender<PrestashopPayload>>,
+    user: User
 }
 
 
@@ -62,6 +63,11 @@ impl CreateTaskModal {
             prestashop_api_tx: Some(prestashop_api_tx),
             tur: Tur::default(),
             current_page_state: ModalAction::TicketInfoPage,
+            user: if let Some(user) = get_current_user_from_auth() {
+                user
+            } else {
+                User::default()
+            },
             ..Default::default()
         }
     }
@@ -133,7 +139,8 @@ impl DisplayModal for CreateTaskModal {
                             ui,
                             &mut self.tur.task_data,
                             avail_size,
-                            &store_users
+                            &store_users,
+                            self.user.clone()
                         );
                     },
                     _ => {}

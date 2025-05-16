@@ -106,11 +106,15 @@ pub struct OrderNumber {
 
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
+        log::warn!("EmployeeHelper -> find_user");
         DATABASE.set("email", self.email.clone()).await?;
         let usr: Option<User> = DATABASE
             .query("SELECT * FROM user WHERE email == $email")
             .await?
             .take(0)?;
+        if usr.is_none() {
+            log::warn!("EmployeeHelper -> find_user -> Could not find user");
+        }
         debug!("user: {:?}", usr);
         Ok(usr)
     }

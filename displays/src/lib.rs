@@ -151,7 +151,7 @@ pub trait ColumnLayout {
 
 #[async_trait]
 pub trait Updatable {
-    // This is correctly implemented
+    async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error>;
     async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error>;
     async fn update_due_date(&self) -> anyhow::Result<(), anyhow::Error>;
     async fn update_assignee_initials(&self, initials: String) -> anyhow::Result<(), anyhow::Error>;
@@ -165,7 +165,7 @@ pub trait Updatable {
 }
 
 pub trait Interaction {
-    // This is correctly implemented
+    fn interact_service_number(&mut self, ui: &mut Ui) -> Response;
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_task_description(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
