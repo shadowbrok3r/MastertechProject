@@ -9,6 +9,30 @@ use log::info;
 use super::task_cards::date_colors;
 
 impl Interaction for TaskPayload {
+    fn interact_service_number(&mut self, ui: &mut Ui) -> Response {
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
+        ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
+        let mut default = String::new();
+        let service_number = self.service_number.as_mut().unwrap_or(&mut default);
+        let text_edit = TextEdit::singleline(service_number)
+            .desired_width(325.)
+            .margin(Margin::symmetric(6, 3))
+            .horizontal_align(Align::Min)
+            .vertical_align(Align::Center)
+            .ui(ui);
+
+        if text_edit.lost_focus() {
+            let svc = service_number.clone();
+            let task = self.clone(); 
+            PlatformSpawner::spawn(async move { 
+                let update = task.update_service_number(svc.clone()).await;
+                info!("Update: {update:?}"); 
+            });
+        }
+
+        text_edit
+    }
+
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
