@@ -238,7 +238,7 @@ impl<'a> Prestashop<'a> {
         T: for<'de> Deserialize<'de> + std::fmt::Debug + Send + Default,
     {
         log::info!(
-            "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
+            "resource_name: {resource_name}, {url_params:#?}\nURL: {}",
             self.query_args_wasm(resource_name, url_params.clone())
         );
 
@@ -250,17 +250,16 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        // info!("prestashop_schema -> response: {:#?}", response);
-        let x: anyhow::Result<Vec<T>, serde_json::Error> = from_value(response[resource_name].clone());
-        // info!("prestashop_schema -> x: {x:#?}");
-        if let Err(e) = x {
-            log::info!("Error: {e:?}");
-            let mut new = Vec::new();
-            new.push(T::default());
-            return Ok(new)
+        log::info!(
+            "Raw response: {response:?}",
+        );
+        match from_value::<Vec<T>>(response[resource_name].clone()) {
+            Ok(t) => Ok(t),
+            Err(e) => {
+                log::error!("request_resources_wasm<T: {resource_name}> -> Error: {e:?}");
+                return Ok(vec![T::default()]);
+            }
         }
-
-        Ok(x?)
     }
 
     pub async fn find_resource_wasm<T>(
@@ -661,12 +660,19 @@ pub struct CustomerThread {
     pub id_order: String,    // isUnsignedId 	❌ 		Order ID
     pub date_add: String,    // isDate 	        ❌
     pub date_upd: String,    // isDate 	        ❌
+    #[serde(default = "empty_association")]
     pub associations: CustMessageAssociation,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct CustMessageAssociation {
     pub customer_messages: Vec<CustMessage>,
+}
+
+fn empty_association() -> CustMessageAssociation {
+    CustMessageAssociation { 
+        customer_messages: vec![]
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
