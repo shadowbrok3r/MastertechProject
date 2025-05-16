@@ -7,6 +7,17 @@ use log::info;
 
 #[async_trait]
 impl Updatable for TaskPayload {
+    async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE
+            .query("UPDATE $id SET service_number=$service_number")
+            .bind(("id", self.id.clone()))
+            .bind(("service_number", service_number))
+            .await?
+            .take(0)?;
+        
+        Ok(())
+    }
+
     async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET completed=$completed, status=$status")

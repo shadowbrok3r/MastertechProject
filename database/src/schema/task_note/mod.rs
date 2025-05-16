@@ -2,7 +2,7 @@ use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestash
 use structdiff::{Difference, StructDiff};
 use surrealdb::{sql::Datetime, RecordId};
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use std::collections::HashMap;
 use regex::Regex;
 
@@ -77,7 +77,11 @@ impl TaskNotePayload {
                     id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
                     id_customer_message: Some(response.id.to_string().clone()),
                     id_customer_thread: self.id_customer_thread.clone(),
-                    created_at: DateTime::parse_from_rfc3339(&response.date_add)?.with_timezone(&Utc).into(),
+                    created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&response.date_add) {
+                        date.with_timezone(&Utc).into()
+                    } else {
+                        parse_msg_date(&response.date_add).unwrap_or(Utc::now().into())
+                    },
                     ..self.clone() // Keep other fields the same
                 };
                 let diffs = self.diff(&updated_value);
@@ -100,7 +104,11 @@ impl TaskNotePayload {
                         id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
                         id_customer_message: Some(response.id.to_string().clone()),
                         id_customer_thread: self.id_customer_thread.clone(),
-                        created_at: DateTime::parse_from_rfc3339(&response.date_add)?.with_timezone(&Utc).into(),
+                        created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&response.date_add) {
+                            date.with_timezone(&Utc).into()
+                        } else {
+                            parse_msg_date(&response.date_add).unwrap_or(Utc::now().into())
+                        },
                         ..self.clone() // Keep other fields the same
                     };
                     let diffs = self.diff(&updated_value);
@@ -633,7 +641,11 @@ impl TaskNotePayload {
                                     "employee",
                                     &customer_message.id_employee,
                                 )
-                                .await?; // Employee::default().get_employee_from_id(&customer_message.id_employee).await?;
+                                .await?;
+
+                            log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Employee: {:?}", employee.firstname);
+
+                            log::info!("task_note/mod.rs -> check_or_create_notes_from_thread -> Creating new note");
 
                             let mut task_note = TaskNotePayload {
                                 id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
@@ -641,7 +653,11 @@ impl TaskNotePayload {
                                 id_customer_thread: Some(thread.id.clone()),
                                 task_id: self.task_id.clone(),
                                 id_employee: Some(customer_message.id_employee),
-                                created_at: DateTime::parse_from_rfc3339(&customer_message.date_add)?.with_timezone(&Utc).into(),
+                                created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&customer_message.date_add) {
+                                    date.with_timezone(&Utc).into()
+                                } else {
+                                    parse_msg_date(&customer_message.date_add).unwrap_or(Utc::now().into())
+                                },
                                 note: customer_message.message,
                                 username: parse_email_user(&employee.email).to_string(),
                                 service_number: Some(service_number.to_string()),
@@ -711,3 +727,11 @@ impl TaskNotePayload {
     }
 }
 
+
+pub fn parse_msg_date(date_str: &str) -> Result<Datetime, chrono::ParseError> {
+    // Parse the string as a NaiveDateTime first
+    let naive_dt = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S")?;
+    // Convert to DateTime<Utc> by assuming UTC timezone
+    let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+    Ok(dt_utc.into())
+}
