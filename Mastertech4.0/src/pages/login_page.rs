@@ -93,7 +93,7 @@ impl MasterTechApp{
                                 ui.add_space(20.0);
                                 if let Some(login) = self.login_mut(){
                                     let text_edit = TextEdit::singleline(&mut login.username)
-                                        .font(font)
+                                        .font(font.clone())
                                         .desired_width(180.0);
                                     
                                     let output = text_edit.show(ui);
