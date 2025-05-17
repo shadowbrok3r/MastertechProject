@@ -1,17 +1,19 @@
-use crate::schema::TASK_NOTE_TABLE;
-
-use super::{deserializer::deserialize_to_string, helper_traits::EmployeeHelper, CustomerData, TaskNotePayload, User};
-use chrono::{DateTime, Utc};
-use log::info;
-use reqwest::{
-    header::{ACCEPT, CONTENT_TYPE},
-    Client,
-};
-use serde::{Deserialize, Serialize};
+use super::{deserializer::deserialize_to_string, CustomerData, TaskNotePayload};
+use reqwest::{ header::{ACCEPT, CONTENT_TYPE}, Client};
 use serde_json::{from_value, Value};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use log::info;
+
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
 const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
+
+pub mod customer_messages;
+pub mod customer_threads;
+
+pub use customer_messages::*;
+pub use customer_threads::*;
+
 
 #[derive(Clone)]
 pub struct Prestashop<'a> {
@@ -488,34 +490,6 @@ impl<'a> Prestashop<'a> {
     }
 }
 
-impl CustomerMessage {
-    pub async fn into_task_note(&self, service_number: &str) -> anyhow::Result<TaskNotePayload, anyhow::Error> {
-        match Employee::default().get_employee_from_id(&self.id_employee).await {
-            Ok(employee) => {
-                match User::query_user_from_email(employee.email.clone()).await {
-                    Ok(user) => { 
-                        log::warn!("Pulled user: {}", user.get_name());
-                        return Ok(TaskNotePayload {
-                            note: self.message.clone(),
-                            created_at: DateTime::parse_from_rfc3339(&self.date_add)?.with_timezone(&Utc).into(),
-                            id: surrealdb::RecordId::from((TASK_NOTE_TABLE, self.id.clone())),
-                            username: user.get_username().to_string(),
-                            user: Some(user.get_id()),
-                            id_customer_thread: Some(self.id_customer_thread.clone()),
-                            id_customer_message: Some(self.id.clone()),
-                            id_employee: Some(self.id_employee.clone()),
-                            service_number: Some(service_number.to_string()),
-                            ..Default::default()
-                        });
-                    },
-                    Err(e) => Err(anyhow::anyhow!("Error querying user from email: {e:?}")),
-                }
-            },
-            Err(e) => Err(anyhow::anyhow!("Error converting customer message into task note: {e:?}")),
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct PrestashopPayload {
     pub customer: CustomerData,
@@ -638,46 +612,6 @@ pub struct Customer {
     pub lastname: String,
     pub firstname: String,
     pub email: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct CustomerMessage {
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub id: String,
-    pub id_employee: String,
-    pub id_customer_thread: String,
-    pub message: String,
-    pub file_name: String,
-    pub private: String,
-    pub date_add: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct CustomerThread {
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub id: String,
-    pub id_customer: String, // isUnsignedId 	❌ 		Customer ID
-    pub id_order: String,    // isUnsignedId 	❌ 		Order ID
-    pub date_add: String,    // isDate 	        ❌
-    pub date_upd: String,    // isDate 	        ❌
-    #[serde(default = "empty_association")]
-    pub associations: CustMessageAssociation,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct CustMessageAssociation {
-    pub customer_messages: Vec<CustMessage>,
-}
-
-fn empty_association() -> CustMessageAssociation {
-    CustMessageAssociation { 
-        customer_messages: vec![]
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct CustMessage {
-    pub id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
