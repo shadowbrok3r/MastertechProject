@@ -152,7 +152,7 @@ impl <'a> WebconsoleTab <'a> {
                         }
                     }
                 },
-                Err(e) => log::info!("Failed to connect remote WebSocket: {e:?}"),
+                Err(e) => log::error!("Failed to connect remote WebSocket: {e:?}"),
             }
         });
     }

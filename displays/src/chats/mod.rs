@@ -1,8 +1,8 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, ScrollArea, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{epaint::Shadow, popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Rect, Response, RichText, ScrollArea, Shape, Stroke, Style, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::{collections::{BTreeSet, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{Receiver, Sender};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
@@ -239,7 +239,7 @@ impl ChatView {
             }
         }
 
-        TopBottomPanel::top(format!("Top panel header {:?}", task_id)).exact_height(28.).show_inside(ui, |ui| {
+        TopBottomPanel::top(format!("Top panel header {:?}", task_id)).exact_height(24.).show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(""); 
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
@@ -324,24 +324,27 @@ impl ChatView {
                 Frame::new()
                     .fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
                     .stroke(ui.style().visuals.widgets.inactive.bg_stroke)
-                    .outer_margin(Margin::symmetric(5, 10))
-                    .inner_margin(Margin::same(6))
+                    .outer_margin(Margin::symmetric(1, 4))
+                    .inner_margin(Margin::same(1))
             )
             .show_inside(ui, |ui| 
         {
+            // let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
+            // let total_rows = self.messages.len();
             ScrollArea::vertical()
                 .animated(true)
-                .max_height(ui.available_height())
-                .max_width(ui.available_width())
+                .max_height(f32::INFINITY)
+                .max_width(f32::INFINITY)
                 .auto_shrink(false)
                 .stick_to_bottom(true)
+                // .show_rows(ui, row_height, total_rows, add_contents)
                 .show(ui, |ui| 
             {
 
-                let max_msg_width = ui.available_width()/2.5;
-                let fixed_height = 50.;
-                let min_width = 200.;
-                let other = min_width - 30.;
+                let max_msg_width = ui.available_width()/1.9;
+                // let fixed_height = 50.;
+                // let min_width = 200.;
+                // let other = 170.;
                 
                 self.messages.sort_by_key(|message| message.created_at.clone() );
 
@@ -359,7 +362,7 @@ impl ChatView {
                     };
 
                     let msg_color = if is_message_from_myself {
-                        ui.style().visuals.widgets.inactive.bg_fill
+                        ui.style().visuals.widgets.active.bg_fill
                     } else {
                         ui.style().visuals.widgets.active.weak_bg_fill
                     };
@@ -368,7 +371,7 @@ impl ChatView {
                         ui.set_width(max_msg_width);
 
                         let rounding = 8.;
-                        let margin = 8.;
+                        let margin = 4.;
                         
                         // ui.set_min_width(min_width);
                         let rnding = eframe::egui::CornerRadius {
@@ -390,8 +393,8 @@ impl ChatView {
 
                         { // NOTE FRAME SCOPED UI
                             let ui = &mut main_note_frame.content_ui;
-                            ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                            ui.set_max_width(max_msg_width);
+                            // ui.set_min_height(fixed_height);  // Set the fixed height for the message box
+                            // ui.set_max_width(max_msg_width);
                             // Use a vertical layout to stack the name and message content
                             ui.with_layout(Layout::top_down(Align::Min), |ui| {
                                 let btn_txt_color = ui.style().visuals.error_fg_color;
@@ -403,15 +406,23 @@ impl ChatView {
                                         Align::Min,
                                     ), |ui| {
                                         // ui.set_max_width(max_msg_width);
-                                        ui.add_space(4.);
-                                        Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
-                                        
-                                        ui.add_space(20.);
-                                        // let parsed_date = item.created_at.clone();
+                                        // ui.add_space(4.);
+                                        let from_btn = Button::new(from)
+                                            .fill(Color32::from_rgb(7, 7, 9))
+                                            .min_size(Vec2::new(30., 20.))
+                                            .ui(ui);
+
+                                        if from_btn.clicked(){
+                                            ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}", item.id).into()));
+                                        }
+
+                                        popup_widget(ui, from_btn, style.clone(), &item);
+
+                                        ui.add_space(5.);
                                     
-                                        ui.label(RichText::new(item.created_at.format("%Y/%m/%d @ %I:%M%p").to_string()).weak());
-                                        ui.add_space(20.);
-                                        ui.add_space(other);
+                                        ui.label(RichText::new(item.created_at.format("%m/%d@%I:%M%p").to_string()).weak());
+                                        ui.add_space(5.);
+                                        ui.add_space(120.);
 
                                         let id = &item.id;
 
@@ -437,14 +448,14 @@ impl ChatView {
                                                 self.allow_edit.remove(&id.to_string());
                                             }
                                             let cancel_btn = Button::new(RichText::new("Cancel").weak().color(Color32::LIGHT_RED))
-                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
+                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
 
                                             if cancel_btn.clicked(){
                                                 self.allow_edit.remove(&id.to_string());
                                             }
                                         } else {
                                             let edit_btn = Button::new(RichText::new("🖊").weak().color(btn_txt_color))
-                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui)
+                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui)
                                                 .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"));
 
                                             if edit_btn.clicked(){
@@ -453,7 +464,7 @@ impl ChatView {
                                         }
 
                                         let copy_btn = Button::new(RichText::new("🗐").weak().color(btn_txt_color))
-                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui)
+                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui)
                                             .on_hover_text(RichText::new("Copy Task Note"));
 
                                         if copy_btn.clicked(){
@@ -463,7 +474,7 @@ impl ChatView {
                                         let btn = Button::new(RichText::new("🗙").weak().color(btn_txt_color))
                                             .corner_radius(eframe::egui::CornerRadius::same(255))
                                             .small()
-                                            .min_size(Vec2::new(30., 14.))
+                                            .min_size(Vec2::new(15., 14.))
                                             .ui(ui)
                                             .on_hover_text(
                                                 RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
@@ -491,23 +502,28 @@ impl ChatView {
                                         // ui.set_max_width(max_msg_width);
                                         let id = &item.id;
 
-                                        ui.add_space(4.);
-                                        Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
-                                        ui.add_space(20.);
+                                        ui.add_space(15.);
+                                        let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
+                                        if from_btn.clicked(){
+                                            ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}",item.id).into()));
+                                        }
+                                        popup_widget(ui, from_btn, style.clone(), &item);
+
+                                        ui.add_space(5.);
                                     
                                         ui.label(RichText::new(item.created_at.format("%Y/%m/%d @ %I:%M%p").to_string()).weak());
                                         
-                                        ui.add_space(20.);
+                                        ui.add_space(5.);
 
                                         ui.label(if item.private { "🕶" } else { "✔" });
 
-                                        ui.add_space(20.);
+                                        ui.add_space(5.);
 
                                         if self.current_user.get_authorization().as_str() == "Admin" {
                                             let btn = Button::new(RichText::new("🗙").weak().color(btn_txt_color))
                                                 .corner_radius(eframe::egui::CornerRadius::same(255))
                                                 .small()
-                                                .min_size(Vec2::new(30., 14.))
+                                                .min_size(Vec2::new(15., 14.))
                                                 .ui(ui)
                                                 .on_hover_text(
                                                     RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
@@ -528,7 +544,7 @@ impl ChatView {
                                         }
 
                                         let copy_btn = Button::new(RichText::new("🗐").small().weak().color(btn_txt_color))
-                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
+                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
 
                                         if copy_btn.clicked(){
                                             ui.ctx().copy_text(item.note.clone());
@@ -536,7 +552,7 @@ impl ChatView {
                                         if self.current_user.get_authorization().as_str() == "Admin" {
                                             if self.allow_edit.contains(&id.to_string()) {
                                                 let save_btn = Button::new(RichText::new("Save").weak().color(btn_txt_color))
-                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
+                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
 
                                                 if save_btn.clicked(){
                                                     if self.allow_edit.contains(&id.to_string()) {
@@ -556,14 +572,14 @@ impl ChatView {
                                                     self.allow_edit.remove(&id.to_string());
                                                 }
                                                 let cancel_btn = Button::new(RichText::new("Cancel").weak().color(Color32::LIGHT_RED))
-                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
+                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
 
                                                 if cancel_btn.clicked(){
                                                     self.allow_edit.remove(&id.to_string());
                                                 }
                                             } else {
                                                 let edit_btn = Button::new(RichText::new("🖊").weak().color(btn_txt_color))
-                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui)
+                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui)
                                                     .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"));
 
                                                 if edit_btn.clicked(){
@@ -576,12 +592,6 @@ impl ChatView {
 
                                 Frame::new()
                                     .fill(Color32::from_rgb(10,10,12))
-                                    .shadow(Shadow {
-                                        blur: 3,
-                                        spread: 3,
-                                        color: Color32::from_rgb(40,36,40),
-                                        ..Default::default()
-                                    })
                                     .stroke(style.visuals.widgets.inactive.bg_stroke)
                                     .outer_margin(Margin {
                                         top: 3,
@@ -608,7 +618,6 @@ impl ChatView {
                                         }
                                     });
                                 });
-
                             });
                         };
                         let response = main_note_frame.allocate_space(ui);
@@ -651,5 +660,54 @@ impl ChatView {
     }
 }
 
+
+pub fn popup_widget(ui: &mut Ui, btn_response: Response, style: Arc<Style>, item: &TaskNotePayload) {
+
+    popup_below_widget(
+        ui, 
+        format!("sub_menu-from-{:?}",item.id).into(), 
+        &btn_response, 
+        PopupCloseBehavior::CloseOnClickOutside, 
+        |ui| 
+    {
+        ui.vertical_centered_justified(|ui| {
+            ui.set_width(400.0);
+            ui.horizontal(|ui| {
+                ui.colored_label(style.visuals.hyperlink_color, "ID");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(format!("{:?}", item.id));
+                });
+            });
+            ui.horizontal(|ui| {
+                if let Some(task_id) = item.task_id.clone() {
+                    ui.colored_label(style.visuals.hyperlink_color, "Task ID");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(format!("{task_id:?}"));
+                    });
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.colored_label(style.visuals.hyperlink_color, "Thread ID");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(item.id_customer_message.clone().unwrap_or_default());
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.colored_label(style.visuals.hyperlink_color, "Employee ID");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(item.id_employee.clone().unwrap_or_default());
+                });
+            });
+            ui.horizontal(|ui| {
+                if let Some(uid) = item.user.clone() {
+                    ui.colored_label(style.visuals.hyperlink_color, "User ID");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(format!("{uid:?}"));
+                    });
+                }
+            });
+        });
+    });
+}
 
 

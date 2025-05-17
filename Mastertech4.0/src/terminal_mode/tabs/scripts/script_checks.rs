@@ -460,7 +460,7 @@ impl <'a> ScriptsTab <'a> {
         tokio::spawn(async move {
             match install_supereasybackup(email, client, tx).await {
                 Ok(_) => log::info!("Installed SEB"),
-                Err(e) => log::info!("Error Installing SEB: {e:?}"),
+                Err(e) => log::error!("Error Installing SEB: {e:?}"),
             }
         });
         
@@ -512,7 +512,7 @@ impl <'a> ScriptsTab <'a> {
             let paths = get_data_transfer_candidates();
             match paths {
                 Ok(paths) => { let _ = tx.try_send(paths); },
-                Err(e) => log::info!("Error getting paths: {e:?}"),
+                Err(e) => log::error!("Error getting paths: {e:?}"),
             };
         });
         // self.log_message("Data transfer completed.");

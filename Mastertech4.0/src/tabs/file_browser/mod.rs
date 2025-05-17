@@ -257,7 +257,7 @@ impl FileBrowser {
 
                     match self.command_tx.send(Some(Command::OpenPath(path))) {
                         Ok(_) => info!("sent task successfully"),
-                        Err(e) => info!("{e}"),
+                        Err(e) => log::error!("{e}"),
                     };
                 }
             });
@@ -268,7 +268,7 @@ impl FileBrowser {
                     if response.clicked() {
                         match self.command_tx.send(Some(Command::Home)) {
                             Ok(_) => info!("Home"),
-                            Err(e) => info!("{e}"),
+                            Err(e) => log::error!("{e}"),
                         }
                     }
                 });
@@ -278,7 +278,7 @@ impl FileBrowser {
                     if response.clicked() {
                         match self.command_tx.send(Some(Command::UpDirectory)) {
                             Ok(_) => info!("UpDirectory"),
-                            Err(e) => info!("{e}"),
+                            Err(e) => log::error!("{e}"),
                         }
                     }
                 });
@@ -287,7 +287,7 @@ impl FileBrowser {
                 if response.clicked() {
                     match self.command_tx.send(Some(Command::Refresh)) {
                         Ok(_) => info!("sent task successfully"),
-                        Err(e) => info!("{e}"),
+                        Err(e) => log::error!("{e}"),
                     }
                 }
 
@@ -340,7 +340,7 @@ impl FileBrowser {
 
                             match self.command_tx.send(path) {
                                 Ok(_) => info!("Opening drive path"),
-                                Err(e) => info!("{e}"),
+                                Err(e) => log::error!("{e}"),
                             }
                         };
                     }
@@ -447,7 +447,7 @@ impl FileBrowser {
                                     .send(Some(Command::ReadMetadata(path.clone())))
                                 {
                                     Ok(_) => drop(command_sender5),
-                                    Err(e) => info!("hovered sender error: {e:?}"),
+                                    Err(e) => log::error!("hovered sender error: {e:?}"),
                                 }
                             }
                             if let Some(metadata) = self.folder_metadata.borrow_mut().get(path) {
@@ -688,7 +688,7 @@ impl FileBrowser {
                     .send(Some(Command::ReadMetadata(path.clone())))
                 {
                     Ok(_) => info!("Getting file size"),
-                    Err(e) => info!("hovered sender error: {e:?}"),
+                    Err(e) => log::error!("hovered sender error: {e:?}"),
                 }
             }
         } else if cut && shift && selected_item_len > 0 {
@@ -702,7 +702,7 @@ impl FileBrowser {
                     .send(Some(Command::ReadMetadata(path.clone())))
                 {
                     Ok(_) => info!("Getting file size"),
-                    Err(e) => info!("hovered sender error: {e:?}"),
+                    Err(e) => log::error!("hovered sender error: {e:?}"),
                 }
             }
         } else if paste && shift {
@@ -720,7 +720,7 @@ impl FileBrowser {
                             "Source: {:?}\nDest: {:?}\n",
                             self.copied_items_src, self.copied_items_dest
                         ),
-                        Err(e) => info!("{e}"),
+                        Err(e) => log::error!("{e}"),
                     }
                 } else {
                     self.copied_items_dest = PathBuf::from(&self.path_edit);

@@ -47,7 +47,7 @@ impl EventHandler {
                                 }
                             }
                             Some(Err(e)) => {
-                                log::info!("Error: {e:?}");
+                                log::error!("Error: {e:?}");
                                 let _ = _tx.try_send(Event::Error);
                             }
                             None => {},
@@ -236,7 +236,7 @@ impl <'a>TerminalApp<'a> {
                             Tab::Ncdu => self.ncdu_tab.borrow_mut().handle_mouse_event(&mouse_event)
                         };
                     },
-                    Event::Error => log::info!("Error in event loop"),
+                    Event::Error => log::error!("Error in event loop"),
                     Event::Tick => {}
                 }
             }

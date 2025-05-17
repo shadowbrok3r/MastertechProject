@@ -65,7 +65,7 @@ impl SharedContext {
                     PlatformSpawner::spawn(async move {
                         match get_or_insert_notes((note_payload.0, note_payload.1)).await {
                             Ok(_) => info!("receive_ui_action -> get_or_insert_notes ran ok"),
-                            Err(e) => info!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
+                            Err(e) => log::error!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
                         }
                     });
 
@@ -153,7 +153,7 @@ async fn get_or_insert_notes(note_payload: (surrealdb::RecordId, Vec<TaskNotePay
                 }
                 
             },
-            Err(e) => info!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
+            Err(e) => log::error!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
         }
     } else {
         info!("receive_ui_action -> There were not any notes, checking prestashop");
@@ -168,7 +168,7 @@ async fn get_or_insert_notes(note_payload: (surrealdb::RecordId, Vec<TaskNotePay
                     return Ok(());
                 }
             },
-            Err(e) => info!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
+            Err(e) => log::error!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
         }
     }
     Ok(())
