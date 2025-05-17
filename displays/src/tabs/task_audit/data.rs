@@ -40,12 +40,12 @@ impl TaskAuditViewer {
                                     let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
                                     }
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
+                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e)
                     };
                 },
                 TaskAudit::MyInRepair => {
@@ -62,12 +62,12 @@ impl TaskAuditViewer {
                                     let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
                                     }
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
+                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e)
                     };
                 },
                 TaskAudit::InRepair => {
@@ -84,12 +84,12 @@ impl TaskAuditViewer {
                                     let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting inrepair services: {:?}", e),
+                                        Err(e) => log::error!("Error getting inrepair services: {:?}", e),
                                     }
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error getting in repair shelf services: {:?}", e)
+                        Err(e) => log::error!("Error getting in repair shelf services: {:?}", e)
                     };
                 },
                 TaskAudit::DoneShelf => {
@@ -106,12 +106,12 @@ impl TaskAuditViewer {
                                     let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
                                     }
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error with get_services_by_status 40: : {:?}", e)
+                        Err(e) => log::error!("Error with get_services_by_status 40: : {:?}", e)
                     };
                 },
                 TaskAudit::AllServices => {
@@ -128,12 +128,12 @@ impl TaskAuditViewer {
                                     let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
                                     }
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error with get_all_services_in_my_store: {:?}", e)
+                        Err(e) => log::error!("Error with get_all_services_in_my_store: {:?}", e)
                     };
                 },
                 TaskAudit::MyServices => {
@@ -150,12 +150,12 @@ impl TaskAuditViewer {
                                     let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                     match presta_payload {
                                         Ok(service) => order_tx.try_send(service).unwrap(),
-                                        Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                        Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
                                     }
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error with get_my_services_in_repair: {:?}", e)
+                        Err(e) => log::error!("Error with get_my_services_in_repair: {:?}", e)
                     };
                 },
                 TaskAudit::NeedsCall => {
@@ -171,12 +171,12 @@ impl TaskAuditViewer {
                                             let presta_payload = Employee::to_prestashop_payload(&order_num.id).await;
                                             match presta_payload {
                                                 Ok(service) => order_tx.try_send(service).unwrap(),
-                                                Err(e) => log::info!("Error getting check-in shelf services: {:?}", e),
+                                                Err(e) => log::error!("Error getting check-in shelf services: {:?}", e),
                                             }
                                         }
                                     }
                                 },
-                                Err(e) => log::info!("Error with get_services_by_status: {:?}", e),
+                                Err(e) => log::error!("Error with get_services_by_status: {:?}", e),
                             };
                         }
                     }
@@ -225,7 +225,7 @@ impl TaskAuditViewer {
                 // if let Some(storage) = frame.storage_mut() {
                 //     match serde_json::to_string(&self.service_map) {
                 //         Ok(service_map) => storage.set_string("service_data", service_map),
-                //         Err(e) => log::info!("error converting service_data to string: {e:?}"),
+                //         Err(e) => log::error!("error converting service_data to string: {e:?}"),
                 //     }
                 // }
             // }

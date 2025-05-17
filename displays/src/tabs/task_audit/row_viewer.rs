@@ -186,7 +186,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                     PlatformSpawner::spawn(async move {
                         match Self::get_order_notes(service_number).await {
                             Ok(notes) => notes_tx.try_send(notes).unwrap(),
-                            Err(e) => log::info!("Error {e:?}"),
+                            Err(e) => log::error!("Error {e:?}"),
                         };
                     });
                 }

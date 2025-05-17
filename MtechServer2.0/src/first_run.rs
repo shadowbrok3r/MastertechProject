@@ -32,7 +32,7 @@ impl MtechServer {
             if let Some(_service_map) = storage.get_string("service_data") {
                 // match serde_json::from_str::<HashMap<String, DataTable<PrestashopPayload>>>(&service_map) {
                 //     Ok(map) => self.context.shared_ctx.task_audit_table.service_map = map,
-                //     Err(e) => info!("Error converting service_map: {e:?}"),
+                //     Err(e) => log::error!("Error converting service_map: {e:?}"),
                 // }
             }
 
@@ -104,7 +104,7 @@ impl MtechServer {
                         spawn_local(async move {
                             match DATABASE.health().await {
                                 Ok(_) => info!("Healthy connection"),
-                                Err(e) => info!("Database connection health: {e:?}"),
+                                Err(e) => log::error!("Database connection health: {e:?}"),
                             }
                         });
                     }

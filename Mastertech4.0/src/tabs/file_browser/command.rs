@@ -57,7 +57,7 @@ impl FileBrowser{
                         self.refresh_contents();
                         self.select(path);
                     }
-                    Err(err) => log::info!("Error while creating directory: {err}"),
+                    Err(err) => log::error!("Error while creating directory: {err}"),
                 }
             },
 
@@ -126,7 +126,7 @@ impl FileBrowser{
                         self.refresh_contents();
                         self.select(to);
                     }
-                    Err(err) => log::info!("Error while renaming: {err}"),
+                    Err(err) => log::error!("Error while renaming: {err}"),
                 }
             },
 
@@ -164,7 +164,7 @@ impl FileBrowser{
                     result = read_metadata_task => {
                         match result {
                             Ok(path_size) => { // Send the result through the channel.
-                                if sender.try_send(path_size).is_err() { log::info!("Error sending metadata");}
+                                if sender.try_send(path_size).is_err() { log::error!("Error sending metadata");}
                                 
                                 if path.is_dir() { // Insert the metadata into the appropriate HashMap.
                                     self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
@@ -174,7 +174,7 @@ impl FileBrowser{
                                         MetaData { path_size });
                                 }
                             },
-                            Err(e) => log::info!("Error reading metadata: {:?}", e),
+                            Err(e) => log::error!("Error reading metadata: {:?}", e),
                         }
                     }
                 }

@@ -1,8 +1,8 @@
 use crate::{
-    schema::{prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days, LiveTaskPayload, Record, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE},
+    schema::{prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days, LiveTaskPayload, TaskPayload, TicketPayload},
     DATABASE,
 };
-use log::{debug, info};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use surrealdb::RecordId;
@@ -35,87 +35,6 @@ pub async fn get_associated_ticket(
         new_task,
     };
     tx.try_send(chnnl)?;
-    Ok(())
-}
-
-pub async fn get_associated_notes(
-    tx: Sender<Vec<TaskNotePayload>>,
-    task_id: RecordId
-) -> Result<(), Error> {
-    debug!("get_associated_notes");
-    DATABASE.set("task_id", task_id.clone()).await?;
-    let notes: Vec<TaskNotePayload> = DATABASE.query(
-        "SELECT * FROM task_note WHERE task_id == $task_id"
-    )
-    .await?
-    .take(0)?;
-
-    tx.try_send(notes)?;
-    Ok(())
-}
-
-// pub async fn get_customer_data(tx: Sender<LiveOutput>) -> Result<(), Error> {
-// tx: Sender<CustomerData>
-// debug!("get_customers");
-// let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
-// DATABASE.set("id", "value").await?;
-// let computers: Vec<ComputerData> = DATABASE.query("SELECT * FROM computer").await?.take(0)?;
-// let tickets: Vec<TicketData> = DATABASE
-//     .query("SELECT * FROM service_order")
-//     .await?
-//     .take(0)?;
-// let output = LiveOutput {
-//     customers,
-//     computers,
-//     tickets,
-// };
-//     tx.try_send(output)?;
-//     Ok(())
-// }
-
-pub async fn get_user_from_email(email: String) -> Result<Option<User>, Error> {
-    DATABASE.set("email", email).await?;
-    let user_record: Option<User> = DATABASE
-        .query("SELECT * FROM user WHERE email == $email")
-        .await?
-        .take(0)?;
-
-    Ok(user_record)
-}
-
-#[async_trait]
-pub trait TaskNoteMod {
-    async fn delete_note(&mut self) -> Result<(), Error>;
-}
-
-#[async_trait]
-impl TaskNoteMod for TaskNotePayload {
-    async fn delete_note(&mut self) -> Result<(), Error> {
-        let id = self.id.clone();
-        info!("deleting id: {:?}", id.clone());
-        DATABASE.set("id", id.key().to_string().clone()).await?;
-        let y: Option<Record> = DATABASE
-            .delete((TASK_NOTE_TABLE, id.key().to_string()))
-            .await?;
-        info!("Deleted note: {:?}", y);
-
-        Ok(())
-    }
-}
-
-pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(), Error> {
-    let id = task_id.clone();
-    let task_note = TaskNotePayload {
-        task_id: Some(id),
-        note: new_msg,
-        ..Default::default()
-    };
-
-    let query = format!("CREATE task_note CONTENT $note");
-    DATABASE.set("note", task_note).await.unwrap();
-    let update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-
-    info!("Updated notes: {update_task:?}");
     Ok(())
 }
 
@@ -244,5 +163,4 @@ impl Task for TaskPayload {
                 .take(0)?;
         Ok(get_data)
     }
-
 }

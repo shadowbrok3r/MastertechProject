@@ -602,7 +602,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
 
                 match msg.into_task_note(potential_order.id.as_str()).await {
                     Ok(task_note) => task_notes.push(task_note),
-                    Err(e) => info!("Error converting cust msg into task note: {e:?}"),
+                    Err(e) => log::error!("Error converting cust msg into task note: {e:?}"),
                 }
                 customer_messages.push(msg)
             }
@@ -705,7 +705,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
 
                 match msg.into_task_note(order_number).await {
                     Ok(task_note) => task_notes.push(task_note),
-                    Err(e) => info!("Error converting cust msg into task note: {e:?}"),
+                    Err(e) => log::error!("Error converting cust msg into task note: {e:?}"),
                 }
 
                 customer_messages.push(msg)
@@ -799,7 +799,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
     let order_date = match NaiveDateTime::parse_from_str(order_date_str, "%Y-%m-%d %H:%M:%S") {
         Ok(dt) => dt.date(),
         Err(e) => {
-            log::info!("Failed to parse order date {}: {}", order_date_str, e);
+            log::error!("Failed to parse order date {}: {}", order_date_str, e);
             return Vec::new();
         }
     };
@@ -820,7 +820,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
     let mut day = match order_date.succ_opt() {
         Some(d) => d,
         None => {
-            log::info!("Failed to get successor for order date: {}", order_date);
+            log::error!("Failed to get successor for order date: {}", order_date);
             return missing_days;
         }
     };
@@ -834,7 +834,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
             day = match day.succ_opt() {
                 Some(d) => d,
                 None => {
-                    log::info!("Failed to get successor for day: {}", day);
+                    log::error!("Failed to get successor for day: {}", day);
                     break;
                 }
             };
@@ -854,7 +854,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
                         break;
                     }
                 },
-                Err(e) => log::info!("  Failed to parse customer message date {}: {}", msg.date_add, e),
+                Err(e) => log::error!("  Failed to parse customer message date {}: {}", msg.date_add, e),
             }
         }
         
@@ -866,7 +866,7 @@ pub fn get_missing_call_days(order_date_str: &str, customer_messages: &[Customer
         day = match day.succ_opt() {
             Some(d) => d,
             None => {
-                log::info!("Failed to get successor for day: {}", day);
+                log::error!("Failed to get successor for day: {}", day);
                 break;
             }
         };

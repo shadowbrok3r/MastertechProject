@@ -213,7 +213,7 @@ impl User {
             .await
         {
             Ok(res) => log::info!("helper_traits -> Result: {res:?}"),
-            Err(e) => log::info!("helper_traits -> Error updating User Settings: {e:?}"),
+            Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }
@@ -231,7 +231,7 @@ impl User {
             .await
         {
             Ok(res) => log::info!("helper_traits -> Result: {res:?}"),
-            Err(e) => log::info!("helper_traits -> Error updating User Settings: {e:?}"),
+            Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }

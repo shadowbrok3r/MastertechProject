@@ -12,7 +12,6 @@ impl SharedContext {
             let ticket = &mut self.tur.ticket_data;
             let task = &mut self.tur.task_data;
             let task_notes = &mut self.tur.task_notes;
-            // let computer_data = &mut self.tur.computer_data;
             let service_details = data.order.associations.order_service.clone();
             let sales_rep = data.sales_rep.clone().unwrap_or_default();
             let split_rep = data.split_rep.clone().unwrap_or_default();

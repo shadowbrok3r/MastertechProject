@@ -81,7 +81,7 @@ pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
             match decode_from_slice(&decrypted_data, standard()) {
                 Ok((login, _)) => Some(login),
                 Err(e) => {
-                    info!("Failed to decode data: {e:?}");
+                    log::error!("Failed to decode data: {e:?}");
                     None
                 },
             }
