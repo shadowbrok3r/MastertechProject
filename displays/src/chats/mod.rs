@@ -74,7 +74,9 @@ impl ChatView {
             note_ids.insert(message.id.to_string(), message.clone());
         }
 
-        ChatView {
+        log::info!("Note ID's: {}", note_ids.len());
+
+        Self {
             current_user: if let Some(user) = get_current_user_from_auth() {
                 user
             } else {
@@ -146,6 +148,13 @@ impl ChatView {
             .cloned()
             .unwrap_or_default();
 
+        log::info!(r#"Chats/mod.rs -> refresh_notes
+            -> service_number: {}
+            -> task_id: {:?}
+            -> user: {}
+            -> id_customer_thread: {}
+        "#, service_number, task_id, user.get_username(), id_customer_thread);
+
         PlatformSpawner::spawn(async move {
             if id_customer_thread.is_empty() && !service_number.is_empty() {
                 let mut task_note = TaskNotePayload {
@@ -156,11 +165,13 @@ impl ChatView {
                     ..Default::default()
                 };
 
+                log::info!("Chats/mod.rs -> refresh_notes -> task_note.get_notes_from_service_number");
                 match task_note.get_notes_from_service_number(&service_number).await {
                     Ok(notes) => {let _ = tx.try_send(notes); },
                     Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                 };
             } else if !id_customer_thread.is_empty() && service_number.is_empty() {
+                log::info!("Chats/mod.rs -> refresh_notes -> TaskNotePayload::get_db_notes_from_task_id");
                 if let Some(id) = task_id.clone() {
                     match TaskNotePayload::get_db_notes_from_task_id(id).await {
                         Ok(notes) => {let _ = tx.try_send(notes); },
@@ -173,18 +184,29 @@ impl ChatView {
 
     pub fn receive(&mut self) {
         if let Ok(notes) = self.new_notes_rx.try_recv() {
-            let new_messages = &mut vec![];
+            log::info!("Chats/mod.rs -> refresh_notes -> self.new_notes_rx.try_recv(): {notes:?}");
+            let mut new_messages = vec![];
 
-            for msg in self.messages.iter_mut() {
-                for note in notes.iter() {
-                    if msg.id != note.id {
-                        new_messages.push(note.clone());
-                    }
+            // Collect IDs of existing messages for efficient lookup
+            let existing_ids: std::collections::HashSet<_> = self
+                .messages
+                .iter()
+                .map(|msg| msg.id.clone())
+                .collect();
+
+            log::info!("Chats/mod.rs -> refresh_notes -> Existing ID's: {existing_ids:?}");
+
+            // Add notes that don't exist in current messages
+            for note in notes {
+                if !existing_ids.contains(&note.id) {
+                    log::info!("Adding new note with ID: {:?}", note.id);
+                    new_messages.push(note);
                 }
             }
 
+            // Append new messages to the existing list
             if !new_messages.is_empty() {
-                self.messages.clone_from_slice(&new_messages.clone());
+                self.messages.extend(new_messages);
             }
         }
     }

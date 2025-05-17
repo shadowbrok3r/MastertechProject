@@ -1,4 +1,4 @@
-use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
+use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
 use structdiff::{Difference, StructDiff};
 use surrealdb::{sql::Datetime, RecordId};
 use serde::{Deserialize, Serialize};
@@ -66,8 +66,7 @@ impl TaskNotePayload {
 
         let is_prestashop_note = !id_customer_thread.is_empty() && self.service_number.is_some();
 
-        if is_prestashop_note && !self.private
-        {
+        if is_prestashop_note && !self.private {
             self.id_customer_thread = Some(id_customer_thread);
             let response = self.create_customer_message().await?;
             log::info!("task_note/mod.rs -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
@@ -237,11 +236,39 @@ impl TaskNotePayload {
             log::info!("task_note/mod.rs -> existing note Task ID: {:?}", note.task_id);
             log::info!("task_note/mod.rs -> self.note Task ID: {:?}", self.task_id);
             if let (Some(existing_task_id), Some(task_id)) = (&note.task_id, &self.task_id) {
+
                 log::info!("self.task_id: {}\nqueried_note.task_id: {}", existing_task_id.key().to_string(), task_id.key().to_string());
+
                 if existing_task_id != task_id {
-                    log::error!("task_note/mod.rs -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", note.id);
-                    // let res: Option<TaskNotePayload> = DATABASE.query("UPDATE task_note SET task_id = $new_id WHERE id == $id").bind(("id", note.id.clone())).bind(("new_id", task_id.clone())).await?.take(0)?;
-                    // log::info!("Task note already exists: {res:#?}, but it should now have a new task id: {task_id:?}");
+
+                    log::error!(
+                        "task_note/mod.rs -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", 
+                        note.id
+                    );
+
+                    let task: Option<LiveTaskPayload> = DATABASE
+                        .query("SELECT * FROM task WHERE id == $id")
+                        .bind(("id", existing_task_id.clone()))
+                        .await?
+                        .take(0)?;
+
+                    if task.is_none() {
+                        log::error!("Task note already exists: {:?}", existing_task_id);
+                        log::error!("But it was linked to a non existent Task ID, so now it is linked to {:?}", task_id);
+
+                        let updated_note_res: Option<TaskNotePayload> = DATABASE
+                            .query("UPDATE task_note SET task_id = $new_id WHERE id == $id")
+                            .bind(("id", note.id.clone()))
+                            .bind(("new_id", task_id.clone()))
+                            .await?
+                            .take(0)?;
+
+                        log::warn!("updated_note_res -> {updated_note_res:?}");
+
+                        if let Some(updated_note) = updated_note_res {
+                            return Ok(Some(updated_note.id.clone()))
+                        }
+                    }
                 }
             }
 
@@ -252,7 +279,7 @@ impl TaskNotePayload {
                 return Ok(Some(note.id.clone()))
             } else {
                 // note does NOT exist, and we need to create it.
-                return Err(anyhow::anyhow!("Task Note does NOT exist. {:?}", self.id));
+                return Err(anyhow::anyhow!("Task Note does NOT exist. self: {:?}", self));
             }
         }
         Ok(None)
@@ -578,7 +605,7 @@ impl TaskNotePayload {
     pub async fn get_notes_from_service_number(&mut self, service_number: &str) -> anyhow::Result<Vec<TaskNotePayload>> {
         log::info!("task_note/mod.rs -> get_notes_from_service_number -> Calling get_notes_from_service_number");
         
-        if !service_number.is_empty() {
+        if service_number.is_empty() {
             return Err(anyhow::anyhow!("Service Number is empty"));
         }
 
@@ -680,11 +707,6 @@ impl TaskNotePayload {
             }
         }
         Ok(notes.clone())
-    }
-
-    pub fn set_task_id(&mut self, task_id: RecordId) -> &mut Self {
-        self.task_id = Some(task_id);
-        self
     }
 
     pub async fn get_db_notes_from_service(service_number: String) -> anyhow::Result<Vec<Self>, anyhow::Error> {

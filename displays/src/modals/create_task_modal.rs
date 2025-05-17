@@ -253,10 +253,7 @@ impl CreateTaskModal {
 
             let enabled = if (pulling_ticket && check) || (check) { true } else { false };
 
-            if ui.add_enabled(enabled, btn).clicked()
-            {
-
-                
+            if ui.add_enabled(enabled, btn).clicked() {
                 // let service_num = self.ticket_data.service_number.clone();
                 // Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
                 // self.ticket_data = TicketPayload::default();
