@@ -156,15 +156,15 @@ impl ChatView {
         "#, service_number, task_id, user.get_username(), id_customer_thread);
 
         PlatformSpawner::spawn(async move {
-            if id_customer_thread.is_empty() && !service_number.is_empty() {
-                let mut task_note = TaskNotePayload {
-                    service_number: Some(service_number.clone()),
-                    task_id,
-                    user: Some(user.get_id().clone()),
-                    username: user.get_username().to_string(),
-                    ..Default::default()
-                };
+            let mut task_note = TaskNotePayload {
+                service_number: Some(service_number.clone()),
+                task_id: task_id.clone(),
+                user: Some(user.get_id().clone()),
+                username: user.get_username().to_string(),
+                ..Default::default()
+            };
 
+            if id_customer_thread.is_empty() && !service_number.is_empty() {
                 log::info!("Chats/mod.rs -> refresh_notes -> task_note.get_notes_from_service_number");
                 match task_note.get_notes_from_service_number(&service_number).await {
                     Ok(notes) => {let _ = tx.try_send(notes); },
@@ -178,7 +178,12 @@ impl ChatView {
                         Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                     };
                 }
-            } 
+            } else {
+                match task_note.get_notes_from_service_number(&service_number).await {
+                    Ok(notes) => {let _ = tx.try_send(notes); },
+                    Err(e) => log::error!("Error getting notes from service number: {e:?}"),
+                };
+            }
         });
     }
 
