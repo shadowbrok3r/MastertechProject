@@ -1,9 +1,7 @@
 use serde::de::{self, Deserializer};
 use std::fmt;
 
-pub fn deserialize_to_string<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<String, D::Error> {
+pub fn deserialize_to_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     struct StringOrIntVisitor;
 
     impl<'de> de::Visitor<'de> for StringOrIntVisitor {
