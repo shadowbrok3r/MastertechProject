@@ -174,7 +174,7 @@ impl ChatServer {
                         match send_result {
                             Ok(()) => info!("Message sent to target session in room {}", room_id),
                             Err(e) => {
-                                info!("Failed to send message to session in room {}: {:?}", room_id, e);
+                                log::error!("Failed to send message to session in room {}: {:?}", room_id, e);
                                 // Assume the target is dead and clean it up
                                 if self.is_session_match(room.master.as_ref(), &from).await {
                                     room.client = None;

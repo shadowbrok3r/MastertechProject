@@ -95,7 +95,7 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        log::info!("ERR: {:?}", err);
+        log::error!("Err: {:?}", err);
     }
 
     Ok(())

@@ -54,7 +54,7 @@ impl eframe::App for MasterTechApp {
                 self.context.get_settings = false;
                 match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mastertech()){
                     Ok(tree) => self.tree = tree,
-                    Err(e) => info!("Could not get UI layout from user: {e:?}"),
+                    Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
                 }
             } 
         }
@@ -124,7 +124,7 @@ async fn main() -> eframe::Result<()> {
 
     match check_old_exe() {
         Ok(_) => log::info!("check_old_exe ran ok"),
-        Err(e) => log::info!("check_old_exe Err: {e:?}"),
+        Err(e) => log::error!("check_old_exe Err: {e:?}"),
     }
 
 
@@ -241,7 +241,7 @@ fn check_old_exe() -> anyhow::Result<(), anyhow::Error> {
                 log::info!("Removed old exe");
                 std::fs::rename(std::env::current_exe()?, "Mastertech.exe")?;
             },
-            Err(e) => log::info!("Error removing old exe: {e:?}"),
+            Err(e) => log::error!("Error removing old exe: {e:?}"),
         }
     }
     Ok(())

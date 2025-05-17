@@ -376,7 +376,7 @@ impl AiPlayground {
                     current_thread.messages.push(response);
                 }
                 ChatMessageType::Error(ref e) => {
-                    log::info!("Error in response: {}", e);
+                    log::error!("Error in response: {}", e);
                     current_thread.messages.push(response);
                 }
                 ChatMessageType::Done => {

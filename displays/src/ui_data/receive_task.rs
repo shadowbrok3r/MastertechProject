@@ -1,4 +1,4 @@
-use database::{live_data::handle_live_data, schema::get_data::{get_associated_notes, get_associated_ticket}};
+use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, TaskNotePayload}};
 use log::{error, info};
 
 use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
@@ -16,8 +16,8 @@ impl SharedContext {
                             Ok(_) => info!("Got associated ticket"),
                             Err(e) => error!("Error getting associated ticket: {e:?}"),
                         }
-                        match get_associated_notes(notes_tx, new_task.1.id.clone()).await {
-                            Ok(_) => info!("Got associated notes"),
+                        match TaskNotePayload::get_db_notes_from_task_id(new_task.1.id.clone()).await {
+                            Ok(notes) => { let _ = notes_tx.try_send(notes); },
                             Err(e) => error!("Error getting associated notes: {e:?}"),
                         }
                     });

@@ -153,7 +153,7 @@ impl TerminalWebsocketClient {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
-            Err(e) => log::info!("Failed to establish WebSocket connection: {e:?}")
+            Err(e) => log::error!("Failed to establish WebSocket connection: {e:?}")
         }
         Ok(())
     }

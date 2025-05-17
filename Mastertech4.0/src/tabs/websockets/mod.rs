@@ -221,7 +221,7 @@ impl WebConsoleFrontend {
                     info!("Compressed data: {}\nOriginal: {}", compressed.len(), sysinfo.len());
                     self.ws_sender.send(WsMessage::Binary(std::mem::take(&mut compressed)));
                 },
-                Err(e) => info!("Error compressing data: {e:?}"),
+                Err(e) => log::error!("Error compressing data: {e:?}"),
             }
         }
         

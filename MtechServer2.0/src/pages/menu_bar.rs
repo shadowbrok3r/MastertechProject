@@ -490,7 +490,7 @@ impl MtechServer {
                             spawn_local(async move {
                                 match user.save_mtechserver_ui_layout(default_layout.clone()).await {
                                     Ok(_) => info!("Updated User Settings"),
-                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                    Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                 }
                             });
                             self.context.update_settings = true;
@@ -532,7 +532,7 @@ impl MtechServer {
                             spawn_local(async move {
                                 match user.save_mtechserver_ui_layout(val.clone()).await {
                                     Ok(_) => info!("Updated User Settings"),
-                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                    Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                 }
                             });
                             self.context.update_settings = true;

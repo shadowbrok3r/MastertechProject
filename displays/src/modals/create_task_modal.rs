@@ -1,14 +1,14 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, Priority, Status, TaskNotePayload, TaskPayload, TicketPayload, User},DATABASE};
-use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use crate::{get_current_user_from_auth, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
-use super::task_modal::{display_ticket_page, ModalAction};
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
+use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
+use super::task_modal::{display_computer_page, display_ticket_page, ModalAction};
+use surrealdb::{sql::Datetime, RecordId};
+use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use crossbeam::channel::Sender;
 use std::collections::BTreeSet;
 use log::{error, info};
-use surrealdb::RecordId;
 use serde::Serialize;
 
 #[derive(Serialize, Default, Debug, Clone)]
@@ -23,7 +23,7 @@ pub struct CreateTaskModal {
 
     pub task_name: String,
     pub task_priority: Priority,
-    pub due_date: NaiveDate,
+    pub due_date: Datetime,
     pub description: String,
     pub assignee: String,
     pub tur: Tur,
@@ -32,7 +32,6 @@ pub struct CreateTaskModal {
     user: User
 }
 
-
 // TODO This is an ugly implementation
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Tur {
@@ -40,7 +39,7 @@ pub struct Tur {
     pub ticket_data: TicketPayload,
     pub task_data: TaskPayload,
     pub customer_data: CustomerData,
-    // pub computer_data: ComputerData,
+    pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
     pub store_users: Vec<User>,
 }
@@ -58,7 +57,7 @@ impl CreateTaskModal {
             min_height: Some(500.0),
             default_height: Some(500.0),
             full_span_content: false,
-            due_date: Utc::now().date_naive(),
+            due_date: Utc::now().into(),
             store_users,
             prestashop_api_tx: Some(prestashop_api_tx),
             tur: Tur::default(),
@@ -103,6 +102,16 @@ impl DisplayModal for CreateTaskModal {
                 {
                     self.current_page_state = ModalAction::TicketInfoPage;
                 };
+
+                if ui
+                    .selectable_label(
+                        self.current_page_state == ModalAction::ComputerInfoPage,
+                        RichText::new("🖹").heading(),
+                    )
+                    .clicked()
+                {
+                    self.current_page_state = ModalAction::ComputerInfoPage;
+                };    
                 if ui
                     .selectable_label(
                         self.current_page_state == ModalAction::ImportTask,
@@ -143,6 +152,7 @@ impl DisplayModal for CreateTaskModal {
                             self.user.clone()
                         );
                     },
+                    ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.tur.task_data, avail_size),
                     _ => {}
                 };
             });
@@ -222,11 +232,28 @@ impl CreateTaskModal {
                         });
                 });
 
-                DatePickerButton::new(&mut self.due_date)
+                let mut due_date = self.due_date.date_naive();
+                let date_picker = DatePickerButton::new(&mut due_date)
                     .calendar_week(false)
                     .format("%m/%d/%y")
                     .show_icon(true)
                     .ui(ui);
+
+                if date_picker.changed() {
+                    // Combine the NaiveDate with a default time to create a DateTime<Utc>
+                    let date_time = NaiveDate::from_ymd_opt(
+                        due_date.year(), 
+                        due_date.month(), 
+                        due_date.day()
+                    )
+                    .unwrap_or_default()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap_or_default()
+                    .and_local_timezone(Utc)
+                    .unwrap();
+                
+                    self.due_date = date_time.clone().into();
+                }
             });
 
             ui.add_space(15.0);
@@ -268,10 +295,7 @@ impl CreateTaskModal {
                 let mut payload = self.tur.clone();                   
                 payload.task_data.priority = self.task_priority.clone();
                 payload.task_data.created_at = Utc::now().into();
-                payload.task_data.due_date = NaiveDateTime::new(
-                    self.due_date, 
-                    NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap()
-                ).and_utc().into();
+                payload.task_data.due_date = self.due_date.clone();
                 payload.task_data.completed = false;
                 payload.task_data.status = Status::Todo;
                 payload.task_data.task_name = self.task_name.clone();
@@ -318,44 +342,36 @@ impl CreateTaskModal {
                                 payload.ticket_data.salesman.clone(), 
                                 assignee.clone()
                             );
-                        } 
+                        }
                         
-                        match create_full_task_payload(
+                        let create_task_result = create_full_task_payload(
                             payload.ticket_data.into(),
                             payload.customer_data.clone(),
                             ComputerData::default(),
                             task.into(),
                             payload.task_notes,
                             false,
-                        )
-                        .await
-                        {
-                            Ok(_) => info!("Created Records"),
-                            Err(e) => error!("Error sending payload: {e:?}")
-                        }
+                        ).await;
+                        info!("create_task_result: {create_task_result:?}");
+
                     } else {
                         info!("Creating Regular Task");
-                        let email = format!("{assignee}@pclaptops.com");
-                        
-                        match get_user_from_email(email).await {
+                        match User::query_user_from_email(assignee).await {
                             Ok(user) => {
-                                if let Some(usr) = user {
+                                payload.task_data.assignee = user.get_id();
+                                payload.task_data.everest_initials = user.get_initials().to_string();
 
-                                    payload.task_data.assignee = usr.get_id();
-                                    payload.task_data.everest_initials = usr.get_initials().to_string();
+                                log::info!("Payload: {payload:?}");
+                                let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                                    .query("CREATE task CONTENT $content")
+                                    .bind(("content", payload.task_data))
+                                    .await;
 
-                                    log::info!("Payload: {payload:?}");
-                                    let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE
-                                        .query("CREATE task CONTENT $content")
-                                        .bind(("content", payload.task_data))
-                                        .await;
-
-                                    match query {
-                                        Ok(mut res) => {
-                                            let _: Option<RecordId> = res.take(0).unwrap_or_default();
-                                        },
-                                        Err(e) => error!("Error creating task: {e:?}")
-                                    }
+                                match query {
+                                    Ok(mut res) => {
+                                        let _: Option<RecordId> = res.take(0).unwrap_or_default();
+                                    },
+                                    Err(e) => error!("Error creating task: {e:?}")
                                 }
                             }
                             Err(e) => error!("Error getting user: {e:?}"),
@@ -363,7 +379,6 @@ impl CreateTaskModal {
                     }
                 });
             }
-        
         });
 
         self.current_page_state.clone()

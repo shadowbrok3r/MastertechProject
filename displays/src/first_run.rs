@@ -79,7 +79,7 @@ impl SharedContext {
                     self.theme_config = color_settings.clone();
                     ctx.request_repaint();
                 },
-                Err(e) => info!("Error setting theme config: {e:?}"),
+                Err(e) => log::error!("Error setting theme config: {e:?}"),
             }
 
             let toast = &mut self.toasts;

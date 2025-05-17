@@ -186,7 +186,7 @@ impl InstalledProgram {
                 let output = ps.run(&script);
                 
                 if let Err(e) = output {
-                    log::info!("Error with PS: {e:?}");
+                    log::error!("Error with PS: {e:?}");
                     let cmd = command.to_lowercase();
                     if cmd.contains("MsiExec /I") 
                         || cmd.contains("--uninstall")
