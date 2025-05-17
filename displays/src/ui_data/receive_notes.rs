@@ -24,7 +24,7 @@ impl SharedContext {
                 if let Some(layout_configs) = layout_configs {
                     for (layout_key, layout) in self.task_layouts.iter_mut() {
                         let Some(config) = layout_configs.get(layout_key) else {
-                            log::warn!("No config defined for layout: {}", layout_key);
+                            log::warn!("receive_notes -> No config defined for layout: {}", layout_key);
                             continue;
                         };
 
@@ -40,7 +40,8 @@ impl SharedContext {
                                     &store_selection,
                                 );
 
-                                if should_include {
+                                log::info!("Should Include: {should_include:?}");
+                                // if should_include {
                                     if action == Action::Create {
                                         info!(
                                             "receive_notes -> Adding note to task {} in layout {}",
@@ -58,14 +59,14 @@ impl SharedContext {
                                         task.task_note.retain(|n| n != &note);
                                         task_updated = true;
                                     }
-                                } else {
-                                    // Remove task from this layout if it no longer belongs
-                                    task_list.retain(|t| t.id != *task_id);
-                                    info!(
-                                        "receive_notes -> Removed task {} from layout {} as it no longer belongs",
-                                        task_id, layout_key
-                                    );
-                                }
+                                // } else {
+                                //     // Remove task from this layout if it no longer belongs
+                                //     task_list.retain(|t| t.id != *task_id);
+                                //     info!(
+                                //         "receive_notes -> Removed task {} from layout {} as it no longer belongs",
+                                //         task_id, layout_key
+                                //     );
+                                // }
                             }
                         }
                     }
@@ -103,16 +104,10 @@ impl SharedContext {
                             }
                         }
                     } else if let ModalType::ChatView(chat_view) = modal {
-                        let task = self.tasks.iter_mut().find(|task| {
-                            Some(task.id.clone())
-                                == chat_view
-                                    .messages
-                                    .first()
-                                    .cloned()
-                                    .unwrap_or_default()
-                                    .task_id
-                                    .clone()
-                        });
+                        let task = self
+                            .tasks
+                            .iter_mut()
+                            .find(|task| Some(task.id.clone()) == chat_view.task_id.clone() );
 
                         if let Some(task) = task {
                             info!("receive_notes -> Inserting note into ChatView modal for task {}", task.id);
@@ -157,10 +152,7 @@ impl SharedContext {
 
         // Handle batch of associated notes from associated_notes_rx
         if let Ok(notes) = self.associated_notes_rx.try_recv() {
-            info!(
-                "receive_notes -> associated_notes_rx.try_recv() -> Received {} notes",
-                notes.len()
-            );
+            info!("receive_notes -> associated_notes_rx.try_recv() -> Received {} notes", notes.len());
 
             // Initialize layout_configs if needed
             self.init_layout_configs();
@@ -192,21 +184,21 @@ impl SharedContext {
                                         &store_selection,
                                     );
 
-                                    if should_include {
+                                    // if should_include {
                                         info!(
-                                            "receive_notes -> Adding associated note to task {} in layout {}",
+                                            "receive_notes -> Adding associated note to task {} in layout {} should_include: {should_include}",
                                             task.id, layout_key
                                         );
                                         task.task_note.push(note.clone());
                                         task_updated = true;
-                                    } else {
+                                    // } else {
                                         // Remove task from this layout if it no longer belongs
-                                        task_list.retain(|t| t.id != *task_id);
-                                        info!(
-                                            "receive_notes -> Removed task {} from layout {} as it no longer belongs",
-                                            task_id, layout_key
-                                        );
-                                    }
+                                        // task_list.retain(|t| t.id != *task_id);
+                                        // info!(
+                                        //     "receive_notes -> Removed task {} from layout {} as it no longer belongs",
+                                        //     task_id, layout_key
+                                        // );
+                                    // }
                                 }
                             }
                         }

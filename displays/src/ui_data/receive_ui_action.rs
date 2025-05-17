@@ -75,6 +75,7 @@ impl SharedContext {
                         Some(pld.0.clone()),
                         note_payload.2
                     );
+                    
                     let task = self
                         .tasks
                         .iter()
@@ -94,6 +95,7 @@ impl SharedContext {
                             .or_insert(ModalType::ChatView(chat_modal));
                     }
                 }
+
                 TaskUiActions::OpenViewport(task) => {
                     info!("receive_ui_action -> TaskUiActions::OpenViewport");
                     let modal = TaskModal::new(
@@ -118,7 +120,6 @@ impl SharedContext {
                         info!("receive_ui_action -> self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
                 },
                 TaskUiActions::None => (),
-                
             };
         }
     }

@@ -31,10 +31,7 @@ pub fn handle_live_notes((action, data): (Action, TaskNotePayload), existing_tas
     -> anyhow::Result<(), anyhow::Error>
 {
     match action{
-        Action::Create => {
-            update_or_insert_notes(data, existing_task)?;
-        },
-        Action::Update => {
+        Action::Create | Action::Update => {
             update_or_insert_notes(data, existing_task)?;
         },
         Action::Delete => {
@@ -125,7 +122,6 @@ pub fn update_or_insert_notes(new_note: TaskNotePayload, task: &mut TaskPayload)
                 notes.push(new_note.clone());
                 debug!("Inserted new note: {:?}", new_note);
             }
-
         }
     }
     Ok(())
