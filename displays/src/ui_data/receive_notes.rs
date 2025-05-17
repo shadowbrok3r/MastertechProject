@@ -41,7 +41,7 @@ impl SharedContext {
                                 );
 
                                 log::info!("Should Include: {should_include:?}");
-                                // if should_include {
+                                if should_include {
                                     if action == Action::Create {
                                         info!(
                                             "receive_notes -> Adding note to task {} in layout {}",
@@ -59,7 +59,7 @@ impl SharedContext {
                                         task.task_note.retain(|n| n != &note);
                                         task_updated = true;
                                     }
-                                // } else {
+                                } // else {
                                 //     // Remove task from this layout if it no longer belongs
                                 //     task_list.retain(|t| t.id != *task_id);
                                 //     info!(
@@ -184,21 +184,21 @@ impl SharedContext {
                                         &store_selection,
                                     );
 
-                                    // if should_include {
+                                    if should_include {
                                         info!(
                                             "receive_notes -> Adding associated note to task {} in layout {} should_include: {should_include}",
                                             task.id, layout_key
                                         );
                                         task.task_note.push(note.clone());
                                         task_updated = true;
-                                    // } else {
+                                    } else {
                                         // Remove task from this layout if it no longer belongs
-                                        // task_list.retain(|t| t.id != *task_id);
-                                        // info!(
-                                        //     "receive_notes -> Removed task {} from layout {} as it no longer belongs",
-                                        //     task_id, layout_key
-                                        // );
-                                    // }
+                                        task_list.retain(|t| t.id != *task_id);
+                                        info!(
+                                            "receive_notes -> Removed task {} from layout {} as it no longer belongs",
+                                            task_id, layout_key
+                                        );
+                                    }
                                 }
                             }
                         }
