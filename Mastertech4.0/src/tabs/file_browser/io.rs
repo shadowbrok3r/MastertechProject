@@ -85,7 +85,7 @@ pub async fn _copy_selected_items(
                     let progress = (*copied as f64 / total_size as f64) * 100.0;
                     match progress_tx.send(progress){
                         Ok(_) => log::info!("sent ok"),
-                        Err(e) => log::info!("progress_tx send error: {e}"),
+                        Err(e) => log::error!("progress_tx send error: {e}"),
                     }
                     Ok(())
                 },
@@ -169,7 +169,7 @@ pub fn format_path_metadata(mut path_size: u64) -> String{
 //                 Ok(path_size) => {
 //                     // Send the result through the channel.
 //                     if sender.try_send(path_size).is_err() {
-//                         log::info!("Error sending metadata");
+//                         log::error!("Error sending metadata");
 //                     }   
 //                     // Insert the metadata into the appropriate HashMap.
 //                     if path.is_dir() {
@@ -178,7 +178,7 @@ pub fn format_path_metadata(mut path_size: u64) -> String{
 //                         self.file_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
 //                     }
 //                 },
-//                 Err(e) => log::info!("Error reading metadata: {:?}", e),
+//                 Err(e) => log::error!("Error reading metadata: {:?}", e),
 //             }
 //         }
 //     }

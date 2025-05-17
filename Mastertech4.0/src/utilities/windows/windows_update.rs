@@ -107,7 +107,7 @@ pub fn install_windows_updates(event_sender: Sender<WindowsUpdateEvent>, _shutdo
         event_sender.try_send(WindowsUpdateEvent::UpdateLogs("Ensuring Microsoft Update is enabled...".to_string())).ok();
         match ensure_microsoft_update_enabled() {
             Ok(_) => log::info!("Microsoft Update enabled."),
-            Err(e) => log::info!("Error enabling Update Services: {e:?}"),
+            Err(e) => log::error!("Error enabling Update Services: {e:?}"),
         }
 
         // Create an update session

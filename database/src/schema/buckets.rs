@@ -3,7 +3,6 @@ use reqwest::header::ACCEPT_ENCODING;
 use std::collections::HashMap;
 use anyhow::{Error, Result};
 use web_time::Duration;
-use log::info;
 
 use super::Node;
 
@@ -23,7 +22,7 @@ pub async fn list_buckets(
     // Decide which prefix string to use
     let prefix_str = prefix.unwrap_or("").trim_end_matches('/');
 
-    info!("database/schema/buckets.rs -> Listing objects for prefix: '{}'", prefix_str);
+    log::debug!("database/schema/buckets.rs -> Listing objects for prefix: '{}'", prefix_str);
 
     // We will accumulate everything in a single folder-map.
     let mut folder_map = HashMap::new();
@@ -45,7 +44,7 @@ pub async fn list_buckets(
 
         // If we have a continuation token, use it
         if let Some(ref token) = continuation_token {
-            info!("database/schema/buckets.rs -> Using continuation token: {token}");
+            log::debug!("database/schema/buckets.rs -> Using continuation token: {token}");
             list_objects.with_continuation_token(token.clone());
         }
 
@@ -63,7 +62,7 @@ pub async fn list_buckets(
         let parsed = ListObjectsV2::parse_response(&text)?;
 
         for content in parsed.contents {
-            info!(
+            log::debug!(
                 "database/schema/buckets.rs -> Found file: '{}', Parent Prefix: '{}'",
                 content.key, prefix_str
             );
@@ -74,7 +73,7 @@ pub async fn list_buckets(
                 .unwrap_or(&content.key)
                 .to_string();
         
-            info!(
+            log::debug!(
                 "Processed file. Full Key: '{}', Short Name: '{}', Parent Prefix: '{}'",
                 content.key, short_name, prefix_str
             );
@@ -86,7 +85,7 @@ pub async fn list_buckets(
         }
         
         for common_prefix in parsed.common_prefixes {
-            info!("database/schema/buckets.rs -> Found subfolder: '{}'", common_prefix.prefix);
+            log::debug!("database/schema/buckets.rs -> Found subfolder: '{}'", common_prefix.prefix);
         
             let short_subfolder_name = common_prefix
                 .prefix
@@ -95,7 +94,7 @@ pub async fn list_buckets(
                 .trim_end_matches('/')
                 .to_string();
         
-            info!(
+            log::debug!(
                 "Processed subfolder. Full Prefix: '{}', Short Name: '{}', Parent Prefix: '{}'",
                 common_prefix.prefix, short_subfolder_name, prefix_str
             );
@@ -110,7 +109,7 @@ pub async fn list_buckets(
 
         // ---------- Continuation ----------
         if let Some(next_token) = parsed.next_continuation_token {
-            info!("database/schema/buckets.rs -> Truncated result. NextContinuationToken: {}", next_token);
+            log::debug!("database/schema/buckets.rs -> Truncated result. NextContinuationToken: {}", next_token);
             continuation_token = Some(next_token);
         } else {
             // Done listing this prefix
@@ -133,7 +132,7 @@ impl Node {
         match new_node {
             Node::Folder(new_prefix, new_map) => {
                 let normalized_prefix = normalize_prefix(&new_prefix);
-                info!("Merging folder. Prefix: '{}', Normalized: '{}'", new_prefix, normalized_prefix);
+                log::debug!("Merging folder. Prefix: '{}', Normalized: '{}'", new_prefix, normalized_prefix);
 
                 // Use `find_or_create_folder_mut` to ensure the hierarchy exists.
                 let target_folder = self.find_or_create_folder_mut(&normalized_prefix);
@@ -144,7 +143,7 @@ impl Node {
                             let clean_key = key.trim_end_matches('/').to_string(); // Trim trailing slashes
                             if !clean_key.is_empty() {
                                 children.insert(clean_key.clone(), node);
-                                info!(
+                                log::debug!(
                                     "Inserted '{}'. Current children of '{}': {:?}",
                                     clean_key, normalized_prefix, children.keys().collect::<Vec<_>>()
                                 );
@@ -196,15 +195,15 @@ impl Node {
     /// Returns a mutable reference to the `Node::Folder` if found, otherwise `None`.
     pub fn find_folder_mut(&mut self, prefix: &str) -> Option<&mut Node> {
         let normalized_prefix = normalize_prefix(prefix);
-        info!("find_folder_mut -> Looking for prefix: '{}', Normalized: '{}'", prefix, normalized_prefix);
+        log::debug!("find_folder_mut -> Looking for prefix: '{}', Normalized: '{}'", prefix, normalized_prefix);
     
         if normalized_prefix == "/" || normalized_prefix.ends_with(":/") {
-            info!("find_folder_mut -> Resolved to root for prefix: '{}'", normalized_prefix);
+            log::debug!("find_folder_mut -> Resolved to root for prefix: '{}'", normalized_prefix);
             return Some(self); // Root directory or drive root (e.g., "C:/")
         }
     
         let parts: Vec<&str> = normalized_prefix.split('/').filter(|p| !p.is_empty()).collect();
-        info!("find_folder_mut -> Parts after splitting: {:?}", parts);
+        log::debug!("find_folder_mut -> Parts after splitting: {:?}", parts);
     
         let mut current = self;
     
@@ -212,21 +211,21 @@ impl Node {
             match current {
                 Node::Folder(_, children) => {
                     if let Some(node) = children.get_mut(part) {
-                        info!("find_folder_mut -> Found part: '{}', Node: {:?}", part, node);
+                        log::debug!("find_folder_mut -> Found part: '{}', Node: {:?}", part, node);
                         current = node;
                     } else {
-                        info!("find_folder_mut -> Part not found: '{}'", part);
+                        log::debug!("find_folder_mut -> Part not found: '{}'", part);
                         return None;
                     }
                 }
                 _ => {
-                    info!("find_folder_mut -> Current node is not a folder: {:?}", current);
+                    log::debug!("find_folder_mut -> Current node is not a folder: {:?}", current);
                     return None;
                 }
             }
         }
     
-        info!("find_folder_mut -> Resolved folder for prefix: '{}'", normalized_prefix);
+        log::debug!("find_folder_mut -> Resolved folder for prefix: '{}'", normalized_prefix);
         Some(current)
     }
     

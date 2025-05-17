@@ -145,7 +145,7 @@ impl DisplayModal for TaskModal {
                             PlatformSpawner::spawn(async move {
                                 match delete_task(task_id).await {
                                     Ok(_) => info!("Deleted task"),
-                                    Err(e) => info!("Error: {e:?}"),
+                                    Err(e) => log::error!("Error: {e:?}"),
                                 }
                             });
                             self.current_page_state = ModalAction::Close;
@@ -415,7 +415,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                                         let res = r.take::<Option<Record>>(0);
                                         log::info!("updating description: {res:?}");
                                     },
-                                    Err(e) => log::info!("Error updating description: {e:?}"),
+                                    Err(e) => log::error!("Error updating description: {e:?}"),
                                 };
                             });
                         }
@@ -443,7 +443,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
     });
 }
 
-fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
+pub fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
     let Some(ticket) = task.service_ticket.as_mut() else { return; };
     let computer = if let Some(computer) = ticket.computer.as_mut() { computer } else { &mut ComputerData{ id: RecordId::from((COMPUTER_TABLE, "")), ..Default::default() } };
 
@@ -520,6 +520,7 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                     } else {
                         ui.label(&format!(" - "));
                     }
+                    
                     ui.end_row();
                     ui.end_row();
 

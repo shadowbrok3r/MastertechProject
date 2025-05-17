@@ -151,7 +151,7 @@ impl eframe::App for MtechServer {
                 self.context.get_settings = false;
                 match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mtechserver()){
                     Ok(tree) => self.tree = tree,
-                    Err(e) => info!("Could not get UI layout from user: {e:?}: {:#?}", user.get_user_settings().get_ui_layout_mtechserver()),
+                    Err(e) => log::error!("Could not get UI layout from user: {e:?}: {:#?}", user.get_user_settings().get_ui_layout_mtechserver()),
                 }
             } 
         }

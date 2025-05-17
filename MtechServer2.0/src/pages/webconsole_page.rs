@@ -142,7 +142,7 @@ impl MtechServer {
         //                     }
         //                     Err(error) => {
         //                         cli_clone.connected = false;
-        //                         info!("Failed to connect to {:?}: {}", &url, error);
+        //                         log::error!("Failed to connect to {:?}: {}", &url, error);
         //                         let toast = &mut self.context.shared_ctx.toasts;
 
         //                         let error_toast = Toast {

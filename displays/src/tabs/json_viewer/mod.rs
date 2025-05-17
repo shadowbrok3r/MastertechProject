@@ -88,7 +88,7 @@ impl SharedContext {
                         //     PlatformSpawner::spawn(async move {
                         //         match usr.save_user_ui_layout(database::schema::ClientType::MtechServer).await {
                         //             Ok(_) => info!("Updated User Settings"),
-                        //             Err(e) => info!("Error updating User Settings: {e:?}"),
+                        //             Err(e) => log::error!("Error updating User Settings: {e:?}"),
                         //         }
                         //     });
                         // }

@@ -553,7 +553,7 @@ pub async fn assistant_call_with_response_ai_tools(
                 _ => info!("\nEvent: {event:?}\n"),
             },
             Err(e) => {
-                info!("Error: {e}");
+                log::error!("Error: {e}");
             }
         }
     }
@@ -596,7 +596,7 @@ async fn handle_requires_action(
         match submit_tool_outputs(client, run_object, tool_outputs).await {
             Ok(msgs) => msgs,
             Err(e) => {
-                info!("Error on submitting tool outputs: {e}");
+                log::error!("Error on submitting tool outputs: {e}");
                 vec![format!("Error: {e:?}")]
             }
         }
@@ -643,7 +643,7 @@ async fn submit_tool_outputs(
                 }
             }
             Err(e) => {
-                info!("Error: {e}");
+                log::error!("Error: {e}");
                 msgs.push(format!("Error: {e:?}"));
             }
         }

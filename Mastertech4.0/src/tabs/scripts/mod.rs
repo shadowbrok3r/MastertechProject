@@ -91,7 +91,7 @@ impl MastertechContext {
                                     );
                                     match std::str::from_utf8(superanti_xml.data.as_ref()) {
                                         Ok(xml) => info!("Index_html: {xml:?}"),
-                                        Err(e) => info!("Error: {e:?}"),
+                                        Err(e) => log::error!("Error: {e:?}"),
                                     }
                                 }
                                 // let mut reader = Reader::from_file(index_html.data.as_ref()).unwrap();

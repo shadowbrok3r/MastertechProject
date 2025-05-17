@@ -38,7 +38,7 @@ impl Interaction for TaskPayload {
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
         // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
-            .desired_width(325.)
+            .desired_width(320.)
             .margin(Margin::symmetric(6, 3))
             .horizontal_align(Align::Min)
             .vertical_align(Align::Center)
@@ -128,6 +128,7 @@ impl Interaction for TaskPayload {
             .unwrap_or_default()
             .and_local_timezone(Utc)
             .unwrap();
+        
             self.due_date = date_time.clone().into();
             let task = self.clone(); 
             info!("new date: {date_time:?}"); 

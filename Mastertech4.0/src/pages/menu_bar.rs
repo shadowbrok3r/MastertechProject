@@ -142,13 +142,13 @@ impl MasterTechApp {
                                             if exists {
                                                 match std::fs::remove_file(file_path){
                                                     Ok(_) => info!("Removed data file, logged out."),
-                                                    Err(e) => info!("Error removing data file: {e:?}"),
+                                                    Err(e) => log::error!("Error removing data file: {e:?}"),
                                                 }
                                             } else {
                                                 info!("Data file does not exist");
                                             }
                                         },
-                                        Err(e) => info!("*.enc File not found {e:?}"),
+                                        Err(e) => log::error!("*.enc File not found {e:?}"),
                                     };
 
                                     let _ = self.context.app_state_tx.try_send(AppState::Login);
@@ -309,7 +309,7 @@ impl MasterTechApp {
                             spawn(async move {
                                 match user.save_mastertech_ui_layout(default_layout.clone()).await {
                                     Ok(_) => info!("Updated User Settings"),
-                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                    Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                 }
                             });
                             self.tree = tree.0;
@@ -325,7 +325,7 @@ impl MasterTechApp {
                             spawn(async move {
                                 match user.save_mastertech_ui_layout(val.clone()).await {
                                     Ok(_) => info!("Updated User Settings"),
-                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                    Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                 }
                             });
                             self.context.update_settings = true;

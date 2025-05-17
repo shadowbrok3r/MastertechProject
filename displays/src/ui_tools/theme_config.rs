@@ -138,7 +138,7 @@ impl ThemeConfig {
                             .await 
                         {
                             Ok(res) => info!("Res: {res:?}"),
-                            Err(e) => info!("Error updating User Settings: {e:?}"),
+                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
                         }
                     });
                     ret = (true, ThemeConfig::default());
@@ -159,7 +159,7 @@ impl ThemeConfig {
                             .await 
                         {
                             Ok(res) => info!("Result: {res:?}"),
-                            Err(e) => info!("Error updating User Settings: {e:?}"),
+                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
                         }
                     });
                     ret = (true, self.clone());
@@ -186,11 +186,11 @@ impl ThemeConfig {
                             {
                                 // Write the JSON data to the selected file
                                 if let Err(err) = file.write(&json_data).await {
-                                    info!("Failed to save file: {:?}", err);
+                                    log::error!("Failed to save file: {:?}", err);
                                 }
                             }
                         } else {
-                            info!("Error serializing settings to json");
+                            log::error!("Error serializing settings to json");
                         }
                     });
                 }
@@ -213,7 +213,7 @@ impl ThemeConfig {
                         {
                             match serde_json::from_slice::<ThemeConfig>(&file.read().await) {
                                 Ok(theme) => tx.try_send(theme).unwrap(),
-                                Err(e) => info!("Error converting bytes to Theme: {e:?}"),
+                                Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
                             }
                         }
                         

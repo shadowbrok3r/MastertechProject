@@ -675,7 +675,7 @@ impl TaskNotePayload {
                                 )
                                 .await?;
 
-                            log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Employee: {:?}", employee.firstname);
+                            log::info!("task_note/mod.rs -> check_or_create_notes_from_thread -> Employee: {:?}", employee.firstname);
 
                             log::info!("task_note/mod.rs -> check_or_create_notes_from_thread -> Creating new note");
 
@@ -700,7 +700,7 @@ impl TaskNotePayload {
 
                             match task_note.create_task_note_in_db().await {
                                 Ok(_) => log::info!("Created task note: {task_note:?}"),
-                                Err(e) => log::info!("Error creating task note: {e:?}"),
+                                Err(e) => log::error!("Error creating task note: {e:?}"),
                             }
                             log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Created note: {task_note:?}");
 

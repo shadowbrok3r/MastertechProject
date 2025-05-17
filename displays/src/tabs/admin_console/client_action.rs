@@ -62,7 +62,7 @@ impl AdminConsole {
                     }
                     Err(error) => {
                         client.connected = false;
-                        log::info!("Failed to connect to {:?}: {}", &url, error.clone());
+                        log::error!("Failed to connect to {:?}: {}", &url, error.clone());
                         self.error = format!("WebConsole Error -> {error}");
                     }
                 };
