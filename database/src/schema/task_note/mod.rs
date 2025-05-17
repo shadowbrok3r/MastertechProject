@@ -220,21 +220,16 @@ impl TaskNotePayload {
     /// queries in SurrealDB to find existing notes
     pub async fn check_existing_note_record(&mut self, msg_id: &String) -> anyhow::Result<Option<RecordId>, anyhow::Error> {
         let query_results: Vec<TaskNotePayload> = DATABASE
-            .query(
-                r#"
-                SELECT * FROM task_note 
-                    WHERE id_customer_message == $id_customer_message
-            "#,
-            )
+            .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
             .bind(("id_customer_message", msg_id.clone()))
             .await?
             .take(0)?;
 
-        log::warn!("task_note/mod.rs -> Message existence query results: {query_results:#?}");
+        log::warn!("task_note/mod.rs -> check_existing_note_record -> Message existence query results: {query_results:#?}");
         
         for note in query_results.iter() {
-            log::info!("task_note/mod.rs -> existing note Task ID: {:?}", note.task_id);
-            log::info!("task_note/mod.rs -> self.note Task ID: {:?}", self.task_id);
+            log::info!("task_note/mod.rs -> check_existing_note_record -> existing note Task ID: {:?}", note.task_id);
+            log::info!("task_note/mod.rs -> check_existing_note_record -> self.note Task ID: {:?}", self.task_id);
             if let (Some(existing_task_id), Some(task_id)) = (&note.task_id, &self.task_id) {
 
                 log::info!("self.task_id: {}\nqueried_note.task_id: {}", existing_task_id.key().to_string(), task_id.key().to_string());
@@ -242,7 +237,7 @@ impl TaskNotePayload {
                 if existing_task_id != task_id {
 
                     log::error!(
-                        "task_note/mod.rs -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", 
+                        "task_note/mod.rs -> check_existing_note_record -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", 
                         note.id
                     );
 
@@ -252,20 +247,30 @@ impl TaskNotePayload {
                         .await?
                         .take(0)?;
 
-                    if task.is_none() {
-                        log::error!("Task note already exists: {:?}", existing_task_id);
-                        log::error!("But it was linked to a non existent Task ID, so now it is linked to {:?}", task_id);
+                    log::error!("task_note/mod.rs -> check_existing_note_record -> SELECT * FROM task WHERE id == $id: {existing_task_id:?}\n\n{task:?}\n");
+
+                    if task.is_some() {
+                        log::error!("task_note/mod.rs -> check_existing_note_record -> Task exists: {:?}", existing_task_id);
+                        log::error!("task_note/mod.rs -> check_existing_note_record -> But it was linked to a non existent Task ID, so now it is linked to {:?}", task_id);
+
+                        let query = if self.service_number.as_ref().is_some_and(|v| !v.is_empty()) {
+                            DATABASE.set("service_number", self.service_number.clone().unwrap_or_default()).await?;
+                            "UPDATE task_note SET task_id = $new_id, service_number = $service_number WHERE id == $id"
+                        } else {
+                            "UPDATE task_note SET task_id = $new_id WHERE id == $id"
+                        };
 
                         let updated_note_res: Option<TaskNotePayload> = DATABASE
-                            .query("UPDATE task_note SET task_id = $new_id WHERE id == $id")
+                            .query(query)
                             .bind(("id", note.id.clone()))
                             .bind(("new_id", task_id.clone()))
                             .await?
                             .take(0)?;
 
-                        log::warn!("updated_note_res -> {updated_note_res:?}");
+                        log::warn!("updated_note_res -> check_existing_note_record -> {updated_note_res:?}");
 
                         if let Some(updated_note) = updated_note_res {
+                            // note already exists, and it IS the current note (Self) DO NOT CREATE THIS
                             return Ok(Some(updated_note.id.clone()))
                         }
                     }
@@ -278,8 +283,8 @@ impl TaskNotePayload {
                 // note already exists, and it IS the current note (Self) DO NOT CREATE THIS
                 return Ok(Some(note.id.clone()))
             } else {
-                // note does NOT exist, and we need to create it.
-                return Err(anyhow::anyhow!("Task Note does NOT exist. self: {:?}", self));
+                // note does NOT exist, and we *may* need to create it.
+                return Err(anyhow::anyhow!("task_note/mod.rs -> Task Note does NOT exist. self: {:?}", self));
             }
         }
         Ok(None)
