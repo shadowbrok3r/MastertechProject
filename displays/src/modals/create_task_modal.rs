@@ -2,7 +2,7 @@ use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, Cust
 use crate::{get_current_user_from_auth, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
-use super::task_modal::{display_computer_page, display_ticket_page, ModalAction};
+use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
 use surrealdb::{sql::Datetime, RecordId};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
