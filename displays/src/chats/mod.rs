@@ -1,8 +1,8 @@
-use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Rect, Response, RichText, ScrollArea, Shape, Stroke, Style, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, Style, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
-use std::{collections::{BTreeSet, HashMap, HashSet}, sync::Arc};
+use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
 use crossbeam::channel::{Receiver, Sender};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
@@ -28,11 +28,25 @@ pub struct ChatView{
     pub new_notes_tx: Sender<Vec<TaskNotePayload>>, 
     #[serde(skip)]
     pub new_notes_rx: Receiver<Vec<TaskNotePayload>>,
+    #[serde(skip)]
+    pub ui_event_tx: Sender<ChatEvent>, 
+    #[serde(skip)]
+    pub ui_event_rx: Receiver<ChatEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ChatEvent {
+    Edit(RecordId),
+    SaveNote(TaskNotePayload),
+    CancelEdit(RecordId),
+    DeleteNote(TaskNotePayload),
 }
 
 impl Default for ChatView {
     fn default() -> Self {
         let (new_notes_tx, new_notes_rx) = crossbeam::channel::unbounded();
+        let (ui_event_tx, ui_event_rx) = crossbeam::channel::unbounded();
+
         let current_user = if let Some(user) = get_current_user_from_auth() {
             user
         } else {
@@ -50,7 +64,8 @@ impl Default for ChatView {
             allow_edit: HashSet::new(),
             task_id: None,
             service_number: None,
-            new_notes_tx, new_notes_rx
+            new_notes_tx, new_notes_rx,
+            ui_event_tx, ui_event_rx,
         }
     }
 }
@@ -63,6 +78,7 @@ impl ChatView {
         service_number: Option<String>
     ) -> Self {
         let (new_notes_tx, new_notes_rx) = crossbeam::channel::unbounded();
+         let (ui_event_tx, ui_event_rx) = crossbeam::channel::unbounded();
         let mut users_set = BTreeSet::new();
         let mut note_ids = HashMap::new();
         for user in users {
@@ -91,7 +107,8 @@ impl ChatView {
             allow_edit: HashSet::new(),
             task_id,
             service_number,
-            new_notes_tx, new_notes_rx
+            new_notes_tx, new_notes_rx,
+            ui_event_tx, ui_event_rx,
         }
     }
 
@@ -227,6 +244,38 @@ impl ChatView {
                 self.messages.extend(new_messages);
             }
         }
+    
+        if let Ok(event) = self.ui_event_rx.try_recv() {
+            match event {
+                ChatEvent::SaveNote(task_note) => {
+                    if self.allow_edit.contains(&task_note.id.to_string()) {
+                        if let Some(msg) = self.edit_text.get_mut(&task_note.id.to_string()){
+                            let mut task_note = msg.clone();
+                            task_note.note = msg.note.clone();
+                            PlatformSpawner::spawn(async move {
+                                match task_note.update_note().await {
+                                    Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
+                                    Err(e) => error!("Error modifying note: {e:?}"),
+                                }
+                            });
+                        }
+                    }
+                    self.allow_edit.remove(&task_note.id.to_string());
+                },
+                ChatEvent::Edit(id) => { self.allow_edit.insert(id.to_string()); },
+                ChatEvent::CancelEdit(id) => { self.allow_edit.remove(&id.to_string()); },
+                ChatEvent::DeleteNote(note) => {
+                    self.delete = Some(note.clone());
+                    let mut item = note.clone();
+                    PlatformSpawner::spawn(async move {
+                        match item.delete_note().await{
+                            Ok(_) => info!("chats/mod.rs -> Deleted Note"),
+                            Err(e) => error!("chats/mod.rs -> Error deleting note: {e:?}"),
+                        }
+                    })
+                },
+            }
+        }
     }
     
     pub fn ui(&mut self, ui: &mut Ui) {
@@ -240,19 +289,16 @@ impl ChatView {
         }
 
         TopBottomPanel::top(format!("Top panel header {:?}", task_id)).exact_height(24.).show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(""); 
-                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                    if Button::new("Refresh").ui(ui).clicked() {
-                        self.refresh_notes();
-                    }
-                });
+            ui.vertical_centered(|ui| {
+                if Button::new(RichText::new("Refresh").strong().heading()).ui(ui).clicked() {
+                    self.refresh_notes();
+                }
             });
         });
 
         TopBottomPanel::bottom(id)
-            .default_height(ui.available_height()/1.2)
-            .resizable(true)
+            .default_height(300.)
+            .resizable(false)
             .show_inside(ui, |ui| 
         {
             ui.visuals_mut().extreme_bg_color= Color32::BLACK;
@@ -263,18 +309,15 @@ impl ChatView {
             let markdown_editor = &mut self.markdown_editor;
             markdown_editor.inputs = self.users.clone();
 
-            if let Some(response) = markdown_editor.ui(ui)
-            {
+            if let Some(response) = markdown_editor.ui(ui) {
                 if response.clicked() || enter_pressed {
                     let txt = markdown_editor.submit();
                     info!("chats/mod.rs -> Txt: {txt}");
                     markdown_editor.clear();
 
                     let usr = &mut self.current_user.clone();
-                    log::warn!("USER: {usr:?}");
                     if usr.get_email().is_empty() {
                         if let Some(user) = get_current_user_from_auth() {
-                            log::warn!("USER FROM AUTH: {user:?}");
                             *usr = user;
                         }
                     }
@@ -320,39 +363,23 @@ impl ChatView {
         });
 
         CentralPanel::default()
-            .frame(
-                Frame::new()
-                    .fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
-                    .stroke(ui.style().visuals.widgets.inactive.bg_stroke)
-                    .outer_margin(Margin::symmetric(4, 4))
-                    .inner_margin(Margin::same(1))
-            )
+            .frame(Frame::new().inner_margin(Margin::same(2)))
             .show_inside(ui, |ui| 
         {
-            log::info!("CentralPanel available width: {:?}", ui.available_size().x);
-            // let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
-            // let total_rows = self.messages.len();
-            log::info!("Size: {:?}", ui.available_size());
             ScrollArea::vertical()
-                .animated(true)
-                .max_height(ui.available_height())// dont ask me to explain why 
+                .max_height(f32::INFINITY)// dont ask me to explain why 
                 .max_width(ui.available_width()) // this works over f32::infinity
                 .auto_shrink(false)
                 .stick_to_bottom(true)
-                .show(ui, |ui| 
-                    // Wrap content in a Frame for fixed left margin
-                Frame::new()
-                    .outer_margin(Margin { left: 5, right: 0, top: 0, bottom: 0 })
-                    .show(ui, |ui| {
-                        self.chat(ui) 
-                })
-            );
-
+                .show(ui, |ui| {
+                    ui.set_min_height(ui.available_height()/1.1);
+                    self.chat(ui) 
+            });
         });
     }
 
     fn chat(&mut self, ui: &mut Ui) {
-        let max_msg_width = ui.available_width()/1.9;
+        let max_msg_width = 376.;
         
         self.messages.sort_by_key(|message| message.created_at.clone() );
 
@@ -376,15 +403,11 @@ impl ChatView {
             };
 
             ui.with_layout(layout, |ui| {
-                log::warn!("Size: {:?}", ui.available_size());
-                if !is_message_from_myself {
-                    ui.add_space(5.0); // 5-pixel offset
-                }
                 ui.set_max_width(max_msg_width);
                 let rounding = 8.;
-                let margin = 4.;
-                
-                // ui.set_min_width(min_width);
+                let outer_margin = Margin { left: 1, right: 1, top: 4, bottom: 1 };
+                let inner_margin = Margin { left: 0, right: 0, top: 4, bottom: 0 };
+
                 let rnding = eframe::egui::CornerRadius {
                     ne: if is_message_from_myself { 0 } else { rounding as u8 },
                     nw: if is_message_from_myself { rounding as u8 } else { 0 },
@@ -392,130 +415,104 @@ impl ChatView {
                     sw: rounding as u8,
                 };
 
-                let mut main_note_frame = Frame::new()
-                    .corner_radius(rnding)
-                    .inner_margin(margin)
-                    .outer_margin(margin)
-                    .fill(msg_color)
-                    .begin(ui);
-
                 let style = ui.style().clone();
-                main_note_frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
-                
-                { // NOTE FRAME SCOPED UI
-                    let ui = &mut main_note_frame.content_ui;
-                    // ui.allocate_exact_size(desired_size, sense)
+
+                let outer_f = &mut Frame::new()
+                .corner_radius(rnding)
+                .inner_margin(inner_margin)
+                .outer_margin(outer_margin)
+                .fill(msg_color)
+                .show(ui, |ui| { // NOTE FRAME SCOPED UI
+                    let mut frame = Frame::NONE
+                        .corner_radius(rnding)
+                        .inner_margin(inner_margin)
+                        .outer_margin(Margin { left: 0, right: 0, top: 4, bottom: 1 })
+                        .fill(msg_color)
+                        .begin(ui);
+
+                    frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
+
+                    let ui = &mut frame.content_ui;
                     // ui.set_min_height(fixed_height);  // Set the fixed height for the message box
                     ui.set_width(max_msg_width);
-                    log::error!("Size: {:?}", ui.max_rect());
                     // Use a vertical layout to stack the name and message content
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        let btn_txt_color = ui.style().visuals.error_fg_color;
-                        let username_txt_color = ui.style().visuals.hyperlink_color;
-                        let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
                         if is_message_from_myself {
-                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                Direction::RightToLeft,
-                                Align::Min,
-                            ), |ui| {
-                                // ui.set_max_width(max_msg_width);
-                                // ui.add_space(4.);
-                                let from_btn = Button::new(from)
-                                    .fill(Color32::from_rgb(7, 7, 9))
-                                    .min_size(Vec2::new(30., 20.))
-                                    .ui(ui);
-
-                                if from_btn.clicked(){
-                                    ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}", item.id).into()));
+                            ui.horizontal(|ui| {
+                                let btn_txt_color = ui.style().visuals.error_fg_color;
+                                let username_txt_color = ui.style().visuals.hyperlink_color;
+                                let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
+                                ui.add_space(5.);
+                                if  Button::new(RichText::new("🗙").color(btn_txt_color))
+                                .min_size(Vec2::new(15., 14.))
+                                .ui(ui)
+                                .on_hover_text(
+                                    RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
+                                        .strong()
+                                        .color(Color32::LIGHT_RED)
+                                )
+                                .double_clicked() {
+                                    let _ = self.ui_event_tx.try_send(ChatEvent::DeleteNote(item.clone()));
                                 }
 
-                                popup_widget(ui, from_btn, style.clone(), &item);
-
-                                ui.add_space(5.);
-                            
-                                ui.label(RichText::new(item.created_at.format("%m/%d@%I:%M%p").to_string()).weak());
-                                ui.add_space(5.);
-                                ui.add_space(120.);
-
+                                if Button::new(RichText::new("🗐").color(btn_txt_color))
+                                .ui(ui)
+                                .on_hover_text(RichText::new("Copy Task Note"))
+                                .clicked() {
+                                    ui.ctx().copy_text(item.note.clone());
+                                }
+                                
                                 let id = &item.id;
 
                                 if self.allow_edit.contains(&id.to_string()) {
-                                    let save_btn = Button::new(RichText::new("Save").weak().color(btn_txt_color))
-                                        .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
-
-                                    if save_btn.clicked(){
-                                        if self.allow_edit.contains(&id.to_string()) {
-                                            if let Some(msg) = self.edit_text.get_mut(&id.to_string()){
-                                                let mut task_note = msg.clone();
-                                                item.note = msg.note.clone();
-                                                // if note_pre_edit.ne(&msg.note) {
-                                                PlatformSpawner::spawn(async move {
-                                                    match task_note.update_note().await {
-                                                        Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
-                                                        Err(e) => error!("Error modifying note: {e:?}"),
-                                                    }
-                                                });
-                                                
-                                            }
-                                        }
-                                        self.allow_edit.remove(&id.to_string());
+                                    if Button::new(RichText::new("Save").color(btn_txt_color))
+                                    .ui(ui)
+                                    .clicked() {
+                                        let _ = self.ui_event_tx.try_send(ChatEvent::SaveNote(item.clone()));
                                     }
-                                    let cancel_btn = Button::new(RichText::new("Cancel").weak().color(Color32::LIGHT_RED))
-                                        .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
 
-                                    if cancel_btn.clicked(){
-                                        self.allow_edit.remove(&id.to_string());
+                                    if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
+                                    .ui(ui)
+                                    .clicked() {
+                                        let _ = self.ui_event_tx.try_send(ChatEvent::CancelEdit(id.clone()));
                                     }
                                 } else {
-                                    let edit_btn = Button::new(RichText::new("🖊").weak().color(btn_txt_color))
-                                        .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui)
-                                        .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"));
-
-                                    if edit_btn.clicked(){
-                                        self.allow_edit.insert(item.id.to_string()); 
-                                    }
-                                }
-
-                                let copy_btn = Button::new(RichText::new("🗐").weak().color(btn_txt_color))
-                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui)
-                                    .on_hover_text(RichText::new("Copy Task Note"));
-
-                                if copy_btn.clicked(){
-                                    ui.ctx().copy_text(item.note.clone());
-                                }
-
-                                let btn = Button::new(RichText::new("🗙").weak().color(btn_txt_color))
-                                    .corner_radius(eframe::egui::CornerRadius::same(255))
-                                    .small()
-                                    .min_size(Vec2::new(15., 14.))
-                                    .ui(ui)
-                                    .on_hover_text(
-                                        RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
-                                            .strong()
-                                            .color(Color32::LIGHT_RED)
-                                    );
-
-                                if btn.double_clicked(){
-                                    self.delete = Some(item.clone());
-                                    let mut item = item.clone();
-                                    PlatformSpawner::spawn(async move {
-                                        match item.delete_note().await{
-                                            Ok(_) => info!("chats/mod.rs -> Deleted Note"),
-                                            Err(e) => error!("chats/mod.rs -> Error deleting note: {e:?}"),
+                                        if Button::new(RichText::new("🖊").color(btn_txt_color)).ui(ui)
+                                        .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"))
+                                        .clicked() {
+                                            let _ = self.ui_event_tx.try_send(ChatEvent::Edit(id.clone()));
                                         }
-                                    })
                                 }
+
+                                ui.add_space(5.);
+                                ui.label(if item.private { "🕶" } else { "✔" });
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui|{
+                                    ui.add_space(2.);
+                                    let from_btn = Button::new(from)
+                                        .fill(Color32::from_rgb(7, 7, 9))
+                                        .min_size(Vec2::new(30., 20.))
+                                        .ui(ui);
+
+                                    if from_btn.clicked(){
+                                        ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}", item.id).into()));
+                                    }
+
+                                    popup_widget(ui, from_btn, style.clone(), &item);
+
+                                    ui.add_space(5.);
+
+                                    ui.label(RichText::new(item.created_at.format("%m/%d @ %I:%M%p").to_string()).weak());
+                                });
                             });
-                            
                         } else {
-                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                Direction::LeftToRight,
-                                Align::Min,
-                            ), |ui| {
+                            ui.horizontal(|ui| {
+                                let btn_txt_color = ui.style().visuals.error_fg_color;
+                                let username_txt_color = ui.style().visuals.hyperlink_color;
+                                let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
                                 // ui.set_max_width(max_msg_width);
                                 let id = &item.id;
-                                
-                                ui.add_space(5.0);
+                                ui.add_space(2.);
                                 let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
                                 if from_btn.clicked(){
                                     ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}",item.id).into()));
@@ -524,87 +521,57 @@ impl ChatView {
 
                                 ui.add_space(5.);
                             
-                                ui.label(RichText::new(item.created_at.format("%Y/%m/%d @ %I:%M%p").to_string()).weak());
-                                
-                                ui.add_space(5.);
+                                ui.label(RichText::new(item.created_at.format("%m/%d @ %I:%M%p").to_string()).weak());
 
-                                ui.label(if item.private { "🕶" } else { "✔" });
-
-                                ui.add_space(5.);
-
-                                if self.current_user.get_authorization().as_str() == "Admin" {
-                                    let btn = Button::new(RichText::new("🗙").weak().color(btn_txt_color))
-                                        .corner_radius(eframe::egui::CornerRadius::same(255))
-                                        .small()
-                                        .min_size(Vec2::new(15., 14.))
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.add_space(5.);
+                                    if self.current_user.get_authorization().as_str() == "Admin" {
+                                        if self.allow_edit.contains(&id.to_string()) {
+                                            if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
+                                            .ui(ui)
+                                            .clicked() {
+                                                let _ = self.ui_event_tx.try_send(ChatEvent::CancelEdit(id.clone()));
+                                            }
+                                            if Button::new(RichText::new("Save").color(btn_txt_color))
+                                            .ui(ui)
+                                            .clicked() {
+                                                let _ = self.ui_event_tx.try_send(ChatEvent::SaveNote(item.clone()));
+                                            }
+                                        } else {
+                                            if Button::new(RichText::new("🖊").color(btn_txt_color)).ui(ui)
+                                            .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"))
+                                            .clicked() {
+                                                let _ = self.ui_event_tx.try_send(ChatEvent::Edit(id.clone()));
+                                            }
+                                        }
+                                    }
+                                    
+                                    if Button::new(RichText::new("🗐").color(btn_txt_color))
+                                    .ui(ui)
+                                    .clicked(){
+                                        ui.ctx().copy_text(item.note.clone());
+                                    }
+                                    
+                                    if self.current_user.get_authorization().as_str() == "Admin" {
+                                        if  Button::new(RichText::new("🗙").color(btn_txt_color))
                                         .ui(ui)
                                         .on_hover_text(
                                             RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
                                                 .strong()
                                                 .color(Color32::LIGHT_RED)
-                                        );
-
-                                    if btn.double_clicked(){
-                                        self.delete = Some(item.clone());
-                                        let mut item = item.clone();
-                                        PlatformSpawner::spawn(async move {
-                                            match item.delete_note().await{
-                                                Ok(_) => info!("chats/mod.rs -> Deleted Note"),
-                                                Err(e) => error!("chats/mod.rs -> Error deleting note: {e:?}"),
-                                            }
-                                        })
-                                    }
-                                }
-
-                                let copy_btn = Button::new(RichText::new("🗐").small().weak().color(btn_txt_color))
-                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
-
-                                if copy_btn.clicked(){
-                                    ui.ctx().copy_text(item.note.clone());
-                                }
-                                
-                                if self.current_user.get_authorization().as_str() == "Admin" {
-                                    if self.allow_edit.contains(&id.to_string()) {
-                                        let save_btn = Button::new(RichText::new("Save").weak().color(btn_txt_color))
-                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
-
-                                        if save_btn.clicked(){
-                                            if self.allow_edit.contains(&id.to_string()) {
-                                                if let Some(msg) = self.edit_text.get_mut(&id.to_string()){
-                                                    let mut task_note = msg.clone();
-                                                    item.note = msg.note.clone();
-                                                    // if note_pre_edit.ne(&msg.note) {
-                                                    PlatformSpawner::spawn(async move {
-                                                        match task_note.update_note().await {
-                                                            Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
-                                                            Err(e) => error!("Error modifying note: {e:?}"),
-                                                        }
-                                                    });
-                                                    
-                                                }
-                                            }
-                                            self.allow_edit.remove(&id.to_string());
-                                        }
-                                        let cancel_btn = Button::new(RichText::new("Cancel").weak().color(Color32::LIGHT_RED))
-                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui);
-
-                                        if cancel_btn.clicked(){
-                                            self.allow_edit.remove(&id.to_string());
-                                        }
-                                    } else {
-                                        let edit_btn = Button::new(RichText::new("🖊").weak().color(btn_txt_color))
-                                            .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(15., 14.)).ui(ui)
-                                            .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"));
-
-                                        if edit_btn.clicked(){
-                                            self.allow_edit.insert(item.id.to_string()); 
+                                        )
+                                        .double_clicked() {
+                                            let _ = self.ui_event_tx.try_send(ChatEvent::DeleteNote(item.clone()));
                                         }
                                     }
-                                }
+
+                                    ui.add_space(5.);
+                                    ui.label(if item.private { "🕶" } else { "✔" });
+                                });
                             });
                         }
 
-                        Frame::new()
+                        Frame::new() // Frame for the actual note text itself // or for modifying the note
                             .fill(Color32::from_rgb(10,10,12))
                             .stroke(style.visuals.widgets.inactive.bg_stroke)
                             .outer_margin(Margin {
@@ -633,42 +600,20 @@ impl ChatView {
                             });
                         });
                     });
-                };
+
+                    frame
+                }).inner;
+
                 
-                let response = main_note_frame.allocate_space(ui);
-                
-                main_note_frame.paint(ui);
+                let response = outer_f.allocate_space(ui); //.allocate_space(ui);
+                // log::info!("Message left edge: {:?}", response.rect.left());
                 if response.hovered() {
                     // style.visuals.widgets.inactive.bg_fill
-                    main_note_frame.frame.fill =  style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 3);
-                    main_note_frame.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
-                    main_note_frame.frame.shadow = style.visuals.window_shadow;
+                    outer_f.frame.fill =  style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 4);
+                    outer_f.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
+                    outer_f.frame.shadow = style.visuals.window_shadow;
                 }
-                // let points = if !is_message_from_myself {
-                //     let top = response.rect.left_top() + Vec2::splat(margin);
-                //     let arrow_rect =
-                //         Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
-
-                //     vec![
-                //         arrow_rect.left_top(),
-                //         arrow_rect.right_top(),
-                //         arrow_rect.right_bottom(),
-                //     ]
-                // } else {
-                //     let top = response.rect.right_top() + Vec2::new(-margin, margin);
-                //     let arrow_rect =
-                //         Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
-
-                //     vec![
-                //         arrow_rect.left_top(),
-                //         arrow_rect.right_top(),
-                //         arrow_rect.left_bottom(),
-                //     ]
-                // };
-
-                // ui.painter().add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
-
-
+                outer_f.paint(ui);
             });
         };
     }

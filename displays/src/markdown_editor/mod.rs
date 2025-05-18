@@ -151,12 +151,6 @@ impl EasyMarkEditor {
     pub fn clear(&mut self) {
         self.message.clear();
     }
-
-    pub fn panels(&mut self, ctx: &Context) {
-        CentralPanel::default().show(ctx, |ui| {
-            self.ui(ui);
-        });
-    }
 }
 
 pub const SHORTCUT_BOLD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
