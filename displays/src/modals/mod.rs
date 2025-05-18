@@ -8,6 +8,7 @@ use std::ops::Deref;
 
 pub mod task_modal;
 pub mod create_task_modal;
+pub mod tabs;
 
 #[derive(Serialize, Default, Clone, Debug)]
 pub enum ModalType{
@@ -90,7 +91,6 @@ impl ModalWindow for ModalType {
         modal_action
     }
 }
-
 
 pub trait ModalWindow {
     fn ui(&mut self, ctx: &Context, title: String, min_width: f32, min_height: f32) -> Option<ModalAction>;
