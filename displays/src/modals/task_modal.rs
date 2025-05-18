@@ -107,9 +107,10 @@ impl TaskModal {
 
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
-        let avail_size = Vec2::new(722.0, 620.0);
+        let avail_size = Vec2::new(715.0, 700.0);
+        let max_space = Vec2::new(715.0, 700.0);
         ui.set_min_size(avail_size);
-        ui.set_max_size(Vec2::new(722.0, 800.0));
+        ui.set_max_size(max_space);
         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
         TopBottomPanel::top(format!("Top panel header {}", self.task.id.key().to_string())).exact_height(28.).show_inside(ui, |ui| {
@@ -225,14 +226,15 @@ impl DisplayModal for TaskModal {
 
         ui.add_space(10.);
         tui(ui, format!("Grid layout {}", self.task.id.key().to_string()))
-            .reserve_available_space()
+            .reserve_space(max_space)
             .style(TaffyStyle {
                 display: taffy::Display::Grid,
                 grid_template_columns: vec![
-                    length(10.),   // left gutter
+                    length(15.0),   // left gutter
                     fr(1.0),      // stretchy middle track
-                    length(5.),   // right gutter
+                    length(10.0),   // right gutter
                 ],
+                grid_template_rows: vec![fr(1.0)],
                 ..Default::default()
             })
             .show(|tui| {
@@ -248,9 +250,11 @@ impl DisplayModal for TaskModal {
                 })
                 .add(|tui| {
                     // tui.ui(|ui| ui.set_min_width(ui.available_width()) );
-
                     tui.ui(|ui| {
                         let store_users = self.store_users.clone();
+                        // Ensure full width and height
+                        ui.set_min_width(ui.available_width());
+                        ui.set_min_height(ui.available_height());
                         match self.current_page_state {
                             ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users, self.user.clone()),
                             ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
