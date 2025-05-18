@@ -329,24 +329,31 @@ impl ChatView {
             )
             .show_inside(ui, |ui| 
         {
+            log::info!("CentralPanel available width: {:?}", ui.available_size().x);
             // let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
             // let total_rows = self.messages.len();
-            ui.set_max_width(ui.available_width()/1.1);
-
+            log::info!("Size: {:?}", ui.available_size());
             ScrollArea::vertical()
                 .animated(true)
                 .max_height(ui.available_height())// dont ask me to explain why 
                 .max_width(ui.available_width()) // this works over f32::infinity
                 .auto_shrink(false)
                 .stick_to_bottom(true)
-                .show(ui, |ui| self.chat(ui) );
+                .show(ui, |ui| 
+                    // Wrap content in a Frame for fixed left margin
+                Frame::new()
+                    .outer_margin(Margin { left: 5, right: 0, top: 0, bottom: 0 })
+                    .show(ui, |ui| {
+                        self.chat(ui) 
+                })
+            );
 
         });
     }
 
     fn chat(&mut self, ui: &mut Ui) {
         let max_msg_width = ui.available_width()/1.9;
-
+        
         self.messages.sort_by_key(|message| message.created_at.clone() );
 
         for item in self.messages.iter_mut(){
@@ -369,8 +376,11 @@ impl ChatView {
             };
 
             ui.with_layout(layout, |ui| {
+                log::warn!("Size: {:?}", ui.available_size());
+                if !is_message_from_myself {
+                    ui.add_space(5.0); // 5-pixel offset
+                }
                 ui.set_max_width(max_msg_width);
-                
                 let rounding = 8.;
                 let margin = 4.;
                 
@@ -391,11 +401,13 @@ impl ChatView {
 
                 let style = ui.style().clone();
                 main_note_frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
-
+                
                 { // NOTE FRAME SCOPED UI
                     let ui = &mut main_note_frame.content_ui;
+                    // ui.allocate_exact_size(desired_size, sense)
                     // ui.set_min_height(fixed_height);  // Set the fixed height for the message box
                     ui.set_width(max_msg_width);
+                    log::error!("Size: {:?}", ui.max_rect());
                     // Use a vertical layout to stack the name and message content
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
                         let btn_txt_color = ui.style().visuals.error_fg_color;
@@ -502,8 +514,8 @@ impl ChatView {
                             ), |ui| {
                                 // ui.set_max_width(max_msg_width);
                                 let id = &item.id;
-
-                                ui.add_space(15.);
+                                
+                                ui.add_space(5.0);
                                 let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
                                 if from_btn.clicked(){
                                     ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}",item.id).into()));
@@ -607,7 +619,7 @@ impl ChatView {
                                 Direction::TopDown,
                                 Align::Center,
                             ), |ui| {
-                                ui.set_width(max_msg_width);
+                                ui.set_width(ui.available_width());
                                 if self.allow_edit.contains(&item.id.to_string()) {
                                     if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
                                         TextEdit::multiline(&mut msg.note)
@@ -622,40 +634,40 @@ impl ChatView {
                         });
                     });
                 };
+                
                 let response = main_note_frame.allocate_space(ui);
-
+                
+                main_note_frame.paint(ui);
                 if response.hovered() {
                     // style.visuals.widgets.inactive.bg_fill
                     main_note_frame.frame.fill =  style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 3);
                     main_note_frame.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
                     main_note_frame.frame.shadow = style.visuals.window_shadow;
                 }
-                
-                main_note_frame.paint(ui);
+                // let points = if !is_message_from_myself {
+                //     let top = response.rect.left_top() + Vec2::splat(margin);
+                //     let arrow_rect =
+                //         Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
 
-                let points = if !is_message_from_myself {
-                    let top = response.rect.left_top() + Vec2::splat(margin);
-                    let arrow_rect =
-                        Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
+                //     vec![
+                //         arrow_rect.left_top(),
+                //         arrow_rect.right_top(),
+                //         arrow_rect.right_bottom(),
+                //     ]
+                // } else {
+                //     let top = response.rect.right_top() + Vec2::new(-margin, margin);
+                //     let arrow_rect =
+                //         Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
 
-                    vec![
-                        arrow_rect.left_top(),
-                        arrow_rect.right_top(),
-                        arrow_rect.right_bottom(),
-                    ]
-                } else {
-                    let top = response.rect.right_top() + Vec2::new(-margin, margin);
-                    let arrow_rect =
-                        Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
+                //     vec![
+                //         arrow_rect.left_top(),
+                //         arrow_rect.right_top(),
+                //         arrow_rect.left_bottom(),
+                //     ]
+                // };
 
-                    vec![
-                        arrow_rect.left_top(),
-                        arrow_rect.right_top(),
-                        arrow_rect.left_bottom(),
-                    ]
-                };
+                // ui.painter().add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
 
-                ui.painter().add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
 
             });
         };
