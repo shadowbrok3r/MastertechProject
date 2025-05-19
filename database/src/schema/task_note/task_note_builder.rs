@@ -1,8 +1,6 @@
 use crate::{
     schema::{
-        helper_traits::{parse_email_user, EmployeeHelper},
-        prestashop_schema::{CustomerMessage, CustomerThread, Employee, Prestashop, Order},
-        LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE,
+        helper_traits::EmployeeHelper, prestashop_schema::{CustomerMessage, CustomerThread, Employee, Order, Prestashop}, LiveTaskPayload, Notification, Record, User, TASK_NOTE_TABLE
     },
     DATABASE,
 };
@@ -12,6 +10,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use regex::Regex;
 use anyhow::Result;
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskNote {
@@ -89,7 +88,7 @@ impl TaskNoteBuilder {
     /// Derives username from id_employee if not set.
     async fn ensure_username(&mut self) -> Result<()> {
         if self.username.is_none() {
-            let employee = Prestashop::default()
+            let mut employee: Employee = Prestashop::default()
                 .request_subresources_by_id_wasm("employees", "employee", &self.id_employee)
                 .await?;
             let user = employee.find_user().await?.ok_or_else(|| {
@@ -146,7 +145,7 @@ impl TaskNoteBuilder {
     async fn check_existing_note(&self, id_customer_message: &str) -> Result<Option<RecordId>> {
         let query_results: Vec<TaskNote> = DATABASE
             .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
-            .bind(("id_customer_message", id_customer_message))
+            .bind(("id_customer_message", id_customer_message.to_string()))
             .await?
             .take(0)?;
 
@@ -232,7 +231,7 @@ impl TaskNoteBuilder {
     /// Builds the TaskNote and persists it to the database and/or Prestashop.
     pub async fn build(mut self) -> Result<TaskNote> {
         // Validate required fields
-        let note_content = self.note.ok_or_else(|| anyhow::anyhow!("Note content is required"))?;
+        let note_content = self.note.clone().ok_or_else(|| anyhow::anyhow!("Note content is required"))?;
         self.ensure_username().await?;
         self.ensure_customer_thread().await?;
 
@@ -263,7 +262,7 @@ impl TaskNoteBuilder {
         } else {
             (
                 None,
-                self.created_at,
+                self.created_at.clone(),
                 RecordId::from((TASK_NOTE_TABLE, uuid::Uuid::new_v4().to_string())),
             )
         };
@@ -273,19 +272,19 @@ impl TaskNoteBuilder {
             task_id: self.task_id.clone(),
             created_at,
             note: note_content,
-            username: self.username.unwrap(),
-            id_customer_thread: self.id_customer_thread,
+            username: self.username.clone().unwrap_or(String::new()),
+            id_customer_thread: self.id_customer_thread.clone(),
             id_customer_message,
-            id_employee: self.id_employee,
-            user: self.user,
-            service_number: self.service_number,
+            id_employee: self.id_employee.clone(),
+            user: self.user.clone(),
+            service_number: self.service_number.clone(),
             private: self.private,
         };
 
         // Persist to database
         DATABASE
             .query("CREATE task_note CONTENT $task_note")
-            .bind(("task_note", &task_note))
+            .bind(("task_note", task_note.clone()))
             .await?
             .take::<Option<Record>>(0)?;
 
@@ -313,7 +312,7 @@ impl TaskNote {
                 .await?;
         }
 
-        DATABASE
+        let _: Option<TaskNote> = DATABASE
             .upsert(self.id.clone())
             .content(self.clone())
             .await?;
@@ -334,7 +333,7 @@ impl TaskNote {
             }
         }
 
-        DATABASE
+        let _: Option<TaskNote> = DATABASE
             .delete((TASK_NOTE_TABLE, self.id.key().to_string()))
             .await?;
 
@@ -389,7 +388,7 @@ impl TaskNote {
                     if task_id.is_some() {
                         DATABASE
                             .query("CREATE task_note CONTENT $task_note")
-                            .bind(("task_note", &task_note))
+                            .bind(("task_note", task_note.clone()))
                             .await?
                             .take::<Option<Record>>(0)?;
                     }
@@ -408,16 +407,16 @@ impl TaskNote {
 
         let query_results: Vec<Self> = DATABASE
             .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number PARALLEL")
-            .bind(("service_number", service_number))
+            .bind(("service_number", service_number.to_string()))
             .await?
             .take(0)?;
 
         if query_results.is_empty() {
-            DATABASE
+            Ok(DATABASE
                 .query("SELECT * FROM task_note WHERE service_number == $service_number PARALLEL")
-                .bind(("service_number", service_number))
+                .bind(("service_number", service_number.to_string()))
                 .await?
-                .take(0)?
+                .take::<Vec<TaskNote>>(0)?)
         } else {
             Ok(query_results)
         }
@@ -425,11 +424,11 @@ impl TaskNote {
 
     /// Retrieves database notes for a task ID.
     pub async fn get_db_notes_by_task_id(task_id: RecordId) -> Result<Vec<Self>> {
-        DATABASE
+        Ok(DATABASE
             .query("SELECT * FROM task_note WHERE task_id == $task_id PARALLEL")
             .bind(("task_id", task_id))
             .await?
-            .take(0)?
+            .take::<Vec<TaskNote>>(0)?)
     }
 }
 
@@ -438,3 +437,345 @@ pub fn parse_msg_date(date_str: &str) -> Result<Datetime, chrono::ParseError> {
     let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
     Ok(dt_utc.into())
 }
+
+/* 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        schema::{
+            helper_traits::EmployeeHelper,
+            prestashop_schema::{CustomerMessage, CustomerThread, Employee, Order, PrestashopResponse},
+        },
+        DATABASE,
+    };
+    use async_trait::async_trait;
+    use mockall::{mock, predicate::*};
+    use surrealdb::RecordId;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    // Mock Prestashop API
+    mock! {
+        PrestashopApi {}
+        #[async_trait]
+        impl Prestashop for PrestashopApi {
+            async fn request_subresources_by_id_wasm(&self, resource: &str, subresource: &str, id: &str) -> Result<Employee>;
+            async fn request_resources_wasm(&self, resource: &str, query: HashMap<&str, &str>) -> Result<Vec<CustomerThread>>;
+            async fn create_customer_thread(&self, service_number: &str, id_customer: &str) -> Result<PrestashopResponse>;
+            async fn create_customer_message(&self, id_employee: &str, id_customer_thread: &str, message: &str) -> Result<PrestashopResponse>;
+            async fn modify_customer_message(&self, id_customer_message: &str, id_employee: &str, id_customer_thread: &str, message: &str) -> Result<PrestashopResponse>;
+            async fn delete_resource_wasm(&self, resource: &str, id: &str) -> Result<()>;
+        }
+    }
+
+    // Mock EmployeeHelper for find_user
+    mock! {
+        EmployeeHelperMock {}
+        #[async_trait]
+        impl EmployeeHelper for EmployeeHelperMock {
+            async fn find_user(&self) -> Result<Option<User>>;
+        }
+    }
+
+    // Setup common test data
+    fn setup_test_data() -> (RecordId, RecordId, String) {
+        let task_id = RecordId::from(("task", Uuid::new_v4().to_string()));
+        let user_id = RecordId::from(("user", Uuid::new_v4().to_string()));
+        let id_employee = "123".to_string();
+        (task_id, user_id, id_employee)
+    }
+
+    #[tokio::test]
+    async fn test_missing_note_fails() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let builder = TaskNoteBuilder::new(task_id, user_id, id_employee);
+        let result = builder.build().await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Note content is required"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_missing_username_derives_from_employee() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let mut mock_presta = MockPrestashopApi::new();
+        let mut mock_employee = MockEmployeeHelperMock::new();
+        let mut user = User::default()
+            .set_email("test.user@pclaptops.com");
+
+        mock_presta
+            .expect_request_subresources_by_id_wasm()
+            .with(eq("employees"), eq("employee"), eq(id_employee.as_str()))
+            .times(1)
+            .returning(|_, _, _| {
+                Ok(Employee {
+                    email: "test@pclaptops.com".to_string(),
+                    firstname: "Test".to_string(),
+                    ..Default::default()
+                })
+            });
+
+        mock_employee
+            .expect_find_user()
+            .times(1)
+            .returning(|| {
+                Ok(Some(user))
+            });
+
+        let builder = TaskNoteBuilder::new(task_id, user_id, id_employee)
+            .note("Test note");
+
+        // Mock DATABASE to avoid actual DB calls
+        DATABASE
+            .expect_query()
+            .times(1)
+            .returning(|_| Ok(vec![Record { id: RecordId::from(("task_note", Uuid::new_v4().to_string())) }]));
+        
+        let result = builder.build().await;
+        assert!(result.is_ok());
+        let note = result.unwrap();
+        assert_eq!(note.username, "test.user");
+    }
+
+    #[tokio::test]
+    async fn test_prestashop_note_with_service_number() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let mut mock_presta = MockPrestashopApi::new();
+        let service_number = "12345";
+        let thread_id = "67890";
+        let message_id = "54321";
+
+        mock_presta
+            .expect_request_resources_wasm()
+            .with(eq("customer_threads"), always())
+            .times(1)
+            .returning(|_, _| Ok(vec![CustomerThread { id: thread_id.to_string(), ..Default::default() }]));
+
+        mock_presta
+            .expect_create_customer_message()
+            .with(eq(id_employee.as_str()), eq(thread_id), eq("Test note"))
+            .times(1)
+            .returning(|_, _, _| {
+                Ok(PrestashopResponse {
+                    id: message_id.to_string(),
+                    date_add: "2025-05-19 07:00:00".to_string(),
+                    ..Default::default()
+                })
+            });
+
+        DATABASE
+            .expect_query()
+            .with(always())
+            .times(2) // check_existing_note and create
+            .returning(|_| Ok(vec![])); // No existing note
+
+        let builder = TaskNoteBuilder::new(task_id.clone(), user_id, id_employee)
+            .note("Test note")
+            .username("test.user")
+            .service_number(service_number)
+            .id_customer_thread(thread_id);
+
+        let result.ConcurrentTaskNotes = builder.build().await;
+        assert!(result.is_ok());
+        let note = result.unwrap();
+        assert_eq!(note.id_customer_thread, Some(thread_id.to_string()));
+        assert_eq!(note.id_customer_message, Some(message_id.to_string()));
+        assert_eq!(note.service_number, Some(service_number.to_string()));
+        assert_eq!(note.task_id, task_id);
+        assert!(!note.private);
+    }
+
+    #[tokio::test]
+    async fn test_private_note_no_prestashop() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+
+        DATABASE
+            .expect_query()
+            .times(1)
+            .returning(|_| Ok(vec![Record { id: RecordId::from(("task_note", Uuid::new_v4().to_string())) }]));
+
+        let builder = TaskNoteBuilder::new(task_id.clone(), user_id, id_employee)
+            .note("Private note")
+            .username("test.user")
+            .private(true);
+
+        let result = builder.build().await;
+        assert!(result.is_ok());
+        let note = result.unwrap();
+        assert_eq!(note.id_customer_thread, None);
+        assert_eq!(note.id_customer_message, None);
+        assert_eq!(note.service_number, None);
+        assert_eq!(note.task_id, task_id);
+        assert!(note.private);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_prestashop_note_fails() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let mut mock_presta = MockPrestashopApi::new();
+        let service_number = "12345";
+        let thread_id = "67890";
+        let message_id = "54321";
+
+        mock_presta
+            .expect_request_resources_wasm()
+            .with(eq("customer_threads"), always())
+            .times(1)
+            .returning(|_, _| Ok(vec![CustomerThread { id: thread_id.to_string(), ..Default::default() }]));
+
+        mock_presta
+            .expect_create_customer_message()
+            .with(eq(id_employee.as_str()), eq(thread_id), eq("Test note"))
+            .times(1)
+            .returning(|_, _, _| {
+                Ok(PrestashopResponse {
+                    id: message_id.to_string(),
+                    date_add: "2025-05-19 07:00:00".to_string(),
+                    ..Default::default()
+                })
+            });
+
+        DATABASE
+            .expect_query()
+            .with(always())
+            .times(1)
+            .returning(|_| {
+                Ok(vec![TaskNote {
+                    id: RecordId::from(("task_note", message_id)),
+                    task_id: RecordId::from(("task", Uuid::new_v4().to_string())),
+                    ..Default::default()
+                }])
+            });
+
+        let builder = TaskNoteBuilder::new(task_id, user_id, id_employee)
+            .note("Test note")
+            .username("test.user")
+            .service_number(service_number)
+            .id_customer_thread(thread_id);
+
+        let result = builder.build().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Note already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_tagged_user_notification() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let mut mock_employee = MockEmployeeHelperMock::new();
+        let mut user = User::default()
+            .set_email("test.user@pclaptops.com");
+
+        mock_employee
+            .expect_find_user()
+            .times(1)
+            .returning(|| {
+                Ok(Some(user))
+            });
+
+        DATABASE
+            .expect_query()
+            .with(always())
+            .times(3) // create note, task_name, create notification
+            .returning(|_| Ok(vec![Record { id: RecordId::from(("task_note", Uuid::new_v4().to_string())) }]));
+
+        let builder = TaskNoteBuilder::new(task_id.clone(), user_id, id_employee)
+            .note("Note with @tagged.user")
+            .username("test.user")
+            .private(true);
+
+        let result = builder.build().await;
+        assert!(result.is_ok());
+        let note = result.unwrap();
+        assert_eq!(note.note, "Note with @tagged.user");
+    }
+
+    #[tokio::test]
+    async fn test_update_prestashop_note() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let mut mock_presta = MockPrestashopApi::new();
+        let message_id = "54321";
+        let thread_id = "67890";
+
+        mock_presta
+            .expect_modify_customer_message()
+            .with(eq(message_id), eq(id_employee.as_str()), eq(thread_id), eq("Updated note"))
+            .times(1)
+            .returning(|_, _, _, _| Ok(PrestashopResponse { id: message_id.to_string(), ..Default::default() }));
+
+        DATABASE
+            .expect_upsert()
+            .times(1)
+            .returning(|_| Ok(Some(TaskNote { id: RecordId::from(("task_note", message_id)), ..Default::default() })));
+
+        let mut note = TaskNote {
+            id: RecordId::from(("task_note", message_id)),
+            task_id,
+            created_at: Utc::now().into(),
+            note: "Updated note".to_string(),
+            username: "test.user".to_string(),
+            id_customer_thread: Some(thread_id.to_string()),
+            id_customer_message: Some(message_id.to_string()),
+            id_employee,
+            user: user_id,
+            service_number: Some("12345".to_string()),
+            private: false,
+        };
+
+        let result = note.update().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_delete_prestashop_note() {
+        let (task_id, user_id, id_employee) = setup_test_data();
+        let mut mock_presta = MockPrestashopApi::new();
+        let message_id = "54321";
+        let thread_id = "67890";
+
+        mock_presta
+            .expect_delete_resource_wasm()
+            .with(eq("customer_messages"), eq(message_id))
+            .times(1)
+            .returning(|_, _| Ok(()));
+
+        DATABASE
+            .expect_delete()
+            .times(1)
+            .returning(|_| Ok(Some(TaskNote { id: RecordId::from(("task_note", message_id)), ..Default::default() })));
+
+        let note = TaskNote {
+            id: RecordId::from(("task_note", message_id)),
+            task_id,
+            created_at: Utc::now().into(),
+            note: "Test note".to_string(),
+            username: "test.user".to_string(),
+            id_customer_thread: Some(thread_id.to_string()),
+            id_customer_message: Some(message_id.to_string()),
+            id_employee,
+            user: user_id,
+            service_number: Some("12345".to_string()),
+            private: false,
+        };
+
+        let result = note.delete().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_prestashop_notes_empty_service_number() {
+        let result = TaskNote::get_prestashop_notes("", None).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Service number is empty");
+    }
+
+    #[tokio::test]
+    async fn test_get_db_notes_by_service_empty() {
+        let result = TaskNote::get_db_notes_by_service("").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Service number is empty");
+    }
+} 
+*/

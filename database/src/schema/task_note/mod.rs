@@ -1,27 +1,92 @@
 use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
-use structdiff::{Difference, StructDiff};
-use surrealdb::{sql::Datetime, RecordId};
-use serde::{Deserialize, Serialize};
+use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, User};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use surrealdb::{sql::Datetime, RecordId};
+use structdiff::{Difference, StructDiff};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use regex::Regex;
 
-use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, User};
+// pub mod builder;
+pub mod task_note_builder;
+
+pub use task_note_builder::*;
+// pub use builder::*;
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TaskNotePayload {
+	/// This is required, but cannot be set until we have either determined
+	/// we are creating a prestashop note, or both a database note AND a prestashop
+	/// note (so the ID can contain the id_customer_message from the prestashop API response). 
+	/// * If we are not creating a prestashop note, then, and only then, can it be randomly generated.
+	/// * If we are creating only a database note, this is randomly generated.
     pub id: RecordId,
+    /// Currently, this is optional, and will ONLY be set if we are creating a database
+    /// note. 
+    /// * However, this should NOT be required, because if the note isn’t tied to
+    ///     a task ID, there is nowhere else for us to even view it, and it will be lost 
+    ///     in the abyss. The only reason it’s optional right now is because otherwise
+    ///     when i am for example, either pulling notes from prestashop to view orders that 
+    ///     have not been created as tasks in surrealDB yet, or somewhere else that I could
+    ///     potentially be pulling notes where I do not know the task_id yet, then I don’t 
+    ///     really have any choice but to set this to None. I want a way around this.
     pub task_id: Option<RecordId>,
-    // pub everest_initials: String,
+    /// This defaults to *Now*, but if we are creating a prestashop note,
+    /// then once we create the note in the database, it will update to
+    /// the timestamp provided by the prestashop response.
     pub created_at: Datetime,
+    /// The actual note.
+    /// * If this is a prestashop note, then the note should always be the same
+	///     between prestashop and the database, if i make a change to one, then
+	///     I have to make the change in the other. This shouldn’t be a challenge 
+	///     on its own because users are not allowed to modify notes in prestashop,
+	///     only the database, so there’s only one point of interest here, thankfully
+	///     on the side of code that **I** manage
+	/// * If this is only a database note, then it is either private, or the task which
+	///     the note has been created is not associated to a service, which also means
+	///     service_number should be None (unless its a private note of course).
     pub note: String,
+    /// Username of the user who created the note. 
+    /// * This is always required, and should not be empty.
+    /// * If the user is not in my database, then I can get their email address via
+    ///     prestashop API, and use my User::query_user_from_email(employee.email)
+    ///     method to give a username.
     pub username: String,
+    /// Optional. 
+    /// * If we are creating a prestashop note, or database note associated to 
+    ///     a task with a service (service_number should also be Some() here),
+    ///     then this needs to be set. 
+	/// * Even if this is a private note, if the note is tied to a service
+	///     in prestashop, it should always have a thread ID.
+	/// * In prestashop, a service upon creation will not have a thread ID,
+	///     which means i need to create one, so technically this note can be
+	///     tied to a service and still not have a thread ID, so if we are 
+	///     creating the first prestashop note in this instance, we will need to
+	///     create a prestashop thread, get the ID, set self.id_customer_thread
+	///     immediately before continuing.
     pub id_customer_thread: Option<String>,
+    /// Optional. 
+    /// * Has the same requirements / logistics as id_customer_thread
+    /// * This can only be None if the note does not exist in prestashop.
+    ///     Which means either its a private note, or the associated task
+    ///     is not tied to a service (service_number should be empty in that case)
     pub id_customer_message: Option<String>,
+    /// The id of the employee creating a note. 
+    /// * Since all users of this application are all employees, this is always
+    ///     required, but its optional right now because of the same reasons task_id is
+    ///     optional, some places in the code i just don’t have that info yet.
     pub id_employee: Option<String>,
+    /// User ID of the user who created the note. 
+    /// * This is always required, and should not EVER be empty.
     pub user: RecordId,
-    // #[serde(deserialize_with = "deserialize_to_string")]
+    /// Prestashop order number
+	/// If this note is associated with a task which is tied to a service,
+	/// then this is required. 
     pub service_number: Option<String>,
+    /// Whether this note will be pushed to prestashop, or ONLY the database.
+    /// * If the note is not associated to a task which is tied to a service,
+    ///     (or service_number is empty) then this doesn’t do anything.
     pub private: bool,
 }
 
