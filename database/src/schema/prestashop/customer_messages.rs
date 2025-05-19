@@ -29,12 +29,13 @@ impl CustomerMessage {
                             created_at: DateTime::parse_from_rfc3339(&self.date_add)?.with_timezone(&Utc).into(),
                             id: surrealdb::RecordId::from((TASK_NOTE_TABLE, self.id.clone())),
                             username: user.get_username().to_string(),
-                            user: Some(user.get_id()),
+                            user: user.get_id(),
                             id_customer_thread: Some(self.id_customer_thread.clone()),
                             id_customer_message: Some(self.id.clone()),
                             id_employee: Some(self.id_employee.clone()),
                             service_number: Some(service_number.to_string()),
-                            ..Default::default()
+                            task_id: None,
+                            private: false,
                         });
                     },
                     Err(e) => Err(anyhow::anyhow!("Error querying user from email: {e:?}")),

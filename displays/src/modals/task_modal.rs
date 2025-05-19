@@ -54,27 +54,6 @@ pub enum ModalAction {
     None,
 }
 
-impl Default for TaskModal {
-    fn default() -> Self {
-        Self {
-            title: "Task Details".to_string(),
-            task: TaskPayload::default(),
-            min_width: Some(600.0),
-            min_height: Some(600.0),
-            default_height: Some(800.0),
-            current_page_state: ModalAction::default(),
-            chat_view: ChatView::default(),
-            spo: SpecialPartOrder::default(),
-            store_users: get_database_users(),
-            user: if let Some(user) = get_current_user_from_auth() {
-                user
-            } else {
-                User::default()
-            }
-        }
-    }
-}
-
 impl TaskModal {
     pub fn new(chat_view: ChatView, mut task: TaskPayload) -> Self {
 

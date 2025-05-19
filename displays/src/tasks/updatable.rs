@@ -1,4 +1,4 @@
-use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload}, DATABASE};
+use database::{schema::{Priority, Record, Status, Store, TaskPayload}, DATABASE};
 use async_trait::async_trait;
 use surrealdb::RecordId;
 use crate::Updatable;
@@ -145,24 +145,6 @@ impl Updatable for TaskPayload {
         .bind(("notes", ticket_id))
         .await?
         .take(0)?;
-        
-        Ok(())
-    }
-
-    async fn update_task_notes(&self, new_msg: String) -> anyhow::Result<(), anyhow::Error> {
-        let task_note = TaskNotePayload {
-            task_id: Some(self.id.clone()),
-            note: new_msg,
-            ..Default::default()
-        };
-
-        let update_task: Vec<Record> = DATABASE
-        .query("CREATE task_note CONTENT $note")
-        .bind(("note", task_note))
-        .await?
-        .take(0)?;
-
-        info!("Updated notes: {update_task:?}");
         
         Ok(())
     }

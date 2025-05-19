@@ -1,11 +1,11 @@
-use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_TABLE, TICKET_TABLE};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use itertools::Itertools;
 use surrealdb::RecordId;
 use chrono::Utc;
 
-use crate::{chats::ChatView, PlatformSpawner, Spawner};
+use crate::{PlatformSpawner, Spawner};
 
 use super::{row_viewer::TaskRowViewer, TaskAudit, TaskAuditViewer};
 
@@ -235,7 +235,11 @@ impl TaskAuditViewer {
             log::info!("Got notes: {notes:?}");
             if self.services_viewer.selected.is_some() {
                 log::info!("Creating chat view");
-                self.services_viewer.chat_view = ChatView::new(notes, store_users, None, None);
+                let svc_num = self.services_viewer.selected.clone().unwrap_or_default().order.id.clone();
+                self.services_viewer.chat_view
+                    .set_notes(notes.clone())
+                    .set_service_number(svc_num.clone())
+                    .set_users(store_users.clone());
             }
         }
 
@@ -258,8 +262,7 @@ impl TaskRowViewer {
             log::info!("We already have notes");
             Ok(existing_notes)
         } else {
-            let mut note = TaskNotePayload::default();
-            let notes = note.get_notes_from_service_number(&service_number).await?;
+            let notes = TaskNotePayload::get_prestashop_notes_from_service(&service_number, None).await?;
             log::info!("notes: {notes:?}");
             Ok(notes)
         }
@@ -267,7 +270,7 @@ impl TaskRowViewer {
 
     pub async fn get_prestashop_order(service_number: String) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
         log::info!("Did not have a task, creating");
-        let value = get_prestashop_payload(&service_number).await?;
+        let mut value = get_prestashop_payload(&service_number).await?;
         let mut customer = CustomerData::default();
         let mut ticket = TicketPayload::default();
         let mut task: TaskPayload = TaskPayload::default();
@@ -309,17 +312,10 @@ impl TaskRowViewer {
             ticket.service_number.clone(),
         ));
 
-        for msg in value.customer_messages.iter() {
-            task_notes.push(TaskNotePayload {
-                note: msg.message.clone(),
-                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
-                task_id: Some(task.id.clone()),
-                // created_at: msg.date_add.clone(),
-                id_customer_thread: Some(msg.id_customer_thread.clone()),
-                id_customer_message: Some(msg.id.clone()),
-                id_employee: Some(msg.id_employee.clone()),
-                ..Default::default()
-            })
+        for note in value.task_notes.iter_mut() {
+            note.task_id = Some(task.id.clone());
+
+            task_notes.push(note.clone());
         }
         task.task_note = task_notes.clone();
         task.due_date = Utc::now().into();

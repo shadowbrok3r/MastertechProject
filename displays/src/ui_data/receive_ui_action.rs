@@ -11,27 +11,15 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
-                    let task_modal = if task.service_ticket.is_some() {
-                        TaskModal::new(
+                        let task_modal = TaskModal::new(
                             ChatView::new(
                                 task.task_note.clone(),
                                 self.store_users.clone(),
-                                Some(task.id.clone()),
+                                task.id.clone(),
                                 task.service_number.clone()
                             ),
                             task.clone()
-                        )
-                    } else {
-                        let mut task_modal = TaskModal::default();
-                        task_modal.chat_view = ChatView::new(
-                            task.task_note.clone(),
-                            self.store_users.clone(),
-                            Some(task.id.clone()),
-                            task.service_number.clone()
                         );
-                        task_modal.task = task.clone();
-                        task_modal
-                    };
                     
                     let title = &task_modal.title;
 
@@ -58,33 +46,33 @@ impl SharedContext {
                             .or_insert(ModalType::CreateTaskModal(create_modal));
                     }
                 }
-                TaskUiActions::OpenChatModal(pld) => {
-                    info!("receive_ui_action -> Got Chat action: {:?}", pld.0.clone());
+                TaskUiActions::OpenChatModal((task_id, notes, service_number)) => {
+                    info!("receive_ui_action -> Got Chat action: {:?}", task_id);
 
-                    let note_payload = pld.clone();
+                    let payload = (task_id.clone(), notes.clone(), service_number.clone());
                     PlatformSpawner::spawn(async move {
-                        match get_or_insert_notes((note_payload.0, note_payload.1)).await {
+                        match get_or_insert_notes(payload).await {
                             Ok(_) => info!("receive_ui_action -> get_or_insert_notes ran ok"),
                             Err(e) => log::error!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
                         }
                     });
 
                     let chat_modal = ChatView::new(
-                        pld.1.to_owned(),
+                        notes.to_owned(),
                         self.store_users.clone(),
-                        Some(pld.0.clone()),
-                        note_payload.2
+                        task_id.clone(),
+                        service_number
                     );
                     
                     let task = self
                         .tasks
                         .iter()
-                        .find(|task| task.id == pld.0.clone());
+                        .find(|task| task.id == task_id.clone());
 
                     let title = if let Some(task) = task {
                         task.task_name.clone()
                     } else {
-                        "New Chat".to_string()
+                        task_id.to_string()
                     };
 
                     if self.opened_modals.get(&title).is_some() {
@@ -102,7 +90,7 @@ impl SharedContext {
                         ChatView::new(
                             task.task_note.clone(),
                             self.store_users.clone(),
-                            Some(task.id.clone()),
+                            task.id.clone(),
                             task.service_number.clone()
                         ),
                         task.clone(),
@@ -129,47 +117,52 @@ impl SharedContext {
 /// We are calling this even though it doesnt return anything BECAUSE 
 /// the get_thread_id_from_order() will also handle the creation of new notes
 /// and in turn, will live update the modal with notes from prestashop / the database
-async fn get_or_insert_notes(note_payload: (surrealdb::RecordId, Vec<TaskNotePayload>)) -> anyhow::Result<(), anyhow::Error> {
+async fn get_or_insert_notes(
+    note_payload: (surrealdb::RecordId, Vec<TaskNotePayload>, Option<String>)
+) -> anyhow::Result<(), anyhow::Error> {
     // I will probably want to do this manually opposed to using TaskNotePayload::get_thread_id_from_order(&self)
     // Because, that will have to make a separate API call for every single note, since &Self, in the 
     // TaskNotePayloadHelper is TaskNotePayload, not Vec<TaskNotePayload>. so I will just want to 
     // take a order number, query all the notes, see if all the notes in the db match all the notes
     // in prestashop, and if not, sync the two databases.
-    let mut notes = note_payload.1;
-    let task_id = note_payload.0;
+    let (task_id, mut notes, service_number) = note_payload.clone();
 
-    let existing_note = notes
-        .iter_mut()
-        .next();
+    if notes.is_empty() || service_number.is_some() {
+        if let Some(service) = service_number.as_ref() {
+            let notes_res = TaskNotePayload::get_prestashop_notes_from_service(&service, Some(task_id.clone())).await;
+            match notes_res {
+                Ok(notes) => {log::info!("Got notes: {notes:?}"); },
+                Err(e) => log::error!("Error getting notes from service number: {e:?}"),
+            };
+        }
 
-    if let Some(note) = existing_note {
-        match note.get_thread_id_from_order().await {
-            Ok(thread_id) => {
-                if thread_id.is_empty() {
-                    return Err(anyhow::anyhow!("Thread ID is empty"));
-                } else {
-                    info!("receive_ui_action -> Thread ID: {thread_id:?}");
-                    return Ok(());
-                }
-                
-            },
-            Err(e) => log::error!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
+    } else if !notes.is_empty() || service_number.is_none() {
+        let existing_note = notes
+            .iter_mut()
+            .next();
+
+        if let Some(note) = existing_note {
+            match note.get_thread_id_from_order().await {
+                Ok(thread_id) => {
+                    if thread_id.is_empty() {
+                        return Err(anyhow::anyhow!("Thread ID is empty"));
+                    } else {
+                        info!("receive_ui_action -> Thread ID: {thread_id:?}");
+                        return Ok(());
+                    }
+                    
+                },
+                Err(e) => log::error!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
+            }
+        } else {
+            return Err(anyhow::anyhow!("receive_ui_action -> Error getting thread ID from order"));
         }
     } else {
-        info!("receive_ui_action -> There were not any notes, checking prestashop");
-        let mut tmp_note = TaskNotePayload::default();
-        tmp_note.task_id = Some(task_id);
-        match tmp_note.get_thread_id_from_order().await {
-            Ok(thread_id) => {
-                if thread_id.is_empty() {
-                    return Err(anyhow::anyhow!("Thread ID is empty"));
-                } else {
-                    info!("receive_ui_action -> Thread ID: {thread_id:?}");
-                    return Ok(());
-                }
-            },
-            Err(e) => log::error!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
-        }
+        let notes_res = TaskNotePayload::get_db_notes_from_task_id(task_id.clone()).await;
+        match notes_res {
+            Ok(notes) => {log::info!("Got notes: {notes:?}"); },
+            Err(e) => log::error!("Error getting notes from service number: {e:?}"),
+        };
     }
     Ok(())
 }
