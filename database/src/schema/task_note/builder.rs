@@ -1,3 +1,12 @@
+use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
+use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, TaskNotePayload, User};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use surrealdb::{sql::Datetime, RecordId};
+use structdiff::{Difference, StructDiff};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use regex::Regex;
+
 /// A note can be either a DB-only note or one that is synchronised
 /// with Prestashop.  We encode that *at the type level*.
 pub enum NoteKind {
