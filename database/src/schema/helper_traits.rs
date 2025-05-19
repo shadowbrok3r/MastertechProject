@@ -2,7 +2,7 @@
 use super::{
     prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::{schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{schema::{parse_msg_date, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::schema::deserializer::deserialize_to_string;
 use std::{collections::HashMap, fmt::Debug};
@@ -123,19 +123,22 @@ impl EmployeeHelper for Employee {
         let api_call = Prestashop::default();
 
         if id_employee != "0" && id_employee != "" {
-            let employee: Employee = api_call
+            let employee_res: anyhow::Result<Employee, anyhow::Error> = api_call
                 .request_subresources_by_id_wasm("employees", "employee", &id_employee)
-                .await?;
+                .await;
 
-            Ok(Employee {
-                email: employee.email.clone(),
-                initials: employee.initials.clone(),
-                firstname: employee.firstname.clone(),
-                id_store: employee.id_store.clone(),
-                lastname: employee.lastname.clone(),
-                id: employee.id.clone(),
-                ..Default::default() // ..self.clone()
-            })
+            match employee_res {
+                Ok(employee) => Ok(Employee {
+                    email: employee.email.clone(),
+                    initials: employee.initials.clone(),
+                    firstname: employee.firstname.clone(),
+                    id_store: employee.id_store.clone(),
+                    lastname: employee.lastname.clone(),
+                    id: employee.id.clone(),
+                    ..Default::default() // ..self.clone()
+                }),
+                Err(e) => { return Err(anyhow::anyhow!("Error getting employee: {e:?}")); }
+            }
         } else if !self.email.is_empty() {
             Ok(User::default().set_email(&self.email).find_employee_by_email().await?)
         } else {
@@ -710,7 +713,11 @@ impl From<PrestashopPayload> for TaskPayload {
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
                 task_id: Some(task.id.clone()),
-                created_at:  DateTime::parse_from_rfc3339(&msg.date_add).unwrap_or_default().with_timezone(&Utc).into(),
+                created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&msg.date_add) {
+                    date.with_timezone(&Utc).into()
+                } else {
+                    parse_msg_date(&msg.date_add).unwrap_or(Utc::now().into())
+                },
                 id_customer_thread: Some(msg.id_customer_thread.clone()),
                 id_customer_message: Some(msg.id.clone()),
                 id_employee: Some(msg.id_employee.clone()),

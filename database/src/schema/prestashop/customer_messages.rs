@@ -1,5 +1,5 @@
 use crate::schema::{helper_traits::EmployeeHelper, prestashop::deserialize_to_string};
-use crate::schema::{TaskNotePayload, User, TASK_NOTE_TABLE};
+use crate::schema::{parse_msg_date, TaskNotePayload, User, TASK_NOTE_TABLE};
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
@@ -26,7 +26,11 @@ impl CustomerMessage {
                         log::warn!("Pulled user: {}", user.get_name());
                         return Ok(TaskNotePayload {
                             note: self.message.clone(),
-                            created_at: DateTime::parse_from_rfc3339(&self.date_add)?.with_timezone(&Utc).into(),
+                            created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&self.date_add) {
+                                date.with_timezone(&Utc).into()
+                            } else {
+                                parse_msg_date(&self.date_add).unwrap_or(Utc::now().into())
+                            },
                             id: surrealdb::RecordId::from((TASK_NOTE_TABLE, self.id.clone())),
                             username: user.get_username().to_string(),
                             user: user.get_id(),
@@ -41,7 +45,7 @@ impl CustomerMessage {
                     Err(e) => Err(anyhow::anyhow!("Error querying user from email: {e:?}")),
                 }
             },
-            Err(e) => Err(anyhow::anyhow!("Error converting customer message into task note: {e:?}")),
+            Err(e) => Err(anyhow::anyhow!("Error querying employee via id_employee: {e:?}")),
         }
     }
 }
