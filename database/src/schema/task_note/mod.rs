@@ -91,22 +91,6 @@ pub struct TaskNotePayload {
 }
 
 impl TaskNotePayload {
-    pub fn new(task_id: RecordId, user: RecordId) -> Self {
-        Self {
-            id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            task_id: Some(task_id),
-            created_at: Utc::now().into(),
-            note: Default::default(),
-            username: Default::default(),
-            id_customer_thread: Default::default(),
-            id_customer_message: Default::default(),
-            id_employee: Default::default(),
-            user,
-            service_number: Default::default(),
-            private: false,
-        }
-    }
-
     /// Creates a task note record in the system.
     ///
     /// # Returns
@@ -134,9 +118,7 @@ impl TaskNotePayload {
             }
         };
 
-        let is_prestashop_note = !id_customer_thread.is_empty() && self.service_number.is_some();
-
-        if is_prestashop_note && !self.private {
+        if !id_customer_thread.is_empty() && self.service_number.is_some() && !self.private {
             self.id_customer_thread = Some(id_customer_thread);
             let response = self.create_customer_message().await?;
             log::info!("task_note/mod.rs -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
@@ -159,7 +141,7 @@ impl TaskNotePayload {
                 self.create_task_note_in_db().await?;
             }
 
-        } else if id_customer_thread.is_empty() && self.service_number.is_some() {
+        } else if id_customer_thread.is_empty() && self.service_number.is_some() && !self.private {
             let create_thread_response = self.create_customer_thread().await?;
             log::info!("task_note/mod.rs -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
             self.id_customer_thread = Some(create_thread_response.id.clone());
@@ -186,21 +168,20 @@ impl TaskNotePayload {
                     self.create_task_note_in_db().await?;
                 }
             }
+        } else if !id_customer_thread.is_empty() && self.service_number.is_some() && self.private { 
+            // we HAVE a customer thread and we HAVE a service number. this SHOULD be a private note.
+            if self.private || id_customer_thread.is_empty() { todo!()
+                self.create_task_note_in_db().await?;
+            } else {
+                return Err(anyhow::anyhow!("An unknown case occurred. Please check the data: {:#?}", self.clone()));
+            }
         } else if id_customer_thread.is_empty() && self.service_number.is_none() {
             log::info!("task_note/mod.rs -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT have a service number. creating a regular task note. {:?}", self.clone());
             if self.task_id.is_none() {
                 return Err(anyhow::anyhow!("Task ID is empty"));
             }
             self.create_task_note_in_db().await?
-        } else { 
-            // we HAVE a customer thread and we HAVE a service number. this SHOULD be a private note.
-            if self.private || id_customer_thread.is_empty() {
-                self.id_customer_thread = None;
-                self.create_task_note_in_db().await?;
-            } else {
-                return Err(anyhow::anyhow!("An unknown case occurred. Please check the data: {:#?}", self.clone()));
-            }
-        }
+        } 
         self.check_tagged_user_in_note().await?;
 
         Ok(())
