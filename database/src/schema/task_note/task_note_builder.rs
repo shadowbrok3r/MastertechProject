@@ -42,7 +42,7 @@ pub struct TaskNoteBuilder {
 impl TaskNoteBuilder {
     /// Initializes the builder with required fields.
     pub fn new(task_id: RecordId, user: RecordId, id_employee: String) -> Self {
-        TaskNoteBuilder {
+        Self {
             task_id,
             user,
             id_employee,

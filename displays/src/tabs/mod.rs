@@ -12,3 +12,4 @@ pub mod resource_monitor;
 pub mod admin_console;
 pub mod script_editor;
 pub mod scene;
+pub mod user_chat;

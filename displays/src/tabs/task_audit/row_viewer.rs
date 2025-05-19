@@ -9,7 +9,7 @@ use egui_extras::Column;
 
 use super::codec::Codec;
 
-const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
+pub const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 
 /// Every logic is defined in `Viewer`
 #[derive(serde::Serialize)]
