@@ -1,8 +1,6 @@
-use std::collections::BTreeSet;
-
-use database::schema::TaskPayload;
 use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, TextFormat, Ui, Widget};
-use log::info;
+use database::schema::TaskPayload;
+use std::collections::BTreeSet;
 use regex::Regex;
 
 use crate::TaskUiActions;
@@ -69,7 +67,7 @@ pub fn show_notification(
                 .inner_margin(Margin::same(15))
                 .outer_margin(Margin::same(5))
                 .show(ui, |ui| {
-                    info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
+                    // info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
                     ui.horizontal_wrapped(|ui| {
                         // Show the text before the task name
                         ui.label(RichText::new(before));

@@ -61,7 +61,8 @@ impl ModalWindow for ModalType {
             )
             .drag_to_scroll(false)
             .pivot(Align2::CENTER_CENTER)
-            .max_height(800.)
+            .max_height(750.)
+            .default_height(715.)
             .default_width(722.0)
             .open(&mut open)
             .title_bar(true);

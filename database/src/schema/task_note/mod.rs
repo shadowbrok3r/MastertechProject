@@ -19,32 +19,29 @@ pub struct TaskNotePayload {
     pub id_customer_thread: Option<String>,
     pub id_customer_message: Option<String>,
     pub id_employee: Option<String>,
-    pub user: Option<RecordId>,
+    pub user: RecordId,
     // #[serde(deserialize_with = "deserialize_to_string")]
     pub service_number: Option<String>,
     pub private: bool,
 }
 
-impl Default for TaskNotePayload {
-    fn default() -> Self {
+impl TaskNotePayload {
+    pub fn new(task_id: RecordId, user: RecordId) -> Self {
         Self {
             id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            task_id: Default::default(),
-            // everest_initials: Default::default(),
+            task_id: Some(task_id),
             created_at: Utc::now().into(),
             note: Default::default(),
             username: Default::default(),
             id_customer_thread: Default::default(),
             id_customer_message: Default::default(),
             id_employee: Default::default(),
-            user: Default::default(),
+            user,
             service_number: Default::default(),
             private: false,
         }
     }
-}
 
-impl TaskNotePayload {
     /// Creates a task note record in the system.
     ///
     /// # Returns
@@ -55,12 +52,20 @@ impl TaskNotePayload {
             return Err(anyhow::anyhow!("We need an employee ID to create notes"));
         }
 
-        let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
+        let id_customer_thread = if let Some(thread_id) =  self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
-            match self.get_thread_id_from_order().await {
-                Ok(id) => id,
-                Err(e) => { return Err(anyhow::anyhow!("Could not get thread ID from service: {e:?}")); },
+            if !self.private {
+                match self.get_thread_id_from_order().await {
+                    Ok(id) => id,
+                    Err(e) => { 
+                        log::error!("Could not get thread ID from service: {e:?}\nGoing to make a DB note without prestashop");
+                        self.private = true;
+                        String::new() 
+                    }, // then we are going to be just a db note
+                }
+            } else {
+                String::new()
             }
         };
 
@@ -123,27 +128,13 @@ impl TaskNotePayload {
             }
             self.create_task_note_in_db().await?
         } else { 
-            return Err(anyhow::anyhow!("An unknown case occurred. Please check the data: {:#?}", self.clone()));
-            // let user = get_current_user_from_auth().await?;
-            // if let Some(usr) = user {
-            //     if self.username.is_empty() {
-            //         self.username = parse_email_user(&usr.email).to_string();
-            //     }
-            //     if self.everest_initials.is_empty() {
-            //         self.username = usr.everest_initials;
-            //     }
-            //     if self.id_employee.is_none() {
-            //         self.id_employee = Some(format!("{}", usr.id_prestashop.unwrap_or(0)));
-            //     }
-            // }
-            // The case that this happens, probably need to upsert the task note
-            // to match a new service order number than the existing note has or something.
-            // log::info!("task_note/mod.rs -> handle_note_creation -> This is an odd case... {:?}", self.clone());
-            // let upsert_note_record: Option<TaskNotePayload> = DATABASE
-            //     .upsert(self.id.clone())
-            //     .content(self.clone())
-            //     .await?;
-            // log::info!("upsert_note_record: {upsert_note_record:?}");
+            // we HAVE a customer thread and we HAVE a service number. this SHOULD be a private note.
+            if self.private || id_customer_thread.is_empty() {
+                self.id_customer_thread = None;
+                self.create_task_note_in_db().await?;
+            } else {
+                return Err(anyhow::anyhow!("An unknown case occurred. Please check the data: {:#?}", self.clone()));
+            }
         }
         self.check_tagged_user_in_note().await?;
 
@@ -235,7 +226,6 @@ impl TaskNotePayload {
                 log::info!("self.task_id: {}\nqueried_note.task_id: {}", existing_task_id.key().to_string(), task_id.key().to_string());
 
                 if existing_task_id != task_id {
-
                     log::error!(
                         "task_note/mod.rs -> check_existing_note_record -> UPDATE task_note SET task_id = {task_id:?} WHERE id == {:?}", 
                         note.id
@@ -693,7 +683,11 @@ impl TaskNotePayload {
                                 note: customer_message.message,
                                 username: parse_email_user(&employee.email).to_string(),
                                 service_number: Some(service_number.to_string()),
-                                user: if let Some(usr) = employee.find_user().await? { Some(usr.get_id()) } else { None },
+                                user: if let Some(usr) = employee.find_user().await? {
+                                    usr.get_id()
+                                } else { 
+                                    return Err(anyhow::anyhow!("Could not get user from employee info")); 
+                                 },
                                 private: false,
                             };
                             log::warn!("task_note/mod.rs -> check_or_create_notes_from_thread -> Creating a new task_note: {task_note:?}");
@@ -712,6 +706,91 @@ impl TaskNotePayload {
             }
         }
         Ok(notes.clone())
+    }
+
+    pub async fn get_prestashop_notes_from_service(service_number: &str, task_id: Option<RecordId>) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        log::info!("task_note/mod.rs -> get_prestashop_notes_from_service -> Calling get_notes_from_service_number");
+        let notes: &mut Vec<TaskNotePayload> = &mut vec![];
+        
+        if service_number.is_empty() {
+            return Err(anyhow::anyhow!("Service Number is empty"));
+        }
+
+        let api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+        query.insert("filter[id_order]", &service_number);
+        query.insert("output_format", "JSON");
+
+        let customer_threads_result: Result<Vec<CustomerThread>, anyhow::Error> = api_call
+            .request_resources_wasm("customer_threads", query.clone())
+            .await;
+
+        match customer_threads_result {
+            Ok(threads) => {
+                for thread in threads {
+                    for msg in thread.associations.customer_messages.iter() {
+                        let customer_message: CustomerMessage = api_call
+                            .request_subresources_by_id_wasm(
+                                "customer_messages",
+                                "customer_message",
+                                &msg.id,
+                            )
+                            .await?;      
+
+                        if !customer_message.id_employee.is_empty() && customer_message.id_employee.as_str() != "0" {
+                            let employee: Employee = api_call
+                                .request_subresources_by_id_wasm(
+                                    "employees",
+                                    "employee",
+                                    &customer_message.id_employee,
+                                )
+                                .await?;
+
+                            log::info!("task_note/mod.rs -> get_prestashop_notes_from_service -> Employee: {:?}", employee.firstname);
+
+                            log::info!("task_note/mod.rs -> get_prestashop_notes_from_service -> Creating new note");
+                            let user = User::query_user_from_email(employee.email.clone()).await?;
+                            let mut task_note = TaskNotePayload {
+                                id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
+                                id_customer_message: Some(customer_message.id.clone()),
+                                id_customer_thread: Some(thread.id.clone()),
+                                task_id: task_id.clone(),
+                                id_employee: Some(customer_message.id_employee),
+                                created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&customer_message.date_add) {
+                                    date.with_timezone(&Utc).into()
+                                } else {
+                                    parse_msg_date(&customer_message.date_add).unwrap_or(Utc::now().into())
+                                },
+                                note: customer_message.message,
+                                username: user.get_username().to_string(),
+                                service_number: Some(service_number.to_string()),
+                                user: user.get_id(),
+                                private: false,
+                            };
+                            notes.push(task_note.clone());
+                            if task_id.is_some() {
+                                match task_note.create_task_note_in_db().await {
+                                    Ok(_) => log::info!("Created task note: {task_note:?}"),
+                                    Err(e) => log::error!("Error creating task note: {e:?}"),
+                                }
+                            }
+                        }
+                    }
+                }
+                
+            }
+            Err(e) => { return Err(anyhow::anyhow!("Error getting customer_threads from service number: {e:?}")); },
+        }
+        Ok(notes.clone())
+    }
+
+    pub fn set_task_id(&mut self, task_id: &RecordId) -> &mut Self {
+        self.task_id = Some(task_id.clone());
+        self
+    }
+
+    pub async fn check_or_create_notes(_notes: Vec<Self>) {
+
     }
 
     pub async fn get_db_notes_from_service(service_number: String) -> anyhow::Result<Vec<Self>, anyhow::Error> {
@@ -762,3 +841,5 @@ pub fn parse_msg_date(date_str: &str) -> Result<Datetime, chrono::ParseError> {
     let dt_utc = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
     Ok(dt_utc.into())
 }
+
+
