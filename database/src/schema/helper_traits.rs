@@ -317,6 +317,7 @@ impl EmployeeHelper for Employee {
     async fn to_prestashop_payload(service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
         let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
+        let task_notes = &mut vec![];
         info!("helper_traits -> Pulling order {service_number}");
         query.insert("filter[id]", service_number);
         query.insert("output_format", "JSON");
@@ -331,19 +332,19 @@ impl EmployeeHelper for Employee {
         if !customer_threads.is_empty() {
             for thread in customer_threads.iter() {
                 for msg in thread.associations.customer_messages.iter() {
-                    let msg =  api_call
+                    let msg: prestashop_schema::CustomerMessage =  api_call
                         .request_subresources_by_id_wasm(
                             "customer_messages",
                             "customer_message",
                             msg.id.as_str(),
                         )
                         .await?;
-                    customer_messages.push(msg)
+                    task_notes.push(msg.into_task_note(service_number).await?);
+                    customer_messages.push(msg);
                 }
             }
         }
     
-
         let order: prestashop_schema::Order = api_call
             .find_resource_wasm("orders", query.clone())
             .await.context("Pulling order")?;
@@ -413,6 +414,11 @@ impl EmployeeHelper for Employee {
                 .await.context("Pulling customer")?
         };
         
+        api_call.display = "full";
+        let address: prestashop_schema::Address = api_call
+            .request_subresources_by_id_wasm("addresses", "address", &order.id_address_invoice)
+            .await?;
+
         let customer = CustomerData {
             id: RecordId::from((
                 CUSTOMER_TABLE.to_string(),
@@ -420,7 +426,7 @@ impl EmployeeHelper for Employee {
             )),
             cust_code: order.id_customer.clone(),
             name: format!("{} {}", &cust.firstname, &cust.lastname),
-            // phone_number: address.phone.clone().to_string(),
+            phone_number: address.phone.clone().to_string(),
             email: cust.email,
             ..Default::default()
         };
@@ -433,7 +439,8 @@ impl EmployeeHelper for Employee {
                 split_rep,
                 customer_threads,
                 customer_messages,
-                ..Default::default()
+                task_notes: task_notes.clone(),
+                address
             }
         )
     }
@@ -708,7 +715,7 @@ impl From<PrestashopPayload> for TaskPayload {
                 id_customer_message: Some(msg.id.clone()),
                 id_employee: Some(msg.id_employee.clone()),
                 username: user.get_username().to_string(),
-                user: Some(user.get_id().clone()),
+                user: user.get_id().clone(),
                 service_number: Some(ticket.service_number.clone()),
                 private: false
                 // ..Default::default()

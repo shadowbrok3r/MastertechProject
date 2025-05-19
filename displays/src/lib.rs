@@ -161,7 +161,6 @@ pub trait Updatable {
     async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error>;
     async fn update_task_description(&self) -> anyhow::Result<(), anyhow::Error>;
     async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> anyhow::Result<(), anyhow::Error>;
-    async fn update_task_notes(&self, new_msg: String) -> anyhow::Result<(), anyhow::Error>;
 }
 
 pub trait Interaction {

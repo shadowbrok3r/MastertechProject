@@ -41,7 +41,7 @@ impl Default for TaskRowViewer {
             hotkeys: Default::default(),
             selected: Default::default(),
             open_hotkeys: Default::default(),
-            chat_view: Default::default(),
+            chat_view: ChatView::default(),
             order_data: PrestashopPayload::default(),
             missed_calls: Vec::new(),
         }
