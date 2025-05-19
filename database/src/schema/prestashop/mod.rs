@@ -196,7 +196,7 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        log::debug!("prestashop_schema -> query:{url}\nResponse for {}: {response:?}", response[name].clone());
+        log::info!("prestashop_schema -> query:{url}\nResponse: {:?}", response[name].clone());
 
         let x: T = from_value(response[name].clone())?;
         // info!("prestashop_schema -> x: {x:#?}");

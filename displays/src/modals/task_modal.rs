@@ -54,6 +54,12 @@ pub enum ModalAction {
     None,
 }
 
+                Hyperlink::from_label_and_url(
+                    format!(" {}", row.order.id.clone()), 
+                    format!("{BASE_URL}{}", row.order.id.clone())
+                )
+                .open_in_new_tab(true)
+                .ui(ui)
 impl TaskModal {
     pub fn new(chat_view: ChatView, mut task: TaskPayload) -> Self {
 
