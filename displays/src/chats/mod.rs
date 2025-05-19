@@ -1,5 +1,6 @@
+use chrono::Utc;
 use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, Style, TextEdit, TopBottomPanel, Ui, Widget};
-use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User}};
+use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
@@ -22,7 +23,7 @@ pub struct ChatView{
     pub users: BTreeSet<String>,
     pub edit_text: HashMap<String, TaskNotePayload>,
     pub allow_edit: HashSet<String>,
-    pub task_id: Option<RecordId>,
+    pub task_id: RecordId,
     pub service_number: Option<String>,
     #[serde(skip)]
     pub new_notes_tx: Sender<Vec<TaskNotePayload>>, 
@@ -32,14 +33,6 @@ pub struct ChatView{
     pub ui_event_tx: Sender<ChatEvent>, 
     #[serde(skip)]
     pub ui_event_rx: Receiver<ChatEvent>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum ChatEvent {
-    Edit(RecordId),
-    SaveNote(TaskNotePayload),
-    CancelEdit(RecordId),
-    DeleteNote(TaskNotePayload),
 }
 
 impl Default for ChatView {
@@ -62,7 +55,8 @@ impl Default for ChatView {
             users: BTreeSet::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
-            task_id: None,
+            // THIS IS ON PURPOSE SO WE CANT ACCIDENTALLY TRY AND LEAVE A NOTE WITHOUT A TASK
+            task_id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
@@ -70,11 +64,20 @@ impl Default for ChatView {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub enum ChatEvent {
+    Edit(RecordId),
+    SaveNote(TaskNotePayload),
+    CancelEdit(RecordId),
+    DeleteNote(TaskNotePayload),
+}
+
+
 impl ChatView {
     pub fn new(
         messages: Vec<TaskNotePayload>,
         users: Vec<User>, 
-        task_id: Option<RecordId>,
+        task_id: RecordId,
         service_number: Option<String>
     ) -> Self {
         let (new_notes_tx, new_notes_rx) = crossbeam::channel::unbounded();
@@ -89,6 +92,16 @@ impl ChatView {
         for message in messages.iter() {
             note_ids.insert(message.id.to_string(), message.clone());
         }
+
+        let service_number = if let Some(service_number) = service_number {
+            if service_number.is_empty() {
+                None
+            } else {
+                Some(service_number.clone())
+            }
+        } else {
+            None
+        };
 
         log::info!("Note ID's: {}", note_ids.len());
 
@@ -110,6 +123,24 @@ impl ChatView {
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
         }
+    }
+
+    pub fn set_notes(&mut self, notes: Vec<TaskNotePayload>) -> &mut Self {
+        self.messages = notes.clone();
+        self
+    }
+
+    pub fn set_service_number(&mut self, service_number: String) -> &mut Self {
+        self.service_number = Some(service_number.clone());
+        self
+    }
+
+    pub fn set_users(&mut self, users: Vec<User>) -> &mut Self {
+        for user in users.iter() {
+            let parsed_email = user.get_username();
+            self.users.insert(format!("@{parsed_email}"));  
+        }
+        self
     }
 
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
@@ -137,20 +168,7 @@ impl ChatView {
             self.edit_text.insert(new_note.id.to_string(), new_note.clone());
         } else {
             log::warn!("chats/mod.rs -> id_customer_thread, service_number, or task_id do not match\nOr self.messages is empty");
-            let removed = &mut vec![];
-
-            self
-                .messages
-                .retain(|n| {
-                    let check = n.id_customer_thread != new_note.id_customer_thread.clone()
-                        && n.service_number != new_note.service_number.clone()
-                        && n.task_id != new_note.task_id.clone();
-                    if check {
-                        removed.push(n.clone());
-                    }
-                    check
-                });
-                log::error!("chats/mod.rs -> Removed elements: {removed:#?}");
+            log::error!("chats/mod.rs -> Removed elements: {new_note:#?}");
         }
     }
 
@@ -186,30 +204,15 @@ impl ChatView {
         "#, service_number, task_id, user.get_username(), id_customer_thread);
 
         PlatformSpawner::spawn(async move {
-            let mut task_note = TaskNotePayload {
-                service_number: Some(service_number.clone()),
-                task_id: task_id.clone(),
-                user: Some(user.get_id().clone()),
-                username: user.get_username().to_string(),
-                ..Default::default()
-            };
-
-            if id_customer_thread.is_empty() && !service_number.is_empty() {
-                log::info!("Chats/mod.rs -> refresh_notes -> task_note.get_notes_from_service_number");
-                match task_note.get_notes_from_service_number(&service_number).await {
+            if !service_number.is_empty() {
+                let notes_res = TaskNotePayload::get_prestashop_notes_from_service(&service_number, Some(task_id.clone())).await;
+                match notes_res {
                     Ok(notes) => {let _ = tx.try_send(notes); },
                     Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                 };
-            } else if !id_customer_thread.is_empty() && service_number.is_empty() {
-                log::info!("Chats/mod.rs -> refresh_notes -> TaskNotePayload::get_db_notes_from_task_id");
-                if let Some(id) = task_id.clone() {
-                    match TaskNotePayload::get_db_notes_from_task_id(id).await {
-                        Ok(notes) => {let _ = tx.try_send(notes); },
-                        Err(e) => log::error!("Error getting notes from service number: {e:?}"),
-                    };
-                }
             } else {
-                match task_note.get_notes_from_service_number(&service_number).await {
+                let notes_res = TaskNotePayload::get_db_notes_from_task_id(task_id.clone()).await;
+                match notes_res {
                     Ok(notes) => {let _ = tx.try_send(notes); },
                     Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                 };
@@ -218,7 +221,8 @@ impl ChatView {
     }
 
     pub fn receive(&mut self) {
-        if let Ok(notes) = self.new_notes_rx.try_recv() {
+        if let Ok(mut notes) = self.new_notes_rx.try_recv() {
+
             log::info!("Chats/mod.rs -> refresh_notes -> self.new_notes_rx.try_recv(): {notes:?}");
             let mut new_messages = vec![];
 
@@ -232,10 +236,12 @@ impl ChatView {
             log::info!("Chats/mod.rs -> refresh_notes -> Existing ID's: {existing_ids:?}");
 
             // Add notes that don't exist in current messages
-            for note in notes {
+            for note in notes.iter_mut() {
+                note.set_task_id(&self.task_id);
+
                 if !existing_ids.contains(&note.id) {
                     log::info!("Adding new note with ID: {:?}", note.id);
-                    new_messages.push(note);
+                    new_messages.push(note.clone());
                 }
             }
 
@@ -336,17 +342,19 @@ impl ChatView {
                         Some(id_employee) => {
                             let mut new_note = TaskNotePayload {
                                 note: txt, 
-                                task_id, 
+                                task_id: Some(task_id.clone()), 
                                 username: usr.get_username().to_string(),
-                                user: Some(usr.get_id()),
+                                user: usr.get_id(),
                                 id_employee: Some(id_employee.to_string()),
                                 id_customer_thread,
                                 service_number: self.service_number.clone(),
                                 private: markdown_editor.private_note.clone(),
-                                ..Default::default() 
+                                id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+                                created_at: Utc::now().into(),
+                                id_customer_message: None,
                             };
 
-                            info!("chats/mod.rs -> new_note: {new_note:?}");
+                            error!("chats/mod.rs -> new_note: {new_note:#?}");
                             
                             PlatformSpawner::spawn(async move {
                                 if let Err(e) = new_note.handle_note_creation().await {
@@ -363,9 +371,10 @@ impl ChatView {
         });
 
         CentralPanel::default()
-            .frame(Frame::new().inner_margin(Margin::same(2)))
+            .frame(Frame::new().inner_margin(Margin::same(2)).fill(Color32::from_rgb(12, 12, 16)))
             .show_inside(ui, |ui| 
         {
+            
             ScrollArea::vertical()
                 .max_height(f32::INFINITY)// dont ask me to explain why 
                 .max_width(ui.available_width()) // this works over f32::infinity
@@ -373,8 +382,11 @@ impl ChatView {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height()/1.1);
+                    // 
                     self.chat(ui) 
             });
+            
+            ui.set_max_height(750.);
         });
     }
 
@@ -630,25 +642,25 @@ pub fn popup_widget(ui: &mut Ui, btn_response: Response, style: Arc<Style>, item
         |ui| 
     {
         ui.vertical_centered_justified(|ui| {
-            ui.set_width(400.0);
+            ui.set_width(300.0);
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("{:?}", item.id));
+                    ui.label(format!("Task_note:{}", item.id.key().to_string()));
                 });
             });
             ui.horizontal(|ui| {
                 if let Some(task_id) = item.task_id.clone() {
                     ui.colored_label(style.visuals.hyperlink_color, "Task ID");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!("{task_id:?}"));
+                        ui.label(format!("Task:{}", task_id.key().to_string()));
                     });
                 }
             });
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "Thread ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(item.id_customer_message.clone().unwrap_or_default());
+                    ui.label(item.id_customer_thread.clone().unwrap_or_default());
                 });
             });
             ui.horizontal(|ui| {
@@ -658,12 +670,10 @@ pub fn popup_widget(ui: &mut Ui, btn_response: Response, style: Arc<Style>, item
                 });
             });
             ui.horizontal(|ui| {
-                if let Some(uid) = item.user.clone() {
-                    ui.colored_label(style.visuals.hyperlink_color, "User ID");
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!("{uid:?}"));
-                    });
-                }
+                ui.colored_label(style.visuals.hyperlink_color, "User ID");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(format!("User:{}", item.user.key().to_string()));
+                });
             });
         });
     });

@@ -77,6 +77,11 @@ impl TaskAuditViewer {
                                 ui.label(phone);
                                 ui.end_row();
 
+                                ui.colored_label(Color32::LIGHT_RED, " Email");
+                                let phone = order.customer.email.clone();
+                                ui.label(phone);
+                                ui.end_row();
+
                                 ui.colored_label(Color32::LIGHT_RED, " Sales Rep");
                                 let sales_rep = order.sales_rep.unwrap_or_default();
                                 ui.label(format!("{} {}", sales_rep.firstname, sales_rep.lastname));

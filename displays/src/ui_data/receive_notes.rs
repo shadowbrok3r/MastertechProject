@@ -107,7 +107,7 @@ impl SharedContext {
                         let task = self
                             .tasks
                             .iter_mut()
-                            .find(|task| Some(task.id.clone()) == chat_view.task_id.clone() );
+                            .find(|task| Some(task.id.clone()) == Some(chat_view.task_id.clone()) );
 
                         if let Some(task) = task {
                             info!("receive_notes -> Inserting note into ChatView modal for task {}", task.id);
@@ -135,7 +135,7 @@ impl SharedContext {
                     if let Some(task) = self.tasks.iter().find(|task| {
                         task.id == id && task.assignee == user.get_id() && !task.completed
                     }) {
-                        if note.user != Some(user.get_id().clone()) {
+                        if note.user != user.get_id().clone() {
                             let toast = Toast {
                                 kind: ToastKind::Success,
                                 text: format!("New Message for {}", task.task_name).into(),
