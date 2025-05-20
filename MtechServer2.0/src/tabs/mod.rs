@@ -53,6 +53,7 @@ impl TabViewer for MtechServerContext {
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             "Customers" => self.shared_ctx.customer_view(ui),
+            "Threads" => self.shared_ctx.user_chat.ui(ui),
             _ => {}
         }
     }
