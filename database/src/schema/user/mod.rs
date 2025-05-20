@@ -1,13 +1,13 @@
-// use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use surrealdb::RecordId;
 use serde_json::Value;
-
 use crate::DATABASE;
 
-use super::{prestashop_schema::{self, Prestashop}, ChatThreads, Status, Store, USER_TABLE};
+use super::{prestashop_schema::{self, Prestashop}, Status, Store, USER_TABLE};
 
+pub mod chats;
+pub use chats::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {
@@ -22,7 +22,6 @@ pub struct User {
     user_settings: UserSettings,
     id_prestashop: Option<u64>,
     id_store: Option<String>,
-    chat_threads: Option<Vec<ChatThreads>>,
     user_statuses: Option<Vec<Status>>,
     authorization: UserAuthorization
 }
@@ -40,7 +39,6 @@ impl Default for User {
             user_settings: UserSettings::default(),
             id_store: None,
             id_prestashop: None,
-            chat_threads: None,
             user_statuses: None,
             authorization: UserAuthorization::User
         }
@@ -321,5 +319,14 @@ impl User {
                 ..Default::default()
             })
         }
+    }
+
+    pub async fn load_user_threads() -> anyhow::Result<Vec<ChatThread>, anyhow::Error> {
+        let user_threads: Vec<ChatThread> = DATABASE
+            .query("SELECT * FROM chat_thread WHERE user == $auth.id")
+            .await?
+            .take(0)?;
+
+        Ok(user_threads)
     }
 }

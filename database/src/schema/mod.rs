@@ -32,7 +32,9 @@ pub const SEB_TABLE: &str = "seb_data";
 pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
-pub const CHAT_THREADS_TABLE: &str = "threads";
+pub const CHAT_THREAD_TABLE: &str = "chat_thread";
+pub const USER_MESSAGE_TABLE: &str = "user_message";
+
 
 pub use task::*;
 pub use task_note::*;
