@@ -1,12 +1,8 @@
-use std::{borrow::Cow, sync::Arc};
 
-use eframe::egui::{
-    epaint::Shadow, popup_below_widget, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, PopupCloseBehavior, Rect, Response, RichText, ScrollArea, Sense, Shape, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget
-};
+use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Image, ImageSource, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{ChatAction, ChatMessageType, ChatThread, UserMessage};
-
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
-
+use std::{borrow::Cow, sync::Arc};
 use super::UserChat;
 
 impl UserChat {
@@ -16,39 +12,24 @@ impl UserChat {
             self.first_run();
         }
 
-        let username =  self.current_user.get_username().to_string();
-        let title = if let Some(thread) = &self.selected_thread {
-            let uid = self.current_user.get_id();
-            if thread.user_created == uid {
-                username.clone()
-            } else {
-                thread.thread_users
-                    .iter()
-                    .filter(|u| **u != uid)
-                    .map(|u| {
-                        self.store_users
-                            .iter()
-                            .find(|user| user.get_id() == *u)
-                            .map_or(u.to_string(), |user| user.get_username().to_string())
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            }
+        self.chat_title = if let Some(thread) = &self.selected_thread {
+            let usr = &thread.user_created;
+            self.store_users
+                .iter()
+                .find(|user| user.get_id() == *usr)
+                .map_or("Select a chat to get started".to_string(), |u| u.get_username().to_string())
         } else {
             "Select a chat to get started".to_string()
         };
         
-        TopBottomPanel::top(title)
-            .frame(Frame::default().inner_margin(Margin::same(8)))
+        TopBottomPanel::top(self.chat_title.clone())
+            .frame(Frame::default().inner_margin(Margin::same(4)))
             .exact_height(28.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     if !self.edit_title {
                         let t = self.chat_title.clone();
-                        if Button::new(
-                                RichText::new(format!("{t} 🖊"))
-                                .heading()
-                            )
+                        if Button::new(RichText::new(format!("{t} 🖊")).heading())
                             .min_size(Vec2::new(10., 8.))
                             .ui(ui)
                             .clicked() 
@@ -57,8 +38,7 @@ impl UserChat {
                         }
                     } else {
                         let edit = TextEdit::singleline(&mut self.chat_title)
-                        .margin(Margin::same(5))
-                        .font(FontId::proportional(12.))
+                        .margin(Margin::same(3))
                         .ui(ui);
 
                         if edit.lost_focus() {
@@ -71,20 +51,17 @@ impl UserChat {
             });
 
         SidePanel::left("ChatHistoryPanel")
-            .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_width(150.)
+            .exact_width(120.)
             .show_inside(ui, |ui| {
-                ui.vertical_centered(|ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.add_space(10.);
                     let selected_thread = &mut self.selected_thread.clone();
                     if self.threads.is_empty() {
                         ui.label("No chats yet");
                     } else {
                         for thread in self.threads.iter() {
                             let uid = self.current_user.get_id();
-                            let title = if thread.user_created == uid {
-                                self.current_user.get_username()
-                            } else {
-                                &thread.thread_users
+                            let title = thread.thread_users
                                     .iter()
                                     .filter(|u| **u != uid)
                                     .map(|u| {
@@ -94,8 +71,7 @@ impl UserChat {
                                             .map_or(u.to_string(), |user| user.get_username().to_string())
                                     })
                                     .collect::<Vec<String>>()
-                                    .join(", ")
-                            };
+                                    .join(", ");
 
                             let selected_thread_res = ui.selectable_label(
                                 selected_thread.as_ref().map_or(false, |t| t.id == thread.id),
@@ -116,6 +92,9 @@ impl UserChat {
                     }
 
                     ui.add_space(10.);
+                    ui.separator();
+                    ui.add_space(10.);
+
                     for user in self.store_users.iter() {
                         if Button::new(user.get_username())
                             .min_size(Vec2::new(120., 24.))
@@ -123,9 +102,9 @@ impl UserChat {
                             .clicked()
                         {
                             let tx = self.chat_action_tx.clone();
-                            log::info!("Sent a new chat action: {:?}", user.get_id());
                             let _ = tx.try_send(ChatAction::SelectThread(user.get_id()));
                         }
+                        ui.add_space(10.);
                     }
                 });
             });
@@ -133,15 +112,11 @@ impl UserChat {
         TopBottomPanel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .default_height(150.)
-            .show_inside(ui, |ui| {
-                self.chat_input(ui);
-            });
-
+            .show_inside(ui, |ui| self.chat_input(ui) );
+        
         CentralPanel::default()
             .frame(Frame::dark_canvas(ui.style()))
-            .show_inside(ui, |ui| {
-                self.display_thread(ui);
-            });
+            .show_inside(ui, |ui| self.display_thread(ui) );
 
     }
     
@@ -193,52 +168,36 @@ impl UserChat {
 
             //     }
             // }
-        if let Some(thread) = self.selected_thread.clone() {
+        if self.selected_thread.is_some() {
             ui.horizontal_centered(|ui| {
-
-                let add_media = Button::new(RichText::new("🖻").heading())
-                    .corner_radius(eframe::egui::CornerRadius::same(25))
-                    .min_size(Vec2::new(60., ui.available_height()/1.5))
-                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
-                    .ui(ui);
-                    // .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
-
-                if add_media.clicked() {
-                    // Self::submit_input(thread, self.response_tx.clone());
-                }
-
-                ui.add_space(10.);
-
                 let text_edit = TextEdit::multiline(&mut self.input)
                     .desired_width(ui.available_width()/1.1)
                     .margin(Margin::same(8))
-                    .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
                     .ui(ui);
-
-                let key_press = ui
-                    .input(|i| 
-                        i.key_pressed(Key::Enter)
-                    );
-
-                if text_edit.lost_focus() && key_press {
-                    text_edit.request_focus();
-                    let _ = self.chat_action_tx.try_send(ChatAction::SubmitMessage(ChatMessageType::Text(self.input.clone())));
-                    self.input.clear();
-                }
 
                 ui.add_space(10.);
 
-                let submit = Button::new(RichText::new("⮫").heading())
-                    .corner_radius(eframe::egui::CornerRadius::same(25))
-                    .min_size(Vec2::new(60., ui.available_height()/1.5))
-                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
-                    .ui(ui)
-                    .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
+                ui.vertical_centered(|ui| {
+                    if Button::new(RichText::new(" 🖻 ").heading())
+                        .min_size(Vec2::new(ui.available_width(), 25.))
+                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                        .ui(ui).clicked() {
+                        // Self::submit_input(thread, self.response_tx.clone());
+                    }
 
-                if submit.clicked() {
-                    let _ = self.chat_action_tx.try_send(ChatAction::SubmitMessage(ChatMessageType::Text(self.input.clone())));
-                    self.input.clear();
-                }
+                    ui.add_space(10.);
+
+                    if Button::new(RichText::new(" ⮫ ").heading())
+                        .min_size(Vec2::new(ui.available_width(), 25.))
+                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                        .ui(ui)
+                        .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"))
+                        .clicked() {
+                            let _ = self.chat_action_tx.try_send(ChatAction::SubmitMessage(ChatMessageType::Text(self.input.clone())));
+                            self.input.clear();
+                            text_edit.request_focus();
+                    }
+                });
             });
         }
     }
