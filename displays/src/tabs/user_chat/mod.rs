@@ -1,52 +1,64 @@
+use database::schema::User;
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
-use egui_extras::syntax_highlighting::{code_view_ui, CodeTheme};
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use surrealdb::{sql::Datetime, RecordId};
+use std::{borrow::Cow, sync::Arc};
 use crossbeam::channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use bytes::Bytes;
 use log::info;
 use core::str;
 
-pub struct UserChat {
-    pub selected_thread: String,
-    chat_title: HashMap<String, String>,
-    edit_title: bool,
-    threads: HashMap<String, ChatThread>,
+use crate::{get_current_user_from_auth, get_database_users, markdown_editor::viewer::easy_mark};
 
-    response_tx: Sender<UserMessage>,
-    response_rx: Receiver<UserMessage>,
-    /// Save AI chats to local storage // SurrealDB for persistence
-    pub save_chats: bool,
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserChat {
+    chat_title: String,
+    pub selected_thread: Option<RecordId>,
+    edit_title: bool,
+    threads: Vec<ChatThread>,
+    current_user: User,
+    store_users: Vec<User>,
+    #[serde(skip)]
+    chat_action_tx: Sender<ChatAction>,
+    #[serde(skip)]
+    chat_action_rx: Receiver<ChatAction>,
     image_id: String,
     open_modal: bool,
+    first_run:  bool
 }
 
 pub type ImageType = (String, Bytes);
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatThread {
-    pub id: String,
+    pub id: RecordId,
     pub messages: Vec<UserMessage>,
     pub images: Vec<ImageType>,
     pub input: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserMessage {
-    pub id: String,
-    pub thread_id: String,
-    pub ts: i32,
-    pub from: String,
+    pub id: RecordId,
+    pub thread_id: RecordId,
+    pub created_at: Datetime,
+    pub from: User,
     pub content: ChatMessageType
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ChatMessageType {
     Text(String),
     Image(ImageType),
+}
+
+enum ChatAction {
+    NewChat(RecordId),
+    ArchiveChat(RecordId),
+    RemoveChat(RecordId)
 }
 
 impl Default for ChatMessageType {
@@ -56,43 +68,59 @@ impl Default for ChatMessageType {
 }
 impl Default for UserChat {
     fn default() -> Self {
-        let (response_tx, response_rx) = crossbeam::channel::unbounded::<UserMessage>();
-
+        let (chat_action_tx, chat_action_rx) = crossbeam::channel::unbounded();
         Self {
-            selected_thread: String::new(),
-            threads: HashMap::new(),
-            chat_title: HashMap::new(),
+            chat_title: String::new(),
+            selected_thread: None,
+            threads: Vec::new(),
             edit_title: false,
-            response_tx, response_rx,
-            save_chats: false,
+            chat_action_tx, chat_action_rx,
             image_id: String::new(),
             open_modal: false,
+            current_user: if let Some(user) = get_current_user_from_auth() {
+                user
+            } else {
+                User::default()
+            },
+            store_users: vec![],
+            first_run: true
         }
     }
 }
 
 impl UserChat {
-    pub fn user_chat(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top(self.selected_thread)
-            .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_height(50.)
-            .show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let title = if let Some(title) = self
-                        .chat_title
-                        .get_mut(&self.selected_thread) 
-                    { 
-                        title 
-                    } else { 
-                        &mut self.selected_thread 
-                    };
+    pub fn ui(&mut self, ui: &mut Ui) {
+        self.handle_events(ui);
+        if self.first_run {
+            if self.store_users.is_empty() {
+                self.set_users();
+            } else {
+                self.first_run = false;
+                log::warn!("Setting users");
+            }
+        }
 
-                    ui.add_space(ui.available_width()/2.5);
+        let username =  self.current_user.get_username().to_string();
+        let title = if let Some(id) = &self.selected_thread {
+            let uid = self.current_user.get_id();
+            if id == &uid {
+                username.clone()
+            } else {
+                "Select a chat to get started".to_string()
+            }
+        } else {
+            "Select a chat to get started".to_string()
+        };
+        
+        TopBottomPanel::top(title)
+            .frame(Frame::default().inner_margin(Margin::same(8)))
+            .exact_height(28.)
+            .show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
                     if !self.edit_title {
-                        ui.heading(self.selected_thread.clone());
-                        ui.add_space(10.);
+                        let t = self.chat_title.clone();
                         if Button::new(
-                                RichText::new("🖊")
+                                RichText::new(format!("{t} 🖊"))
                                 .heading()
                             )
                             .min_size(Vec2::new(10., 8.))
@@ -102,20 +130,12 @@ impl UserChat {
                             self.edit_title = true;
                         }
                     } else {
-                        let edit = TextEdit::singleline(title)
+                        let edit = TextEdit::singleline(&mut self.chat_title)
                         .margin(Margin::same(5))
                         .font(FontId::proportional(12.))
                         .ui(ui);
-                        // request keyboard focus somehow..
-                        ui.add_space(10.);
-                        let done = Button::new(
-                                RichText::new("✔")
-                                .heading()
-                            )
-                            .min_size(Vec2::new(10., 8.))
-                            .ui(ui);
 
-                        if edit.lost_focus() ||  done.clicked() {
+                        if edit.lost_focus() {
                             info!("self.chat_title: {:?}", self.chat_title);
                             // self.chat_title.get(&selected_thread).insert(&title.clone());
                             self.edit_title = false;
@@ -126,57 +146,50 @@ impl UserChat {
 
         SidePanel::left("ChatHistoryPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_width(175.)
+            .exact_width(150.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     let mut selected_thread = self.selected_thread.clone();
                     if !self.threads.is_empty() {
-                        for (thread_id, _) in self.threads.iter() {
-                            let title = if let Some(title) = self
-                                .chat_title
-                                .get_key_value(thread_id) 
-                            { 
-                                title 
-                            } else { 
-                                (&selected_thread, &selected_thread)
+                        for thread in self.threads.iter() {
+                            let uid = self.current_user.get_id();
+                            let title = if thread.id == uid {
+                                self.current_user.get_username()
+                            } else {
+                                &thread.id.to_string()
                             };
 
                             let selected_thread_res = ui.selectable_label(
-                                selected_thread.eq(&thread_id.clone()), 
-                                RichText::new(title.1)
+                                selected_thread.eq(&Some(thread.id.clone())), 
+                                RichText::new(title)
                             );
                         
                             if selected_thread_res.clicked() {
-                                info!(
-                                    "Selected: {selected_thread:?}\nthread_id: {thread_id:?}\nBool: {:?}", 
-                                    selected_thread.eq(&thread_id.clone())
-                                );
-                                selected_thread = thread_id.clone();
+                                selected_thread = Some(thread.id.clone());
                             }
                         }
                     } else {
 
                     }
 
-                    ui.add_space(10.);
-                    let new_chat = Button::new("New ➕")
-                        .corner_radius(eframe::egui::CornerRadius::same(25))
-                        .min_size(Vec2::new(120., 24.))
-                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
-                        .ui(ui);
-
-                    if new_chat.clicked() {
-                        let tx = self.response_tx.clone();
-                        PlatformSpawner::spawn(async move {
-                            let _ = tx.try_send(UserMessage::default());
-                        });
+                    
+                    for user in self.store_users.iter() {
+                        ui.add_space(10.);
+                        if Button::new(user.get_username())
+                            .min_size(Vec2::new(120., 24.))
+                            .ui(ui)
+                            .clicked() 
+                        {
+                            let tx = self.chat_action_tx.clone();
+                            let _ = tx.try_send(ChatAction::NewChat(user.get_id()));
+                        }
                     }
                 });
             });
 
         TopBottomPanel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_height(75.)
+            .exact_height(150.)
             .show_inside(ui, |ui| {
                 self.chat(ui);
             });
@@ -188,14 +201,16 @@ impl UserChat {
             });
 
     }
-}
+    pub fn set_users(&mut self) {
+        let me = self.current_user.clone();
+       self.store_users = get_database_users().iter().filter(|u| u.get_store() == me.get_store()).cloned().collect::<Vec<User>>();
+    }
 
-impl UserChat {
-    pub fn set_threads(&mut self, threads: HashMap<String, ChatThread>) {
+    pub fn set_threads(&mut self, threads: Vec<ChatThread>) {
         self.threads = threads;
     }
 
-    pub fn get_threads(&mut self) -> HashMap<String, ChatThread> {
+    pub fn get_threads(&mut self) -> Vec<ChatThread> {
         self.threads.clone()
     }
 
@@ -217,7 +232,10 @@ impl UserChat {
 
                         // Render all finalized messages
                         let threads = self.threads.clone();
-                        for (thread_id, thread) in threads.iter() {
+                        if !threads.is_empty() {
+                            log::info!("Got a thread: {threads:?}");
+                        }
+                        for thread in threads.iter() {
                             if thread.messages.is_empty() {
                                 // let query = [("limit", "1")]; // Limit the list responses to 1 message
                                 // let _response: async_openai_wasm::types::ListMessagesResponse = oa_client
@@ -227,7 +245,7 @@ impl UserChat {
                                 //     .data;
                             }
                             for message in thread.messages.iter() {
-                                if message.thread_id.eq(thread_id) {
+                                if message.thread_id.eq(&thread.id) {
                                     self.render_message(ui, message, max_msg_width, fixed_height, min_width);
                                 }
                             }
@@ -235,12 +253,11 @@ impl UserChat {
                     });
             },
         );
-
-        self.handle_events(ui);
     }
 
     fn chat(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
+        let selected = self.selected_thread.clone();
+        if let Some(thread) = self.threads.iter_mut().find(|t| Some(t.id.clone()) == selected) {
             ui.horizontal_centered(|ui| {
 
                 let add_media = Button::new(RichText::new("🖻").heading())
@@ -270,7 +287,7 @@ impl UserChat {
 
                 if text_edit.lost_focus() && key_press {
                     text_edit.request_focus();
-                    Self::submit_input(thread, self.response_tx.clone());
+                    // Self::submit_input(thread, self.chat_action_tx.clone());
                 }
 
                 ui.add_space(10.);
@@ -283,7 +300,7 @@ impl UserChat {
                     .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
 
                 if submit.clicked() {
-                    Self::submit_input(thread, self.response_tx.clone());
+                    // Self::submit_input(thread, self.chat_action_tx.clone());
                 }
             });
         }
@@ -294,73 +311,57 @@ impl UserChat {
         let input = thread.input.clone();
         thread.input.clear();
 
-        // let current_thread = &self.selected_thread;
-        let id = if !thread.id.is_empty() {
-            Some(thread.id.clone())
-        } else { None };
 
-        PlatformSpawner::spawn(async move {
-            
-            let res = assistant_call_with_response_ai_tools(
-                input.as_str(), 
-                id, 
-                response_tx.clone()
-            ).await;
-
-            log::info!("Res: {res:?}");
-        });
     }
 
     fn handle_events(&mut self, ui: &mut Ui) {
         // Append characters to the current streaming message
-        while let Ok(response) = self.response_rx.try_recv() {
+        if let Ok(response) = self.chat_action_rx.try_recv() {
             ui.ctx().request_repaint();
-                    // Ensure the thread exists
-            let current_thread = self
-                .threads
-                .entry(response.thread_id.clone())
-                .or_insert_with(|| ChatThread {
-                    id: response.thread_id.clone(),
+
+            // Ensure the thread exists
+            let id = match response {
+                ChatAction::NewChat(record_id) => record_id,
+                ChatAction::ArchiveChat(record_id) => record_id,
+                ChatAction::RemoveChat(record_id) => record_id,
+            };
+
+            self.selected_thread = Some(id.clone());
+
+            self.threads
+                .iter()
+                .find(|t| t.id == id.clone())
+                .get_or_insert(&ChatThread {
+                    id: id.clone(),
                     messages: Vec::new(),
                     images: Vec::new(),
                     input: String::new(),
-                }
-            );
+                });
 
-            match response.content {
-                ChatMessageType::Text(ref msg) | ChatMessageType::Code(ref msg) => {
-                    info!("msg ID: {}", response.id.clone());
-                    // Update or add the message in the thread
-                    if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == response.id) {
-                        info!("Got existing_message: {}", response.id.clone());
-                        // Append new text to the existing message
-                        if let ChatMessageType::Text(existing_content) = &mut existing_message.content {
-                            log::info!("Got msg of type Text: {msg}");
-                            existing_content.push_str(msg);
-                        }
-                    } else {
-                        log::info!("We did NOT have an existing message. Pushing response: {:?}", response);
-                        // Add the message if it's not already in the thread
-                        current_thread.messages.push(response);
-                    }
-                }
-                ChatMessageType::Image((_, ref img)) => {
-                    info!("{img:?}");
-                    // Directly add these types of messages
-                    current_thread.messages.push(response);
-                }
-                ChatMessageType::FileId(_)  => {
-                    current_thread.messages.push(response);
-                }
-                ChatMessageType::Error(ref e) => {
-                    log::error!("Error in response: {}", e);
-                    current_thread.messages.push(response);
-                }
-                ChatMessageType::Done => {
-                    self.save_chats = true;
-                    // Finalize the message, no further action needed
-                }
-            }
+
+            // match response.content {
+            //     ChatMessageType::Text(ref msg) => {
+            //         info!("msg ID: {}", response.id.clone());
+            //         // Update or add the message in the thread
+            //         if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == id.clone()) {
+            //             info!("Got existing_message: {}", response.id.clone());
+            //             // Append new text to the existing message
+            //             if let ChatMessageType::Text(existing_content) = &mut existing_message.content {
+            //                 log::info!("Got msg of type Text: {msg}");
+            //                 existing_content.push_str(msg);
+            //             }
+            //         } else {
+            //             log::info!("We did NOT have an existing message. Pushing response: {:?}", response);
+            //             // Add the message if it's not already in the thread
+            //             current_thread.messages.push(response);
+            //         }
+            //     }
+            //     ChatMessageType::Image((_, ref img)) => {
+            //         info!("{img:?}");
+            //         // Directly add these types of messages
+            //         current_thread.messages.push(response);
+            //     }
+            // }
         
         }
     }
@@ -373,8 +374,21 @@ impl UserChat {
         fixed_height: f32,
         min_width: f32,
     ) {
-        let is_message_from_myself =
-            if item.from.eq(&SentFrom::Me) { true } else { false };
+        let is_message_from_myself = if item
+            .from
+            .get_id()
+            .eq(&self.current_user.get_id()) { true } else { false };
+
+        let from = match is_message_from_myself {
+            true => RichText::new(self.current_user.get_username())
+                .strong()
+                .monospace()
+                .color(Color32::LIGHT_BLUE),
+            false => RichText::new(item.from.get_username())
+                .strong()
+                .monospace()
+                .color(Color32::LIGHT_BLUE),
+        };
 
         // Messages from the user are right-aligned.
         let layout = if is_message_from_myself {
@@ -441,21 +455,6 @@ impl UserChat {
                             .inner_margin(Margin::symmetric(6, 10))
                             .corner_radius(rnding);
 
-                        let from = match item.from {
-                            SentFrom::Me => {
-                                RichText::new("You")
-                                    .strong()
-                                    .monospace()
-                                    .color(Color32::LIGHT_BLUE)
-                            },
-                            SentFrom::Gpt => {
-                                RichText::new("GPT")
-                                    .strong()
-                                    .monospace()
-                                    .color(Color32::LIGHT_BLUE)
-                            }
-                        };
-
                         if is_message_from_myself {
                             ui.with_layout(
                                 Layout::from_main_dir_and_cross_align(
@@ -483,11 +482,7 @@ impl UserChat {
                                     .ui(ui);
 
                                     if copy_btn.clicked() {
-                                        if let 
-                                            ChatMessageType::Code(txt) 
-                                            | ChatMessageType::Text(txt) 
-                                            = &item.content
-                                        {
+                                        if let ChatMessageType::Text(txt) = &item.content {
                                             ui.ctx().copy_text(txt.clone());
                                         }
                                     }
@@ -519,11 +514,7 @@ impl UserChat {
                                     .ui(ui);
 
                                     if copy_btn.clicked() {
-                                        if let 
-                                            ChatMessageType::Code(txt) 
-                                            | ChatMessageType::Text(txt) 
-                                            = &item.content
-                                        {
+                                        if let ChatMessageType::Text(txt) = &item.content {
                                             ui.ctx().copy_text(txt.clone());
                                         }
                                     }
@@ -540,15 +531,7 @@ impl UserChat {
                                     ui.set_width(ui.available_width());
                                     // info!("Got msg: {item:?}"));
                                     match &item.content {
-                                        ChatMessageType::Text(msg) 
-                                        | ChatMessageType::FileId(msg) 
-                                        | ChatMessageType::Error(msg) => viewer::easy_mark(ui, msg),
-                                        ChatMessageType::Code(code) => {
-                                            info!("Got code: {code:?}");
-                                            let language = "python";
-                                            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
-                                            code_view_ui(ui, &theme, code, language);
-                                        },
+                                        ChatMessageType::Text(msg) => easy_mark(ui, &msg),
                                         ChatMessageType::Image((file_id, bytes)) => {
                                             // info!("Got an img: {bytes:?}"));
                                             // Convert `bytes::Bytes` into `Arc<[u8]>` required by `egui::load::Bytes`
@@ -642,4 +625,5 @@ impl UserChat {
             ));
         });
     }
+
 }

@@ -112,6 +112,7 @@ impl TabViewer for MastertechContext {
             "Resource Monitor" => self.show_resource_monitor(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
+            "Threads" => self.shared_ctx.user_chat.ui(ui),
             _ => {}
         }
     }

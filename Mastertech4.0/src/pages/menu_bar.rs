@@ -39,6 +39,7 @@ impl MasterTechApp {
                             &"Task Audit".to_string(),
                             &"Company Stock".to_string(),
                             &"Downloads".to_string(),
+                            &"Threads".to_string(),
                             &"Logs".to_string(),
                         ] {
                             if ui
