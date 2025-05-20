@@ -108,7 +108,7 @@ mod platform {
 
 pub fn get_current_user_from_auth() -> Option<User> {
     if let Ok(current_user) = CURRENT_USER_INFO.try_lock() {
-        log::warn!("WE HAVE A USER FROM GLOBAL STATE");
+        // log::warn!("WE HAVE A USER FROM GLOBAL STATE");
         current_user.clone()
     } else {
         log::warn!("NONE");
@@ -118,7 +118,7 @@ pub fn get_current_user_from_auth() -> Option<User> {
 
 pub fn get_database_users()  -> Vec<User>{
     if let Ok(users) = STORE_USERS.try_lock() {
-        log::warn!("WE HAVE STORE USERS FROM GLOBAL STATE");
+        // log::warn!("WE HAVE STORE USERS FROM GLOBAL STATE");
         users.clone()
     } else {
         log::warn!("NONE");

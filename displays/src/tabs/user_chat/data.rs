@@ -1,6 +1,6 @@
 use database::{live_data::listen_data, schema::{ChatAction, ChatMessageType, ChatThread, User, UserMessage, CHAT_THREAD_TABLE, USER_MESSAGE_TABLE}};
 use crate::{get_current_user_from_auth, get_database_users, PlatformSpawner, Spawner};
-use surrealdb::RecordId;
+// use surrealdb::RecordId;
 use eframe::egui::Ui;
 use super::UserChat;
 
@@ -14,6 +14,8 @@ impl UserChat {
             let msg_tx = self.message_listener_tx.clone();
             PlatformSpawner::spawn(async move {
                 let _ = listen_data(tx, CHAT_THREAD_TABLE).await;
+            }); 
+            PlatformSpawner::spawn(async move {
                 let _ = listen_data(msg_tx, USER_MESSAGE_TABLE).await;
             });
         }
@@ -22,12 +24,12 @@ impl UserChat {
     pub fn receive(&mut self, ui: &mut Ui) {
         if let Ok(thread) = self.thread_rx.try_recv() {
             ui.ctx().request_repaint();
-            log::info!("Received thread: {thread:?}");
             // Add thread to threads list if not already present
             if !self.threads.iter().any(|t| t.id == thread.id) {
                 self.threads.push(thread.clone());
             }
             self.selected_thread = Some(thread.clone());
+            // self.chat_title = thread.
             // Ensure thread_messages has an entry
             self.thread_messages.entry(thread.id.clone()).or_insert(Vec::new());
             // Load messages for the selected thread
@@ -44,10 +46,8 @@ impl UserChat {
 
         if let Ok(msg) = self.chat_msg_rx.try_recv() {
             ui.ctx().request_repaint();
-            log::info!("Received message: {msg:?}");
             let messages = self.thread_messages.entry(msg.thread_id.clone()).or_insert(Vec::new());
             if !messages.iter().any(|m| m.id == msg.id) {
-                log::info!("msg not found, inserting");
                 messages.push(msg.clone());
                 messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
             }
@@ -156,10 +156,10 @@ impl UserChat {
 
         if let Ok((action, msg)) = self.message_listener_rx.try_recv() {
             ui.ctx().request_repaint();
-            log::info!("Received message: {msg:?}");
             let messages = self.thread_messages.entry(msg.thread_id.clone()).or_insert(Vec::new());
             match action {
                 surrealdb::Action::Create => {
+                    let messages = self.thread_messages.entry(msg.thread_id.clone()).or_insert(Vec::new());
                     if !messages.iter().any(|m| m.id == msg.id) {
                         messages.push(msg.clone());
                         messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));

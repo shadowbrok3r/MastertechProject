@@ -1,10 +1,6 @@
-use chrono::Utc;
-use surrealdb::{sql::Datetime, RecordId};
-
 use crate::{schema::{User, CHAT_THREAD_TABLE}, DATABASE};
-
-use super::UserMessage;
-
+use surrealdb::{sql::Datetime, RecordId};
+use chrono::Utc;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ChatThread {
@@ -38,7 +34,7 @@ impl ChatThread {
         }
     }
 
-    pub fn insert_user_to_thread(mut self, user_id: RecordId) -> Self {
+    pub fn insert_user_to_thread(self, user_id: RecordId) -> Self {
         let _ = self.thread_users.iter()
             .find(|t| **t == user_id)
             .get_or_insert(&user_id);
