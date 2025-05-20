@@ -1,7 +1,6 @@
-use std::collections::{HashMap, HashSet};
-
 use database::schema::{ChatAction, ChatThread, User, UserMessage};
 use crossbeam::channel::{Receiver, Sender};
+use std::collections::{HashMap, HashSet};
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
 
