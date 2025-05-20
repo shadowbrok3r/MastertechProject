@@ -1,6 +1,6 @@
-use eframe::egui::{Button, Color32, FontId, Grid, Margin, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Button, Color32, FontId, Grid, Hyperlink, Margin, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
 use database::{schema::{CustomerData, Record, TaskPayload, TicketPayload, User}, DATABASE};
-use crate::{Interaction, PlatformSpawner, Spawner};
+use crate::{tabs::task_audit::row_viewer::BASE_URL, Interaction, PlatformSpawner, Spawner};
 use chrono::{DateTime, Utc};
 
 use super::return_colors;
@@ -25,12 +25,25 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                     ui.push_id(format!("Service #{:?}", task.service_number), |ui| {
                         task.interact_service_number(ui);
                     });
-                    
-                    ui.colored_label(Color32::LIGHT_RED, "Other");
+                } else {
                     ui.label("");
-
-                    ui.end_row();
+                    ui.label("");
                 }
+
+                if let Some(service_number) = task.service_number.as_ref() {
+                    ui.colored_label(Color32::LIGHT_RED, "Prestashop Order");
+                    Hyperlink::from_label_and_url(
+                        service_number.clone(), 
+                        format!("{BASE_URL}{}", service_number)
+                    )
+                    .open_in_new_tab(true)
+                    .ui(ui);
+                } else {
+                    ui.label("");
+                    ui.label("");
+                }
+
+                ui.end_row();
 
                 ui.colored_label(Color32::LIGHT_RED, "Assignee");
                 ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {

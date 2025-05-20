@@ -33,6 +33,7 @@ impl MtechServer {
                                 &"Store Stock".to_string(),
                                 &"Company Stock".to_string(),
                                 &"My Tools".to_string(),
+                                &"Threads".to_string(),
                                 &"Logs".to_string(),
                             ] {
                                 if ui
