@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, TaskNotePayload, TaskPayload, User}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -41,10 +41,6 @@ pub struct SharedContext {
     pub live_clients_tx: Sender<(Action, ConnectedClient)>,
     #[serde(skip)]
     pub live_clients_rx: Receiver<(Action, ConnectedClient)>,
-    /// {WebSocket clients by ID}
-    // #[serde(skip)]
-    // pub ws_clients: HashMap<String, WebSocketClient>,
-
     /// {Task transmission channel over crossbeam}
     #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
@@ -76,8 +72,6 @@ pub struct SharedContext {
     pub db_rx: Receiver<anyhow::Result<Database, Error>>,
     #[serde(skip)]
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
-    // #[serde(skip)]
-    // pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     #[serde(skip)]
@@ -140,10 +134,6 @@ pub struct SharedContext {
     pub tur: Tur,
     pub close_modal: Option<String>,
 
-    // #[serde(skip)]
-    // pub json_editor: JsonEditor,
-    // #[serde(skip)]
-    // pub json_editor_state: JsonEditorState,
     /// generic data viewer (currently used for inventory tab)
     #[serde(skip)]
     pub serials_viewer: SerialsViewer,
@@ -165,7 +155,6 @@ pub struct SharedContext {
     pub ai_playground: AiPlayground,
     #[serde(skip)]
     pub show_tasks_viewport: HashMap<RecordId, ViewportData>,
-    pub switching_store: bool,
     pub refresh: bool,
     #[serde(skip)]
     pub timer: Option<web_time::Instant>,
@@ -181,9 +170,12 @@ pub struct SharedContext {
     #[serde(skip)]
     pub associated_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
-    pub layout_configs: Option<HashMap<String, LayoutConfig>>, // Lazy initialization
+    pub layout_configs: Option<HashMap<String, LayoutConfig>>,
     pub scene_editor: SceneEditor,
     pub user_chat: UserChat,
+    pub pending_store: Option<Store>,
+    #[serde(skip)]
+    pub layout_filters: HashMap<String, Box<dyn LayoutFilter>>,
 }
 
 impl SharedContext {
@@ -214,7 +206,6 @@ impl SharedContext {
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
-        // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
 
         let mut serials_viewer = SerialsViewer::default();
@@ -225,7 +216,13 @@ impl SharedContext {
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
 
+        let mut layout_filters = HashMap::new();
+        layout_filters.insert("MyTasks".to_string(), Box::new(MyTasksFilter) as Box<dyn LayoutFilter>);
+        layout_filters.insert("StoreTasks".to_string(), Box::new(StoreTasksFilter));
+        layout_filters.insert("Completed".to_string(), Box::new(CompletedFilter));
+
         Self {
+            layout_filters,
             layout_configs: None,
             current_user: None,
             tasks: Vec::new(),
@@ -270,18 +267,14 @@ impl SharedContext {
             extra_stock_channel,
             ai_thread_channel,
             seb_channel,
-            // github_releases_channel,
             undock_client: HashMap::new(),
             wants_to_undock: false,
             clients: Vec::new(),
             opened_modals: HashMap::new(),
             read_notifications: false,
             new_note: false,
-            // ws_clients: HashMap::new(),
 
             // Other Components
-            // json_editor: JsonEditor::default(),
-            // json_editor_state: JsonEditorState::SettingsPage,
             serials_table: DataTable::<SerialsData>::default(),
             serials_viewer,
             stock_quantity_viewer: StockQuantityViewer::default(),
@@ -296,19 +289,46 @@ impl SharedContext {
             theme,
             modify_theme: false,
             show_tasks_viewport: HashMap::new(),
-            switching_store: false,
             refresh: false,
             timer: None,
             filesystem,
             web_console_layout,
             room_id: String::new(),
             user_chat: UserChat::default(),
+            pending_store: None
         }
     }
 
     pub fn init_layout_configs(&mut self) {
         if self.layout_configs.is_none() && !self.store_users.is_empty() {
             let mut layout_configs = HashMap::new();
+
+            // MyTasks: Current user's tasks, non-Complete, keyed by all statuses
+            let valid_statuses = {
+                let mut statuses = vec![
+                    Status::Todo,
+                    Status::InRepair,
+                    Status::Sales,
+                    Status::Qc,
+                    // Exclude Complete as per filter
+                ];
+                // Add custom statuses from current_user's user_statuses
+                if let Some(current_user) = &self.current_user {
+                    let user_statuses = current_user.get_statuses();
+                    statuses.extend(user_statuses.iter().filter(|s| *s != &Status::Complete).cloned());
+                    
+                }
+                // Convert to strings and deduplicate
+                statuses
+                    .into_iter()
+                    .map(|s| match s {
+                        Status::CustomStatus(name) => name,
+                        _ => s.as_str().to_string(),
+                    })
+                    .collect::<std::collections::HashSet<String>>()
+                    .into_iter()
+                    .collect::<Vec<String>>()
+            };
 
             // MyTasks: Current user's tasks, non-Complete, keyed by status
             layout_configs.insert(
@@ -451,4 +471,48 @@ fn setup_custom_fonts(ctx: &Context) {
         .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
+}
+
+pub trait LayoutFilter {
+    fn should_include(&self, task: &TaskPayload, context: &SharedContext) -> bool;
+    fn valid_statuses(&self) -> Vec<Status>; // Statuses this layout displays
+}
+
+// Example implementations for existing layouts
+pub struct MyTasksFilter;
+impl LayoutFilter for MyTasksFilter {
+    fn should_include(&self, task: &TaskPayload, context: &SharedContext) -> bool {
+        context
+            .current_user
+            .as_ref()
+            .map(|user| task.assignee == user.get_id() && task.status != Status::Complete)
+            .unwrap_or(false)
+    }
+    fn valid_statuses(&self) -> Vec<Status> {
+        vec![Status::Todo, Status::InRepair]
+    }
+}
+
+pub struct StoreTasksFilter;
+impl LayoutFilter for StoreTasksFilter {
+    fn should_include(&self, task: &TaskPayload, context: &SharedContext) -> bool {
+        context
+            .store_users
+            .iter()
+            .any(|user| task.assignee == user.get_id())
+            && task.status != Status::Complete
+    }
+    fn valid_statuses(&self) -> Vec<Status> {
+        vec![Status::Todo, Status::InRepair]
+    }
+}
+
+pub struct CompletedFilter;
+impl LayoutFilter for CompletedFilter {
+    fn should_include(&self, task: &TaskPayload, _context: &SharedContext) -> bool {
+        task.status == Status::Complete
+    }
+    fn valid_statuses(&self) -> Vec<Status> {
+        vec![Status::Complete]
+    }
 }

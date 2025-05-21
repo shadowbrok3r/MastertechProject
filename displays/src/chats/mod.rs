@@ -213,7 +213,7 @@ impl ChatView {
             } else {
                 let notes_res = TaskNotePayload::get_db_notes_from_task_id(task_id.clone()).await;
                 match notes_res {
-                    Ok(notes) => {let _ = tx.try_send(notes); },
+                    Ok(notes) => { let _ = tx.try_send(notes); },
                     Err(e) => log::error!("Error getting notes from service number: {e:?}"),
                 };
             }

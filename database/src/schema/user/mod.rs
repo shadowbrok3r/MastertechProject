@@ -39,7 +39,7 @@ impl Default for User {
             user_settings: UserSettings::default(),
             id_store: None,
             id_prestashop: None,
-            user_statuses: None,
+            user_statuses: Some(Status::VALUES.to_vec()),
             authorization: UserAuthorization::User
         }
     }
@@ -143,6 +143,10 @@ impl User {
         self.user_settings.clone()
     }
 
+    pub fn get_statuses(&self) -> Vec<Status>{
+        self.user_statuses.clone().unwrap_or(Status::VALUES.to_vec())
+    }
+
     pub fn get_color_scheme(&self) -> Value {
         self.user_settings.color_scheme.clone()
     }
@@ -177,6 +181,11 @@ impl User {
 
     pub fn set_color_scheme(&mut self, color_scheme: Value) -> &mut Self {
         self.user_settings.color_scheme = color_scheme;
+        self
+    }
+
+    pub fn set_statuses(&mut self, status: Status) -> &mut Self {
+        self.user_statuses.as_mut().unwrap_or(&mut Status::VALUES.to_vec()).push(status);
         self
     }
 
@@ -270,12 +279,6 @@ impl User {
         };
         Ok(store)
     }
-    
-    pub fn add_custom_status(&mut self, _new_status: &str) {
-        // if let Status::CustomStatus(ref mut user_statuses) = self {
-        //     user_statuses.push(new_status.to_string());
-        // }
-    }
 
     pub async fn get_current_user_from_auth() -> anyhow::Result<Option<Self>, anyhow::Error> {
         let user_record: Option<Self> = DATABASE
@@ -319,6 +322,17 @@ impl User {
                 ..Default::default()
             })
         }
+    }
+
+    pub async fn add_custom_status(status: Status) -> anyhow::Result<(), anyhow::Error> {
+        let user_statuses: Vec<Status> = DATABASE
+            .query("UPDATE user SET user_statuses += $status WHERE id == $auth.id")
+            .bind(("status", status))
+            .await?
+            .take(0)?;
+
+        log::info!("user/mod.rs -> Inserted user status: {user_statuses:?}");
+        Ok(())
     }
 
     pub async fn load_user_threads() -> anyhow::Result<Vec<ChatThread>, anyhow::Error> {
