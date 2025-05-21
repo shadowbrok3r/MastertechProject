@@ -1,4 +1,4 @@
-use database::{live_data::listen_data, schema::{utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{live_data::listen_data, schema::{utilities::{get_completed_tasks_for_store, get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
@@ -196,23 +196,23 @@ impl MtechServer {
                         });
             
                         if *selected != current {
-                            self.context.shared_ctx.store_users.clear();
-                            self.context.shared_ctx.tasks.clear();
-                            self.context.shared_ctx.task_layouts.clear();
                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
                             let store_selection = std::convert::Into::<Store>::into(*selected);
-                            
+                            self.context.shared_ctx.store_users.clear();
+                            self.context.shared_ctx.tasks.clear();
+                            self.context.shared_ctx.layout_configs = None; // Force reinitialization
+                            info!("Switching to store: {:?}", store_selection.as_str());
                             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
                             spawn_local(async move {
                                 let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                let tasks = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
                                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
-                
+                                info!("get_completed_tasks_for_store: {tasks:?}");
                                 info!("get_tasks_for_store: {store_tasks:?}");
                                 info!("get_store_users: {get_store_users:?}");
                             });
                         }
-
                     });
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
