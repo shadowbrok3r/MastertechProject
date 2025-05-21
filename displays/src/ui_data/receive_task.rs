@@ -5,7 +5,7 @@ use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 impl SharedContext {
     pub fn receive_task(&mut self) {
         if let Ok(new_task) = self.live_tasks_rx.try_recv() {
-            info!("New Task Update: {:?}", new_task.0);
+            info!("New Task Update: {:?}", new_task.0); // need to fix live update for priority changes, check everything else
             let tx = self.new_ticket_tx.clone();
             let notes_tx = self.associated_notes_tx.clone();
             if let Some(service_num) = new_task.clone().1.service_number {
