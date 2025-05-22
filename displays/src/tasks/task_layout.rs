@@ -107,6 +107,7 @@ impl TaskLayout {
         // a tiny value. Capturing it up‑front guarantees we have the full
         // window height for every column.
         //-----------------------------------------------------------------
+
         let viewport_h = ui.available_height();
 
         let column_frame = Frame::default()
@@ -155,12 +156,11 @@ impl TaskLayout {
 
                             ui.horizontal(|ui| 
                             {
-                                ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| 
                                 {
                                     let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
                                     let mut margin = Margin::default();
                                     margin.top = 6;
-                                    margin.left = 4;
                                     
                                     TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
 
@@ -175,8 +175,6 @@ impl TaskLayout {
                                     }
 
                                     if count > 0 {
-                                        ui.small("Overdue");
-                                        ui.add_space(5.0);
                                         ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
                                     }
 
@@ -218,36 +216,28 @@ impl TaskLayout {
                                         }).inner
                                     });
 
-                                    if let Some(action) = res{
-                                        match action{
-                                            TaskActions::MarkComplete => {
-                                                PlatformSpawner::spawn(async move {
-                                                    // for id in ids{
-                                                        let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                            .bind(("record", ids.clone()))
-                                                            .bind(("completion", true))
-                                                            .await.unwrap().take(0).unwrap();
-                                                    // }
-                                                });
-                                            },
-                                            TaskActions::MarkIncomplete => {
-                                                PlatformSpawner::spawn(async move {
-                                                    // for id in ids{
-                                                        let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                            .bind(("record", ids.clone()))
-                                                            .bind(("completion", false))
-                                                            .await.unwrap().take(0).unwrap();
-                                                    // }
-                                                });
-                                            },
-                                            TaskActions::MarkDueToday => {
-                                                PlatformSpawner::spawn(async move {
+                                    PlatformSpawner::spawn(async move {
+                                        if let Some(action) = res {
+                                            match action{
+                                                TaskActions::MarkComplete => {
+                                                    let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                        .bind(("record", ids.clone()))
+                                                        .bind(("completion", true))
+                                                        .await.unwrap().take(0).unwrap();
+                                                },
+                                                TaskActions::MarkIncomplete => {
+                                                    let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                        .bind(("record", ids.clone()))
+                                                        .bind(("completion", false))
+                                                        .await.unwrap().take(0).unwrap();
+                                                },
+                                                TaskActions::MarkDueToday => {
                                                     let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
                                                         .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
-                                                });
-                                            }, _ => {}
+                                                }, _ => {}
+                                            }
                                         }
-                                    }
+                                    });
                                 });
                                 
                                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
@@ -290,30 +280,9 @@ impl TaskLayout {
                                             }
 
                                             ui.add_space(5.0);
-                                            // let create_status_button = Button::new(
-                                            //     RichText::new("Create new status")
-                                            //         .color(ui.style().visuals.warn_fg_color)
-                                            //     )
-                                            //     .corner_radius(ui.style().visuals.menu_rounding)
-                                            //     .fill(Color32::from_rgb(22,22,22))
-                                            //     .min_size(Vec2::new(30.0, 15.0))
-                                            //     .ui(ui);
 
                                             let accepted_by_keyboard = ui.ctx().input_mut(|i| i.key_pressed(eframe::egui::Key::Enter));
                                             let res = TextEdit::singleline(&mut self.new_status).hint_text("Create new status").show(ui);
-
-                                            if res.response.lost_focus() || accepted_by_keyboard {
-                                                if let Some(new_status) = self.new_status.clone().into() {
-                                                    // Send the new status to the database
-                                                    PlatformSpawner::spawn(async move {
-                                                        let _x: Option<Record> = DATABASE.query("fn::create_new_status($status)")
-                                                            .bind(("status", new_status))
-                                                            .await.unwrap().take(0).unwrap();
-                                                    });
-                                                }
-                                                self.new_status.clear();
-
-                                            }
 
                                             if ( accepted_by_keyboard || res.response.lost_focus() ) && !self.new_status.is_empty() {
                                                 info!("Got a new status: {}", self.new_status);

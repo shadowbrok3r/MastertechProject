@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 impl SharedContext {
     pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
-        ui.ctx().request_repaint(); // Ensure continuous updates
+        ui.ctx().request_repaint();
         if self.store_users.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.label("Loading...");
@@ -17,7 +17,7 @@ impl SharedContext {
             return;
         }
 
-        // Initialize layout_configs if needed
+        // Initialize layout_configs
         self.init_layout_configs();
 
         // Ensure layout_configs exists
@@ -38,20 +38,24 @@ impl SharedContext {
             let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
 
             let mut map = BTreeMap::new();
-            let col_names = (config.key_provider)(&self.store_users);
+            let mut col_names = Vec::new();
 
             if page == "MyTasks" {
-                // Initialize by status
+                // Initialize by status, only include non-empty columns
                 for status_str in &config.valid_keys {
                     let status = Status::from_str(status_str);
                     let filtered = self
                         .tasks
                         .filter_by_status(&status)
                         .filter_by_assignee(&current_user);
-                    map.entry(status_str.clone()).or_insert(filtered);
+                    if !filtered.is_empty() {
+                        map.entry(status_str.clone()).or_insert(filtered);
+                        col_names.push(status_str.clone());
+                    }
                 }
             } else {
                 // Initialize by user initials
+                col_names = (config.key_provider)(&self.store_users);
                 for user in self.store_users.iter() {
                     let filtered = self
                         .tasks

@@ -305,22 +305,15 @@ impl SharedContext {
 
             // MyTasks: Current user's tasks, non-Complete, keyed by all statuses
             let valid_statuses = {
-                let mut statuses = vec![
-                    Status::Todo,
-                    Status::InRepair,
-                    Status::Sales,
-                    Status::Qc,
-                    // Exclude Complete as per filter
-                ];
-                // Add custom statuses from current_user's user_statuses
-                if let Some(current_user) = &self.current_user {
-                    let user_statuses = current_user.get_statuses();
-                    statuses.extend(user_statuses.iter().filter(|s| *s != &Status::Complete).cloned());
-                    
-                }
-                // Convert to strings and deduplicate
+                let statuses = self
+                    .current_user
+                    .as_ref()
+                    .map(|user| user.get_statuses())
+                    .unwrap_or_else(|| Status::VALUES.to_vec());
+                // Filter out Complete and deduplicate
                 statuses
                     .into_iter()
+                    .filter(|s| *s != Status::Complete)
                     .map(|s| match s {
                         Status::CustomStatus(name) => name,
                         _ => s.as_str().to_string(),
@@ -334,21 +327,23 @@ impl SharedContext {
             layout_configs.insert(
                 "MyTasks".to_string(),
                 LayoutConfig {
-                    valid_keys: vec!["Todo".to_string(), "InRepair".to_string()],
-                    key_provider: Box::new(|_| {
-                        vec!["Todo".to_string(), "InRepair".to_string()]
-                    }),
+                    valid_keys: valid_statuses.clone(),
+                    key_provider: Box::new(move |_| valid_statuses.clone()),
                     filter: Box::new(|task, current_user, _store_users, _store| {
                         current_user
                             .as_ref()
-                            .map(|user| task.assignee == user.get_id() && task.status != Status::Complete)
+                            .map(|user|{
+                                task.assignee == user.get_id() &&
+                                task.status != Status::Complete &&
+                                !task.completed
+                            })
                             .unwrap_or(false)
                     }),
                     update_assignees: false,
                 },
             );
 
-            // StoreTasks: Incomplete tasks for store users, keyed by initials
+            // StoreTasks: Incomplete tasks for store users, keyed by username
             layout_configs.insert(
                 "StoreTasks".to_string(),
                 LayoutConfig {
@@ -369,6 +364,7 @@ impl SharedContext {
                                         && u.get_id() != current.get_id()
                                         && task.assignee != current.get_id()
                                         && task.assignee == u.get_id()
+                                        && task.status != Status::Complete
                                         && !task.completed
                                 })
                             })
@@ -378,7 +374,7 @@ impl SharedContext {
                 },
             );
 
-            // CompletedTasks: Completed tasks for store users, keyed by initials
+            // CompletedTasks: Completed tasks for store users, keyed by username
             layout_configs.insert(
                 "CompletedTasks".to_string(),
                 LayoutConfig {
@@ -392,7 +388,7 @@ impl SharedContext {
                     }),
                     filter: Box::new(|task, _current_user, store_users, store| {
                         store_users.iter().any(|u| {
-                            u.get_store() == *store && task.assignee == u.get_id() && task.completed
+                            u.get_store() == *store && task.assignee == u.get_id() && task.completed && task.status == Status::Complete
                         })
                     }),
                     update_assignees: true,

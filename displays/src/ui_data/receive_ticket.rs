@@ -6,7 +6,7 @@ use crate::app_state::SharedContext;
 impl SharedContext {
     pub fn receive_ticket(&mut self) {
         if let Ok(channel) = self.new_ticket_rx.try_recv() {
-            info!("New Ticket Update");
+info!("New Ticket Update");
 
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
@@ -26,7 +26,7 @@ impl SharedContext {
                         continue;
                     };
 
-                    // Remove task from all task_map entries if it no longer belongs
+                    // Remove task from all task_map entries if it no longer belongs or is in the wrong key
                     let mut old_key = None;
                     for (key, task_list) in layout.task_map.iter_mut() {
                         if let Some(pos) = task_list
@@ -39,11 +39,16 @@ impl SharedContext {
                                 &self.store_users,
                                 &store_selection,
                             );
-                            if !should_include {
+                            // Remove task if it doesn't belong or is in the wrong status column
+                            let is_wrong_key = layout_key == "MyTasks" && key != new_task.status.as_str();
+                            if !should_include || is_wrong_key {
                                 task_list.remove(pos);
                                 info!(
-                                    "Removed task {} from layout {} (key: {}) as it no longer belongs",
-                                    new_task_id, layout_key, key
+                                    "Removed task {} from layout {} (key: {}) as it {} belongs",
+                                    new_task_id,
+                                    layout_key,
+                                    key,
+                                    if should_include && is_wrong_key { "is in wrong status column" } else { "no longer" }
                                 );
                             } else {
                                 old_key = Some(key.clone());
