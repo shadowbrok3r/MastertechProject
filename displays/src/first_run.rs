@@ -1,4 +1,3 @@
-
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, Status, Store, TaskPayload, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, FilterTasks, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
@@ -191,8 +190,7 @@ impl SharedContext {
             }
         }
 
-        if let Ok(users) = self.store_users_rx.try_recv() {
-            info!("Received new store users: {} users", users.len());
+        if let Ok(users) = self.store_users_rx.try_recv() {info!("Received new store users: {} users", users.len());
 
             // Check if store_users has changed significantly
             let old_initials: HashSet<String> = self
@@ -204,16 +202,41 @@ impl SharedContext {
                 .iter()
                 .map(|u| u.get_initials().to_string())
                 .collect();
-            
             let users_changed = old_initials != new_initials;
+
+            // Check if user_statuses have changed for current_user
+            let old_statuses = self.current_user.as_ref().map(|u| {
+                u.get_statuses()
+                    .into_iter()
+                    .map(|status| match status {
+                        Status::CustomStatus(name) => name,
+                        _ => status.as_str().to_string(),
+                    })
+                    .collect::<HashSet<String>>()
+            });
+            let new_statuses = users
+                .iter()
+                .find(|u| self.current_user.as_ref().map(|cu| cu.get_id() == u.get_id()).unwrap_or(false))
+                .map(|u| {
+                    u.get_statuses()
+                        .into_iter()
+                        .map(|status| match status {
+                            Status::CustomStatus(name) => name,
+                            _ => status.as_str().to_string(),
+                        })
+                        .collect::<HashSet<String>>()
+                });
+            let statuses_changed = old_statuses != new_statuses;
 
             // Update store_users
             self.store_users.clear();
             self.store_users = users;
 
-            // Reinitialize layout_configs to include new user_statuses
-            self.layout_configs = None; // Force reinitialization
-            self.init_layout_configs();
+            // Reinitialize layout_configs if statuses or users changed
+            if users_changed || statuses_changed {
+                self.layout_configs = None; // Force reinitialization
+                self.init_layout_configs();
+            }
 
             // Get layout_configs
             let layout_configs = match &self.layout_configs {
@@ -245,34 +268,37 @@ impl SharedContext {
                     layout.search_inputs.clear();
                 }
 
-                // Rebuild task_map if users changed, store switched, or statuses changed
-                let mut new_task_map = BTreeMap::new();
-                if page == "MyTasks" {
-                    // Initialize by status
-                    for status_str in &config.valid_keys {
-                        let status = Status::from_str(status_str);
-                        let filtered = self
-                            .tasks
-                            .filter_by_status(&status)
-                            .filter_by_assignee(&current_user);
-                        new_task_map.entry(status_str.clone()).or_insert(filtered);
-                    }
-                } else {
-                    // Initialize by user initials
-                    for user in self.store_users.iter() {
-                        let filtered = self
-                            .tasks
-                            .filter_by_assignee(user)
-                            .filter_by_completion(page == "CompletedTasks")
-                            .filter_by_store(user, &store_selection);
-                        if !filtered.is_empty() {
-                            new_task_map
-                                .entry(user.get_initials().to_string())
-                                .or_insert(filtered);
+            // Rebuild task_map if users or statuses changed, or store switched
+                if users_changed || statuses_changed || self.pending_store.is_some() {
+                    let mut new_task_map = BTreeMap::new();
+                    if page == "MyTasks" {
+                        // Initialize by status
+                        for status_str in &config.valid_keys {
+                            let status =
+                                Status::from_str(status_str);
+                            let filtered = self
+                                .tasks
+                                .filter_by_status(&status)
+                                .filter_by_assignee(&current_user);
+                            new_task_map.entry(status_str.clone()).or_insert(filtered);
+                        }
+                    } else {
+                        // Initialize by user initials
+                        for user in self.store_users.iter() {
+                            let filtered = self
+                                .tasks
+                                .filter_by_assignee(user)
+                                .filter_by_completion(page == "CompletedTasks")
+                                .filter_by_store(user, &store_selection);
+                            if !filtered.is_empty() {
+                                new_task_map
+                                    .entry(user.get_initials().to_string())
+                                    .or_insert(filtered);
+                            }
                         }
                     }
+                    layout.task_map = new_task_map;
                 }
-                layout.task_map = new_task_map;
 
                 // Update assignees if required
                 if config.update_assignees {
@@ -286,7 +312,6 @@ impl SharedContext {
                     self.pending_store = None;
                 }
             }
-        
         }
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
