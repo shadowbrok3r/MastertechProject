@@ -10,7 +10,6 @@ use structdiff::StructDiff;
 use surrealdb::RecordId;
 use serde::Serialize;
 use chrono::Utc;
-use log::info;
 use crate::{PlatformSpawner, Spawner};
 
 #[derive(Difference)]
@@ -285,11 +284,14 @@ impl TaskLayout {
                                             let res = TextEdit::singleline(&mut self.new_status).hint_text("Create new status").show(ui);
 
                                             if ( accepted_by_keyboard || res.response.lost_focus() ) && !self.new_status.is_empty() {
-                                                info!("Got a new status: {}", self.new_status);
+                                                log::info!("Got a new status: {}", self.new_status);
                                                 let status = self.new_status.clone();
                                                 self.new_status.clear();
                                                 PlatformSpawner::spawn(async move {
-                                                    let _ = User::add_custom_status(database::schema::Status::CustomStatus(status.clone())).await;
+                                                    match User::add_custom_status(database::schema::Status::CustomStatus(status.clone())).await {
+                                                        Ok(_) => log::info!("Created new status: {}", status),
+                                                        Err(e) => log::error!("Error creating new status: {e:?}")
+                                                    }
                                                 });
                                             }
                                         });

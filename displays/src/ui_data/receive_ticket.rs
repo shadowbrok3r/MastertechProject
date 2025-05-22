@@ -6,12 +6,12 @@ use crate::app_state::SharedContext;
 impl SharedContext {
     pub fn receive_ticket(&mut self) {
         if let Ok(channel) = self.new_ticket_rx.try_recv() {
-info!("New Ticket Update");
+            log::info!("New Ticket Update");
 
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
 
-            let new_task = channel.new_task.1.clone();
+            let new_task: TaskPayload = channel.new_task.1.clone().into(); // Convert LiveTaskPayload to TaskPayload
             let new_task_id = new_task.id.clone().key().to_string();
             let new_ticket = Some(channel.new_ticket.clone());
             let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
@@ -34,7 +34,7 @@ info!("New Ticket Update");
                             .position(|task| task.id.key().to_string() == new_task_id)
                         {
                             let should_include = (config.filter)(
-                                &new_task,
+                                &new_task.clone().into(),
                                 &self.current_user,
                                 &self.store_users,
                                 &store_selection,
@@ -72,7 +72,7 @@ info!("New Ticket Update");
 
                     // Check if the task belongs in this layout
                     let should_include = (config.filter)(
-                        &new_task,
+                        &new_task.clone().into(),
                         &self.current_user,
                         &self.store_users,
                         &store_selection,
@@ -94,34 +94,45 @@ info!("New Ticket Update");
                             // Update existing task
                             if let Err(e) = update_or_insert_layout(
                                 &mut self.tasks,
-                                new_task.clone(),
+                                new_task.clone().into(),
                                 new_ticket.clone(),
                                 task,
                             ) {
                                 error!("Error updating task in layout {}: {e:?}", layout_key);
                             } else {
-                                info!("Updated task in layout: {} (key: {})", layout_key, new_key);
+                                // Update tasks and task_index
+                                if let Some(index_task) = self.task_index.get_mut(&new_task_id) {
+                                    *index_task = new_task.clone();
+                                    // Update self.tasks to maintain consistency
+                                    if let Some(pos) = self.tasks.iter().position(|t| t.id.key().to_string() == new_task_id) {
+                                        self.tasks[pos] = new_task.clone();
+                                    }
+                                }
+                                log::info!("Updated task in layout: {} (key: {})", layout_key, new_key);
                                 *task_updated = true;
                                 *layout_updated = true;
                             }
                         } else if old_key.as_ref() != Some(&new_key) {
                             // Insert task if it wasn't found in the new key
-                            let mut new_task_payload: TaskPayload = new_task.clone().into();
+                            let mut new_task_payload: TaskPayload = new_task.clone();
                             new_task_payload.service_ticket = new_ticket.clone();
                             task_list.push(new_task_payload.clone());
                             if !*task_updated {
                                 if let Err(e) = update_or_insert_layout(
                                     &mut self.tasks,
-                                    new_task.clone(),
+                                    new_task.clone().into(),
                                     new_ticket.clone(),
                                     &mut new_task_payload,
                                 ) {
-                                    error!("Error inserting task into tasks: {e:?}");
+                                    log::error!("Error inserting task into tasks: {e:?}");
                                 } else {
+                                    // Update tasks and task_index
+                                    self.task_index.insert(new_task_id.clone(), new_task.clone());
+                                    self.tasks.push(new_task.clone());
                                     *task_updated = true;
                                 }
                             }
-                            info!("Inserted task into layout: {} (key: {})", layout_key, new_key);
+                            log::info!("Inserted task into layout: {} (key: {})", layout_key, new_key);
                             *layout_updated = true;
                         }
                     }
@@ -132,17 +143,20 @@ info!("New Ticket Update");
             if !*task_updated {
                 if let Err(e) = update_or_insert_layout(
                     &mut self.tasks,
-                    new_task.clone(),
+                    new_task.clone().into(),
                     new_ticket,
                     &mut TaskPayload::default(),
                 ) {
-                    error!("Error inserting new task into tasks: {e:?}");
+                    log::error!("Error inserting new task into tasks: {e:?}");
                 } else {
-                    info!("Inserted new task into global tasks");
+                    // Update tasks and task_index
+                    self.task_index.insert(new_task_id.clone(), new_task.clone());
+                    self.tasks.push(new_task.clone());
+                    log::info!("Inserted new task into global tasks");
                 }
             }
 
-            info!("Processed task update for ID: {}", new_task_id);
+            log::info!("Processed task update for ID: {}", new_task_id);
         }
     }
 }
