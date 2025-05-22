@@ -2,8 +2,6 @@ pub mod github_issue;
 pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod seb_lookup;
-pub mod user_chat;
-// pub mod terminal;
 
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
@@ -257,28 +255,24 @@ impl MtechServerContext {
         if *selected != current {
             let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
             let store_users_tx = self.shared_ctx.store_users_tx.clone();
-            let store_selection = match selected.clone() {
-                76 => Store::RIV,
-                73 => Store::LTN,
-                74 => Store::MUR,
-                78 => Store::WJ,
-                75 => Store::ORE,
-                72 => Store::AF,
-                77 => Store::SAN,
-                _ => Store::RIV,
-            };
+            let store_selection = std::convert::Into::<Store>::into(*selected);
 
+            // Signal store switch
+            self.shared_ctx.pending_store = Some(store_selection.clone());
             self.shared_ctx.store_users.clear();
             self.shared_ctx.tasks.clear();
-            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+            self.shared_ctx.layout_configs = None; // Force reinitialization
+            info!("Switching to store: {:?}", store_selection.as_str());
             spawn_local(async move {
                 let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                let tasks = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
-
+                info!("get_completed_tasks_for_store: {tasks:?}");
                 info!("get_tasks_for_store: {store_tasks:?}");
                 info!("get_store_users: {get_store_users:?}");
             });
         }
+    
     }
 
 }

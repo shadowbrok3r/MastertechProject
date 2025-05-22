@@ -2,7 +2,7 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, Status, Store, TaskPayload, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, FilterTasks, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use eframe::egui::Context;
 use log::info;
 
@@ -100,27 +100,27 @@ impl SharedContext {
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, _ctx: &Context) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            // info!("Received initial task payload with {} tasks", tasks.len());
+            info!("Received initial task payload with {} tasks", tasks.len());
 
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
 
-            // Clear layout-related data for specific pages when switching stores
-            self.task_layouts
-                .iter_mut()
-                .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
-                .for_each(|(_, layout)| {
-                    if self.switching_store {
+            // Clear layout-related data only if switching stores
+            if self.pending_store.is_some() {
+                self.task_layouts
+                    .iter_mut()
+                    .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
+                    .for_each(|(_, layout)| {
                         layout.task_map.clear();
                         layout.assignees.clear();
                         layout.search_inputs.clear();
-                    }
-                    if let Some(time) = self.timer {
-                        if time.elapsed() > web_time::Duration::from_secs(5) {
-                            layout.loading = false;
+                        if let Some(time) = self.timer {
+                            if time.elapsed() > web_time::Duration::from_secs(5) {
+                                layout.loading = false;
+                            }
                         }
-                    }
-                });
+                    });
+            }
 
             // Process new tasks
             let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
@@ -175,7 +175,7 @@ impl SharedContext {
                                     .any(|t| t.id.key().to_string() == new_task.id.key().to_string())
                                 {
                                     task_list.push(new_task_payload.clone());
-                                    // info!("Added initial task to layout: {}", layout_key);
+                                    info!("Added initial task to layout: {}", layout_key);
                                 }
                             }
                         }
@@ -183,23 +183,39 @@ impl SharedContext {
                 }
             });
 
-            // Reset switching_store flag if set
-            if self.switching_store {
-                self.switching_store = false;
+            // Reset pending_store if tasks were processed for the new store
+            if let Some(pending_store) = self.pending_store {
+                if pending_store.as_str() == store_selection.as_str() {
+                    self.pending_store = None;
+                }
             }
         }
 
         if let Ok(users) = self.store_users_rx.try_recv() {
             info!("Received new store users: {} users", users.len());
 
+            // Check if store_users has changed significantly
+            let old_initials: HashSet<String> = self
+                .store_users
+                .iter()
+                .map(|u| u.get_initials().to_string())
+                .collect();
+            let new_initials: HashSet<String> = users
+                .iter()
+                .map(|u| u.get_initials().to_string())
+                .collect();
+            
+            let users_changed = old_initials != new_initials;
+
             // Update store_users
             self.store_users.clear();
             self.store_users = users;
 
-            // Initialize layout_configs now that store_users is available
+            // Reinitialize layout_configs to include new user_statuses
+            self.layout_configs = None; // Force reinitialization
             self.init_layout_configs();
 
-            // Get layout_configs, if initialized
+            // Get layout_configs
             let layout_configs = match &self.layout_configs {
                 Some(configs) => configs,
                 None => {
@@ -217,18 +233,19 @@ impl SharedContext {
                     Some(config) => config,
                     None => {
                         log::warn!("No config defined for layout: {}", page);
+                        layout.task_map.clear();
                         continue;
                     }
                 };
 
-                // Clear task_map, assignees, and search_inputs for StoreTasks and CompletedTasks
-                if page == "StoreTasks" || page == "CompletedTasks" {
+                // Clear task_map, assignees, and search_inputs only if switching stores
+                if (page == "StoreTasks" || page == "CompletedTasks") && self.pending_store.is_some() {
                     layout.task_map.clear();
                     layout.assignees.clear();
                     layout.search_inputs.clear();
                 }
 
-                // Rebuild task_map
+                // Rebuild task_map if users changed, store switched, or statuses changed
                 let mut new_task_map = BTreeMap::new();
                 if page == "MyTasks" {
                     // Initialize by status
@@ -255,7 +272,6 @@ impl SharedContext {
                         }
                     }
                 }
-
                 layout.task_map = new_task_map;
 
                 // Update assignees if required
@@ -263,6 +279,14 @@ impl SharedContext {
                     layout.update_assignees(self.store_users.clone());
                 }
             }
+
+            // Reset pending_store if users match the new store
+            if let Some(pending_store) = self.pending_store {
+                if pending_store.as_str() == store_selection.as_str() {
+                    self.pending_store = None;
+                }
+            }
+        
         }
 
         if let Ok(settings) = self.settings_receiver.try_recv() {

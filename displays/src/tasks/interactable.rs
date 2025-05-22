@@ -166,7 +166,7 @@ impl Interaction for TaskPayload {
         ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(80.)
-            .height(ui.available_height())
+            .height(150.)
             .show_ui(ui, |ui| {
                 for status in Status::VALUES {
                     let status_change =
@@ -196,7 +196,7 @@ impl Interaction for TaskPayload {
         ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
             .width(80.)
-            .height(ui.available_height())
+            .height(150.)
             .show_ui(ui, |ui| {
                 for priority in Priority::VALUES {
                     let priority_change = ui.selectable_value(
@@ -220,7 +220,7 @@ impl Interaction for TaskPayload {
         ComboBox::from_id_salt(Id::new(&self.id.clone().key().to_string()))
             .selected_text(&self.everest_initials)
             .width(100.)
-            .height(ui.available_height())
+            .height(150.)
             .show_ui(ui, |ui| {
                 for user in *&store_users {
                     let assignee_selection = ui.selectable_value(

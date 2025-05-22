@@ -1,5 +1,4 @@
 use anyhow::Context;
-use bincode::{config::standard, serde::{decode_from_slice, encode_to_vec}};
 use database::{schema::TaskPayload, Database, DATABASE};
 use gloo_worker::{HandlerId, WorkerScope};
 use wasm_bindgen_futures::spawn_local;
@@ -8,9 +7,7 @@ use std::fmt::Debug;
 use gloo_console::log;
 
 use gloo_worker::Registrable;
-fn main() {
-    WebWorker::registrar().register();
-}
+fn main() { WebWorker::registrar().register(); }
 
 #[derive(Debug)]
 pub struct Message(pub u32);
@@ -54,44 +51,33 @@ impl gloo_worker::Worker for WebWorker {
     }
 }
 
-
-
 pub async fn get_completed_tasks(input: Input, scope: WorkerScope<WebWorker>, id: HandlerId) -> anyhow::Result<(), anyhow::Error> {
     gloo_console::debug!("get_completed_tasks");
-    let _ = Database::new(
-        "".to_string(), 
-        "".to_string(), 
-        Some(input.0.clone())
-    ).await?;
+    let _ = Database::new("".to_string(), "".to_string(), Some(input.0.clone())).await?;
+
     let mut offset = 0;
-    let limit = 100; // Number of tasks per chunk
+    let limit = 20;
+
     loop {
-
         let tasks = get_completed_tasks_for_store(offset, limit).await?;
-        // Break the loop if no more results
-        if tasks.is_empty() {
-            break;
-        }
-
+        if tasks.is_empty() { break; } // Break the loop if no more results
         scope.respond(id, Output { tasks: encode_task_payload(&tasks)? });
-
         offset += limit;
     }
-
     Ok(())
 }
 
 pub fn encode_task_payload(message: &Vec<TaskPayload>) -> anyhow::Result<Vec<u8>> {
-    let bincoded = encode_to_vec(message, standard()).context("Failed to serialize buffer")?;
+    let bincoded = serde_json::to_vec(message)?;
     gloo_console::info!(format!("Uncompressed Completed task data: {}\n", bincoded.len()));
-    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), 10).context("zstd")?;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), 5).context("zstd")?;
     gloo_console::info!(format!("Compressed Completed task data: {}\n", compressed.len()));
     Ok(compressed)
 }
 
 pub fn decode_task_payload(packet: &[u8]) -> anyhow::Result<Vec<TaskPayload>> {
     let bincoded = zstd::decode_all(packet).context("zstd")?;
-    let (message, _) = decode_from_slice(&bincoded, standard()).context("bincode")?;
+    let message = serde_json::from_slice(&bincoded).context("bincode")?;
     Ok(message)
 }
 
@@ -110,7 +96,7 @@ pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::R
             service_ticket.customer
             PARALLEL
     "#;
-    
+
     let start_query = web_time::Instant::now(); // Start timing the query
 
     let query_results: Vec<TaskPayload> = DATABASE
