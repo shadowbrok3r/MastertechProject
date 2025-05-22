@@ -63,8 +63,12 @@ impl TaskLayout {
     const COL_W: f32 = 450.0; // <- single source of truth
     const HEADER_H: f32 = 48.0;          // rough pixel height of the header frame
     
-    pub fn new(task_map: BTreeMap<String, Vec<TaskPayload>>, column_names: Vec<String>, ui_actions_tx: Sender<TaskUiActions>, assignees: Vec<User>) -> Self 
-    {
+    pub fn new(
+        task_map: BTreeMap<String, Vec<TaskPayload>>, 
+        column_names: Vec<String>, 
+        ui_actions_tx: Sender<TaskUiActions>, 
+        assignees: Vec<User>,
+    ) -> Self  {
         Self {  
             task_map, 
             column_names, 
@@ -77,7 +81,7 @@ impl TaskLayout {
             sort_by: HashMap::new(),
             last_sort_field: None,
             loading: false,
-            new_status: String::new()
+            new_status: String::new(),
         }
     }
 
@@ -296,10 +300,28 @@ impl TaskLayout {
                                             //     .ui(ui);
 
                                             let accepted_by_keyboard = ui.ctx().input_mut(|i| i.key_pressed(eframe::egui::Key::Enter));
-                                            TextEdit::singleline(&mut self.new_status).hint_text("Create new status").show(ui);
+                                            let res = TextEdit::singleline(&mut self.new_status).hint_text("Create new status").show(ui);
 
-                                            if accepted_by_keyboard && !self.new_status.is_empty() {
+                                            if res.response.lost_focus() || accepted_by_keyboard {
+                                                if let Some(new_status) = self.new_status.clone().into() {
+                                                    // Send the new status to the database
+                                                    PlatformSpawner::spawn(async move {
+                                                        let _x: Option<Record> = DATABASE.query("fn::create_new_status($status)")
+                                                            .bind(("status", new_status))
+                                                            .await.unwrap().take(0).unwrap();
+                                                    });
+                                                }
+                                                self.new_status.clear();
+
+                                            }
+
+                                            if ( accepted_by_keyboard || res.response.lost_focus() ) && !self.new_status.is_empty() {
                                                 info!("Got a new status: {}", self.new_status);
+                                                let status = self.new_status.clone();
+                                                self.new_status.clear();
+                                                PlatformSpawner::spawn(async move {
+                                                    let _ = User::add_custom_status(database::schema::Status::CustomStatus(status.clone())).await;
+                                                });
                                             }
                                         });
                                     });
