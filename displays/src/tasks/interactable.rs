@@ -1,6 +1,6 @@
 
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
+use database::schema::{Priority, TaskPayload, TicketPayload, User};
 use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
@@ -162,13 +162,13 @@ impl Interaction for TaskPayload {
         }
     }
 
-    fn interact_status(&mut self, ui: &mut Ui) -> Response {
+    fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response {
         ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(80.)
             .height(150.)
             .show_ui(ui, |ui| {
-                for status in Status::VALUES {
+                for status in user.get_statuses() {
                     let status_change =
                         ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
                     if status_change.clicked() {

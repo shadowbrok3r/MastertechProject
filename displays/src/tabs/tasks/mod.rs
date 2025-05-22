@@ -1,5 +1,5 @@
-use database::schema::{Status, Store, TaskPayload};
 use crate::{app_state::SharedContext, tasks::task_layout::TaskLayout, FilterTasks};
+use database::schema::{Status, Store, TaskPayload};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 use std::collections::BTreeMap;
 
@@ -30,79 +30,16 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         };
 
         // Get or update the layout
-        let layout = self.task_layouts.entry(page.to_string()).or_insert_with(|| {
-            let config = layout_configs
-                .get(page)
-                .expect(&format!("Layout config not found for {}", page));
-            
-            let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
-            let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
-            let mut map = BTreeMap::new();
-            let mut col_names = Vec::new();
+        let Some(config) = layout_configs.get(page) else { return; };
 
-            if page == "MyTasks" {
-                // Initialize by status, only include non-empty columns
-                for status_str in &config.valid_keys {
-                    let status = Status::from_str(status_str);
-                    let filtered = self
-                        .task_index
-                        .values()
-                        .cloned()
-                        .collect::<Vec<TaskPayload>>()
-                        .filter_by_status(&status)
-                        .filter_by_assignee(&current_user)
-                        .into_iter()
-                        .filter(|task| !task.completed)
-                        .collect::<Vec<TaskPayload>>();
-                    
-                    if !filtered.is_empty() {
-                        map.entry(status_str.clone()).or_insert(filtered);
-                        col_names.push(status_str.clone());
-                    }
-                }
-            } else {
-                // Initialize by user initials
-                col_names = (config.key_provider)(&self.store_users);
-                for user in self.store_users.iter() {
-                    let filtered = self
-                        .task_index
-                        .values()
-                        .cloned()
-                        .collect::<Vec<TaskPayload>>()
-                        .filter_by_assignee(user)
-                        .filter_by_completion(page == "CompletedTasks")
-                        .filter_by_store(user, &store_selection);
-                    if !filtered.is_empty() {
-                        map.entry(user.get_initials().to_string()).or_insert(filtered);
-                    }
-                        // .filter_by_assignee(user)
-                        // .filter_by_completion(page == "CompletedTasks")
-                        // .filter_by_store(user, &store_selection);
-                }
-            }
+        let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
+        let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
 
-            let mut layout = TaskLayout::new(
-                map,
-                col_names,
-                self.ui_actions_tx.clone(),
-                self.store_users.clone(),
-            );
-            if config.update_assignees {
-                layout.update_assignees(self.store_users.clone());
-            }
-            layout
-        });
+        // Always rebuild task_map and col_names to reflect current tasks
+        let mut map = BTreeMap::new();
+        let mut col_names = Vec::new();
 
-        // Rebuild task_map and col_names for MyTasks to reflect current tasks
         if page == "MyTasks" {
-            let config = layout_configs
-                .get(page)
-                .expect(&format!("Layout config not found for {}", page));
-            let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
-
-            let mut map = BTreeMap::new();
-            let mut col_names = Vec::new();
-
             for status_str in &config.valid_keys {
                 let status = Status::from_str(status_str);
                 let filtered = self
@@ -115,21 +52,56 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                     .into_iter()
                     .filter(|task| !task.completed)
                     .collect::<Vec<TaskPayload>>();
+
                 if !filtered.is_empty() {
                     map.entry(status_str.clone()).or_insert(filtered);
                     col_names.push(status_str.clone());
                 }
             }
+        } else {
+            col_names = (config.key_provider)(&self.store_users);
+            for user in self.store_users.iter() {
+                let filtered = self
+                    .task_index
+                    .values()
+                    .cloned()
+                    .collect::<Vec<TaskPayload>>()
+                    .filter_by_assignee(user)
+                    .filter_by_completion(page == "CompletedTasks")
+                    .filter_by_store(user, &store_selection);
 
-            layout.task_map = map;
-            layout.column_names = col_names; // Assuming TaskLayout has a mutable col_names field
+                if !filtered.is_empty() {
+                    map.entry(user.get_initials().to_string()).or_insert(filtered);
+                }
+            }
         }
+
+
+        // Update or create layout
+        let layout = self.task_layouts.entry(page.to_string()).or_insert_with(|| {
+            let mut layout = TaskLayout::new(
+                map.clone(),
+                col_names.clone(),
+                self.ui_actions_tx.clone(),
+                self.store_users.clone(),
+            );
+            if config.update_assignees {
+                layout.update_assignees(self.store_users.clone());
+            }
+            layout
+        });
+
+        // Update existing layout
+        layout.task_map = map;
+        layout.column_names = col_names; // Assuming TaskLayout has mutable col_names
 
         // Render the layout
         layout.layout_cols(ui);
     }
 }
 
+
+/* 
 impl SharedContext {
     pub fn my_tasks(&mut self, ui: &mut Ui) {
         if !self.store_users.is_empty() {
@@ -189,3 +161,4 @@ impl SharedContext {
     }
 }
 
+ */

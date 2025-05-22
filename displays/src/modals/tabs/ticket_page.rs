@@ -52,7 +52,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 
                 ui.colored_label(Color32::LIGHT_RED, "Status");
                 ui.push_id(format!("Status {}", task.status.as_str()), |ui| {
-                    task.interact_status(ui);
+                    task.interact_status(&current_user, ui);
                 });
                 
                 ui.end_row();

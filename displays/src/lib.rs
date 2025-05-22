@@ -138,7 +138,7 @@ pub enum TaskUiActions {
 
 
 pub trait Displayable {
-    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>);
+    fn display_cards(&mut self, user: &User, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>);
 }
 
 
@@ -170,7 +170,7 @@ pub trait Interaction {
     fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_completed(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_status(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_priority(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response; // , task: Rc<RefCell<TaskPayload>>
 }
