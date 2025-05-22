@@ -174,8 +174,7 @@ pub struct SharedContext {
     pub scene_editor: SceneEditor,
     pub user_chat: UserChat,
     pub pending_store: Option<Store>,
-    #[serde(skip)]
-    pub layout_filters: HashMap<String, Box<dyn LayoutFilter>>,
+    pub task_index: HashMap<String, TaskPayload>, // Index by task ID
 }
 
 impl SharedContext {
@@ -216,13 +215,8 @@ impl SharedContext {
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
 
-        let mut layout_filters = HashMap::new();
-        layout_filters.insert("MyTasks".to_string(), Box::new(MyTasksFilter) as Box<dyn LayoutFilter>);
-        layout_filters.insert("StoreTasks".to_string(), Box::new(StoreTasksFilter));
-        layout_filters.insert("Completed".to_string(), Box::new(CompletedFilter));
-
         Self {
-            layout_filters,
+            task_index: HashMap::new(),
             layout_configs: None,
             current_user: None,
             tasks: Vec::new(),

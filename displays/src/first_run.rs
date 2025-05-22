@@ -98,99 +98,8 @@ impl SharedContext {
     }
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, _ctx: &Context) {
-        if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            info!("Received initial task payload with {} tasks", tasks.len());
-
-            // Initialize layout_configs if store_users is available
-            self.init_layout_configs();
-
-            // Clear layout-related data only if switching stores
-            if self.pending_store.is_some() {
-                self.task_layouts
-                    .iter_mut()
-                    .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
-                    .for_each(|(_, layout)| {
-                        layout.task_map.clear();
-                        layout.assignees.clear();
-                        layout.search_inputs.clear();
-                        if let Some(time) = self.timer {
-                            if time.elapsed() > web_time::Duration::from_secs(5) {
-                                layout.loading = false;
-                            }
-                        }
-                    });
-            }
-
-            // Process new tasks
-            let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
-            let layout_configs = self.layout_configs.as_ref();
-
-            tasks.drain(..).for_each(|new_task| {
-                // Check for duplicates using task ID
-                if !self
-                    .tasks
-                    .iter()
-                    .any(|task| task.id.key().to_string() == new_task.id.key().to_string())
-                {
-                    // Add to global tasks
-                    let new_task_payload: TaskPayload = new_task.clone();
-                    self.tasks.push(new_task_payload.clone());
-
-                    // Distribute to layouts if layout_configs is initialized
-                    if let Some(layout_configs) = layout_configs {
-                        for (layout_key, layout) in self.task_layouts.iter_mut() {
-                            let Some(config) = layout_configs.get(layout_key) else {
-                                log::warn!("No config defined for layout: {}", layout_key);
-                                continue;
-                            };
-
-                            // Check if the task belongs in this layout
-                            let should_include = (config.filter)(
-                                &new_task.clone().into(),
-                                &self.current_user,
-                                &self.store_users,
-                                &store_selection,
-                            );
-
-                            // Determine the task_map key
-                            let key = if layout_key == "MyTasks" {
-                                new_task.status.as_str().to_string()
-                            } else {
-                                self.store_users
-                                    .iter()
-                                    .find(|u| u.get_id() == new_task.assignee)
-                                    .map(|u| u.get_initials().to_string())
-                                    .unwrap_or_default()
-                            };
-
-                            // Add task to task_map if it belongs
-                            if should_include && (config.valid_keys.is_empty() || config.valid_keys.contains(&key)) {
-                                let task_list = layout
-                                    .task_map
-                                    .entry(key.clone())
-                                    .or_insert_with(Vec::new);
-                                if !task_list
-                                    .iter()
-                                    .any(|t| t.id.key().to_string() == new_task.id.key().to_string())
-                                {
-                                    task_list.push(new_task_payload.clone());
-                                    info!("Added initial task to layout: {}", layout_key);
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-
-            // Reset pending_store if tasks were processed for the new store
-            if let Some(pending_store) = self.pending_store {
-                if pending_store.as_str() == store_selection.as_str() {
-                    self.pending_store = None;
-                }
-            }
-        }
-
-        if let Ok(users) = self.store_users_rx.try_recv() {info!("Received new store users: {} users", users.len());
+        if let Ok(users) = self.store_users_rx.try_recv() {
+            info!("Received new store users: {} users", users.len());
 
             // Check if store_users has changed significantly
             let old_initials: HashSet<String> = self
@@ -219,12 +128,12 @@ impl SharedContext {
                 .find(|u| self.current_user.as_ref().map(|cu| cu.get_id() == u.get_id()).unwrap_or(false))
                 .map(|u| {
                     u.get_statuses()
-                        .into_iter()
-                        .map(|status| match status {
-                            Status::CustomStatus(name) => name,
-                            _ => status.as_str().to_string(),
-                        })
-                        .collect::<HashSet<String>>()
+                    .into_iter()
+                    .map(|status| match status {
+                        Status::CustomStatus(name) => name,
+                        _ => status.as_str().to_string(),
+                    })
+                    .collect::<HashSet<String>>()
                 });
             let statuses_changed = old_statuses != new_statuses;
 
@@ -268,25 +177,35 @@ impl SharedContext {
                     layout.search_inputs.clear();
                 }
 
-            // Rebuild task_map if users or statuses changed, or store switched
+                // Rebuild task_map if users or statuses changed, or store switched
                 if users_changed || statuses_changed || self.pending_store.is_some() {
                     let mut new_task_map = BTreeMap::new();
                     if page == "MyTasks" {
-                        // Initialize by status
+                        // Initialize by status, only include non-empty columns
                         for status_str in &config.valid_keys {
-                            let status =
-                                Status::from_str(status_str);
+                            let status = Status::from_str(status_str);
                             let filtered = self
-                                .tasks
+                                .task_index
+                                .values()
+                                .cloned()
+                                .collect::<Vec<TaskPayload>>()
                                 .filter_by_status(&status)
-                                .filter_by_assignee(&current_user);
-                            new_task_map.entry(status_str.clone()).or_insert(filtered);
+                                .filter_by_assignee(&current_user)
+                                .into_iter()
+                                .filter(|task| !task.completed)
+                                .collect::<Vec<TaskPayload>>();
+                            if !filtered.is_empty() {
+                                new_task_map.entry(status_str.clone()).or_insert(filtered);
+                            }
                         }
                     } else {
                         // Initialize by user initials
                         for user in self.store_users.iter() {
                             let filtered = self
-                                .tasks
+                                .task_index
+                                .values()
+                                .cloned()
+                                .collect::<Vec<TaskPayload>>()
                                 .filter_by_assignee(user)
                                 .filter_by_completion(page == "CompletedTasks")
                                 .filter_by_store(user, &store_selection);
