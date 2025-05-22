@@ -1,6 +1,7 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
-use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
 use database::schema::{LiveTaskPayload, Record, Store, TaskPayload, User};
+use crate::get_current_user_from_auth;
+use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
 use std::collections::BTreeSet;
@@ -33,6 +34,7 @@ pub struct TaskLayout{
     pub last_sort_field: Option<SortField>,    
     pub loading: bool,
     new_status: String,
+    user: User
 }
 
 pub struct LayoutConfig {
@@ -81,6 +83,7 @@ impl TaskLayout {
             last_sort_field: None,
             loading: false,
             new_status: String::new(),
+            user: get_current_user_from_auth().unwrap_or_default()
         }
     }
 
@@ -420,7 +423,7 @@ impl TaskLayout {
                                     }
                                     if let Some(&task_index) = filtered_indices.get(row) {
                                         if let Some(task) = tasks.get_mut(task_index) {
-                                            task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
+                                            task.display_cards(&self.user, ui, &self.assignees, self.ui_actions_tx.clone());
                                         }
                                     }
                                 }

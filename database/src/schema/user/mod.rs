@@ -144,7 +144,14 @@ impl User {
     }
 
     pub fn get_statuses(&self) -> Vec<Status>{
-        self.user_statuses.clone().unwrap_or(Status::VALUES.to_vec())
+        let mut statuses = Status::VALUES.to_vec();
+        if let Some(custom_statuses) = &self.user_statuses {
+            statuses.extend(custom_statuses.iter().cloned());
+        }
+        statuses
+            .into_iter()
+            .filter(|s| !s.as_str().is_empty())
+            .collect::<Vec<Status>>()
     }
 
     pub fn get_color_scheme(&self) -> Value {

@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Surreal};
+use surrealdb::{engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Surreal};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -101,6 +101,54 @@ pub struct Auth {
 pub struct Session {
     pub jwt: Jwt,
     pub user: User,
+}
+
+#[derive(Serialize, Debug, Default, Clone, PartialEq)]
+pub enum DatabaseSelection {
+    #[default]
+    Stable,
+    Beta,
+    Local
+}
+
+impl DatabaseSelection {
+    pub fn get_db_url(&self) -> &'static str {
+        match self {
+            Self::Stable => DB_URL,
+            Self::Beta => DB_URL_DEV,
+            Self::Local => DB_URL_LOCAL,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Stable => "Stable",
+            Self::Beta => "Beta",
+            Self::Local => "Local",
+        }
+    }
+
+    pub fn from_str(selection: &str) -> Self {
+        match selection {
+            "Stable"=> Self::Stable,
+            "Beta"=> Self::Beta,
+            "Local"=> Self::Local,
+            _ => Self::Stable,
+        }
+    }
+
+    pub async fn set_database(&self) -> anyhow::Result<(), anyhow::Error>{
+        DATABASE.invalidate().await?;
+        let url = self.get_db_url();
+        match self {
+            Self::Stable => DATABASE.connect::<Wss>(url).await?,
+            Self::Beta => DATABASE.connect::<Wss>(url).await?,
+            Self::Local => DATABASE.connect::<Ws>(url).await?,
+        };
+
+        DATABASE.use_ns(NS).use_db(DB).await?;
+        Ok(())
+    }
 }
 
 pub async fn initialize_db() -> anyhow::Result<()> {

@@ -7,7 +7,7 @@ use log::info;
 use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions, Updatable};
 
 impl Displayable for TaskPayload {
-    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>) {
+    fn display_cards(&mut self, user: &User, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>) {
         let style = ui.style().clone();
         
         let mut frame = Frame::default()
@@ -109,7 +109,7 @@ impl Displayable for TaskPayload {
                 ui.add_space(35.);
 
                 ui.push_id(format!("Status {}", self.id.key().to_string().clone()), |ui| {
-                    let _ = self.interact_status(ui);
+                    let _ = self.interact_status(user, ui);
                 });
 
                 ui.add_space(35.);

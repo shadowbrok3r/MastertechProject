@@ -1,7 +1,7 @@
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use async_trait::async_trait;
 use surrealdb::RecordId;
@@ -410,7 +410,7 @@ pub struct ModifyNotification {
     pub archive: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum Status {
     #[default]
     Todo,
@@ -419,6 +419,21 @@ pub enum Status {
     Sales,
     Qc,
     CustomStatus(String),
+}
+
+// Custom serialization
+impl Serialize for Status {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+// Custom deserialization
+impl<'de> Deserialize<'de> for Status {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Status::from_str(&s))
+    }
 }
 
 // Trait that all statuses (including user-defined ones) can implement

@@ -1,8 +1,7 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, Layout, RichText, TextEdit, Vec2, Widget};
-use database::{schema::Store, DATABASE};
+use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Key, Layout, RichText, TextEdit, UiBuilder, Vec2, Widget};
 use crate::app_state::{AppState, MainPages, MtechServer};
+use database::{schema::Store, DatabaseSelection, PlatformSpawner, Spawner, DATABASE};
 use egui_extras::{Size, StripBuilder};
-use wasm_bindgen_futures::spawn_local;
 use crossbeam::channel::Sender;
 use serde::Serialize;
 use log::{error, info};
@@ -14,36 +13,34 @@ pub struct AccountMod {
     password: String,
     retyped_password: String,
     store: Store,
+    database: DatabaseSelection,
 }
 
 impl AccountMod{
-    // pub fn mod_account(&self, _appstate_tx: Sender<AppState>, user_id: String){
-    //     let acc_mod: AccountMod = Self {
-    //         name: self.name.clone(),
-    //         email: self.email.clone(),
-    //         password: self.password.clone(),
-    //         ..Default::default()
-    //     };
+    pub async fn mod_account(&self, user_id: String) {
+        let acc_mod: AccountMod = Self {
+            name: self.name.clone(),
+            email: self.email.clone(),
+            password: self.password.clone(),
+            ..Default::default()
+        };
 
-    //     spawn_local(async move {
-    //         let mod_user_result: Result<Response, surrealdb::Error> = DATABASE
-    //             .query("fn::modify_account($user, $new)")
-    //             .bind(("user", user_id))
-    //             .bind(("new", acc_mod))
-    //             .await;
-    //         info!("mod_user_result: {mod_user_result:?}");
-    //     });
-    // }
+        let mod_user_result: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+            .query("fn::modify_account($user, $new)")
+            .bind(("user", user_id))
+            .bind(("new", acc_mod))
+            .await;
 
-    pub fn change_password(&self){
+        info!("mod_user_result: {mod_user_result:?}"); 
+    }
+
+    pub async fn change_password(&self) {
         let password = self.password.clone();
-        spawn_local(async move {
-            let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
-                .query("UPDATE user SET password = crypto::argon2::generate($pass) WHERE id == $auth.id")
-                .bind(("pass", password))
-                .await;
-            info!("X: {x:?}");
-        });
+        let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+            .query("UPDATE user SET password = crypto::argon2::generate($pass) WHERE id == $auth.id")
+            .bind(("pass", password))
+            .await;
+        info!("X: {x:?}");
     }
 }
 
@@ -98,41 +95,48 @@ impl MtechServer{
                                                 .desired_width(230.)
                                                 .ui(ui);
 
-                                            // ui.add_space(5.0);
+                                            ui.add_space(5.0);
 
-                                            // ui.horizontal_top(|ui| {
-                                            //     ui.add_space(width);
-                                            //     ComboBox::new("StoreComboBox", "")
-                                            //         .selected_text(acc_mod.store.as_str())
-                                            //         .width(230.)
-                                            //         .show_ui(ui, |ui| 
-                                            //     {
-                                            //         for store in Store::VALUES {
-                                            //             ui.selectable_value(&mut acc_mod.store, store, store.as_str());
-                                            //         }
-                                            //     });
-                                            // });
+                                            // ui.scope_builder(UiBuilder::new().sizing_pass()., add_contents)
+                                                // ui.add_space(width);
+                                                ComboBox::new("StoreComboBox", "")
+                                                    .selected_text(acc_mod.store.as_str())
+                                                    .width(230.)
+                                                    .show_ui(ui, |ui| 
+                                                {
+                                                    for store in Store::VALUES {
+                                                        ui.selectable_value(&mut acc_mod.store, store, store.as_str());
+                                                    }
+                                                });
 
-                                            // ui.horizontal_top(|ui| {
-                                            //     ui.add_space(width);
-                                            //     let db = ComboBox::new("Database", "")
-                                            //         .selected_text(format!("{:?}", acc_mod.database))
-                                            //         .width(230.)
-                                            //         .show_ui(ui, |ui| 
-                                            //     {
-                                            //         ui.selectable_value(&mut acc_mod.database, DatabaseSelection::Stable, "Stable");
-                                            //         ui.selectable_value(&mut acc_mod.database, DatabaseSelection::Beta, "Beta");
-                                            //     });
-                                            //     if db.response.clicked(){
-                                            //         if acc_mod.database == DatabaseSelection::Stable {
-                                            //             // self.save(Storage:)
-                                            //             set_db_selection(DatabaseSelection::Stable);
-                                            //         } else {
-                                            //             set_db_selection(DatabaseSelection::Beta);
-                                            //         }
-                                            //         info!("Database changed: {:?}", acc_mod.database);
-                                            //     }
-                                            // });
+                                                // ui.add_space(width);
+                                                let db = ComboBox::new("Database", "")
+                                                    .selected_text(format!("{:?}", acc_mod.database))
+                                                    .width(230.)
+                                                    .show_ui(ui, |ui| 
+                                                {
+                                                    ui.selectable_value(
+                                                        &mut acc_mod.database, 
+                                                        DatabaseSelection::Stable, 
+                                                        DatabaseSelection::Stable.as_str()
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut acc_mod.database, 
+                                                        DatabaseSelection::Beta, 
+                                                        DatabaseSelection::Beta.as_str()
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut acc_mod.database, 
+                                                        DatabaseSelection::Local, 
+                                                        DatabaseSelection::Local.as_str()
+                                                    );
+                                                });
+                                                if db.response.clicked(){
+                                                    let acc = acc_mod.clone();
+                                                    PlatformSpawner::spawn(async move {
+                                                        acc.database.set_database().await;
+                                                    });
+                                                }
 
                                             ui.add_space(5.0);
                                             
@@ -157,34 +161,38 @@ impl MtechServer{
                                                 .password(true)
                                                 .ui(ui);
 
-                                            // ui.add_space(5.0);
+                                            ui.add_space(5.0);
 
-                                            // if Button::new("Update Account")
-                                            //     .fill(Color32::from_rgb(30, 30, 35))
-                                            //     .min_size(Vec2::new(140.0, 15.0))
-                                            //     .ui(ui)
-                                            //     .clicked()
-                                            // {
-                                            //     let email = if usr.email.ends_with("@pclaptops.com"){
-                                            //         usr.email.clone()
-                                            //     } else {
-                                            //         format!("{}@pclaptops.com", usr.email.clone())
-                                            //     };
+                                            if Button::new("Update Account")
+                                                .fill(Color32::from_rgb(30, 30, 35))
+                                                .min_size(Vec2::new(140.0, 15.0))
+                                                .ui(ui)
+                                                .clicked()
+                                            {
+                                                let email = if usr.get_email().ends_with("@pclaptops.com"){
+                                                    usr.get_email().to_owned()
+                                                } else {
+                                                    format!("{}@pclaptops.com", usr.get_email())
+                                                };
 
-                                            //     let acc_mod = AccountMod {
-                                            //         email,
-                                            //         name: usr.name.clone(),
-                                            //         store: acc_mod.store,
-                                            //         ..Default::default()
-                                            //     };
+                                                let acc_mod = AccountMod {
+                                                    email,
+                                                    name: usr.get_name().to_string(),
+                                                    store: acc_mod.store,
+                                                    ..Default::default()
+                                                };
 
-                                            //     info!("Account Mod: {:?}", acc_mod);
-                                            //     acc_mod.mod_account(appstate_tx.clone(), usr.id.key().to_string().clone());
-                                            //     match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
-                                            //         Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                            //         Err(e) => error!("Error {e:?}"),
-                                            //     }
-                                            // }
+                                                info!("Account Mod: {:?}", acc_mod);
+                                                let tx = appstate_tx.clone();
+                                                let user = usr.get_id().key().to_string().clone();
+                                                PlatformSpawner::spawn(async move {
+                                                    acc_mod.mod_account(user).await;
+                                                    match tx.try_send(AppState::Authenticated(MainPages::Tasks)){
+                                                        Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                                                        Err(e) => error!("Error {e:?}"),
+                                                    }
+                                                });
+                                            }
                                             ui.add_space(5.0);
 
                                             let change_pw_txt = if password_check {" Change Password "} else { " Passwords must match " };
@@ -198,7 +206,8 @@ impl MtechServer{
 
                                             if enabled_button.clicked() || accepted_by_keyboard {
                                                 acc_mod.change_password();
-                                                match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
+                                                let tx = appstate_tx.clone();
+                                                match tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                                                     Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                                     Err(e) => error!("Error {e:?}"),
                                                 }
