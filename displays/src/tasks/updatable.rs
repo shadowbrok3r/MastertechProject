@@ -1,4 +1,4 @@
-use database::{schema::{Priority, Record, Status, Store, TaskPayload}, DATABASE};
+use database::{schema::{Priority, Record, Status, TaskPayload}, DATABASE};
 use async_trait::async_trait;
 use surrealdb::RecordId;
 use crate::Updatable;
@@ -40,21 +40,12 @@ impl Updatable for TaskPayload {
         Ok(())
     }
 
-    async fn update_assignee_initials(&self, initials: String) -> anyhow::Result<(), anyhow::Error> {
-        info!("Initials: {initials}");
-        let selected_user: Option<RecordId> = DATABASE
-            .query("SELECT VALUE id FROM user WHERE everest_initials=$initials")
-            .bind(("initials", initials.clone()))
-            .await?
-            .take(0)?;
-
-        info!("Selected user: {selected_user:?}");
-
+    async fn update_assignee(&self, assignee: RecordId) -> anyhow::Result<(), anyhow::Error> {
+        info!("Initials: {assignee:?}");
         let _update_task: Vec<Record> = DATABASE
-            .query("UPDATE $id SET assignee=$assignee, everest_initials=$initials")
+            .query("UPDATE $id SET assignee=$assignee, status ='Todo'")
             .bind(("id", self.id.clone()))
-            .bind(("assignee", selected_user.unwrap()))
-            .bind(("initials", initials))
+            .bind(("assignee", assignee))
             .await?
             .take(0)?;
         
@@ -106,16 +97,6 @@ impl Updatable for TaskPayload {
         Ok(())
     }
 
-    async fn update_dep(&self, dep: Store) -> anyhow::Result<(), anyhow::Error> {
-        let _update_task: Vec<Record> = DATABASE
-            .query("UPDATE $id SET dep=$dep")
-            .bind(("id", self.id.clone()))
-            .bind(("dep", dep))
-            .await?
-            .take(0)?;
-        Ok(())
-    }
-
     async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE.query("UPDATE $id SET priority=$priority")
             .bind(("id", self.id.clone()))
@@ -132,19 +113,6 @@ impl Updatable for TaskPayload {
             .bind(("description", self.task_description.clone()))
             .await?
             .take(0)?;
-        
-        Ok(())
-    }
-
-    async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> anyhow::Result<(), anyhow::Error> {
-        let ticket = self.service_ticket.as_ref();
-        let ticket_id = ticket.cloned().unwrap_or_default().id.clone();
-
-        let _update_task: Vec<Record> = DATABASE.query("UPDATE service_order SET checkin_notes=$notes")
-        .bind(("id", checkin_notes.unwrap_or_default()))
-        .bind(("notes", ticket_id))
-        .await?
-        .take(0)?;
         
         Ok(())
     }

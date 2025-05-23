@@ -82,7 +82,7 @@ impl MasterTechApp {
             ticket.salesman = email_split_rep;
             ticket.sales_rep = email.clone();
             ticket.tech = email.clone();
-            ticket.customer = Some(customer.id.clone());
+            ticket.customer = customer.id.clone();
             ticket.checkin_rep = email;
             ticket.terms = data.order.payment.clone();
             ticket.ticket_total = data.order.total_products_wt.clone();

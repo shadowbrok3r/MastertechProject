@@ -54,7 +54,7 @@ pub enum MainPages {
     ChatGpt,
     Downloads,
     WebConsole,
-    AccountSettings,
+    UserPreferences,
 }
 
 #[derive(Debug, PartialEq)]
@@ -204,7 +204,7 @@ impl MasterTechApp {
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
 
         let mastertech_context = MastertechContext {
-            shared_ctx: SharedContext::new(cc),
+            shared_ctx: SharedContext::new(cc, tree.0.clone()),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             client_friendly_name: String::new(),

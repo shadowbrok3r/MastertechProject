@@ -13,7 +13,7 @@ impl SharedContext {
             if self.pending_store.is_some() {
                 self.task_layouts
                     .iter_mut()
-                    .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
+                    .filter(|(page, _)| *page == "Completed Tasks" || *page == "Store Tasks")
                     .for_each(|(_, layout)| {
                         layout.task_map.clear();
                         layout.assignees.clear();
@@ -56,7 +56,7 @@ impl SharedContext {
                             );
 
                             // Determine the task_map key
-                            let key = if layout_key == "MyTasks" {
+                            let key = if layout_key == "My Tasks" {
                                 match &new_task.status {
                                     Status::CustomStatus(name) => name.clone(),
                                     _ => new_task.status.as_str().to_string(),

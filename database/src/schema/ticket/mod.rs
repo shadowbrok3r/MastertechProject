@@ -1,7 +1,7 @@
+use super::{ComputerData, CustomerData, HardwareTests, Job, CUSTOMER_TABLE, TICKET_TABLE};
+use surrealdb::{sql::Datetime, RecordId};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
-use surrealdb::{sql::Datetime, RecordId};
-use super::{ComputerData, CustomerData, HardwareTests, Job, TICKET_TABLE};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TicketPayload {
@@ -53,7 +53,7 @@ pub struct TicketData {
     // Live Ticket Payload
     pub id: RecordId,
     pub created_at: Datetime,
-    pub customer: Option<RecordId>,
+    pub customer: RecordId,
     pub computer: Option<RecordId>,
     pub service_number: String,
     /// Person that checked computer in
@@ -75,8 +75,8 @@ impl Default for TicketData {
     fn default() -> Self {
         Self {
             id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            customer: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             created_at: Default::default(),
-            customer: Default::default(),
             computer: Default::default(),
             service_number: Default::default(),
             checkin_rep: Default::default(),
@@ -131,7 +131,7 @@ impl From<TicketPayload> for TicketData {
             doc_alias: ticket.doc_alias,
             current_antivirus: ticket.current_antivirus,
             hardware_test_results: ticket.hardware_test_results,
-            customer: Some(ticket.customer.unwrap_or_default().id),
+            customer: ticket.customer.unwrap_or_default().id,
             computer: Some(ticket.computer.unwrap_or_default().id),
             jobs: ticket.jobs,
         }

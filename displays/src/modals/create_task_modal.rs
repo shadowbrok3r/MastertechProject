@@ -303,33 +303,13 @@ impl CreateTaskModal {
                 payload.task_data.service_number = Some(payload.ticket_data.service_number.clone());
                 
                 
-                let mut usr = User::default();
+                let usr = &mut User::default();
                 for user in self.store_users.iter() {
                     if assignee == user.get_username() {
                         log::info!("Got {:?} from assignee: {assignee:?}", user.get_name());
-                        usr = user.clone();
+                        *usr = user.clone();
                     }
                 }
-
-                payload.task_data.everest_initials = usr.get_initials().to_string();
-
-                // let live_task_payload = LiveTaskPayload {
-                //     task_name: self.task_name.clone(),
-                //     task_description: self.description.clone(),
-                //     due_date: date,
-                //     priority: self.task_priority.clone(),
-                //     completed: false,
-                //     status: Status::Todo,
-                //     service_number: service_number.clone(),
-                //     service_ticket: if let Some(ticket) = &payload.task_data.service_ticket {
-                //         Some(ticket.id.clone())
-                //     } else {
-                //         None
-                //     },
-                //     everest_initials: usr.everest_initials,
-                //     assignee: usr.id,
-                //     ..Default::default()
-                // };
 
                 let task = payload.task_data.clone();
                 PlatformSpawner::spawn(async move {
@@ -359,7 +339,6 @@ impl CreateTaskModal {
                         match User::query_user_from_email(assignee).await {
                             Ok(user) => {
                                 payload.task_data.assignee = user.get_id();
-                                payload.task_data.everest_initials = user.get_initials().to_string();
 
                                 log::info!("Payload: {payload:?}");
                                 let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE

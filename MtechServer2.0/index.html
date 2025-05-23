@@ -22,7 +22,9 @@
       data-target-name="mtechserver"
       data-integrity="none"
       data-wasm-opt-params="--enable-bulk-memory" 
-    /> <!-- --enable-gc -->
+      data-weak-refs
+      data-reference-types
+    /><!-- data-no-demangle --> <!-- --enable-gc -->
     <!-- <script type="module">
       import init, { initThreadPool } from "./worker.js"
       await init("./worker_bg.wasm");
@@ -37,6 +39,9 @@
       data-wasm-opt="4"
       data-bin="webworker"
       data-type="worker"
+      data-wasm-opt-params="--enable-bulk-memory" 
+      data-weak-refs
+      data-reference-types
     />
 
     <link
@@ -47,6 +52,9 @@
       data-wasm-opt="4"
       data-bin="deser_worker"
       data-type="worker"
+      data-wasm-opt-params="--enable-bulk-memory" 
+      data-weak-refs
+      data-reference-types
     />
     <!-- data-bindgen-target="web" -->
     <!-- data-loader-shim -->

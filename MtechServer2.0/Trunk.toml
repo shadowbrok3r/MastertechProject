@@ -13,9 +13,8 @@ dist = "./dist"
 public_url = "/"
 # Whether to include hash values in the output file names.
 # filehash = false
-# pattern_script = '''
-#
-# '''
+# pattern_script = ''' '''
+minify = "always"
 [serve]
 # The address to serve on.
 addresses = ["0.0.0.0"]

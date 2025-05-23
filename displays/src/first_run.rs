@@ -52,7 +52,7 @@ impl SharedContext {
                 
                 self.task_layouts
                     .iter_mut()
-                    .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
+                    .filter(|(page, _)| *page == "Completed Tasks" || *page == "Store Tasks")
                     .for_each(|(_, layout)| {
                         layout.loading = false;
                 });
@@ -171,7 +171,7 @@ impl SharedContext {
                 };
 
                 // Clear task_map, assignees, and search_inputs only if switching stores
-                if (page == "StoreTasks" || page == "CompletedTasks") && self.pending_store.is_some() {
+                if (page == "Store Tasks" || page == "Completed Tasks") && self.pending_store.is_some() {
                     layout.task_map.clear();
                     layout.assignees.clear();
                     layout.search_inputs.clear();
@@ -180,13 +180,17 @@ impl SharedContext {
                 // Rebuild task_map if users or statuses changed, or store switched
                 if users_changed || statuses_changed || self.pending_store.is_some() {
                     let mut new_task_map = BTreeMap::new();
-                    if page == "MyTasks" {
+                    // Use search_results if present, otherwise use all tasks
+                    let tasks_to_filter = self.search_results.clone().unwrap_or_else(|| {
+                        self.task_index.values().cloned().collect::<Vec<TaskPayload>>()
+                    });
+
+                    if page == "My Tasks" {
                         // Initialize by status, only include non-empty columns
                         for status_str in &config.valid_keys {
                             let status = Status::from_str(status_str);
-                            let filtered = self
-                                .task_index
-                                .values()
+                            let filtered = tasks_to_filter
+                                .iter()
                                 .cloned()
                                 .collect::<Vec<TaskPayload>>()
                                 .filter_by_status(&status)
@@ -201,14 +205,14 @@ impl SharedContext {
                     } else {
                         // Initialize by user initials
                         for user in self.store_users.iter() {
-                            let filtered = self
-                                .task_index
-                                .values()
+                            let filtered = tasks_to_filter
+                                .iter()
                                 .cloned()
                                 .collect::<Vec<TaskPayload>>()
                                 .filter_by_assignee(user)
-                                .filter_by_completion(page == "CompletedTasks")
+                                .filter_by_completion(page == "Completed Tasks")
                                 .filter_by_store(user, &store_selection);
+
                             if !filtered.is_empty() {
                                 new_task_map
                                     .entry(user.get_initials().to_string())
@@ -216,6 +220,8 @@ impl SharedContext {
                             }
                         }
                     }
+                    // Update column_names to match task_map keys
+                    layout.update_col_names(new_task_map.keys().cloned().collect());
                     layout.task_map = new_task_map;
                 }
 

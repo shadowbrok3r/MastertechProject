@@ -127,7 +127,7 @@ pub fn get_database_users()  -> Vec<User>{
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskUiActions {
     OpenTaskModal(TaskPayload),
     CreateTaskModal,
@@ -154,25 +154,22 @@ pub trait Updatable {
     async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error>;
     async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error>;
     async fn update_due_date(&self) -> anyhow::Result<(), anyhow::Error>;
-    async fn update_assignee_initials(&self, initials: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_assignee(&self, assignee: RecordId) -> anyhow::Result<(), anyhow::Error>;
     async fn update_task_name(&self, name: String) -> anyhow::Result<(), anyhow::Error>;
     async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error>;
-    async fn update_dep(&self, store: Store) -> anyhow::Result<(), anyhow::Error>;
     async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error>;
     async fn update_task_description(&self) -> anyhow::Result<(), anyhow::Error>;
-    async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> anyhow::Result<(), anyhow::Error>;
 }
 
 pub trait Interaction {
     fn interact_service_number(&mut self, ui: &mut Ui) -> Response;
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_task_description(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_completed(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_priority(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_assignee(&mut self, ui: &mut Ui, store_users: &Vec<User>, current_user: &User) -> Response; // , task: Rc<RefCell<TaskPayload>>
 }
 
 pub trait FilterTasks {
@@ -254,7 +251,7 @@ pub trait DisplayModal {
     // fn set_state(self, action: ModalAction);
 }
 
-#[derive(Default, PartialEq, Clone, serde::Serialize)]
+#[derive(Default, PartialEq, Clone, serde::Serialize, Debug, Deserialize)]
 pub enum SortDirection{
     #[default]
     Asc,

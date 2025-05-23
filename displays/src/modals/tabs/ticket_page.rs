@@ -47,7 +47,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
 
                 ui.colored_label(Color32::LIGHT_RED, "Assignee");
                 ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {
-                    task.interact_assignee_initials(ui, store_users);
+                    task.interact_assignee(ui, store_users, &current_user);
                 });
                 
                 ui.colored_label(Color32::LIGHT_RED, "Status");

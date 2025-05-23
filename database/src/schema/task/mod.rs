@@ -10,7 +10,6 @@ pub struct TaskPayload {
     pub id: RecordId,
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
-    pub everest_initials: String,
     pub task_description: String,
     pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
@@ -29,7 +28,6 @@ impl Default for TaskPayload {
             id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_name: String::new(),
             service_ticket: None,
-            everest_initials: String::new(),
             task_description: String::new(),
             assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
@@ -48,7 +46,6 @@ pub struct LiveTaskPayload {
     pub id: RecordId,
     pub task_name: String,
     pub service_ticket: Option<RecordId>,
-    pub everest_initials: String,
     pub task_description: String,
     pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
@@ -65,7 +62,6 @@ impl Default for LiveTaskPayload {
             id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             task_name: String::new(),
             service_ticket: None,
-            everest_initials: String::new(),
             task_description: String::new(),
             assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
             service_number: None,
@@ -83,7 +79,6 @@ impl From<LiveTaskPayload> for TaskPayload {
         Self {
             id: live_task.id,
             task_name: live_task.task_name,
-            everest_initials: live_task.everest_initials,
             task_description: live_task.task_description,
             assignee: live_task.assignee,
             service_number: live_task.service_number,
@@ -102,7 +97,6 @@ impl From<TaskPayload> for LiveTaskPayload {
             id: task.id,
             task_name: task.task_name,
             service_ticket: Some(task.service_ticket.unwrap_or_default().id),
-            everest_initials: task.everest_initials,
             task_description: task.task_description,
             assignee: task.assignee,
             service_number: task.service_number,
@@ -144,7 +138,6 @@ impl LiveTaskPayload {
         task_data.service_ticket = Some(ticket_id.clone());
         task_data.service_number = Some(service_number.clone());
         task_data.priority = Priority::Normal;
-        task_data.everest_initials = queried_salesman.get_initials().to_string();
         task_data.assignee = queried_salesman.get_id();
     
         // if ticket_data.computer.is_none() {

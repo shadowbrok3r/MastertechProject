@@ -103,12 +103,21 @@ pub struct Session {
     pub user: User,
 }
 
-#[derive(Serialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub enum DatabaseSelection {
-    #[default]
     Stable,
     Beta,
     Local
+}
+
+impl Default for DatabaseSelection {
+    fn default() -> Self {
+        if cfg!(debug_assertions) {
+            Self::Local
+        } else {
+            Self::Stable
+        }
+    }
 }
 
 impl DatabaseSelection {
@@ -149,12 +158,6 @@ impl DatabaseSelection {
         DATABASE.use_ns(NS).use_db(DB).await?;
         Ok(())
     }
-}
-
-pub async fn initialize_db() -> anyhow::Result<()> {
-    DATABASE.connect::<Wss>(DB_URL_DEV).await?;
-    DATABASE.use_ns(NS).use_db(DB).await?;
-    Ok(())
 }
 
 impl Database {

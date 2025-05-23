@@ -1,40 +1,32 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::schema::{LiveTaskPayload, Record, Store, TaskPayload, User};
-use crate::get_current_user_from_auth;
 use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
 use std::collections::{BTreeMap, HashMap};
+use crate::get_current_user_from_auth;
 use crossbeam::channel::Sender;
-use std::collections::BTreeSet;
 use database::{self, DATABASE};
-use structdiff::Difference;
-use structdiff::StructDiff;
+use std::collections::BTreeSet;
+use serde::Deserialize;
 use surrealdb::RecordId;
 use serde::Serialize;
 use chrono::Utc;
 use crate::{PlatformSpawner, Spawner};
 
-#[derive(Difference)]
+#[derive(Serialize, Deserialize)]
 pub struct TaskLayout{
-    #[difference(skip)]
     pub search_inputs: HashMap<String, String>,
-    #[difference(collection_strategy = "unordered_map_like", map_equality = "key_and_value")]
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
-    #[difference(collection_strategy="ordered_array_like")]
     pub column_names: Vec<String>,
     pub assignees: Vec<User>,
     pub open_menu: bool,
-    #[difference(skip)]
     pub action: TaskUiActions,
     pub task: Option<String>,
-    #[difference(skip)]
-    pub ui_actions_tx: Sender<TaskUiActions>,
-    #[difference(skip)]
     pub sort_by: HashMap<String, SortOptions>,
-    #[difference(skip)]
     pub last_sort_field: Option<SortField>,    
     pub loading: bool,
     new_status: String,
-    user: User
+    user: User,
+    search_results: Option<Vec<TaskPayload>>, // Add search results
 }
 
 pub struct LayoutConfig {
@@ -46,13 +38,13 @@ pub struct LayoutConfig {
     pub update_assignees: bool,
 }
 
-#[derive(Clone, Default, PartialEq, Serialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Debug, Deserialize)]
 pub struct SortOptions {
     pub field: SortField,
     pub direction: SortDirection,
 }
 
-#[derive(Clone, Default, PartialEq, Serialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Debug, Deserialize)]
 pub enum SortField {
     #[default]
     Default,
@@ -66,14 +58,13 @@ impl TaskLayout {
     
     pub fn new(
         task_map: BTreeMap<String, Vec<TaskPayload>>, 
-        column_names: Vec<String>, 
-        ui_actions_tx: Sender<TaskUiActions>, 
+        column_names: Vec<String>,
         assignees: Vec<User>,
+        search_results: Option<Vec<TaskPayload>>, // Add parameter
     ) -> Self  {
         Self {  
             task_map, 
-            column_names, 
-            ui_actions_tx, 
+            column_names,
             assignees, 
             search_inputs: HashMap::new(), 
             open_menu: false, 
@@ -83,7 +74,8 @@ impl TaskLayout {
             last_sort_field: None,
             loading: false,
             new_status: String::new(),
-            user: get_current_user_from_auth().unwrap_or_default()
+            user: get_current_user_from_auth().unwrap_or_default(),
+            search_results,
         }
     }
 
@@ -97,7 +89,7 @@ impl TaskLayout {
         self
     }
     
-    pub fn layout_cols(&mut self, ui: &mut Ui) {
+    pub fn layout_cols(&mut self, ui: &mut Ui, ui_actions_tx: Sender<TaskUiActions>) {
         ui.style_mut().visuals.window_corner_radius = ui.style().visuals.window_corner_radius;
         let style = ui.style().clone();
         let mut inputs = BTreeSet::new();
@@ -145,7 +137,7 @@ impl TaskLayout {
                         
                         for task in tasks.iter(){
                             inputs.insert(task.task_name.clone());
-                            inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
+                            inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
                         }
 
                         header_frame.show(col_ui, |ui| {
@@ -158,13 +150,24 @@ impl TaskLayout {
 
                             ui.horizontal(|ui| 
                             {
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| 
+                                ui.with_layout(Layout::left_to_right(Align::Max), |ui| 
                                 {
-                                    let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
+                                    // Disable per-column search if global search is active
+                                    let search_input = if self.search_results.is_some() {
+                                        &mut String::new()
+                                    } else {
+                                        &mut self.search_inputs.entry(name.clone()).or_insert_with(String::new).clone()
+                                    };
+
                                     let mut margin = Margin::default();
                                     margin.top = 6;
                                     
-                                    TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
+                                    TextEdit::singleline(search_input).hint_text(" Search").desired_width(100.0).margin(margin).ui(ui);
+
+                                    // Update search_inputs only if global search is inactive
+                                    if self.search_results.is_none() {
+                                        self.search_inputs.insert(name.clone(), search_input.to_string());
+                                    }
 
                                     ui.add_space(15.);
                                     
@@ -180,7 +183,7 @@ impl TaskLayout {
                                         ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
                                     }
 
-                                    ui.add_space(15.);
+                                    ui.add_space(25.);
                                     let response = Button::new(RichText::new(name.to_owned())
                                             .color(style.visuals.warn_fg_color)
                                             .size(13.0).monospace()
@@ -256,49 +259,8 @@ impl TaskLayout {
                                     ui.add_space(20.0);
 
                                     if button.clicked(){
-                                        ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-create-{:?}",name).into()));
+                                        let _ = ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
                                     }
-                                    
-                                    popup_below_widget(
-                                        ui, 
-                                        format!("sub_menu-create-{:?}", name).into(), 
-                                        &button, 
-                                        PopupCloseBehavior::CloseOnClickOutside, 
-                                        |ui| 
-                                    {
-                                        ui.vertical_centered_justified(|ui| {
-                                            ui.set_width(200.0);
-                                            let create_task_button = Button::new(
-                                                RichText::new("Create Task")
-                                                    .color(ui.style().visuals.warn_fg_color)
-                                                )
-                                                .corner_radius(ui.style().visuals.menu_corner_radius)
-                                                .fill(Color32::from_rgb(22,22,22))
-                                                .min_size(Vec2::new(30.0, 15.0))
-                                                .ui(ui);
-
-                                            if create_task_button.clicked() {
-                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
-                                            }
-
-                                            ui.add_space(5.0);
-
-                                            let accepted_by_keyboard = ui.ctx().input_mut(|i| i.key_pressed(eframe::egui::Key::Enter));
-                                            let res = TextEdit::singleline(&mut self.new_status).hint_text("Create new status").show(ui);
-
-                                            if ( accepted_by_keyboard || res.response.lost_focus() ) && !self.new_status.is_empty() {
-                                                log::info!("Got a new status: {}", self.new_status);
-                                                let status = self.new_status.clone();
-                                                self.new_status.clear();
-                                                PlatformSpawner::spawn(async move {
-                                                    match User::add_custom_status(database::schema::Status::CustomStatus(status.clone())).await {
-                                                        Ok(_) => log::info!("Created new status: {}", status),
-                                                        Err(e) => log::error!("Error creating new status: {e:?}")
-                                                    }
-                                                });
-                                            }
-                                        });
-                                    });
 
                                     let selected = self.sort_by.entry(name.clone()).or_default();
                                     let txt = match selected.direction {
@@ -310,8 +272,10 @@ impl TaskLayout {
                                         SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
                                         SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
                                     };
+                                    
                                     ComboBox::new(format!("SortBy for {name:?}-{i}"), "")
                                         .selected_text(selected_text)
+                                        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                                         .width(70.)
                                         .show_ui(ui, |ui| {
                                             if ui.selectable_value(
@@ -423,7 +387,7 @@ impl TaskLayout {
                                     }
                                     if let Some(&task_index) = filtered_indices.get(row) {
                                         if let Some(task) = tasks.get_mut(task_index) {
-                                            task.display_cards(&self.user, ui, &self.assignees, self.ui_actions_tx.clone());
+                                            task.display_cards(&self.user, ui, &self.assignees, ui_actions_tx.clone());
                                         }
                                     }
                                 }

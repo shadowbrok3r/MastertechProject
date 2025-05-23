@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use database::DATABASE;
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::to_vec;
@@ -122,8 +122,10 @@ impl Default for ThemeConfig {
 impl ThemeConfig {
     pub fn edit_ui(&mut self, ui: &mut Ui, tx: Sender<ThemeConfig>) -> (bool, Self) {
         let mut ret = (false, self.clone());
-        ui.horizontal(|ui| {
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+        TopBottomPanel::top("Theme Menu top bar")
+        .exact_height(30.)
+        .show_inside(ui, |ui| {
+            ui.horizontal(|ui|{
                 let reset = Button::new("Reset to Default")
                     .min_size(Vec2::new(70., 25.))
                     .stroke(Stroke::new(1., self.warn_color))
@@ -143,84 +145,86 @@ impl ThemeConfig {
                     });
                     ret = (true, ThemeConfig::default());
                 }
-            });
-            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                let save = Button::new("Save")
-                    .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1., self.warn_color))
-                    .ui(ui);
-                
-                if save.clicked() {
-                    let color_settings = self.clone();
-                    PlatformSpawner::spawn(async move {
-                        match DATABASE
-                            .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
-                            .bind(("color_settings", color_settings.clone()))
-                            .await 
-                        {
-                            Ok(res) => info!("Result: {res:?}"),
-                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                        }
-                    });
-                    ret = (true, self.clone());
-                }
 
-                ui.add_space(5.);
-
-                let save_local = Button::new("Save to file")
-                    .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1., self.warn_color))
-                    .ui(ui);
-                
-                if save_local.clicked() {
-                    let color_settings = self.clone();
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let save = Button::new("Save")
+                        .min_size(Vec2::new(70., 25.))
+                        .stroke(Stroke::new(1., self.warn_color))
+                        .ui(ui);
                     
-                    PlatformSpawner::spawn(async move {
-                        // Serialize the struct into JSON
-                        if let Ok(json_data) = to_vec(&color_settings) {
+                    if save.clicked() {
+                        let color_settings = self.clone();
+                        PlatformSpawner::spawn(async move {
+                            match DATABASE
+                                .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
+                                .bind(("color_settings", color_settings.clone()))
+                                .await 
+                            {
+                                Ok(res) => info!("Result: {res:?}"),
+                                Err(e) => log::error!("Error updating User Settings: {e:?}"),
+                            }
+                        });
+                        ret = (true, self.clone());
+                    }
+
+                    ui.add_space(5.);
+
+                    let save_local = Button::new("Save to file")
+                        .min_size(Vec2::new(70., 25.))
+                        .stroke(Stroke::new(1., self.warn_color))
+                        .ui(ui);
+                    
+                    if save_local.clicked() {
+                        let color_settings = self.clone();
+                        
+                        PlatformSpawner::spawn(async move {
+                            // Serialize the struct into JSON
+                            if let Ok(json_data) = to_vec(&color_settings) {
+                                // Show the save file dialog
+                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                    .set_file_name("mastertech_color_scheme.json") // Default file name
+                                    .save_file()
+                                    .await
+                                {
+                                    // Write the JSON data to the selected file
+                                    if let Err(err) = file.write(&json_data).await {
+                                        log::error!("Failed to save file: {:?}", err);
+                                    }
+                                }
+                            } else {
+                                log::error!("Error serializing settings to json");
+                            }
+                        });
+                    }
+
+                    ui.add_space(5.);
+
+                    let upload = Button::new("Upload settings")
+                        .min_size(Vec2::new(70., 25.))
+                        .stroke(Stroke::new(1., self.warn_color))
+                        .ui(ui);
+                    
+                    if upload.clicked() {
+                        let tx = tx.clone();
+                        PlatformSpawner::spawn(async move {
                             // Show the save file dialog
                             if let Some(file) = rfd::AsyncFileDialog::new()
                                 .set_file_name("mastertech_color_scheme.json") // Default file name
-                                .save_file()
+                                .pick_file()
                                 .await
                             {
-                                // Write the JSON data to the selected file
-                                if let Err(err) = file.write(&json_data).await {
-                                    log::error!("Failed to save file: {:?}", err);
+                                match serde_json::from_slice::<ThemeConfig>(&file.read().await) {
+                                    Ok(theme) => tx.try_send(theme).unwrap(),
+                                    Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
                                 }
                             }
-                        } else {
-                            log::error!("Error serializing settings to json");
-                        }
-                    });
-                }
-
-                ui.add_space(5.);
-
-                let upload = Button::new("Upload settings")
-                    .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1., self.warn_color))
-                    .ui(ui);
-                
-                if upload.clicked() {
-                    let tx = tx.clone();
-                    PlatformSpawner::spawn(async move {
-                        // Show the save file dialog
-                        if let Some(file) = rfd::AsyncFileDialog::new()
-                            .set_file_name("mastertech_color_scheme.json") // Default file name
-                            .pick_file()
-                            .await
-                        {
-                            match serde_json::from_slice::<ThemeConfig>(&file.read().await) {
-                                Ok(theme) => tx.try_send(theme).unwrap(),
-                                Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
-                            }
-                        }
-                        
-                    });
-                }
-                
+                            
+                        });
+                    }
+                    
+                });
             });
+
         });
 
         ui.add_space(10.);

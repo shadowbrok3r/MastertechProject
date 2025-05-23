@@ -79,12 +79,11 @@ pub struct CustomerData {
     pub part_order_links: Option<Vec<String>>,
     pub name: String,
     pub phone_number: String,
-    pub phone_number_2: String, // Option<String>
+    pub phone_number_2: String,
     pub email: String,
     pub li_doc: String,
     pub li_amnt: String,
-    pub num_inv: String,
-    pub computers: Vec<RecordId>
+    pub num_inv: String
 }
 
 impl Default for CustomerData {
@@ -100,7 +99,6 @@ impl Default for CustomerData {
             li_doc: Default::default(),
             li_amnt: Default::default(),
             num_inv: Default::default(),
-            computers: Default::default(),
         }
     }
 }
@@ -402,7 +400,6 @@ pub enum NotificationStatus {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModifyNotification {
     pub id: RecordId,
-    pub everest_initials: Option<String>,
     /// either Read or Unread
     pub status: Option<NotificationStatus>,
     pub mark_all_read: Option<bool>,
@@ -420,55 +417,6 @@ pub enum Status {
     Qc,
     CustomStatus(String),
 }
-
-// Custom serialization
-impl Serialize for Status {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-// Custom deserialization
-impl<'de> Deserialize<'de> for Status {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Ok(Status::from_str(&s))
-    }
-}
-
-// Trait that all statuses (including user-defined ones) can implement
-// trait TaskStatuses {
-//     fn get_user_statuses(&self) -> Vec<Status>;
-//     fn add_new_user_status(&self) -> Vec<Status>;
-// }
-// impl TaskStatuses for Status {
-//     fn get_user_statuses(&self) -> Vec<Status> {
-//         match self {
-//             Status::Todo => todo!(),
-//             Status::InRepair => todo!(),
-//             Status::Complete => todo!(),
-//             Status::CustomStatus(_) => todo!(),
-//         }
-//     }
-//     fn add_new_user_status(&self) -> Vec<Status> {
-//         todo!()
-//     }
-// }
-// // Implement the TaskStatus trait for your predefined statuses
-// impl TaskStatuses for User {
-//     fn get_user_statuses(&self) -> &str {
-//         match self {
-//             Status::Todo => "Todo",
-//             Status::InRepair => "In Repair",
-//             Status::Complete => "Complete",
-//             Status::CustomStatuses(user_statuses) => {
-//             }
-//         }
-//     }  
-//     fn add_new_user_status(&self) -> Vec<Status> {    
-//         self.user_statuses.push(value);
-//     }
-// }
 
 impl Status {
     pub const VALUES: [Self; 6] = [Self::Todo, Self::InRepair, Self::Complete, Self::Sales, Self::Qc, Status::CustomStatus(String::new())];
@@ -491,6 +439,21 @@ impl Status {
             "QC" => Status::Qc,
             _ => Status::CustomStatus(status.to_string())
         }
+    }
+}
+
+// Custom serialization
+impl Serialize for Status {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+// Custom deserialization
+impl<'de> Deserialize<'de> for Status {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Status::from_str(&s))
     }
 }
 

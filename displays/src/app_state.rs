@@ -1,14 +1,16 @@
 use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
-use crossbeam::channel::{self, Receiver, Sender};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
+use crossbeam::channel::{self, Receiver, Sender};
 use surrealdb::{Action, RecordId};
+use egui_dock::DockState;
 use serde::Serialize;
 use anyhow::Error;
 
 #[derive(Serialize)]
 pub struct SharedContext {
+    pub tree: DockState<String>,
     // User and Client Related Fields
     /// {Sends users from database}
     #[serde(skip)]
@@ -23,7 +25,6 @@ pub struct SharedContext {
     /// {Users in the store}
     pub store_users: Vec<User>,
     /// {Task layouts for different tabs}
-    #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
     /// {All task data}
     pub tasks: Vec<TaskPayload>,
@@ -175,10 +176,11 @@ pub struct SharedContext {
     pub user_chat: UserChat,
     pub pending_store: Option<Store>,
     pub task_index: HashMap<String, TaskPayload>, // Index by task ID
+    pub search_results: Option<Vec<TaskPayload>>, // Store global search results
 }
 
 impl SharedContext {
-    pub fn new(cc: &CreationContext<'_>) -> Self {
+    pub fn new(cc: &CreationContext<'_>, tree: DockState<String>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
 
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
@@ -216,6 +218,7 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
+            tree,
             task_index: HashMap::new(),
             layout_configs: None,
             current_user: None,
@@ -267,6 +270,7 @@ impl SharedContext {
             opened_modals: HashMap::new(),
             read_notifications: false,
             new_note: false,
+            search_results: None,
 
             // Other Components
             serials_table: DataTable::<SerialsData>::default(),
@@ -319,7 +323,7 @@ impl SharedContext {
 
             // MyTasks: Current user's tasks, non-Complete, keyed by status
             layout_configs.insert(
-                "MyTasks".to_string(),
+                "My Tasks".to_string(),
                 LayoutConfig {
                     valid_keys: valid_statuses.clone(),
                     key_provider: Box::new(move |_| valid_statuses.clone()),
@@ -339,7 +343,7 @@ impl SharedContext {
 
             // StoreTasks: Incomplete tasks for store users, keyed by username
             layout_configs.insert(
-                "StoreTasks".to_string(),
+                "Store Tasks".to_string(),
                 LayoutConfig {
                     valid_keys: self
                         .store_users
@@ -370,7 +374,7 @@ impl SharedContext {
 
             // CompletedTasks: Completed tasks for store users, keyed by username
             layout_configs.insert(
-                "CompletedTasks".to_string(),
+                "Completed Tasks".to_string(),
                 LayoutConfig {
                     valid_keys: self
                         .store_users
