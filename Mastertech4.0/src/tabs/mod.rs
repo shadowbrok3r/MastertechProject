@@ -34,7 +34,7 @@ pub mod websockets;
 //     "Completed Tasks",
 //     "Bug Report",
 //     "Logs",
-//     "Query Builder",
+//     "Database",
 //     "Json Viewer",
 //     "Store Stock",
 //     "SEB Lookup",

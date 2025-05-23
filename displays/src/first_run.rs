@@ -102,16 +102,16 @@ impl SharedContext {
             info!("Received new store users: {} users", users.len());
 
             // Check if store_users has changed significantly
-            let old_initials: HashSet<String> = self
+            let old_username: HashSet<String> = self
                 .store_users
                 .iter()
-                .map(|u| u.get_initials().to_string())
+                .map(|u| u.get_username().to_string())
                 .collect();
-            let new_initials: HashSet<String> = users
+            let new_username: HashSet<String> = users
                 .iter()
-                .map(|u| u.get_initials().to_string())
+                .map(|u| u.get_username().to_string())
                 .collect();
-            let users_changed = old_initials != new_initials;
+            let users_changed = old_username != new_username;
 
             // Check if user_statuses have changed for current_user
             let old_statuses = self.current_user.as_ref().map(|u| {
@@ -215,7 +215,7 @@ impl SharedContext {
 
                             if !filtered.is_empty() {
                                 new_task_map
-                                    .entry(user.get_initials().to_string())
+                                    .entry(user.get_username().to_string())
                                     .or_insert(filtered);
                             }
                         }

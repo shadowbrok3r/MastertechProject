@@ -708,7 +708,6 @@ impl From<PrestashopPayload> for TaskPayload {
         }
 
         for msg in value.customer_messages.iter() {
-            // let initials = if msg.id_employee 
             task_notes.push(TaskNotePayload {
                 note: msg.message.clone(),
                 id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),

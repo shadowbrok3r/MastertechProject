@@ -41,7 +41,7 @@ impl Updatable for TaskPayload {
     }
 
     async fn update_assignee(&self, assignee: RecordId) -> anyhow::Result<(), anyhow::Error> {
-        info!("Initials: {assignee:?}");
+        info!("assignee: {assignee:?}");
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET assignee=$assignee, status ='Todo'")
             .bind(("id", self.id.clone()))

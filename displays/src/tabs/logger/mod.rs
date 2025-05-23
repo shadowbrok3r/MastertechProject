@@ -60,7 +60,7 @@ impl Default for LoggerUi {
             search_case_sensitive: false,
             regex: None,
             search_use_regex: false,
-            max_log_length: 1000,
+            max_log_length: 200,
             style: Style::default(),
         }
     }

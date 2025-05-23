@@ -70,7 +70,7 @@ impl eframe::App for MtechServer {
         if let Some(items) = self.context.data_update.take() {
             let tx = self.context.shared_ctx.initial_tasks_tx.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                log::info!("Got data update from webworker: {:?}", items.len());
+                // log::info!("Got data update from webworker: {:?}", items.len());
                 let _ = tx.try_send(decode_task_payload(&items).unwrap_or_default());
             });
         }

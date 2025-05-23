@@ -45,6 +45,7 @@ async-openai-wasm = { version = "0.27" }
 async-openai = {version = "0.28.1"}
 egui_taffy = "0.7"
 egui_colors = "0.8"
+itertools = "0.14"
 
 [profile.dev]
 debug = true

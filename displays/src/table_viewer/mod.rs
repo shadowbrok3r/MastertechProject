@@ -18,7 +18,7 @@ impl egui_data_table::RowViewer<MyRowData> for MyRowViewer {
             0 => ui.label(format!("{}", row.0)),
             1 => ui.label(&row.1),
             2 => ui.checkbox(&mut { row.2 }, ""),
-            _ => unreachable!(),
+            _ => {},
         };
     }
 
@@ -29,18 +29,18 @@ impl egui_data_table::RowViewer<MyRowData> for MyRowViewer {
         column: usize,
     ) -> Option<egui::Response> {
         match column {
-            0 => ui.add(egui::DragValue::new(&mut row.0).speed(1.0)),
+            0 => Some(ui.add(egui::DragValue::new(&mut row.0).speed(1.0))),
             1 => {
-                egui::TextEdit::multiline(&mut row.1)
+                let res = egui::TextEdit::multiline(&mut row.1)
                     .desired_rows(1)
                     .code_editor()
                     .show(ui)
-                    .response
+                    .response;
+                Some(res)
             }
-            2 => ui.checkbox(&mut row.2, ""),
-            _ => unreachable!(),
+            2 => Some(ui.checkbox(&mut row.2, "")),
+            _ => None,
         }
-        .into() // To make focusing work correctly, valid response must be returned.
     }
 
     fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
@@ -48,7 +48,7 @@ impl egui_data_table::RowViewer<MyRowData> for MyRowViewer {
             0 => dst.0 = src.0,
             1 => dst.1 = src.1.clone(),
             2 => dst.2 = src.2,
-            _ => unreachable!(),
+            _ => {},
         }
     }
 

@@ -1,55 +1,80 @@
-use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
-use eframe::egui::{Color32, Hyperlink, KeyboardShortcut, Label, Widget};
-use database::schema::{helper_traits::parse_email_user, prestashop_schema::{MissedCallOrder, PrestashopPayload}, TaskNotePayload};
-use chrono::{DateTime, NaiveDateTime, Utc};
-use egui_data_table::{viewer::{default_hotkeys, RowCodec, UiActionContext}, RowViewer, UiAction};
-use crate::PlatformSpawner;
-use crossbeam::channel::{Receiver, Sender};
-use egui_extras::Column;
+use database::schema::{ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User};
+use egui_data_table::{viewer::RowCodec, RowViewer};
+use serde::{Deserialize, Serialize};
+use crate::{get_current_user_from_auth, tabs::task_audit::codec::Codec};
 
-use super::codec::Codec;
-
-pub const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
+use super::DatabaseViewer;
 
 /// Every logic is defined in `Viewer`
 #[derive(serde::Serialize)]
-pub struct TaskRowViewer {
+pub struct DatabaseRowViewer {
+    pub current_user: User,
     pub filter: String,
-    row_protection: bool,
-    #[serde(skip)]
-    pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
-    pub selected: Option<PrestashopPayload>,
-    order_data: PrestashopPayload,
-    pub open_hotkeys: bool,
-    pub chat_view: ChatView,
-    #[serde(skip)]
-    pub notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
-    #[serde(skip)]
-    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
-    pub missed_calls: Vec<MissedCallOrder>
+    pub selected: DatabaseTable,
+    user_data: User,
+    task_data: TaskPayload,
+    ticket_data: TicketPayload
 }
 
-impl Default for TaskRowViewer {
+#[derive(PartialEq, Serialize, Deserialize)]
+pub enum DatabaseTable {
+    Task(TaskPayload),
+    Customer(CustomerData),
+    Ticket(TicketPayload),
+    Computer(ComputerData),
+    TaskNote(TaskNotePayload),
+}
+
+impl Default for DatabaseTable {
     fn default() -> Self {
-        let notes_channel = <Vec<TaskNotePayload>>::create_unbounded_channel();
-        let tur_channel = PrestashopPayload::create_unbounded_channel();
-        Self {
-            notes_channel,
-            tur_channel,
-            filter: Default::default(),
-            row_protection: Default::default(),
-            hotkeys: Default::default(),
-            selected: Default::default(),
-            open_hotkeys: Default::default(),
-            chat_view: ChatView::default(),
-            order_data: PrestashopPayload::default(),
-            missed_calls: Vec::new(),
+        Self::Task(TaskPayload::default())
+    }
+}
+
+impl DatabaseTable {
+    pub fn as_str(&self) -> &str {
+        match self {
+            DatabaseTable::Task(_) => "Task",
+            DatabaseTable::Customer(_) => "Customer",
+            DatabaseTable::Ticket(_) => "Ticket",
+            DatabaseTable::Computer(_) => "Computer",
+            DatabaseTable::TaskNote(_) => "Task Note",
+        }
+    }
+    
+    pub fn from_str(table: &str) -> Self {
+        match table {
+            "Task" => Self::Task(_),
+            "Customer" => Self::Customer(_),
+            "Ticket" => Self::Ticket(_),
+            "Computer" => Self::Computer(_),
+            "Task Note" => Self::TaskNote(_),
+            _ => Self::default()
         }
     }
 }
 
-impl RowViewer<PrestashopPayload> for TaskRowViewer {
-    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<PrestashopPayload>> {
+impl Default for DatabaseRowViewer {
+    fn default() -> Self {
+        Self {
+            current_user: if let Some(usr) = get_current_user_from_auth() {
+                usr.clone()
+            } else {
+                User::default()
+            },
+            filter: Default::default(),
+            // selected: Default::default(),
+            user_data: User::default(),
+            task_data: TaskPayload::default(),
+            ticket_data: TicketPayload::default(),
+            selected: DatabaseTable::default(),
+        }
+    }
+}
+
+
+impl RowViewer<DatabaseTable> for DatabaseViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<DatabaseTable>> {
         Some(Codec)
     }
 

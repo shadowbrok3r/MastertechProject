@@ -223,7 +223,11 @@ impl TaskAuditViewer {
             // if let self.time.el {
                 // self.loading = false;
                 // if let Some(storage) = frame.storage_mut() {
-                //     match serde_json::to_string(&self.service_map) {
+                //     let map: &HashMap<String, PrestashopPayload> = &self.service_map
+                //         .iter()
+                //         .map(|(k, v)| (k.clone(), v.clone().into()))
+                //         .collect::<&HashMap<String, PrestashopPayload>>();
+                //     match serde_json::to_string(map) {
                 //         Ok(service_map) => storage.set_string("service_data", service_map),
                 //         Err(e) => log::error!("error converting service_data to string: {e:?}"),
                 //     }
@@ -253,7 +257,6 @@ impl TaskAuditViewer {
     }
 
 }
-
 
 impl TaskRowViewer {
     pub async fn get_order_notes(service_number: String) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
