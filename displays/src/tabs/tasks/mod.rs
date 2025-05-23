@@ -108,7 +108,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                             .filter_by_completion(*target_page == "Completed Tasks")
                             .filter_by_store(user, &store_selection);
                         if !filtered.is_empty() {
-                            target_map.entry(user.get_initials().to_string()).or_insert(filtered);
+                            target_map.entry(user.get_username().to_string()).or_insert(filtered);
                         }
                     }
                 }

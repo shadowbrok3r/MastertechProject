@@ -4,7 +4,7 @@ use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 impl SharedContext {
     pub fn receive_task(&mut self) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            log::info!("Received initial task payload with {} tasks", tasks.len());
+            // log::info!("Received initial task payload with {} tasks", tasks.len());
 
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
@@ -65,7 +65,7 @@ impl SharedContext {
                                 self.store_users
                                     .iter()
                                     .find(|u| u.get_id() == new_task.assignee)
-                                    .map(|u| u.get_initials().to_string())
+                                    .map(|u| u.get_username().to_string())
                                     .unwrap_or_default()
                             };
 
@@ -77,7 +77,7 @@ impl SharedContext {
                                     .or_insert_with(Vec::new);
                                 if !task_list.iter().any(|t| t.id.key().to_string() == task_id) {
                                     task_list.push(new_task_payload.clone());
-                                    log::info!("Added initial task to layout: {}", layout_key);
+                                    // log::info!("Added initial task to layout: {}", layout_key);
                                 }
                             }
                         }

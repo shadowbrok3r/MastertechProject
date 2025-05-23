@@ -15,7 +15,6 @@ rpc-router = "0.1"
 schemars = "0.8"
 derivative = "2"
 parking_lot = "0.12"
-itertools = "0.14"
 zstd = "0.13"
 tap = "1"
 compact_str = { version = "0.9.0", features = ["serde"] }
@@ -45,6 +44,7 @@ async-trait = { workspace = true }
 once_cell = { workspace=true }
 egui_taffy = { workspace = true }
 rfd = { workspace = true }
+itertools = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace=true, optional = true }

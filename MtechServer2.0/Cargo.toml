@@ -50,6 +50,7 @@ rfd = { workspace=true }
 gloo-console = { workspace=true }
 egui-data-table = { workspace=true }
 bincode = { workspace = true }
+itertools = { workspace = true }
 
 [dependencies.uuid]
 version = "1.13"

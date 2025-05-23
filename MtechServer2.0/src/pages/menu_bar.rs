@@ -20,21 +20,20 @@ impl MtechServer {
                         ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
                             // allow certain tabs to be toggled
                             for tab in &[
-                                &"Store Tasks".to_string(),
                                 &"My Tasks".to_string(),
-                                &"Terminal".to_string(),
-                                &"Admin Console".to_string(),
+                                &"Store Tasks".to_string(),
                                 &"Completed Tasks".to_string(),
-                                &"Bug Report".to_string(),
-                                &"Ai".to_string(),
-                                &"Json Viewer".to_string(),
-                                &"Query Builder".to_string(),
-                                &"Task Audit".to_string(),
                                 &"Store Stock".to_string(),
                                 &"Company Stock".to_string(),
-                                &"My Tools".to_string(),
+                                &"Task Audit".to_string(),
                                 &"Threads".to_string(),
+                                &"Bug Report".to_string(),
+                                &"My Tools".to_string(),
                                 &"Logs".to_string(),
+                                &"Admin Console".to_string(),
+                                // &"Ai".to_string(),
+                                // &"Json Viewer".to_string(),
+                                &"Database".to_string(),
                             ] {
                                 if ui
                                     .selectable_label(self.context.open_tabs.contains(*tab), *tab)

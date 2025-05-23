@@ -81,28 +81,32 @@ pub fn decode_task_payload(packet: &[u8]) -> anyhow::Result<Vec<TaskPayload>> {
     Ok(message)
 }
 
-pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
+pub async fn get_completed_tasks_for_store(_offset: i32, _limit: i32) -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
     let query = r#"
         SELECT *, (
             SELECT * FROM task_note 
                 WHERE task_id == $parent.id
         ) AS task_note 
         FROM task 
-        WHERE $this.assignee.store == $auth.store AND $this.completed IS true
-        LIMIT $limit START $offset
+        WHERE 
+            $this.assignee.store == $auth.store 
+            AND $this.completed IS true 
+            AND $this.assignee.active == true
+        ORDER BY created_at DESC
+        LIMIT 200
         FETCH 
             service_ticket, 
             service_ticket.computer, 
             service_ticket.customer
             PARALLEL
-    "#;
+    "#; // $limit START $offset
 
     let start_query = web_time::Instant::now(); // Start timing the query
 
     let query_results: Vec<TaskPayload> = DATABASE
         .query(query)
-        .bind(("limit", limit))
-        .bind(("offset", offset))        
+        // .bind(("limit", limit))
+        // .bind(("offset", offset))        
         .await?
         .take(0)?;
 

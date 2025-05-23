@@ -2,7 +2,8 @@ use displays::{tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastK
 use crate::app_state::{AppState, MtechServer};
 use wasm_bindgen_futures::spawn_local;
 use std::collections::HashMap;
-use database::DATABASE;
+use database::DATABASE; // schema::prestashop::PrestashopPayload, 
+// use itertools::Itertools;
 use eframe::Frame;
 
 #[cfg(target_arch="wasm32")]
@@ -29,12 +30,21 @@ impl MtechServer {
                 self.context.shared_ctx.ai_playground.set_threads(chat_threads);
             }
 
-            if let Some(_service_map) = storage.get_string("service_data") {
-                // match serde_json::from_str::<HashMap<String, DataTable<PrestashopPayload>>>(&service_map) {
-                //     Ok(map) => self.context.shared_ctx.task_audit_table.service_map = map,
-                //     Err(e) => log::error!("Error converting service_map: {e:?}"),
-                // }
-            }
+            // if let Some(service_map) = storage.get_string("service_data") {
+            //     match serde_json::from_str::<HashMap<String, PrestashopPayload>>(&service_map) {
+            //         Ok(map) => {
+            //             for (key, v) in map.iter() {
+            //                 if let Some(k) = self.context.shared_ctx.task_audit_table.service_map.get_mut(key) {
+            //                     if !k.iter().contains(&v) {
+            //                         log::info!("Order: {v:?}");
+            //                         k.push(v.clone());
+            //                     }
+            //                 }
+            //             }
+            //         },
+            //         Err(e) => log::error!("Error converting service_map: {e:?}"),
+            //     }
+            // }
 
             if let Some(user) = self.context.shared_ctx.current_user.as_ref() {
                 gloo_console::info!("2 We have a user");

@@ -30,7 +30,7 @@ pub struct TaskLayout{
 }
 
 pub struct LayoutConfig {
-    // Valid keys for task_map (statuses or user initials)
+    // Valid keys for task_map (statuses or username)
     pub valid_keys: Vec<String>,
     pub key_provider: Box<dyn Fn(&[User]) -> Vec<String>>, // Generate keys from store_users
     pub filter: Box<dyn Fn(&LiveTaskPayload, &Option<User>, &[User], &Store) -> bool>,

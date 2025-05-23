@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseViewer, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -150,7 +150,8 @@ pub struct SharedContext {
     pub stock_quantity_table: DataTable<StockQuantityData>,
     #[serde(skip)]
     pub task_audit_table: TaskAuditViewer,
-
+    #[serde(skip)]
+    pub database_viewer: DatabaseViewer,
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
@@ -218,6 +219,7 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
+            database_viewer: DatabaseViewer::default(),
             tree,
             task_index: HashMap::new(),
             layout_configs: None,
@@ -392,7 +394,6 @@ impl SharedContext {
                     update_assignees: true,
                 },
             );
-
             self.layout_configs = Some(layout_configs);
         }
     }
@@ -465,48 +466,4 @@ fn setup_custom_fonts(ctx: &Context) {
         .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
-}
-
-pub trait LayoutFilter {
-    fn should_include(&self, task: &TaskPayload, context: &SharedContext) -> bool;
-    fn valid_statuses(&self) -> Vec<Status>; // Statuses this layout displays
-}
-
-// Example implementations for existing layouts
-pub struct MyTasksFilter;
-impl LayoutFilter for MyTasksFilter {
-    fn should_include(&self, task: &TaskPayload, context: &SharedContext) -> bool {
-        context
-            .current_user
-            .as_ref()
-            .map(|user| task.assignee == user.get_id() && task.status != Status::Complete)
-            .unwrap_or(false)
-    }
-    fn valid_statuses(&self) -> Vec<Status> {
-        vec![Status::Todo, Status::InRepair]
-    }
-}
-
-pub struct StoreTasksFilter;
-impl LayoutFilter for StoreTasksFilter {
-    fn should_include(&self, task: &TaskPayload, context: &SharedContext) -> bool {
-        context
-            .store_users
-            .iter()
-            .any(|user| task.assignee == user.get_id())
-            && task.status != Status::Complete
-    }
-    fn valid_statuses(&self) -> Vec<Status> {
-        vec![Status::Todo, Status::InRepair]
-    }
-}
-
-pub struct CompletedFilter;
-impl LayoutFilter for CompletedFilter {
-    fn should_include(&self, task: &TaskPayload, _context: &SharedContext) -> bool {
-        task.status == Status::Complete
-    }
-    fn valid_statuses(&self) -> Vec<Status> {
-        vec![Status::Complete]
-    }
 }

@@ -66,7 +66,7 @@ impl SharedContext {
                         self.store_users
                             .iter()
                             .find(|u| u.get_id() == new_task.assignee)
-                            .map(|u| u.get_initials().to_string())
+                            .map(|u| u.get_username().to_string())
                             .unwrap_or_default()
                     };
 

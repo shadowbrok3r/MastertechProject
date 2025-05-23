@@ -12,7 +12,6 @@ pub struct TicketPayload {
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
-    /// This is main initials on ticket
     pub sales_rep: String,
     pub checkin_notes: String,
     pub tech: String,
@@ -58,7 +57,6 @@ pub struct TicketData {
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
-    /// This is main initials on ticket
     pub sales_rep: String,
     pub checkin_notes: String,
     pub tech: String,

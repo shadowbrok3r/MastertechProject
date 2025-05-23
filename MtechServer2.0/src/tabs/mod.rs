@@ -1,5 +1,4 @@
 pub mod github_issue;
-pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod seb_lookup;
 
@@ -11,23 +10,23 @@ use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
 
-pub const TABS: [&str; 16] = [
-    "Lil menu",
-    "My Tools",
-    "Store Tasks",
+pub const TABS: [&str; 12] = [
     "My Tasks",
-    "Ai",
-    "Admin Console",
+    "Store Tasks",
     "Completed Tasks",
-    "Bug Report",
-    "Logs",
-    "Query Builder",
-    "Json Viewer",
     "Store Stock",
-    "SEB Lookup",
-    "Task Audit",
     "Company Stock",
-    "Customers",
+    "Task Audit",
+    "Threads",
+    "Bug Report",
+    "My Tools",
+    "Logs",
+    "Admin Console",
+    "Database",
+    // "Ai",
+    // "Json Viewer",
+    // "SEB Lookup",
+    // "Customers",
 ];
 
 impl TabViewer for MtechServerContext {
@@ -35,23 +34,22 @@ impl TabViewer for MtechServerContext {
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
-            "Lil menu" => self.simple_demo_menu(ui),
-            "My Tools" => self.shared_ctx.filesystem.display(ui),
-            "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
             "My Tasks" => self.shared_ctx.render_layout(ui, "My Tasks"),
+            "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
             "Completed Tasks" => self.shared_ctx.render_layout(ui, "Completed Tasks"),
-            "Ai" => self.shared_ctx.ai_playground(ui),
-            "Admin Console" => self.shared_ctx.admin_console(ui),
-            "Bug Report" => self.github(ui),
-            "Logs" => logger_ui().show(ui),
-            "Query Builder" => self.query_builder(ui),
-            "Json Viewer" => self.shared_ctx.json_viewer(ui),
             "Store Stock" => self.shared_ctx.stock_viewer(ui),
-            "SEB Lookup" => self.seb_lookup(ui),
-            "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
-            "Customers" => self.shared_ctx.customer_view(ui),
+            "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Threads" => self.shared_ctx.user_chat.ui(ui),
+            "Bug Report" => self.github(ui),
+            "My Tools" => self.shared_ctx.filesystem.display(ui),
+            "Logs" => logger_ui().show(ui),
+            "Admin Console" => self.shared_ctx.admin_console(ui),
+            // "Database" => self.shared_ctx.database_viewer.ui(ui),
+            // "Ai" => self.shared_ctx.ai_playground(ui),
+            // "Json Viewer" => self.shared_ctx.json_viewer(ui),
+            // "SEB Lookup" => self.seb_lookup(ui),
+            // "Customers" => self.shared_ctx.customer_view(ui),
             _ => {}
         }
     }

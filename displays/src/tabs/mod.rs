@@ -13,3 +13,4 @@ pub mod admin_console;
 pub mod script_editor;
 pub mod scene;
 pub mod user_chat;
+pub mod database_viewer;
