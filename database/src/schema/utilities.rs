@@ -376,7 +376,6 @@ pub async fn create_full_task_payload(
     task_data.service_ticket = Some(ticket_id.clone());
     task_data.service_number = Some(service_number.clone());
     task_data.priority = Priority::Normal;
-    task_data.everest_initials = queried_salesman.get_initials().to_string();
     task_data.assignee = queried_salesman.get_id();
 
     // if ticket_data.computer.is_none() {

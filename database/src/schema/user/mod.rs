@@ -12,6 +12,7 @@ pub use chats::*;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {
     id: RecordId,
+    active: bool,
     name: String,
     everest_initials: String,
     email: String,
@@ -30,6 +31,7 @@ impl Default for User {
     fn default() -> Self {
         Self {
             id: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            active: false,
             name: String::new(),
             everest_initials: String::new(),
             email: String::new(),
@@ -105,6 +107,10 @@ impl UserAuthorization {
 impl User {
     pub fn get_id(&self) -> RecordId {
         self.id.clone()
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active.clone()
     }
 
     pub fn get_authorization(&self) -> UserAuthorization {
@@ -332,13 +338,13 @@ impl User {
     }
 
     pub async fn add_custom_status(status: Status) -> anyhow::Result<(), anyhow::Error> {
-        let user_statuses: Vec<Status> = DATABASE
-            .query("UPDATE user SET user_statuses += $status WHERE id == $auth.id")
+        let _: Option<User> = DATABASE
+            .query("UPDATE $auth.id SET user_statuses += $status")
             .bind(("status", status))
             .await?
             .take(0)?;
 
-        log::info!("user/mod.rs -> Inserted user status: {user_statuses:?}");
+        log::info!("user/mod.rs -> Inserted user status");
         Ok(())
     }
 

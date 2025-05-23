@@ -1,6 +1,6 @@
 
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use database::schema::{Priority, TaskPayload, TicketPayload, User};
+use database::schema::{Priority, Status, TaskPayload, User};
 use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
@@ -52,33 +52,6 @@ impl Interaction for TaskPayload {
             });
         }
 
-        text_edit
-    }
-
-    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Response {
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
-        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-        let mut default = TicketPayload::default();
-        let ticket = self.service_ticket.as_mut().unwrap_or(&mut default);
-        let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
-            .desired_rows(5)
-            .desired_width(445.)
-            .margin(Margin::symmetric(6, 3))
-            .horizontal_align(Align::Center)
-            .ui(ui);
-
-        if text_edit.lost_focus() {
-            let notes = ticket.clone().checkin_notes;
-            let task = self.clone(); 
-            PlatformSpawner::spawn(async move { 
-                let update = task.update_checkin_notes(Some(notes)).await;
-                info!("Update: {update:?}"); 
-            });
-            info!(
-                "checkin_notes changed: {:?}// {:?}",
-                self.id, self.task_name
-            );
-        }
         text_edit
     }
 
@@ -168,10 +141,17 @@ impl Interaction for TaskPayload {
             .width(80.)
             .height(150.)
             .show_ui(ui, |ui| {
-                for status in user.get_statuses() {
-                    let status_change =
-                        ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
-                    if status_change.clicked() {
+                let statuses = if self.assignee == user.get_id() {
+                    user.get_statuses()
+                } else {
+                    Status::VALUES.to_vec().iter().filter(|s| !s.as_str().is_empty()).cloned().collect()
+                };
+                for status in statuses {
+                    if ui.selectable_value(
+                        &mut self.status, 
+                        status.to_owned(), 
+                        status.as_str()
+                    ).clicked() {
                         let task = self.clone(); 
                         PlatformSpawner::spawn(async move { 
                             let update = task.update_status(status.clone()).await;
@@ -216,23 +196,47 @@ impl Interaction for TaskPayload {
             .response
     }
 
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
+    fn interact_assignee(&mut self, ui: &mut Ui, store_users: &Vec<User>, current_user: &User) -> Response {
+        // 1. Figure out what to show in the ComboBox when nothing is open:
+        let current_name = store_users
+            .iter()
+            .filter(|u| u.is_active())
+            .find(|u| u.get_id() == self.assignee)
+            .map(|u| u.get_username().to_owned())
+            .unwrap_or_else(|| "Unassigned".to_string());
+
+        // 2) Build & sort the list
+        let my_store = current_user.get_store();
+        let mut sorted_users: Vec<&User> = store_users
+            .iter()
+            .filter(|u| u.is_active())
+            .collect();
+
+        sorted_users.sort_by_key(|u| {
+            (
+                // same‑store? (false=first, true=later)
+                u.get_store() != my_store,
+                // then by username (case‑insensitive)
+                u.get_username().to_lowercase(),
+            )
+        });
+
         ComboBox::from_id_salt(Id::new(&self.id.clone().key().to_string()))
-            .selected_text(&self.everest_initials)
+            .selected_text(current_name)
             .width(100.)
             .height(150.)
             .show_ui(ui, |ui| {
-                for user in *&store_users {
+                for user in sorted_users {
                     let assignee_selection = ui.selectable_value(
-                        &mut self.everest_initials,
-                        user.get_initials().to_owned(),
-                        user.get_initials(),
-                    );
+                    &mut self.assignee,       // current_value: &mut RecordId
+                    user.get_id(),    // selected_value: RecordId
+                    user.get_username(),      // text: &str or String
+                );
                     if assignee_selection.clicked() {
                         let task = self.clone(); 
-                        let initials = user.get_initials().to_string();
+                        let new_assignee = user.get_id().clone();
                         PlatformSpawner::spawn(async move { 
-                            let update = task.update_assignee_initials(initials).await;
+                            let update = task.update_assignee(new_assignee).await;
                             info!("Update: {update:?}"); 
                         });
                     }

@@ -37,9 +37,9 @@ impl TabViewer for MtechServerContext {
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
-            "Store Tasks" => self.shared_ctx.render_layout(ui, "StoreTasks"),
-            "My Tasks" => self.shared_ctx.render_layout(ui, "MyTasks"),
-            "Completed Tasks" => self.shared_ctx.render_layout(ui, "CompletedTasks"),
+            "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
+            "My Tasks" => self.shared_ctx.render_layout(ui, "My Tasks"),
+            "Completed Tasks" => self.shared_ctx.render_layout(ui, "Completed Tasks"),
             "Ai" => self.shared_ctx.ai_playground(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
             "Bug Report" => self.github(ui),
@@ -158,7 +158,7 @@ impl TabViewer for MtechServerContext {
                         });
                         self.shared_ctx.task_layouts
                             .iter_mut()
-                            .filter(|(page, _)| *page == "CompletedTasks")
+                            .filter(|(page, _)| *page == "Completed Tasks")
                             .for_each(|(_, layout)| {
                                 layout.loading = true;
                         });

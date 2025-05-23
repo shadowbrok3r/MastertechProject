@@ -1,6 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseEvent}, layout::{Constraint, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::HandleWidget};
-use chrono::{DateTime, NaiveDateTime, Utc};
 use unicode_width::UnicodeWidthStr;
 use database::schema::TaskPayload;
 use std::cmp::max;
@@ -39,7 +38,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
                 Cell::from(Text::from(Self::center_text_with_borders(task.due_date.format("%m/%d/%y").to_string(), widths[0] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.status.as_str().to_string(), widths[1] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.task_name.clone(), widths[2] as usize, height))),
-                Cell::from(Text::from(Self::center_text_with_borders(task.everest_initials.clone(), widths[3] as usize, height))),
+                Cell::from(Text::from(Self::center_text_with_borders(task.assignee.to_string().clone(), widths[3] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.priority.as_str().to_string(), widths[4] as usize, height))),
                 Cell::from(Text::from(wrapped_notes)),
                 Cell::from(Text::from(wrapped_desc)),
@@ -164,7 +163,7 @@ impl TasksTab {
 
         for task in tasks {
             widths[2] = max(widths[2], task.task_name.chars().count() as u16);
-            widths[3] = max(widths[3], task.everest_initials.len() as u16);
+            widths[3] = max(widths[3], task.assignee.to_string().len() as u16);
         }
         widths[0] = max(widths[0], headers[0].len() as u16).min(10);
         widths[1] = max(widths[1], headers[1].len() as u16).min(8);

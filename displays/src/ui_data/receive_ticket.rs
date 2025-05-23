@@ -40,7 +40,7 @@ impl SharedContext {
                                 &store_selection,
                             );
                             // Remove task if it doesn't belong or is in the wrong status column
-                            let is_wrong_key = layout_key == "MyTasks" && key != new_task.status.as_str();
+                            let is_wrong_key = layout_key == "My Tasks" && key != new_task.status.as_str();
                             if !should_include || is_wrong_key {
                                 task_list.remove(pos);
                                 info!(
@@ -57,7 +57,7 @@ impl SharedContext {
                     }
 
                     // Determine the new task_map key
-                    let new_key = if layout_key == "MyTasks" {
+                    let new_key = if layout_key == "My Tasks" {
                         match &new_task.status {
                             Status::CustomStatus(name) => name.clone(),
                             _ => new_task.status.as_str().to_string(),

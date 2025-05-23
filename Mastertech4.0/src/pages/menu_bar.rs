@@ -56,10 +56,11 @@ impl MasterTechApp {
                             }
                         }
                     });
+                    
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);
-                        let txt =
-                            RichText::new(usr.get_username()).color(Color32::from_rgb(191, 33, 101));
+                        let txt = RichText::new(usr.get_username()).color(Color32::from_rgb(191, 33, 101));
+
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
@@ -97,6 +98,56 @@ impl MasterTechApp {
                                     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
                                 }
                     
+                    
+                                let selected = &mut self.context.shared_ctx.store_selection;
+                                let current = selected.clone();
+                        
+                                let selected_text = match selected {
+                                    76 => Store::RIV.as_str(),
+                                    73 => Store::LTN.as_str(),
+                                    74 => Store::MUR.as_str(),
+                                    78 => Store::WJ.as_str(),
+                                    75 => Store::ORE.as_str(),
+                                    72 => Store::AF.as_str(),
+                                    77 => Store::SAN.as_str(),
+                                    _ => Store::RIV.as_str(),
+                                };
+                        
+                                Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
+                                    ComboBox::new("Store_Selection", "")                    
+                                    .width(60.)
+                                    .selected_text(selected_text)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(selected, 76, "RIV");
+                                        ui.selectable_value(selected, 73, "LTN");
+                                        ui.selectable_value(selected, 74, "MUR");
+                                        ui.selectable_value(selected, 78, "WJ");
+                                        ui.selectable_value(selected, 75, "ORE");
+                                        ui.selectable_value(selected, 72, "AF");
+                                        ui.selectable_value(selected, 77, "SAN");
+                                    });
+                        
+                                    if *selected != current {
+                                        self.context.task_map.clear();
+                                        self.context.shared_ctx.store_users.clear();
+                                        self.context.shared_ctx.tasks.clear();
+                                        self.context.task_map.clear();
+                                        self.context.shared_ctx.task_layouts.clear();
+                                        let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
+                                        let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
+                                        let store_selection = std::convert::Into::<Store>::into(*selected);
+                                        
+                                        info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+                                        spawn(async move {
+                                            let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                            let get_store_users = get_store_users(store_users_tx, store_selection).await;
+                            
+                                            info!("get_tasks_for_store: {store_tasks:?}");
+                                            info!("get_store_users: {get_store_users:?}");
+                                        });
+                                    }
+                                });
+
                                 if ui.add(Button::new("Downloads")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::Downloads);
                                     let github_releases_tx = self.context.github_releases_channel.0.clone();
@@ -116,13 +167,13 @@ impl MasterTechApp {
                                     }
                                 }
                     
-                                if ui.add(Button::new("Account Settings")).clicked() {
+                                if ui.add(Button::new("Preferences")).clicked() {
                                     self.state =
-                                        AppState::Authenticated(MainPages::AccountSettings);
+                                        AppState::Authenticated(MainPages::UserPreferences);
                                     match self.context.app_state_tx.try_send(
-                                        AppState::Authenticated(MainPages::AccountSettings),
+                                        AppState::Authenticated(MainPages::UserPreferences),
                                     ) {
-                                        Ok(_) => info!("Switching to AccountSettings Page"),
+                                        Ok(_) => info!("Switching to UserPreferences Page"),
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
@@ -331,59 +382,6 @@ impl MasterTechApp {
                             });
                             self.context.update_settings = true;
                         }
-
-                        ui.add_space(15.);
-
-                        let selected = &mut self.context.shared_ctx.store_selection;
-                        let current = selected.clone();
-                
-                        let selected_text = match selected {
-                            76 => Store::RIV.as_str(),
-                            73 => Store::LTN.as_str(),
-                            74 => Store::MUR.as_str(),
-                            78 => Store::WJ.as_str(),
-                            75 => Store::ORE.as_str(),
-                            72 => Store::AF.as_str(),
-                            77 => Store::SAN.as_str(),
-                            _ => Store::RIV.as_str(),
-                        };
-                
-                        Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
-                            ComboBox::new("Store_Selection", "")                    
-                            .width(60.)
-                            .selected_text(selected_text)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(selected, 76, "RIV");
-                                ui.selectable_value(selected, 73, "LTN");
-                                ui.selectable_value(selected, 74, "MUR");
-                                ui.selectable_value(selected, 78, "WJ");
-                                ui.selectable_value(selected, 75, "ORE");
-                                ui.selectable_value(selected, 72, "AF");
-                                ui.selectable_value(selected, 77, "SAN");
-                            });
-                
-                            if *selected != current {
-                                self.context.task_map.clear();
-                                self.context.shared_ctx.store_users.clear();
-                                self.context.shared_ctx.tasks.clear();
-                                self.context.task_map.clear();
-                                self.context.shared_ctx.task_layouts.clear();
-                                let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                                let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
-                                let store_selection = std::convert::Into::<Store>::into(*selected);
-                                
-                                info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-                                spawn(async move {
-                                    let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                    let get_store_users = get_store_users(store_users_tx, store_selection).await;
-                    
-                                    info!("get_tasks_for_store: {store_tasks:?}");
-                                    info!("get_store_users: {get_store_users:?}");
-                                });
-                            }
-                        });
-                        ui.add_space(5.);
-                        ui.label("Show tasks in: ");
 
                         ui.add_space(ui.available_width() / 6.0);
                         ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());

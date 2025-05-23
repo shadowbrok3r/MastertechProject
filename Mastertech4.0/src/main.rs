@@ -27,21 +27,31 @@ impl eframe::App for MasterTechApp {
         });
 
         // most important part of the whole app.. setting up our styling
-        if self.context.shared_ctx.modify_theme {
-            Window::new("Theme Mods").max_height(600.).default_width(600.).title_bar(true).show(ctx, |ui| {
-                let theme = self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone());
-                if theme.0 {
+
+        let theme_res = Window::new("Theme Configuration")
+        .open(&mut self.context.shared_ctx.modify_theme)
+        .max_height(600.)
+        .min_width(700.)
+        .title_bar(true)
+        .show(ctx, |ui|
+            self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone())
+        );
+        
+        if let Some(window_res) = theme_res {
+            if let Some(r) = window_res.inner {
+                if r.0 {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.set_color_scheme(serde_json::to_value(theme.1.clone()).unwrap());
+                        user.set_color_scheme(serde_json::to_value(r.1.clone()).unwrap());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
                         }
                     }
-                    self.context.shared_ctx.theme_config = theme.1;
+                    self.context.shared_ctx.theme_config = r.1;
                     self.context.shared_ctx.modify_theme = false;
                 }
-            });
+            }
         }
+        
 
         let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         ctx.set_style((*custom_style).clone());

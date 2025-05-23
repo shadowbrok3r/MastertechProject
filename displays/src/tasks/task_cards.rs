@@ -97,7 +97,7 @@ impl Displayable for TaskPayload {
 
             ui.horizontal(|ui: &mut Ui| {
                 ui.push_id(format!("Assignee {}", self.id.key().to_string().clone()), |ui| {
-                    let _ = self.interact_assignee_initials(ui, store_users);
+                    let _ = self.interact_assignee(ui, store_users, user);
                 });
 
                 ui.add_space(35.);

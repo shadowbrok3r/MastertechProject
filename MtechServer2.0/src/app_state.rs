@@ -1,4 +1,4 @@
-use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::github_issue::GithubIssue};
+use crate::{pages::{account_settings_page::UserPreferences, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::github_issue::GithubIssue};
 use displays::{app_state::SharedContext, channel_manager::ChannelManager, tabs::admin_console::client_interface::WebSocketClient};
 use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database, WS_MASTER_URL};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
@@ -15,7 +15,7 @@ pub struct MtechServer {
     login: Login,
     #[serde(skip)]
     signup: Signup,
-    pub account_mod: AccountMod,
+    pub account_mod: UserPreferences,
     pub context: MtechServerContext,
     pub state: AppState,
     #[serde(skip)]
@@ -29,7 +29,7 @@ pub enum MainPages {
     ChatGpt,
     Downloads,
     WebConsole,
-    AccountSettings,
+    UserPreferences,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -161,7 +161,7 @@ impl MtechServer {
             })
             .spawn("./webworker.js");
 
-        let shared_ctx = SharedContext::new(cc);
+        let shared_ctx = SharedContext::new(cc, tree.0.clone());
         let admin_console_data_helper = AdminConsoleDataHelper::new();
         
         let context = MtechServerContext {
@@ -211,7 +211,7 @@ impl MtechServer {
         Self {
             login: Login::default(),
             signup: Signup::default(),
-            account_mod: AccountMod::default(),
+            account_mod: UserPreferences::default(),
             state: AppState::default(),
             context,
             tree: tree.0,
@@ -233,9 +233,9 @@ impl MtechServer {
         }
     }
 
-    pub fn account_mut(&mut self) -> Option<&mut AccountMod> {
+    pub fn account_mut(&mut self) -> Option<&mut UserPreferences> {
         match self.state {
-            AppState::Authenticated(MainPages::AccountSettings) => Some(&mut self.account_mod),
+            AppState::Authenticated(MainPages::UserPreferences) => Some(&mut self.account_mod),
             _ => None,
         }
     }
@@ -279,7 +279,6 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "SEB Lookup".to_owned(),
         "Company Stock".to_owned(),
         // "Customers".to_owned(),
-        // "Json Viewer".to_owned(),
         // "Query Builder".to_owned(),
         "Store Stock".to_owned(),
         "Logs".to_owned(),
