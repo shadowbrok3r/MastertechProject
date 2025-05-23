@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 use surrealdb::RecordId;
 use serde_json::Value;
 use crate::DATABASE;
@@ -24,7 +24,8 @@ pub struct User {
     id_prestashop: Option<u64>,
     id_store: Option<String>,
     user_statuses: Option<Vec<Status>>,
-    authorization: UserAuthorization
+    authorization: UserAuthorization,
+    version: String
 }
 
 impl Default for User {
@@ -42,7 +43,8 @@ impl Default for User {
             id_store: None,
             id_prestashop: None,
             user_statuses: Some(Status::VALUES.to_vec()),
-            authorization: UserAuthorization::User
+            authorization: UserAuthorization::User,
+            version: String::new(),
         }
     }
 }
@@ -111,6 +113,10 @@ impl User {
 
     pub fn is_active(&self) -> bool {
         self.active.clone()
+    }
+
+    pub fn get_version(&self) -> String {
+        self.version.clone()
     }
 
     pub fn get_authorization(&self) -> UserAuthorization {
@@ -238,6 +244,19 @@ impl User {
         Ok(())
     }
     
+    pub async fn save_version(&mut self, version: impl Display + Serialize + 'static) -> anyhow::Result<(), anyhow::Error> {
+        log::info!("helper_traits -> save_version -> {version}");
+        match DATABASE
+            .query("UPDATE $auth.id SET version = $version")
+            .bind(("version", version))
+            .await
+        {
+            Ok(res) => log::info!("helper_traits -> save_version -> Result: {res:?}"),
+            Err(e) => log::error!("helper_traits -> save_version -> Error updating User Settings: {e:?}"),
+        }
+        Ok(())
+    }
+
     /// Saves the user settings to the database or persistent storage.
     ///
     /// # Returns

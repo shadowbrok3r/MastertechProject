@@ -221,7 +221,7 @@ pub async fn get_associated_task_notes(
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), Error> {
     debug!("get_store_users");
     let data: Vec<User> = DATABASE
-        .query("SELECT * FROM user WHERE store == $store PARALLEL")
+        .query("SELECT * FROM user WHERE store == $store AND active == true PARALLEL")
         .bind(("store", store))
         .await?
         .take(0)?;
