@@ -22,7 +22,7 @@ path = "src/deser_worker.rs"
 zstd = "0.13"
 gloo-worker = "0.5"
 gloo-net = { version = "0.6", features = ["http"]}
-web-sys = { version = "0.3", features = ["Storage", "Window", "Location", "HtmlCanvasElement"] }
+web-sys = { version = "0.3", features = ["Storage", "Window", "Location", "HtmlCanvasElement", "CacheStorage"] }
 wasm-cookies = { version= "0.2" }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.1", features = ["tls"]}
 reqwest = { version = "0.12", features = ["stream", "json"] }

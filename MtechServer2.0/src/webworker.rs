@@ -69,9 +69,9 @@ pub async fn get_completed_tasks(input: Input, scope: WorkerScope<WebWorker>, id
 
 pub fn encode_task_payload(message: &Vec<TaskPayload>) -> anyhow::Result<Vec<u8>> {
     let bincoded = serde_json::to_vec(message)?;
-    gloo_console::info!(format!("Uncompressed Completed task data: {}\n", bincoded.len()));
+    // gloo_console::info!(format!("Uncompressed Completed task data: {}\n", bincoded.len()));
     let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), 5).context("zstd")?;
-    gloo_console::info!(format!("Compressed Completed task data: {}\n", compressed.len()));
+    // gloo_console::info!(format!("Compressed Completed task data: {}\n", compressed.len()));
     Ok(compressed)
 }
 
@@ -106,8 +106,8 @@ pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::R
         .await?
         .take(0)?;
 
-    let query_duration = start_query.elapsed(); // Measure query duration
-    gloo_console::warn!(format!("Query execution time for completed tasks {query_duration:?}"));
+    let _query_duration = start_query.elapsed(); // Measure query duration
+    // gloo_console::warn!(format!("Query execution time for completed tasks {query_duration:?}"));
 
     Ok(query_results)
 }
