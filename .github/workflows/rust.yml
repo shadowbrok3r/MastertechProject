@@ -60,7 +60,7 @@ jobs:
           context: .
           push: true
           tags: shadowbrok3r/mtechserver:beta
-          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
+          outputs: ${{ github.event_name == 'pull_request' || 'type=registry,push=true' }}
 
   # deploy:
   #   name: Deploy
