@@ -9,7 +9,7 @@ use crate::{PlatformSpawner, Spawner};
 
 use super::{row_viewer::TaskRowViewer, TaskAudit, TaskAuditViewer};
 
-impl TaskAuditViewer {
+impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A SERVICE NUMBER IF THERE ISNT A THREAD
     pub fn get_services(
         selected: TaskAudit, 
         current_user: Option<User>, 
