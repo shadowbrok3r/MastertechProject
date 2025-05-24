@@ -90,7 +90,7 @@ pub async fn get_completed_tasks_for_store(_offset: i32, _limit: i32) -> anyhow:
         FROM task 
         WHERE 
             $this.assignee.store == $auth.store 
-            AND $this.completed IS true 
+            AND $this.completed == true 
             AND $this.assignee.active == true
         ORDER BY created_at DESC
         LIMIT 200
