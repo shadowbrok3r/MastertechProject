@@ -1,6 +1,6 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
-use database::schema::{ComputerData, TaskPayload, TicketPayload, User};
+use database::schema::{ComputerData, CustomerData, TaskPayload, TicketPayload, User};
 use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
@@ -97,6 +97,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         match self.selected {
             DatabaseTable::Task(_) => 9,
             DatabaseTable::User(_) => 8,
+            DatabaseTable::Service(_) => 9,
+            DatabaseTable::Customer(_) => 9,
+            DatabaseTable::Computer(_) => 9,
         }
     }
 
@@ -104,10 +107,10 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         match self.selected {
             DatabaseTable::Task(_) => ["ID", "Name", "Assignee", "Due", "Order #", "Priority", "Status", "Complete", "Description"][column].into(),
             DatabaseTable::User(_) => ["ID", "Name", "Username", "Email", "Store", "Presta ID", "Store ID", "Auth"][column].into(),
-            DatabaseTable::Customer(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
-            DatabaseTable::Service(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
-            DatabaseTable::Computer(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
-            // DatabaseTable::TaskNote(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
+            DatabaseTable::Customer(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"][column].into(),
+            DatabaseTable::Service(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"][column].into(),
+            DatabaseTable::Computer(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"][column].into(),
+            // DatabaseTable::TaskNote(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"][column].into(),
         }
     }
 
@@ -115,6 +118,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         match self.selected {
             DatabaseTable::Task(_) => [false, true, true, true, true, true, true, true, true][column],
             DatabaseTable::User(_) => [false, true, true, true, true, true, true, true][column],
+            DatabaseTable::Service(_) => [false, true, true, true, true, true, true, true][column],
+            DatabaseTable::Customer(_) => [false, true, true, true, true, true, true, true][column],
+            DatabaseTable::Computer(_) => [false, true, true, true, true, true, true, true][column],
         }
     }
 
@@ -127,8 +133,12 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::Task(task) => 
                 task.service_number.clone().unwrap_or_default().contains(&self.filter)
                 || task.task_name.contains(&self.filter),
-            DatabaseTable::User(user) => user.get_username().contains(&self.filter)
+            DatabaseTable::User(user) =>
+                user.get_username().contains(&self.filter)
                 || user.get_name().contains(&self.filter),
+            DatabaseTable::Service(ticket_payload) =>false,
+            DatabaseTable::Customer(customer_data) => false,
+            DatabaseTable::Computer(computer_data) => false,
         }
     }
 
@@ -185,6 +195,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     _ => ui.label(" ")
                 };
             },
+            DatabaseTable::Customer(customer) => {},
+            DatabaseTable::Computer(computer) => {},
+            DatabaseTable::Service(ticket) => {},
         };
         // ui.add_space(5.);
     }
@@ -207,6 +220,45 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                 }
             },
             DatabaseTable::User(_) => {
+                match column {
+                    0 => col_config.resizable(true).at_least(180.).at_most(180.),
+                    1 => col_config.resizable(true).at_least(120.).at_most(120.),
+                    2 => col_config.resizable(true).at_least(155.).at_most(155.),
+                    3 => col_config.resizable(true).at_least(280.).at_most(280.),
+                    4 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    5 => col_config.resizable(true).at_least(80.).at_most(80.),
+                    6 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    7 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    _ => col_config,
+                }
+            },
+            DatabaseTable::Customer(_) => {
+                match column {
+                    0 => col_config.resizable(true).at_least(180.).at_most(180.),
+                    1 => col_config.resizable(true).at_least(120.).at_most(120.),
+                    2 => col_config.resizable(true).at_least(155.).at_most(155.),
+                    3 => col_config.resizable(true).at_least(280.).at_most(280.),
+                    4 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    5 => col_config.resizable(true).at_least(80.).at_most(80.),
+                    6 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    7 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    _ => col_config,
+                }
+            },
+            DatabaseTable::Computer(_) => {
+                match column {
+                    0 => col_config.resizable(true).at_least(180.).at_most(180.),
+                    1 => col_config.resizable(true).at_least(120.).at_most(120.),
+                    2 => col_config.resizable(true).at_least(155.).at_most(155.),
+                    3 => col_config.resizable(true).at_least(280.).at_most(280.),
+                    4 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    5 => col_config.resizable(true).at_least(80.).at_most(80.),
+                    6 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    7 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    _ => col_config,
+                }
+            },
+            DatabaseTable::Service(_) => {
                 match column {
                     0 => col_config.resizable(true).at_least(180.).at_most(180.),
                     1 => col_config.resizable(true).at_least(120.).at_most(120.),
@@ -257,6 +309,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                 }
                 .into()
             },
+            DatabaseTable::Customer(customer) => None,
+            DatabaseTable::Computer(computer) => None,
+            DatabaseTable::Service(ticket) => None,
         };
         // ui.shrink_height_to_current();
         // ui.shrink_width_to_current();
@@ -301,42 +356,46 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
     ) -> std::cmp::Ordering {
         match (row_l, row_r) {
             (DatabaseTable::Task(task_l), DatabaseTable::Task(task_r)) => {
-                let user_l = self.store_users
-                    .iter()
-                    .find(|u| u.get_id() == task_l.assignee)
-                    .cloned()
-                    .unwrap_or_default();
+                        let user_l = self.store_users
+                            .iter()
+                            .find(|u| u.get_id() == task_l.assignee)
+                            .cloned()
+                            .unwrap_or_default();
 
-                let user_r = self.store_users
-                    .iter()
-                    .find(|u| u.get_id() == task_r.assignee)
-                    .cloned()
-                    .unwrap_or_default();
+                        let user_r = self.store_users
+                            .iter()
+                            .find(|u| u.get_id() == task_r.assignee)
+                            .cloned()
+                            .unwrap_or_default();
 
-                match column {
-                    1 => task_l.task_name.cmp(&task_r.task_name),
-                    2 => user_l.get_username().cmp(&user_r.get_username()),
-                    3 => task_l.due_date.cmp(&task_r.due_date),
-                    4 => task_l.service_number.clone().unwrap_or_default().cmp(&task_r.service_number.clone().unwrap_or_default()),
-                    5 => task_l.priority.as_str().cmp(&task_r.priority.as_str()),
-                    6 => task_l.status.as_str().cmp(&task_r.status.as_str()),
-                    7 => task_l.completed.cmp(&task_r.completed),
-                    8 => task_l.task_description.cmp(&task_r.task_description),
-                    _ => Ordering::Equal, // Default for invalid columns
-                }
-            }
+                        match column {
+                            1 => task_l.task_name.cmp(&task_r.task_name),
+                            2 => user_l.get_username().cmp(&user_r.get_username()),
+                            3 => task_l.due_date.cmp(&task_r.due_date),
+                            4 => task_l.service_number.clone().unwrap_or_default().cmp(&task_r.service_number.clone().unwrap_or_default()),
+                            5 => task_l.priority.as_str().cmp(&task_r.priority.as_str()),
+                            6 => task_l.status.as_str().cmp(&task_r.status.as_str()),
+                            7 => task_l.completed.cmp(&task_r.completed),
+                            8 => task_l.task_description.cmp(&task_r.task_description),
+                            _ => Ordering::Equal, // Default for invalid columns
+                        }
+                    }
             (DatabaseTable::User(user_l), DatabaseTable::User(user_r)) => {
-                match column {
-                    0 => user_l.get_id().cmp(&user_r.get_id()),
-                    1 => user_l.get_name().cmp(&user_r.get_name()),
-                    2 => user_l.get_email().cmp(&user_r.get_email()),
-                    3 => user_l.get_store().cmp(&user_r.get_store()),
-                    4 => user_l.is_active().cmp(&user_r.is_active()),
-                    _ => Ordering::Equal, // Default for invalid columns
-                }
-            }
+                        match column {
+                            0 => user_l.get_id().cmp(&user_r.get_id()),
+                            1 => user_l.get_name().cmp(&user_r.get_name()),
+                            2 => user_l.get_email().cmp(&user_r.get_email()),
+                            3 => user_l.get_store().cmp(&user_r.get_store()),
+                            4 => user_l.is_active().cmp(&user_r.is_active()),
+                            _ => Ordering::Equal, // Default for invalid columns
+                        }
+                    }
             (DatabaseTable::Task(_), DatabaseTable::User(_)) => Ordering::Less,
             (DatabaseTable::User(_), DatabaseTable::Task(_)) => Ordering::Greater,
+            (DatabaseTable::Service(svc_l), DatabaseTable::Service(svc_r)) => todo!(),
+            (DatabaseTable::Customer(cust_l), DatabaseTable::Customer(cust_r)) => todo!(),
+            (DatabaseTable::Computer(computer_l), DatabaseTable::Computer(computer_r)) => todo!(),
+            (_, _) => Ordering::Equal
         }
     }
 

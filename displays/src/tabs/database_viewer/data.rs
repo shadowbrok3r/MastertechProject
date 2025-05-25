@@ -17,18 +17,21 @@ impl DatabaseEditor {
             PlatformSpawner::spawn(async move {
                 match data {
                     super::row_viewer::DatabaseTableSelection::Task => {
-                        let tasks = LiveTaskPayload::get_tasks(start_idx).await.unwrap_or_default();
-                        log::info!("{}", tasks.len());
-                        for task in tasks.iter() {
-                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Task(TaskPayload::from(task.clone())));
-                        }
-                    },
+                                        let tasks = LiveTaskPayload::get_tasks(start_idx).await.unwrap_or_default();
+                                        log::info!("{}", tasks.len());
+                                        for task in tasks.iter() {
+                                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Task(TaskPayload::from(task.clone())));
+                                        }
+                                    },
                     super::row_viewer::DatabaseTableSelection::User => {
-                        let users = User::get_users().await.unwrap_or_default();
-                        for user in users.iter() {
-                            let _ = tx.try_send(super::row_viewer::DatabaseTable::User(user.clone()));
-                        }
-                    },
+                                        let users = User::get_users().await.unwrap_or_default();
+                                        for user in users.iter() {
+                                            let _ = tx.try_send(super::row_viewer::DatabaseTable::User(user.clone()));
+                                        }
+                                    },
+                    super::row_viewer::DatabaseTableSelection::Service => todo!(),
+                    super::row_viewer::DatabaseTableSelection::Customer => todo!(),
+                    super::row_viewer::DatabaseTableSelection::Computer => todo!(),
                 }
             });
         }
