@@ -321,6 +321,15 @@ impl User {
         Ok(user_record)
     }
 
+    pub async fn get_users() -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let user_records: Vec<Self> = DATABASE
+            .query("SELECT * FROM user ")
+            .await?
+            .take(0)?;
+
+        Ok(user_records)
+    }
+
     pub async fn query_user_from_email(email: String) -> anyhow::Result<Self, anyhow::Error> {
         let query = if email.contains("checkinshelf") || email.is_empty() {
             "RETURN (SELECT * FROM user WHERE id == $auth.id)"

@@ -70,48 +70,50 @@ impl <'a> InputField <'a>{
     }
 
     pub fn insert_wrapped_text(&self, text: String, width: usize) {
-        let mut input = self.input.borrow_mut();
-        let mut lines: Vec<String> = Vec::new();
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let mut current_line = String::new();
+        let input_result = self.input.try_borrow_mut();
+        if let Ok(mut input) = input_result {
+            let mut lines: Vec<String> = Vec::new();
+            let words: Vec<&str> = text.split_whitespace().collect();
+            let mut current_line = String::new();
 
-        for word in words {
-            let potential_line = if current_line.is_empty() {
-                word.to_string()
-            } else {
-                format!("{} {}", current_line, word)
-            };
-            if potential_line.chars().count() <= width {
-                current_line = potential_line;
-            } else {
-                if !current_line.is_empty() {
-                    lines.push(current_line);
-                }
-                current_line = if word.chars().count() > width {
-                    let mut word_chars = word.chars();
-                    let mut truncated = String::new();
-                    for _ in 0..width {
-                        if let Some(c) = word_chars.next() {
-                            truncated.push(c);
-                        }
-                    }
-                    lines.push(truncated);
-                    word_chars.collect::<String>()
-                } else {
+            for word in words {
+                let potential_line = if current_line.is_empty() {
                     word.to_string()
+                } else {
+                    format!("{} {}", current_line, word)
                 };
+                if potential_line.chars().count() <= width {
+                    current_line = potential_line;
+                } else {
+                    if !current_line.is_empty() {
+                        lines.push(current_line);
+                    }
+                    current_line = if word.chars().count() > width {
+                        let mut word_chars = word.chars();
+                        let mut truncated = String::new();
+                        for _ in 0..width {
+                            if let Some(c) = word_chars.next() {
+                                truncated.push(c);
+                            }
+                        }
+                        lines.push(truncated);
+                        word_chars.collect::<String>()
+                    } else {
+                        word.to_string()
+                    };
+                }
             }
-        }
-        if !current_line.is_empty() {
-            lines.push(current_line);
-        }
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
 
-        input.delete_line_by_head();
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                input.insert_newline();
+            input.delete_line_by_head();
+            for (i, line) in lines.iter().enumerate() {
+                if i > 0 {
+                    input.insert_newline();
+                }
+                input.insert_str(line);
             }
-            input.insert_str(line);
         }
     }
 

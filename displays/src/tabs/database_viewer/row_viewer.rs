@@ -1,23 +1,24 @@
-use std::cmp::Ordering;
 
-use database::schema::{ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User};
-use eframe::egui::TextEdit;
-use egui_data_table::{viewer::RowCodec, RowViewer};
-use egui_extras::Column;
+use crate::{get_current_user_from_auth, get_database_users, Interaction};
+use database::schema::{TaskPayload, TicketPayload, User};
+use eframe::egui::{Color32, Layout, RichText, TextEdit};
+use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
-use crate::{get_current_user_from_auth, tabs::task_audit::codec::Codec, Interaction};
-
-use super::DatabaseViewer;
+use chrono::{DateTime, Utc};
+use egui_extras::Column;
+use std::cmp::Ordering;
 
 /// Every logic is defined in `Viewer`
 #[derive(serde::Serialize)]
 pub struct DatabaseRowViewer {
     pub current_user: User,
+    pub store_users: Vec<User>,
     pub filter: String,
     pub selected: DatabaseTable,
     user_data: User,
     task_data: TaskPayload,
-    ticket_data: TicketPayload
+    ticket_data: TicketPayload,
+    pub selected_table: DatabaseTableSelection,
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
@@ -63,17 +64,6 @@ impl DatabaseTable {
             Self::User(_) => "User"
         }
     }
-    
-    // pub fn from_str(table: &str) -> Self {
-    //     match table {
-    //         "Task" => Self::Task(_),
-    //         "Customer" => Self::Customer(_),
-    //         "Ticket" => Self::Ticket(_),
-    //         "Computer" => Self::Computer(_),
-    //         "Task Note" => Self::TaskNote(_),
-    //         _ => Self::default()
-    //     }
-    // }
 }
 
 impl Default for DatabaseRowViewer {
@@ -85,11 +75,13 @@ impl Default for DatabaseRowViewer {
                 User::default()
             },
             filter: Default::default(),
+            store_users: get_database_users(),
             // selected: Default::default(),
             user_data: User::default(),
             task_data: TaskPayload::default(),
             ticket_data: TicketPayload::default(),
             selected: DatabaseTable::default(),
+            selected_table: Default::default(), 
         }
     }
 }
@@ -101,15 +93,15 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
 
     fn num_columns(&mut self) -> usize {
         match self.selected {
-            DatabaseTable::Task(_) => 10,
+            DatabaseTable::Task(_) => 9,
             DatabaseTable::User(_) => 8,
         }
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         match self.selected {
-            DatabaseTable::Task(_) => ["id", "task_name", "assignee", "due_date", "service_number", "service_ticket", "priority", "status", "completed", "task_description"][column].into(),
-            DatabaseTable::User(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"][column].into(),
+            DatabaseTable::Task(_) => ["ID", "Name", "Assignee", "Due", "Order #", "Priority", "Status", "Complete", "Description"][column].into(),
+            DatabaseTable::User(_) => ["ID", "Name", "Username", "Email", "Store", "Presta ID", "Store ID", "Auth"][column].into(),
             // DatabaseTable::Customer(customer_data) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
             // DatabaseTable::Ticket(ticket_payload) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
             // DatabaseTable::Computer(computer_data) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
@@ -119,8 +111,8 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
         match self.selected {
-            DatabaseTable::Task(_) => [false, true, true, true, true, true, true, true, true, true][column],
-            DatabaseTable::User(_) => [true, true, true, true, true, true, true, true][column],
+            DatabaseTable::Task(_) => [false, true, true, true, true, true, true, true, true][column],
+            DatabaseTable::User(_) => [false, true, true, true, true, true, true, true][column],
         }
     }
 
@@ -141,37 +133,52 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &DatabaseTable, column: usize) {
         let _ = match &row {
             DatabaseTable::Task(task_payload) => {
+                let checked = &mut task_payload.completed.clone();
                 let _ = match column {
-                    0 => ui.label(task_payload.id.key().to_string()),
-                    1 => ui.label(&task_payload.task_name),
-                    2 => ui.label(task_payload.assignee.key().to_string()),
-                    3 => ui.label(&task_payload.due_date.to_string()),
-                    4 => ui.label(&task_payload.service_number.clone().unwrap_or_default()),
-                    5 => {
-                        if let Some(ticket) = &task_payload.service_ticket {
-                            ui.label(ticket.id.key().to_string())
-                        } else {
-                            ui.label("")
-                        }
+                    // 0 => ui.label(format!(" {}", task_payload.id.key().to_string())),
+                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| 
+                        ui.label(RichText::new(format!("{} ", &task_payload.task_name.trim())).strong().underline())
+                    ).inner,
+                    2 => {
+                        let user = self.store_users
+                            .iter()
+                            .find(|u| u.get_id() == task_payload.assignee)
+                            .cloned()
+                            .unwrap_or_default();
+                        ui.vertical_centered(|ui| ui.label(format!(" {}", user.get_username()))).inner
                     },
-                    6 => ui.label(task_payload.priority.as_str()),
-                    7 => ui.label(task_payload.status.as_str()),
-                    8 => ui.label(task_payload.completed.to_string()),
-                    9 => ui.label(&task_payload.task_description),
-                    _ => ui.label("")
+                    3 => {
+                        // Convert to a DateTime with Utc timezone
+                        let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(task_payload.due_date.clone().naive_local(), Utc);
+                        // Format the DateTime into yyyy/mm/dd
+                        let formatted_date = datetime.format(" %m/%d/%Y").to_string();
+                        let split1 = formatted_date.split_once('/').unwrap_or_default();
+                        let split2 = split1.1.split_once('/').unwrap_or_default();
+                        ui.horizontal(|ui| {
+                            ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}/", split1.0));
+                            ui.colored_label(Color32::from_rgb(3, 252, 194), format!("{}/", split2.0));
+                            ui.colored_label(Color32::from_rgb(66, 69, 245), split2.1)
+                        }).inner
+                    },
+                    4 => ui.vertical_centered(|ui| ui.label(task_payload.service_number.clone().unwrap_or_default().trim())).inner,
+                    5 => ui.vertical_centered(|ui| ui.label(format!("{}", task_payload.priority.as_str().trim()))).inner,
+                    6 => ui.vertical_centered(|ui| ui.label(format!(" {}", task_payload.status.as_str().trim()))).inner,
+                    7 => ui.vertical_centered(|ui| ui.checkbox(checked, "")).inner,
+                    8 => ui.label(task_payload.task_description.trim()),
+                    _ => ui.label(""),
                 };
             },
             DatabaseTable::User(user) => {
                 let _ = match column {
-                    0 => ui.label(user.get_id().key().to_string()),
-                    1 => ui.label(user.get_name()),
-                    2 => ui.label(user.get_username()),
-                    3 => ui.label(user.get_email()),
-                    4 => ui.label(user.get_store().as_str()),
-                    5 => ui.label(user.get_employee_id().unwrap_or(0).to_string()),
-                    6 => ui.label(user.get_store_id().unwrap_or(String::new())),
-                    7 => ui.label(user.get_authorization().as_str()),
-                    _ => ui.label("")
+                    0 => ui.label(format!(" {}", user.get_id().key().to_string())),
+                    1 => ui.label(format!(" {}", user.get_name())),
+                    2 => ui.label(format!(" {}", user.get_username())),
+                    3 => ui.label(format!(" {}", user.get_email())),
+                    4 => ui.label(format!(" {}", user.get_store().as_str())),
+                    5 => ui.label(format!(" {}", user.get_employee_id().unwrap_or(0).to_string())),
+                    6 => ui.label(format!(" {}", user.get_store_id().unwrap_or(String::new()))),
+                    7 => ui.label(format!(" {}", user.get_authorization().as_str())),
+                    _ => ui.label(" ")
                 };
             },
         };
@@ -182,29 +189,28 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         match self.selected {
             DatabaseTable::Task(_) => {
                 match column {
-                    0 => col_config.resizable(true).at_least(60.).at_most(60.),
-                    1 => col_config.resizable(true).at_least(180.).at_most(225.),
+                    0 => col_config.resizable(true).at_least(20.).at_most(20.),
+                    1 => col_config.resizable(true).at_least(200.).at_most(260.),
                     2 => col_config.resizable(true).at_least(90.).at_most(100.),
-                    3 => col_config.resizable(true).at_least(130.).at_most(130.),
-                    4 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    5 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    6 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    7 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    8 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    9 => col_config.resizable(true).at_least(150.),
+                    3 => col_config.resizable(true).at_least(110.).at_most(110.),
+                    4 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    5 => col_config.resizable(true).at_least(70.).at_most(70.),
+                    6 => col_config.resizable(true).at_least(80.).at_most(80.),
+                    7 => col_config.resizable(true).at_least(50.).at_most(50.),
+                    8 => col_config.resizable(true).at_least(300.),
                     _ => col_config,
                 }
             },
             DatabaseTable::User(_) => {
                 match column {
-                    0 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    0 => col_config.resizable(true).at_least(150.).at_most(150.),
                     1 => col_config.resizable(true).at_least(180.).at_most(225.),
                     2 => col_config.resizable(true).at_least(90.).at_most(100.),
-                    3 => col_config.resizable(true).at_least(130.).at_most(130.),
-                    4 => col_config.resizable(true).at_least(100.).at_most(150.),
+                    3 => col_config.resizable(true).at_least(160.).at_most(200.),
+                    4 => col_config.resizable(true).at_least(60.).at_most(60.),
                     5 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    6 => col_config.resizable(true).at_least(100.).at_most(150.),
-                    7 => col_config.resizable(true).at_least(100.).at_most(150.),
+                    6 => col_config.resizable(true).at_least(60.).at_most(60.),
+                    7 => col_config.resizable(true).at_least(80.).at_most(80.),
                     _ => col_config,
                 }
             },
@@ -220,15 +226,13 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         match row {
             DatabaseTable::Task(task_payload) => {
                 match column {
-                    0 => Some(ui.label(task_payload.id.key().to_string())),
                     1 => Some(task_payload.interact_task_name(ui)),
-                    2 => Some(ui.label(task_payload.assignee.key().to_string())),
                     3 => Some(task_payload.interact_due_date(ui)),
                     4 => Some(task_payload.interact_service_number(ui)),
-                    6 => Some(task_payload.interact_priority(ui)),
-                    7 => Some(task_payload.interact_status(&self.current_user, ui)),
-                    8 => Some(task_payload.interact_completed(ui)),
-                    9 => Some(task_payload.interact_task_description(ui)),
+                    5 => Some(task_payload.interact_priority(ui)),
+                    6 => Some(task_payload.interact_status(&self.current_user, ui)),
+                    7 => Some(task_payload.interact_completed(ui)),
+                    8 => Some(task_payload.interact_task_description(ui)),
                     _ => None,
                 }
                 .into()
@@ -298,10 +302,14 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             },
         }
     }
-
+    
+    fn persist_ui_state(&self) -> bool {
+        true
+    }
+    
     fn on_cell_view_response(
         &mut self,
-        row: &DatabaseTable,
+        _row: &DatabaseTable,
         column: usize,
         resp: &eframe::egui::Response,
     ) -> Option<Box<DatabaseTable>> {

@@ -110,6 +110,18 @@ impl From<TaskPayload> for LiveTaskPayload {
 }
 
 impl LiveTaskPayload {
+    pub async fn get_tasks(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let tasks: Vec<Self> = DATABASE
+            .query("SELECT * FROM task ORDER BY due_date DESC START $start LIMIT 200")
+            .bind(("start", start))
+            .await?
+            .take(0)?;
+
+        Ok(tasks)
+    }
+}
+
+impl LiveTaskPayload {
     pub async fn create_task_payload(
         mut task_data: Self,
         ticket_data: TicketData,
