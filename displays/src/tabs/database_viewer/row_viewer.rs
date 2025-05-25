@@ -1,7 +1,7 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
 use database::schema::{TaskPayload, TicketPayload, User};
-use eframe::egui::{Color32, Layout, RichText, TextEdit};
+use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
@@ -131,14 +131,16 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &DatabaseTable, column: usize) {
+        // ui.add_space(5.);
         let _ = match &row {
             DatabaseTable::Task(task_payload) => {
                 let checked = &mut task_payload.completed.clone();
                 let _ = match column {
                     // 0 => ui.label(format!(" {}", task_payload.id.key().to_string())),
-                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| 
-                        ui.label(RichText::new(format!("{} ", &task_payload.task_name.trim())).strong().underline())
-                    ).inner,
+                    1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
+                        ui.add_space(2.);
+                        ui.label(RichText::new(task_payload.task_name.trim()).strong().underline())
+                    }).inner,
                     2 => {
                         let user = self.store_users
                             .iter()
@@ -173,15 +175,16 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     0 => ui.label(format!(" {}", user.get_id().key().to_string())),
                     1 => ui.label(format!(" {}", user.get_name())),
                     2 => ui.label(format!(" {}", user.get_username())),
-                    3 => ui.label(format!(" {}", user.get_email())),
+                    3 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_email()))).response,
                     4 => ui.label(format!(" {}", user.get_store().as_str())),
-                    5 => ui.label(format!(" {}", user.get_employee_id().unwrap_or(0).to_string())),
-                    6 => ui.label(format!(" {}", user.get_store_id().unwrap_or(String::new()))),
-                    7 => ui.label(format!(" {}", user.get_authorization().as_str())),
+                    5 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_employee_id().unwrap_or(0).to_string()))).response,
+                    6 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_store_id().unwrap_or(String::new())))).response,
+                    7 => ui.vertical_centered(|ui| ui.label(format!(" {}", user.get_authorization().as_str()))).response,
                     _ => ui.label(" ")
                 };
             },
         };
+        // ui.add_space(5.);
     }
 
     fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> Column {
@@ -197,20 +200,20 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     5 => col_config.resizable(true).at_least(70.).at_most(70.),
                     6 => col_config.resizable(true).at_least(80.).at_most(80.),
                     7 => col_config.resizable(true).at_least(50.).at_most(50.),
-                    8 => col_config.resizable(true).at_least(300.),
+                    8 => col_config.resizable(true).at_least(600.),
                     _ => col_config,
                 }
             },
             DatabaseTable::User(_) => {
                 match column {
-                    0 => col_config.resizable(true).at_least(150.).at_most(150.),
-                    1 => col_config.resizable(true).at_least(180.).at_most(225.),
-                    2 => col_config.resizable(true).at_least(90.).at_most(100.),
-                    3 => col_config.resizable(true).at_least(160.).at_most(200.),
+                    0 => col_config.resizable(true).at_least(180.).at_most(180.),
+                    1 => col_config.resizable(true).at_least(120.).at_most(120.),
+                    2 => col_config.resizable(true).at_least(155.).at_most(155.),
+                    3 => col_config.resizable(true).at_least(280.).at_most(280.),
                     4 => col_config.resizable(true).at_least(60.).at_most(60.),
-                    5 => col_config.resizable(true).at_least(100.).at_most(150.),
+                    5 => col_config.resizable(true).at_least(80.).at_most(80.),
                     6 => col_config.resizable(true).at_least(60.).at_most(60.),
-                    7 => col_config.resizable(true).at_least(80.).at_most(80.),
+                    7 => col_config.resizable(true).at_least(60.).at_most(60.),
                     _ => col_config,
                 }
             },
@@ -223,10 +226,11 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         row: &mut DatabaseTable,
         column: usize,
     ) -> Option<eframe::egui::Response> {
-        match row {
+        let response: Option<Response> = match row {
             DatabaseTable::Task(task_payload) => {
                 match column {
                     1 => Some(task_payload.interact_task_name(ui)),
+                    2 => Some(task_payload.interact_assignee(ui, &self.store_users, &self.current_user)),
                     3 => Some(task_payload.interact_due_date(ui)),
                     4 => Some(task_payload.interact_service_number(ui)),
                     5 => Some(task_payload.interact_priority(ui)),
@@ -240,67 +244,21 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::User(user) => {
                 match column {
                     0 => Some(ui.label(user.get_id().key().to_string())),
-                    1 => {
-                        let res = TextEdit::multiline(&mut user.get_name())
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
-                    2 => {
-                        let res = TextEdit::multiline(&mut user.get_username())
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
-                    3 => {
-                        let res = TextEdit::multiline(&mut user.get_email())
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
-                    4 => {
-                        let res = TextEdit::multiline(&mut user.get_store().as_str())
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
-                    5 => {
-                        let res = TextEdit::multiline(&mut user.get_employee_id().unwrap_or(0).to_string())
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
-                    6 => {
-                        let res = TextEdit::multiline(&mut user.get_store_id().unwrap_or(String::new()))
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
-                    7 => {
-                        let res = TextEdit::multiline(&mut user.get_authorization().as_str())
-                            .desired_rows(1)
-                            .code_editor()
-                            .show(ui)
-                            .response;
-                        Some(res)
-                    }
+                    1 => Some(TextEdit::singleline(&mut user.get_name()).show(ui).response),
+                    2 => Some(TextEdit::singleline(&mut user.get_username()).show(ui).response),
+                    3 => Some(TextEdit::singleline(&mut user.get_email()).show(ui).response),
+                    4 => Some(TextEdit::singleline(&mut user.get_store().as_str()).show(ui).response),
+                    5 => Some(TextEdit::singleline(&mut user.get_employee_id().unwrap_or(0).to_string()).show(ui).response),
+                    6 => Some(TextEdit::singleline(&mut user.get_store_id().unwrap_or(String::new())).show(ui).response),
+                    7 => Some(TextEdit::singleline(&mut user.get_authorization().as_str()).show(ui).response),
                     _ => None
                 }
                 .into()
             },
-        }
+        };
+        // ui.shrink_height_to_current();
+        // ui.shrink_width_to_current();
+        response
     }
     
     fn persist_ui_state(&self) -> bool {
@@ -314,9 +272,6 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         resp: &eframe::egui::Response,
     ) -> Option<Box<DatabaseTable>> {
         match column {
-            0 | 1 => {
-                // 
-            },
             _ => {}
         }
     
@@ -344,12 +299,27 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
     ) -> std::cmp::Ordering {
         match (row_l, row_r) {
             (DatabaseTable::Task(task_l), DatabaseTable::Task(task_r)) => {
+                let user_l = self.store_users
+                    .iter()
+                    .find(|u| u.get_id() == task_l.assignee)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let user_r = self.store_users
+                    .iter()
+                    .find(|u| u.get_id() == task_r.assignee)
+                    .cloned()
+                    .unwrap_or_default();
+
                 match column {
-                    0 => task_l.id.cmp(&task_r.id),
                     1 => task_l.task_name.cmp(&task_r.task_name),
-                    2 => task_l.due_date.cmp(&task_r.due_date),
-                    3 => task_l.priority.as_str().cmp(&task_r.priority.as_str()),
-                    4 => task_l.status.as_str().cmp(&task_r.status.as_str()),
+                    2 => user_l.get_username().cmp(&user_r.get_username()),
+                    3 => task_l.due_date.cmp(&task_r.due_date),
+                    4 => task_l.service_number.clone().unwrap_or_default().cmp(&task_r.service_number.clone().unwrap_or_default()),
+                    5 => task_l.priority.as_str().cmp(&task_r.priority.as_str()),
+                    6 => task_l.status.as_str().cmp(&task_r.status.as_str()),
+                    7 => task_l.completed.cmp(&task_r.completed),
+                    8 => task_l.task_description.cmp(&task_r.task_description),
                     _ => Ordering::Equal, // Default for invalid columns
                 }
             }

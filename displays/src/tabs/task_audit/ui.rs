@@ -156,6 +156,45 @@ impl TaskAuditViewer {
 
                 ui.add_space(10.);
 
+                let selected_text = self.audit_selection.as_str().to_string();
+                let selected = &mut self.audit_selection;
+                let current_selection = selected.clone();
+
+                ComboBox::new("Store_Selection", "")
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(selected, TaskAudit::MyInRepair, " My In Repair ");
+                        ui.selectable_value(selected, TaskAudit::NeedsCall, " Missed Calls ");
+                        ui.selectable_value(selected, TaskAudit::CheckinShelf, " Check-in Shelf ");
+                        ui.selectable_value(selected, TaskAudit::InRepair, " In Repair ");
+                        ui.selectable_value(selected, TaskAudit::DoneShelf, " Done Shelf ");
+                        ui.selectable_value(selected, TaskAudit::AllServices, " All Services ");
+                    })
+                    .response;
+
+                ui.add_space(10.);
+                
+                if current_selection != *selected {
+                    self.loading = true;
+                    let order_tx = self.order_channel.0.clone();
+                    let selection = selected.as_str();
+                    let start_idx = self.index.entry(selection.to_string()).or_insert(0).clone();
+                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
+                        k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
+                    } else {
+                        Vec::new()
+                    };
+                    info!("Services from cache: {:?}", svcs.clone());
+                    self.time = Some(web_time::Instant::now());
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone());
+                }
+                
+                if let Some(time) = self.time.clone() {
+                    if time.elapsed() > web_time::Duration::from_secs(5) {
+                        self.loading = false;
+                    }
+                }
+
                 if Button::new(" Refresh ").ui(ui).clicked() {
                     let order_tx = self.order_channel.0.clone();
                     let selected = self.audit_selection.clone();
@@ -202,8 +241,16 @@ impl TaskAuditViewer {
                 } else {
                     " Show Hotkeys "
                 };
+
                 if Button::new(label).ui(ui).clicked() {
                     self.services_viewer.open_hotkeys = !self.services_viewer.open_hotkeys;
+                }
+                
+                ui.add_space(10.);
+
+                if self.loading {
+                    ui.ctx().request_repaint();
+                    Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
                 }
             });
         });
@@ -240,54 +287,6 @@ impl TaskAuditViewer {
         CentralPanel::default()
             .show_inside(ui, |ui| 
         {
-            ui.horizontal(|ui| {
-                ui.add_space(10.);
-
-                let selected_text = self.audit_selection.as_str().to_string();
-                let selected = &mut self.audit_selection;
-                let current_selection = selected.clone();
-
-                ComboBox::new("Store_Selection", "")
-                    .selected_text(selected_text)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(selected, TaskAudit::MyInRepair, " My In Repair ");
-                        ui.selectable_value(selected, TaskAudit::NeedsCall, " Missed Calls ");
-                        ui.selectable_value(selected, TaskAudit::CheckinShelf, " Check-in Shelf ");
-                        ui.selectable_value(selected, TaskAudit::InRepair, " In Repair ");
-                        ui.selectable_value(selected, TaskAudit::DoneShelf, " Done Shelf ");
-                        ui.selectable_value(selected, TaskAudit::AllServices, " All Services ");
-                    })
-                    .response;
-
-                if current_selection != *selected {
-                    self.loading = true;
-                    let order_tx = self.order_channel.0.clone();
-                    let selection = selected.as_str();
-                    let start_idx = self.index.entry(selection.to_string()).or_insert(0).clone();
-                    let svcs = if let Some(k) = self.service_map.get_mut(&selection.to_string()) {
-                        k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
-                    } else {
-                        Vec::new()
-                    };
-                    info!("Services from cache: {:?}", svcs.clone());
-                    self.time = Some(web_time::Instant::now());
-                    Self::get_services(selected.clone(), current_user, order_tx, svcs, start_idx, self.missed_calls_tx.clone());
-                }
-            
-                if self.loading {
-                    ui.ctx().request_repaint();
-                    ui.add_space(10.);
-                    Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
-                }
-                
-                if let Some(time) = self.time.clone() {
-                    if time.elapsed() > web_time::Duration::from_secs(5) {
-                        self.loading = false;
-                    }
-                }
-            });
-            ui.add_space(5.);
-
             if let Some(table) = self.service_map.get_mut(&self.audit_selection.as_str().to_string()) {
                 // style.single_click_edit_mode = true;
                 Renderer::new(table, &mut self.services_viewer)

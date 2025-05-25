@@ -15,7 +15,7 @@ bincode = { version="2", features = ["serde", "derive"] }
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] } 
 egui_plot = "0.32.1"
-egui-data-table = { version="0.6", features = ["persistency"]}
+egui-data-table = { git = "https://github.com/kang-sw/egui-data-table", rev = "0fef356", features = ["persistency"]}
 lazy_static = "1"
 egui_json_tree = "0.11"
 log="0.4"

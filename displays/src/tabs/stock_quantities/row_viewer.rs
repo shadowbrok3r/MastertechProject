@@ -2,7 +2,7 @@ use crate::egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, TrivialConfig, UiActionContext},
     RowViewer, UiAction,
 };
-use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui};
+use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, Ui};
 
 use egui_extras::Column as TableColumnConfig;
 use log::info;
@@ -151,69 +151,12 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
 
     fn show_cell_editor(
         &mut self,
-        ui: &mut Ui,
-        row: &mut StockQuantityData,
-        column: usize,
+        _ui: &mut Ui,
+        _row: &mut StockQuantityData,
+        _column: usize,
     ) -> Option<Response> {
-        ui.vertical_centered_justified(|ui| {
-            match column {
-                0 => {
-                    TextEdit::multiline(&mut format!("{}", row.0))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                1 => {
-                    TextEdit::multiline(&mut format!("{}", row.1))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                2 => {
-                    TextEdit::multiline(&mut format!("{}", row.2))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                3 => {
-                    TextEdit::multiline(&mut format!("{}", row.3))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                4 => {
-                    TextEdit::multiline(&mut format!("{}", row.4))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                _ => unreachable!(),
-            }
-            .into() // To make focusing work correctly, valid response must be returned.
-        })
-        .inner
+       None
     }
-
-    // fn on_cell_view_response(
-    //     &mut self,
-    //     row: &StockQuantityData,
-    //     column: usize,
-    //     resp: &eframe::egui::Response,
-    // ) -> Option<Box<StockQuantityData>> {
-    //     match column {
-    //         2 => {
-    //             // if resp.clicked() {
-    //             // Some(Box::new(row.clone()))
-    //             None
-    //         }
-    //         _ => None,
-    //     }
-    // }
 
     fn set_cell_value(
         &mut self,
@@ -263,23 +206,17 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     fn new_empty_row(&mut self) -> StockQuantityData {
         // Instead of requiring `Default` trait for row data types, the viewer is
         // responsible of providing default creation method.
-        StockQuantityData(
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        )
+        StockQuantityData::default()
     }
 
     fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
         let col_config = TableColumnConfig::auto();
         match column {
             0 => col_config.resizable(true).at_least(400.).at_most(550.),
-            1 => col_config.resizable(true).at_most(120.),
-            3 => col_config.resizable(true).at_most(120.),
-            2 => col_config.resizable(true).at_most(140.),
-            4 => col_config.resizable(true).at_most(120.),
+            1 => col_config.resizable(true).at_least(120.).at_most(120.),
+            3 => col_config.resizable(true).at_least(120.).at_most(120.),
+            2 => col_config.resizable(true).at_least(140.).at_most(140.),
+            4 => col_config.resizable(true).at_least(120.).at_most(120.),
             _ => col_config,
         }
     }

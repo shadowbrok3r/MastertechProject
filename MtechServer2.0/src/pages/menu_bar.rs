@@ -33,7 +33,7 @@ impl MtechServer {
                                 &"Admin Console".to_string(),
                                 // &"Ai".to_string(),
                                 // &"Json Viewer".to_string(),
-                                &"Database".to_string(),
+                                &"Database Editor".to_string(),
                             ] {
                                 if ui
                                     .selectable_label(self.context.open_tabs.contains(*tab), *tab)

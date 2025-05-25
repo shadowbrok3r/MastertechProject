@@ -1,5 +1,5 @@
 use eframe::egui::{Button, CentralPanel, Color32, ComboBox, ScrollArea, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
-use crate::egui_data_table::Renderer;
+use egui_data_table::Renderer;
 use crate::app_state::SharedContext;
 use crate::{PlatformSpawner, Spawner};
 use database::schema::Store;
@@ -105,7 +105,13 @@ impl SharedContext {
                     Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
                 });
             } else {
-                ui.add(Renderer::new(&mut self.serials_table, &mut self.serials_viewer));
+                Renderer::new(
+                    &mut self.serials_table, 
+                    &mut self.serials_viewer
+                ).with_style_modify(|s| {
+                    s.single_click_edit_mode = true;
+                    s.auto_shrink = [false, false].into();
+                }).ui(ui);
             }
         });
     }
