@@ -4,27 +4,23 @@ use egui_data_table::Renderer;
 use super::{row_viewer::{DatabaseTable, DatabaseTableSelection}, DatabaseViewer};
 
 impl DatabaseViewer {
-    pub fn ui(&mut self, ui: &mut Ui, current_user: Option<User>) {
+    pub fn ui(&mut self, ui: &mut Ui, _current_user: Option<User>) {
+        self.receive();
         TopBottomPanel::top("Database Viewer Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| 
         {
             ui.horizontal_top(|ui| {
                 TextEdit::singleline(&mut self.database_viewer.filter)
+                    .desired_width(150.)
                     .hint_text(" Search")
                     .ui(ui);
-            });
-        });
+                
+                let selected_text = self.database_viewer.selected_table.as_str().to_string();
+                let selected = &mut self.database_viewer.selected_table;
+                let current_selection = selected.clone();
 
-        CentralPanel::default()
-            .show_inside(ui, |ui| 
-        {
-            ui.horizontal(|ui| {
-                ui.add_space(10.);
-
-                let selected_text = self.selected_table.as_str().to_string();
-                let selected = &mut self.selected_table;
-                let current_selection = selected.as_str();
+                ui.add_space(5.);
 
                 ComboBox::new("table selection", "")
                     .selected_text(selected_text)
@@ -66,13 +62,31 @@ impl DatabaseViewer {
                         // );
                     });
 
-                // if current_selection != selected.as_str() {
-                //     let selection = selected;
-                // }
-            });
-            ui.add_space(5.);
+                if current_selection != *selected {
+                    let _ = self.data_selection_tx.try_send(selected.clone());
+                }
 
-            if let Some(table) = self.table_map.get_mut(&self.selected_table.as_str().to_string()) {
+                ui.add_space(5.);
+
+                if ui.button("Get Data").clicked() {
+                    self.start_idx = 0;
+                    let _ = self.data_selection_tx.try_send(self.database_viewer.selected_table.clone());
+                }
+
+                ui.add_space(5.);
+
+                if ui.button("Load +200").clicked() {
+                    self.start_idx += 200;
+                    let _ = self.data_selection_tx.try_send(self.database_viewer.selected_table.clone());
+                }
+
+            });
+        });
+
+        CentralPanel::default()
+            .show_inside(ui, |ui| 
+        {
+            if let Some(table) = self.table_map.get_mut(&self.database_viewer.selected_table.as_str().to_string()) {
                 // style.single_click_edit_mode = true;
                 Renderer::new(table, &mut self.database_viewer)
                     .with_style(egui_data_table::Style::default())
