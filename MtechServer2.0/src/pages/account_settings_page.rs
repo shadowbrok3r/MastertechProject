@@ -7,7 +7,7 @@ use crossbeam::channel::Sender;
 use serde::Serialize;
 use log::{error, info};
 
-#[derive(Serialize, Debug, Default, Clone)]
+#[derive(Serialize, Debug, Clone, Default)]
 pub struct UserPreferences {
     name: String,
     email: String,
@@ -18,9 +18,14 @@ pub struct UserPreferences {
     sort_by: SortOptions,
     last_sort_field: Option<SortField>,   
     new_status: String,
+    user: User
 }
 
-impl UserPreferences{
+impl UserPreferences {
+    pub fn set_user(&mut self, user: User) {
+        self.user = user.clone();
+    }
+
     pub async fn mod_account(&self, user_id: String) {
         let acc_mod: UserPreferences = Self {
             name: self.name.clone(),
@@ -201,38 +206,6 @@ impl MtechServer{
 
                                                         ui.add_space(5.0);
 
-                                                        if Button::new("Update Account")
-                                                            .fill(Color32::from_rgb(30, 30, 35))
-                                                            .min_size(Vec2::new(140.0, 15.0))
-                                                            .ui(ui)
-                                                            .clicked()
-                                                        {
-                                                            let email = if usr.get_email().ends_with("@pclaptops.com"){
-                                                                usr.get_email().to_owned()
-                                                            } else {
-                                                                format!("{}@pclaptops.com", usr.get_email())
-                                                            };
-
-                                                            let acc_mod = UserPreferences {
-                                                                email,
-                                                                name: usr.get_name().to_string(),
-                                                                store: acc_mod.store,
-                                                                ..Default::default()
-                                                            };
-
-                                                            info!("Account Mod: {:?}", acc_mod);
-                                                            let tx = appstate_tx.clone();
-                                                            let user = usr.get_id().key().to_string().clone();
-                                                            PlatformSpawner::spawn(async move {
-                                                                acc_mod.mod_account(user).await;
-                                                                match tx.try_send(AppState::Authenticated(MainPages::Tasks)){
-                                                                    Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                                    Err(e) => error!("Error {e:?}"),
-                                                                }
-                                                            });
-                                                        }
-                                                        ui.add_space(5.0);
-
                                                         let change_pw_txt = if password_check {" Change Password "} else { " Passwords must match " };
                                                         
                                                         let button = Button::new(change_pw_txt)
@@ -357,10 +330,60 @@ impl MtechServer{
                                                 });
                                             });
                                             ui[2].vertical_centered(|ui| {
-                                                ui.heading(RichText::new("Other").strong());
+                                                ui.heading(RichText::new("Other Account Details").strong());
                                                 ui.add_space(5.0);
                                                 ui.group(|ui| {
                                                     ui.set_min_size(avail_size);
+                                                    ui.horizontal(|ui| ui.label("Minio Access Key: "));
+                                                    ui.horizontal(|ui| ui.colored_label(ui.style().visuals.error_fg_color, self.account_mod.user.get_minio_access_key().unwrap_or_default()));
+
+                                                    ui.add_space(5.0);
+
+                                                    ui.horizontal(|ui| ui.label("Minio Secret Key: "));
+                                                    ui.scope(|ui| {
+                                                        ui.style_mut().override_font_id = Some(FontId::proportional(12.));
+                                                        ui.horizontal(|ui| ui.colored_label(ui.style().visuals.error_fg_color, self.account_mod.user.get_minio_secret_key().unwrap_or_default()));
+                                                    });
+                                                    
+                                                    ui.add_space(5.0);
+
+                                                    ui.horizontal(|ui| {
+                                                        ui.label("Prestashop ID: ");
+                                                        
+                                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                            ui.label(self.account_mod.user.get_employee_id().unwrap_or_default().to_string());
+                                                        });
+                                                    });
+
+                                                    ui.add_space(5.0);
+
+                                                    ui.horizontal(|ui| {
+                                                        ui.label("Store #: ");
+                                                        
+                                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                            ui.label(self.account_mod.user.get_store_id().unwrap_or_default());
+                                                        });
+                                                    });
+
+                                                    ui.add_space(5.0);
+
+                                                    ui.horizontal(|ui| {
+                                                        ui.label("Authorization: ");
+                                                        
+                                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                            ui.label(self.account_mod.user.get_authorization().as_str());
+                                                        });
+                                                    });
+
+                                                    ui.add_space(5.0);
+
+                                                    ui.horizontal(|ui| {
+                                                        ui.label("MtechServer Version: ");
+                                                        
+                                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                            ui.label(self.account_mod.user.get_version());
+                                                        });
+                                                    });
                                                 });
                                             });
                                         });

@@ -201,12 +201,11 @@ impl MtechServer {
                             ui.vertical_centered_justified(|ui| {
                                 
                                 if ui.add(Button::new("Preferences")).clicked() {
-                                    self.state =
-                                        AppState::Authenticated(MainPages::UserPreferences);
+                                    self.state = AppState::Authenticated(MainPages::UserPreferences);
                                     match self.context.app_state_tx.try_send(
                                         AppState::Authenticated(MainPages::UserPreferences),
                                     ) {
-                                        Ok(_) => info!("Switching to UserPreferences Page"),
+                                        Ok(_) => self.account_mod.set_user(usr.clone()),
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
