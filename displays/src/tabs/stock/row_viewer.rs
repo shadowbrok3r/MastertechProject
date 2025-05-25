@@ -1,5 +1,5 @@
-use crate::egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, TrivialConfig, UiActionContext}, RowViewer, UiAction};
-use eframe::egui::{Button, Color32, KeyboardShortcut, OpenUrl, Response, RichText, TextEdit, Ui, Widget};
+use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
+use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -53,6 +53,7 @@ pub struct SerialsData(pub String, pub String, pub String, pub String, pub bool)
 pub struct SerialsViewer {
     pub filter: String,
     pub row_protection: bool,
+    #[serde(skip)]
     pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
     #[serde(skip)]
     pub stock_tx: Option<Sender<SerialData>>,
@@ -177,45 +178,25 @@ impl RowViewer<SerialsData> for SerialsViewer {
         row: &mut SerialsData,
         column: usize,
     ) -> Option<Response> {
-        ui.vertical_centered_justified(|ui| {
-            match column {
-                0 => {
-                    TextEdit::multiline(&mut row.0)
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
+        match column {
+            2 => {
+                if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫"{
+                    None
+                } else {
+                    let url = row.2.clone();
+                    Some(
+                        Hyperlink::from_label_and_url(
+                            format!(" {}", row.2.clone()), 
+                            format!("{BASE_URL}{}", last_n(&url, 7))
+                        )
+                        .open_in_new_tab(true)
+                        .ui(ui)
+                    )
                 }
-                1 => {
-                    TextEdit::multiline(&mut row.1)
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                3 => {
-                    TextEdit::multiline(&mut row.3)
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                // 2 => {
-                //     if row.2.ne("Not Attached") {
-                //         Hyperlink::from_label_and_url(
-                //             format!(" {}", row.2.clone()), 
-                //             format!("{BASE_URL}{}", row.2.clone())
-                //         ).open_in_new_tab(true).ui(ui)
-                //     }
-                // },
-                4 => ui.checkbox(&mut row.4, ""),
-                _ => ui.label(""),
-            }
-            .into() // To make focusing work correctly, valid response must be returned.
-        })
-        .inner
+            },
+            _ => None,
+        }
     }
-    
     fn on_cell_view_response(
         &mut self,
         row: &SerialsData,
@@ -283,7 +264,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
         SerialsData::default()
     }
 
-    fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
+    fn column_render_config(&mut self, column: usize, _: bool) -> TableColumnConfig {
         let col_config = TableColumnConfig::auto();
         match column {
             0 => col_config.resizable(true).at_least(400.).at_most(550.),
@@ -295,14 +276,15 @@ impl RowViewer<SerialsData> for SerialsViewer {
         }
     }
 
-    fn trivial_config(&mut self) -> TrivialConfig {
-        TrivialConfig {
-            table_row_height: Some(20.),
-            ..Default::default()
-        }
-    }
 }
 
+fn last_n(s: &str, n: usize) -> &str {
+    if s.len() < n {
+        s
+    } else {
+        &s[s.len() - n..]
+    }
+}
 
 /* -------------------------------------------- Codec ------------------------------------------- */
 

@@ -279,7 +279,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "SEB Lookup".to_owned(),
         "Company Stock".to_owned(),
         // "Customers".to_owned(),
-        // "Database".to_owned(),
+        // "Database Editor".to_owned(),
         "Store Stock".to_owned(),
         "Logs".to_owned(),
     ]);

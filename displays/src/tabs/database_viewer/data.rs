@@ -3,9 +3,9 @@ use itertools::Itertools;
 
 use crate::{get_database_users, PlatformSpawner, Spawner};
 
-use super::{row_viewer::DatabaseRowViewer, DatabaseViewer};
+use super::{row_viewer::DatabaseRowViewer, DatabaseEditor};
 
-impl DatabaseViewer {
+impl DatabaseEditor {
     pub fn receive(&mut self) {
         if let Ok(data) = self.data_selection_rx.try_recv() {
             let tx = self.data_tx.clone();

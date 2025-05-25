@@ -134,7 +134,7 @@ impl MtechServer{
                                                             });
 
                                                             // ui.add_space(width);
-                                                            let db = ComboBox::new("Database", "")
+                                                            let db = ComboBox::new("Database Editor", "")
                                                                 .selected_text(format!("{:?}", acc_mod.database))
                                                                 .width(115.)
                                                                 .show_ui(ui, |ui| 

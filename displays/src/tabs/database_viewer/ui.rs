@@ -1,12 +1,12 @@
 use database::schema::User;
-use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget};
 use egui_data_table::Renderer;
-use super::{row_viewer::{DatabaseTable, DatabaseTableSelection}, DatabaseViewer};
+use super::{row_viewer::DatabaseTableSelection, DatabaseEditor};
 
-impl DatabaseViewer {
+impl DatabaseEditor {
     pub fn ui(&mut self, ui: &mut Ui, _current_user: Option<User>) {
         self.receive();
-        TopBottomPanel::top("Database Viewer Top Panel")
+        TopBottomPanel::top("Database Editor Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| 
         {
@@ -87,9 +87,13 @@ impl DatabaseViewer {
             .show_inside(ui, |ui| 
         {
             if let Some(table) = self.table_map.get_mut(&self.database_viewer.selected_table.as_str().to_string()) {
-                // style.single_click_edit_mode = true;
                 Renderer::new(table, &mut self.database_viewer)
-                    .with_style(egui_data_table::Style::default())
+                    // .with_table_row_height(80.)
+                    .with_style_modify(|s| {
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                        
+                    })
                     .ui(ui);
             }
         });  

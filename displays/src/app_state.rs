@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseViewer, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -140,7 +140,7 @@ pub struct SharedContext {
     pub serials_viewer: SerialsViewer,
     /// generic data table (currently used for inventory tab)
     #[serde(skip)]
-    pub serials_table: DataTable<SerialsData>,
+    pub serials_table: egui_data_table::DataTable<SerialsData>,
     /// Data viewer for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_viewer: StockQuantityViewer,
@@ -151,7 +151,7 @@ pub struct SharedContext {
     #[serde(skip)]
     pub task_audit_table: TaskAuditViewer,
     #[serde(skip)]
-    pub database_viewer: DatabaseViewer,
+    pub database_viewer: DatabaseEditor,
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
@@ -219,7 +219,7 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
-            database_viewer: DatabaseViewer::default(),
+            database_viewer: DatabaseEditor::default(),
             tree,
             task_index: HashMap::new(),
             layout_configs: None,
@@ -275,7 +275,7 @@ impl SharedContext {
             search_results: None,
 
             // Other Components
-            serials_table: DataTable::<SerialsData>::default(),
+            serials_table: egui_data_table::DataTable::<SerialsData>::default(),
             serials_viewer,
             stock_quantity_viewer: StockQuantityViewer::default(),
             stock_quantity_table: DataTable::<StockQuantityData>::default(),

@@ -9,7 +9,7 @@ pub mod data;
 pub mod row_viewer;
 pub mod ui;
 
-pub struct DatabaseViewer {
+pub struct DatabaseEditor {
     pub database_viewer: DatabaseRowViewer,
     pub table_map: HashMap<String, DataTable<DatabaseTable>>,
     pub data_selection_tx: Sender<DatabaseTableSelection>,
@@ -19,7 +19,7 @@ pub struct DatabaseViewer {
     pub start_idx: i32,
 }
 
-impl Default for DatabaseViewer {
+impl Default for DatabaseEditor {
     fn default() -> Self {
         let (data_selection_tx, data_selection_rx) = unbounded();
         let (data_tx, data_rx) = unbounded();

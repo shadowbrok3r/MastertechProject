@@ -1,13 +1,11 @@
 pub mod tasks;
 pub mod aging_tasks;
-pub mod all_tasks;
 pub mod logger;
 pub mod task_audit;
 pub mod stock;
 pub mod stock_quantities;
 pub mod json_viewer;
 pub mod ai_playground;
-pub mod customer;
 pub mod resource_monitor;
 pub mod admin_console;
 pub mod script_editor;
