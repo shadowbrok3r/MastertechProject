@@ -1,6 +1,6 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
-use database::schema::{TaskPayload, TicketPayload, User};
+use database::schema::{ComputerData, TaskPayload, TicketPayload, User};
 use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
@@ -16,17 +16,15 @@ pub struct DatabaseRowViewer {
     pub filter: String,
     pub selected: DatabaseTable,
     user_data: User,
-    task_data: TaskPayload,
-    ticket_data: TicketPayload,
     pub selected_table: DatabaseTableSelection,
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub enum DatabaseTable {
     Task(TaskPayload),
-    // Customer(CustomerData),
-    // Ticket(TicketPayload),
-    // Computer(ComputerData),
+    Service(TicketPayload),
+    Customer(CustomerData),
+    Computer(ComputerData),
     // TaskNote(TaskNotePayload),
     User(User)
 }
@@ -35,14 +33,21 @@ pub enum DatabaseTable {
 pub enum DatabaseTableSelection {
     #[default]
     Task,
-    User
+    Service,
+    Customer,
+    Computer,
+    User,
 }
 
 impl DatabaseTableSelection {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Task => "Task",
-            Self::User => "User"
+            Self::User => "User",
+            Self::Computer => "Computer",
+            Self::Service => "Service",
+            Self::Customer => "Customer",
+            Self::Computer => "Computer",
         }
     }
 }
@@ -57,9 +62,9 @@ impl DatabaseTable {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Task(_) => "Task",
-            // Self::Customer(_) => "Customer",
-            // Self::Ticket(_) => "Ticket",
-            // Self::Computer(_) => "Computer",
+            Self::Customer(_) => "Customer",
+            Self::Service(_) => "Service",
+            Self::Computer(_) => "Computer",
             // Self::TaskNote(_) => "Task Note",
             Self::User(_) => "User"
         }
@@ -76,10 +81,7 @@ impl Default for DatabaseRowViewer {
             },
             filter: Default::default(),
             store_users: get_database_users(),
-            // selected: Default::default(),
             user_data: User::default(),
-            task_data: TaskPayload::default(),
-            ticket_data: TicketPayload::default(),
             selected: DatabaseTable::default(),
             selected_table: Default::default(), 
         }
@@ -102,10 +104,10 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
         match self.selected {
             DatabaseTable::Task(_) => ["ID", "Name", "Assignee", "Due", "Order #", "Priority", "Status", "Complete", "Description"][column].into(),
             DatabaseTable::User(_) => ["ID", "Name", "Username", "Email", "Store", "Presta ID", "Store ID", "Auth"][column].into(),
-            // DatabaseTable::Customer(customer_data) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
-            // DatabaseTable::Ticket(ticket_payload) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
-            // DatabaseTable::Computer(computer_data) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
-            // DatabaseTable::TaskNote(task_note_payload) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
+            DatabaseTable::Customer(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
+            DatabaseTable::Service(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
+            DatabaseTable::Computer(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
+            // DatabaseTable::TaskNote(_) => ["id", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"],
         }
     }
 
