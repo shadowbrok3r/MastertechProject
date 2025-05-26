@@ -1,18 +1,23 @@
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
 use database::{Database, DATABASE};
-use displays::tabs::logger::logger_ui;
+use serde::{Deserialize, Serialize};
+use crate::{tabs::logger::logger_ui, PlatformSpawner, Spawner};
 use eframe::egui::{
     Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, TopBottomPanel, Vec2, Widget
 };
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
-use wasm_bindgen_futures::spawn_local;
+
+#[cfg(target_arch = "wasm32")]
 #[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
 
-use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::app_state::{AppState, MainPages, SharedContext};
 
+pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Login {
     pub username: String,
     pub password: String,
@@ -34,7 +39,7 @@ impl Login {
         db_tx: Sender<anyhow::Result<Database, anyhow::Error>>,
         appstate_tx: Sender<AppState>,
     ) -> Result<(), Error> {
-        gloo_console::info!("Logging in");
+        log::info!("Logging in");
         let database = Database::new(email, pass, None).await;
         match database {
             Ok(db) => {
@@ -65,7 +70,7 @@ impl Login {
 
                         let compressed: Vec<u8> = compress_string(&usr_json);
                         let encoded: String = general_purpose::STANDARD.encode(&compressed);
-                        gloo_console::info!(format!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr_json.len()));
+                        log::info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr_json.len());
 
                         wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                         wasm_cookies::set("user", &encoded, &cookie_opts);
@@ -82,7 +87,7 @@ impl Login {
             }
             Err(e) => {
                 
-                gloo_console::info!(e.to_string());
+                log::error!("{}", e.to_string());
                 if e.to_string().contains("Already connected") {
                     appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
                 } else {
@@ -94,7 +99,7 @@ impl Login {
     }
 }
 
-impl MtechServer {
+impl SharedContext {
     pub fn login_page(
         &mut self,
         ctx: &Context,
@@ -131,7 +136,7 @@ impl MtechServer {
 
                                             ui.label("Please Login");
                                             ui.add_space(20.0);
-                                            let mut refresh = self.context.refresh.clone();
+                                            let mut refresh = self.refresh.clone();
                                             if let Some(login) = self.login_mut() {
                                                 let text_edit =
                                                     TextEdit::singleline(&mut login.username)
@@ -189,7 +194,7 @@ impl MtechServer {
                                                         let email = format!("{user}@pclaptops.com");
                                                         let tx = db_tx.clone();
                                                         let app_tx = appstate_tx.clone();
-                                                        spawn_local(async move {
+                                                        PlatformSpawner::spawn(async move {
                                                             let _ = Login::login(
                                                                 email,
                                                                 pass,
@@ -242,7 +247,7 @@ impl MtechServer {
                                                     let user = login.username.clone();
                                                     let pass = login.password.clone();
                                                     let email = format!("{user}@pclaptops.com");
-                                                    spawn_local(async move {
+                                                    PlatformSpawner::spawn(async move {
                                                         let res = Login::login(
                                                             email,
                                                             pass,

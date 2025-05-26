@@ -1,3 +1,4 @@
+use displays::pages::login_page::Login;
 use log::info;
 use ring::aead;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -5,7 +6,6 @@ use ring::pbkdf2;
 use std::num::NonZeroU32;
 use std::fs::{read, File};
 use std::io::Write;
-use crate::pages::login_page::Login;
 use bincode::{config::standard, serde::*};
 
 const KEY_LEN: usize = 32;

@@ -1,9 +1,9 @@
 
 use database::{schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
 use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
-use crate::{app_state::{default_tree, MainPages}, tabs::github::{get_github_releases, self_updater::run}};
-use crate::app_state::{AppState, MasterTechApp};
-use displays::ui_tools::show_notification;
+use crate::{app_state::{default_tree}, tabs::github::{get_github_releases, self_updater::run}};
+use crate::app_state::MasterTechApp;
+use displays::{app_state::{AppState, MainPages}, ui_tools::show_notification};
 use std::collections::BTreeSet;
 use log::{error, info};
 use tokio::spawn;
@@ -14,7 +14,7 @@ impl MasterTechApp {
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             eframe::egui::menu::bar(ui, |ui| {
                 if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
-                    ui.menu_button("View", |ui| {
+                    ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
                         // allow certain tabs to be toggled
                         for tab in &[
                             &"TUR Sheet".to_string(),
@@ -98,6 +98,9 @@ impl MasterTechApp {
                                     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
                                 }
                     
+                                ui.add_space(10.0);
+                                Separator::default().shrink(20.0).ui(ui);
+                                ui.add_space(10.0);
                     
                                 let selected = &mut self.context.shared_ctx.store_selection;
                                 let current = selected.clone();
@@ -113,43 +116,57 @@ impl MasterTechApp {
                                     _ => Store::RIV.as_str(),
                                 };
                         
-                                Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
-                                    ComboBox::new("Store_Selection", "")                    
-                                    .width(60.)
-                                    .selected_text(selected_text)
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(selected, 76, "RIV");
-                                        ui.selectable_value(selected, 73, "LTN");
-                                        ui.selectable_value(selected, 74, "MUR");
-                                        ui.selectable_value(selected, 78, "WJ");
-                                        ui.selectable_value(selected, 75, "ORE");
-                                        ui.selectable_value(selected, 72, "AF");
-                                        ui.selectable_value(selected, 77, "SAN");
-                                    });
-                        
-                                    if *selected != current {
-                                        self.context.task_map.clear();
-                                        self.context.shared_ctx.store_users.clear();
-                                        self.context.shared_ctx.tasks.clear();
-                                        self.context.task_map.clear();
-                                        self.context.shared_ctx.task_layouts.clear();
-                                        let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                                        let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
-                                        let store_selection = std::convert::Into::<Store>::into(*selected);
-                                        
-                                        info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-                                        spawn(async move {
-                                            let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                            let get_store_users = get_store_users(store_users_tx, store_selection).await;
-                            
-                                            info!("get_tasks_for_store: {store_tasks:?}");
-                                            info!("get_store_users: {get_store_users:?}");
+                                ui.horizontal(|ui| {
+                                    ui.add_space(ui.available_width()/2.5);
+                                    Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
+                                        ComboBox::new("Store_Selection", "")                    
+                                        .width(60.)
+                                        .selected_text(selected_text)
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(selected, 76, "RIV");
+                                            ui.selectable_value(selected, 73, "LTN");
+                                            ui.selectable_value(selected, 74, "MUR");
+                                            ui.selectable_value(selected, 78, "WJ");
+                                            ui.selectable_value(selected, 75, "ORE");
+                                            ui.selectable_value(selected, 72, "AF");
+                                            ui.selectable_value(selected, 77, "SAN");
                                         });
-                                    }
+                            
+                                        if *selected != current {
+                                            self.context.task_map.clear();
+                                            self.context.shared_ctx.store_users.clear();
+                                            self.context.shared_ctx.tasks.clear();
+                                            self.context.task_map.clear();
+                                            self.context.shared_ctx.task_layouts.clear();
+                                            let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
+                                            let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
+                                            let store_selection = std::convert::Into::<Store>::into(*selected);
+                                            
+                                            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+                                            spawn(async move {
+                                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                                let get_store_users = get_store_users(store_users_tx, store_selection).await;
+                                
+                                                info!("get_tasks_for_store: {store_tasks:?}");
+                                                info!("get_store_users: {get_store_users:?}");
+                                            });
+                                        }
+                                    });
                                 });
 
+                                if ui.add(Button::new("Preferences")).clicked() {
+                                    self.context.shared_ctx.state =
+                                        AppState::Authenticated(MainPages::UserPreferences);
+                                    match self.context.shared_ctx.app_state_tx.try_send(
+                                        AppState::Authenticated(MainPages::UserPreferences),
+                                    ) {
+                                        Ok(_) => info!("Switching to UserPreferences Page"),
+                                        Err(e) => error!("Error: {e:?}"),
+                                    }
+                                }
+                                
                                 if ui.add(Button::new("Downloads")).clicked() {
-                                    self.state = AppState::Authenticated(MainPages::Downloads);
+                                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
                                     let github_releases_tx = self.context.github_releases_channel.0.clone();
                                     let client = self.context.client.clone();
                                     spawn(async move {
@@ -158,22 +175,11 @@ impl MasterTechApp {
                                     });
                     
                                     match self
-                                        .context
+                                        .context.shared_ctx
                                         .app_state_tx
                                         .try_send(AppState::Authenticated(MainPages::Downloads))
                                     {
                                         Ok(_) => info!("Switching to Downloads Page"),
-                                        Err(e) => error!("Error: {e:?}"),
-                                    }
-                                }
-                    
-                                if ui.add(Button::new("Preferences")).clicked() {
-                                    self.state =
-                                        AppState::Authenticated(MainPages::UserPreferences);
-                                    match self.context.app_state_tx.try_send(
-                                        AppState::Authenticated(MainPages::UserPreferences),
-                                    ) {
-                                        Ok(_) => info!("Switching to UserPreferences Page"),
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
@@ -203,16 +209,16 @@ impl MasterTechApp {
                                         Err(e) => log::error!("*.enc File not found {e:?}"),
                                     };
 
-                                    let _ = self.context.app_state_tx.try_send(AppState::Login);
+                                    let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Login);
                                     spawn(async move {
                                         let invalidation = DATABASE.invalidate().await;
                                         info!("invalidated connection: {:?}", invalidation);
                                     });
 
                                     let logout_msg = "Logged out".to_string();
-                                    self.state = AppState::NoAuth(logout_msg.clone());
+                                    self.context.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
                                     match self
-                                        .context
+                                        .context.shared_ctx
                                         .app_state_tx
                                         .try_send(AppState::NoAuth(logout_msg))
                                     {
@@ -252,15 +258,16 @@ impl MasterTechApp {
                             });
 
                             let row_height = 100.;
-                            let total_rows = self.context.notifications.len();
+                            let total_rows = self.context.shared_ctx.notifications.len();
                             let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
-                    
+                            ui.ctx().options_mut(|o| o.line_scroll_speed = 80.0);
+
                             scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
                                 for row in row_range {
                                     let mut notifications: Vec<Notification> =
-                                        if self.context.read_notifications {
+                                        if self.context.shared_ctx.read_notifications {
                                             self.context
+                                                .shared_ctx
                                                 .notifications
                                                 .iter()
                                                 .filter(|n| n.status == "Read")
@@ -268,13 +275,14 @@ impl MasterTechApp {
                                                 .collect()
                                         } else {
                                             self.context
+                                                .shared_ctx
                                                 .notifications
                                                 .iter()
                                                 .filter(|n| n.status == "Unread")
                                                 .cloned()
                                                 .collect()
                                         };
-                    
+
                                     if let Some(notification) = notifications.get_mut(row) {
                                         eframe::egui::Frame::new()
                                             .fill(ui.style().visuals.extreme_bg_color)
@@ -349,41 +357,66 @@ impl MasterTechApp {
                         ui.label("Welcome, ");
                     
                         ui.add_space(20.);
-                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
-                        ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                        let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
-                    
-                        if reset_ui.clicked() {
-                            let tree = default_tree();
-                            let default_layout = serde_json::to_value(&tree).unwrap_or_default();
-                            usr.set_ui_layout_mastertech(default_layout.clone());
-                            let mut user = usr.clone();
-                            spawn(async move {
-                                match user.save_mastertech_ui_layout(default_layout.clone()).await {
-                                    Ok(_) => info!("Updated User Settings"),
-                                    Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                                }
-                            });
-                            self.tree = tree.0;
-                            self.context.open_tabs = tree.1;
-                        }
-                        ui.add_space(5.);
-                        let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
-                        if submit.clicked() {
-                            let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
-                            usr.set_ui_layout_mastertech(val.clone());
-                            
-                            let mut user = usr.clone();
-                            spawn(async move {
-                                match user.save_mastertech_ui_layout(val.clone()).await {
-                                    Ok(_) => info!("Updated User Settings"),
-                                    Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                                }
-                            });
-                            self.context.update_settings = true;
-                        }
 
-                        ui.add_space(ui.available_width() / 6.0);
+                        ui.menu_button(RichText::new("Ui Layout").color(ui.style().visuals.error_fg_color).strong().underline(), |ui| {
+                            ui.vertical_centered_justified(|ui| {
+                                ui.set_width(200.0);    
+                                // ui.set_height(60.0);
+                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
+                                ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
+                                let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
+                                ui.add_space(5.0);
+                                let organize = Button::new(RichText::new(" Organize Windows ").monospace()).ui(ui);
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.add_space(10.0);
+                                let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
+                                ui.add_space(5.0);
+                                let reset_mem = Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui);
+                                let tree = default_tree();
+                                if reset_ui.clicked() {
+                                    let default_layout = serde_json::to_value(&tree).unwrap();
+                                    usr.set_ui_layout_mastertech(default_layout.clone());
+                                    
+                                    self.tree = tree.0;
+                                    self.context.open_tabs = tree.1;
+                                    let mut user = usr.clone();
+                                    spawn(async move {
+                                        match user.save_mtechserver_ui_layout(default_layout.clone()).await {
+                                            Ok(_) => info!("Updated User Settings"),
+                                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
+                                        }
+                                    });
+                                    self.context.update_settings = true;
+                                }
+                                if submit.clicked() {
+                                    let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
+                                    usr.set_ui_layout_mastertech(val.clone());
+
+                                    let mut user = usr.clone();
+                                    spawn(async move {
+                                        match user.save_mastertech_ui_layout(val.clone()).await {
+                                            Ok(_) => info!("Updated User Settings"),
+                                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
+                                        }
+                                    });
+                                    self.context.update_settings = true;
+                                }
+                                if organize.clicked() {
+                                    ctx.memory_mut(|mem| mem.reset_areas());
+                                    ctx.memory_mut(|mem| {
+                                        for layer in mem.areas_mut().visible_layer_ids().iter() {
+                                            info!("Visible layers: {layer:?}");
+                                        }
+                                    })
+                                }
+                                if reset_mem.clicked() {
+                                    ctx.memory_mut(|mem| *mem = Default::default());
+                                }
+                            });
+                        });
+
+                        ui.add_space(20.0);
                         ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());
                         ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
 
@@ -398,13 +431,35 @@ impl MasterTechApp {
                                 .ui(ui);
                             ui.add_space(50.);
                         }
+
+                        ui.add_space(ui.available_width() / 5.);
+                        let txt = RichText::new(format!(
+                            "Mastertech Server {}",
+                            env!("CARGO_PKG_VERSION")
+                        )).heading().color(Color32::WHITE);
+
+                        if ui
+                            .add(Button::new(txt))
+                            .clicked()
+                        {
+                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
+                            match self
+                                .context
+                                .shared_ctx
+                                .app_state_tx
+                                .try_send(AppState::Authenticated(MainPages::Tasks))
+                            {
+                                Ok(_) => info!("AppState::Authenticated(MainPages::Tasks)"),
+                                Err(e) => error!("Error: {e:?}"),
+                            }
+                        }
                     });
                 } else {
                     if Button::new("Login").ui(ui).clicked() {
                         let _ = self
-                            .context
+                            .context.shared_ctx
                             .app_state_tx
-                            .send(crate::app_state::AppState::Login);
+                            .send(AppState::Login);
                     }
                 }
             })

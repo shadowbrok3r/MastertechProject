@@ -1,5 +1,5 @@
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
-use crate::app_state::{AppState, MainPages, MtechServer};
+use displays::{app_state::{AppState, MainPages}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::app_state::MtechServer;
 use eframe::{egui::Context, Frame};
 use log::info;
 
@@ -16,9 +16,9 @@ impl MtechServer {
                     if !self.context.shared_ctx.load_data(ctx) {
                         self.context.first_run = true;
                         self.first_run(frame);
-                        self.state = AppState::NoAuth("No user detected".to_string());
+                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     } else {
-                        self.state = AppState::Authenticated(MainPages::Tasks);
+                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                     }
                     
                     if let Some(token) = db.jwt.clone() {
@@ -37,9 +37,9 @@ impl MtechServer {
                         if !self.context.shared_ctx.load_data(ctx) {
                             self.context.first_run = true;
                             self.first_run(frame);
-                            self.state = AppState::NoAuth("No user detected".to_string());
+                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
-                        self.state = AppState::Authenticated(MainPages::Tasks);
+                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                         let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
                             kind: ToastKind::Success,
@@ -67,7 +67,7 @@ impl MtechServer {
                                 .duration_in_seconds(6.0),
                         };
                         toast.add(auth_toast);
-                        self.state = AppState::NoAuth("Needs login".to_string());
+                        self.context.shared_ctx.state = AppState::NoAuth("Needs login".to_string());
                     }
                 }
             }

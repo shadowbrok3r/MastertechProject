@@ -1,7 +1,9 @@
-use crate::{app_state::{AppState, MainPages}, pages::login_page::{Login, HASH}, terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use crate::{terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use displays::pages::login_page::{Login, HASH};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::{schema::User, Database, DATABASE};
 use crossbeam::channel::Sender;
+use displays::app_state::{AppState, MainPages};
 use reqwest::Client;
 pub mod action_handler;
 pub mod render;

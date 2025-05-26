@@ -1,7 +1,7 @@
 use database::{live_data::listen_data, schema::{utilities::{get_completed_tasks_for_store, get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
-use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
-use displays::FilterTasks; // ui_tools::autocomplete::AutoCompleteTextEdit, 
+use crate::app_state::{default_tree, MtechServer};
+use displays::{app_state::{AppState, MainPages}, FilterTasks}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
 use crate::pages::downloads_page::get_github_releases;
 use displays::ui_tools::show_notification;
 use wasm_bindgen_futures::spawn_local;
@@ -140,9 +140,10 @@ impl MtechServer {
                         .add(Button::new(txt))
                         .clicked()
                     {
-                        self.state = AppState::Authenticated(MainPages::Tasks);
+                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                         match self
                             .context
+                            .shared_ctx
                             .app_state_tx
                             .try_send(AppState::Authenticated(MainPages::Tasks))
                         {
@@ -201,17 +202,17 @@ impl MtechServer {
                             ui.vertical_centered_justified(|ui| {
                                 
                                 if ui.add(Button::new("Preferences")).clicked() {
-                                    self.state = AppState::Authenticated(MainPages::UserPreferences);
-                                    match self.context.app_state_tx.try_send(
+                                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::UserPreferences);
+                                    match self.context.shared_ctx.app_state_tx.try_send(
                                         AppState::Authenticated(MainPages::UserPreferences),
                                     ) {
-                                        Ok(_) => self.account_mod.set_user(usr.clone()),
+                                        Ok(_) => self.context.shared_ctx.account_mod.set_user(usr.clone()),
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
 
                                 if ui.add(Button::new("Downloads")).clicked() {
-                                    self.state = AppState::Authenticated(MainPages::Downloads);
+                                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
                                     
                                     let github_releases_tx = self.context.github_releases_channel.0.clone();
                                     spawn_local(async move {
@@ -221,6 +222,7 @@ impl MtechServer {
 
                                     match self
                                         .context
+                                        .shared_ctx
                                         .app_state_tx
                                         .try_send(AppState::Authenticated(MainPages::Downloads))
                                     {
@@ -230,7 +232,7 @@ impl MtechServer {
                                 }
                                 
                                 if ui.add(Button::new("Admin Console")).clicked() {
-                                    self.state = AppState::Authenticated(MainPages::WebConsole);
+                                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::WebConsole);
                                     let live_clients_tx = self.context.shared_ctx.live_clients_tx.clone();
                                     let tx = self.context.shared_ctx.connected_clients_tx.clone();
                                     spawn_local(async move {
@@ -244,6 +246,7 @@ impl MtechServer {
 
                                     match self
                                         .context
+                                        .shared_ctx
                                         .app_state_tx
                                         .try_send(AppState::Authenticated(MainPages::WebConsole))
                                     {
@@ -322,9 +325,10 @@ impl MtechServer {
                                         info!("No window");
                                     }
                                     let logout_msg = "Logged out".to_string();
-                                    self.state = AppState::NoAuth(logout_msg.clone());
+                                    self.context.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
                                     match self
                                         .context
+                                        .shared_ctx
                                         .app_state_tx
                                         .try_send(AppState::NoAuth(logout_msg))
                                     {
@@ -578,9 +582,10 @@ impl MtechServer {
                 } else {
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                         if Button::new("Login").ui(ui).clicked() {
-                            self.state = AppState::Authenticated(MainPages::Downloads);
+                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
                             match self
                                 .context
+                                .shared_ctx
                                 .app_state_tx
                                 .try_send(AppState::NoAuth("clicked login button".to_string()))
                             {
@@ -589,9 +594,10 @@ impl MtechServer {
                             }
                         }
                         if ui.add(Button::new("Downloads")).clicked() {
-                            self.state = AppState::Authenticated(MainPages::Downloads);
+                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
                             match self
                                 .context
+                                .shared_ctx
                                 .app_state_tx
                                 .try_send(AppState::Authenticated(MainPages::Downloads))
                             {

@@ -1,8 +1,7 @@
-use std::ffi::OsStr;
-
-use app_state::{AppState, MainPages, MasterTechApp};
-use displays::ui_tools::theme_config::set_custom_style;
+use displays::{app_state::{AppState, MainPages}, ui_tools::theme_config::set_custom_style};
+use app_state::MasterTechApp;
 use eframe::egui::{Context, IconData, Window};
+use std::ffi::OsStr;
 // use terminal_mode::run_terminal_mode;
 use egui_dock::DockState;
 use log::{error, info};
@@ -87,32 +86,41 @@ impl eframe::App for MasterTechApp {
         self.viewport_loader(ctx);
         self.menu_bar(ctx);
 
-        match &self.state {
-            app_state::AppState::Authenticated(page) => match page {
-                app_state::MainPages::Tasks => self.main_page(ctx),
+        match &self.context.shared_ctx.state {
+            AppState::Authenticated(page) => match page {
+                MainPages::Tasks => self.main_page(ctx),
+                MainPages::UserPreferences => self
+                    .context
+                    .shared_ctx
+                    .account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
                 _ => {}
             },
-            app_state::AppState::NoAuth(reason) => {
+            AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     if self.context.shared_ctx.current_user.is_some() {
-                        info!("Am i even loading data?");
-                        self.load_data(ctx);
-                        let _ = self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                        if !self.context.shared_ctx.load_data(ctx) {
+                            self.context.first_run = true;
+                            self.first_run();
+                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                        } else {
+                            self.context.first_run = true;
+                            self.first_run();
+                        }
+                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
                         self.context.first_run = true;
                         self.first_run();
-                        let _ = self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     }
                 } else {
-                    let _ = self.context.app_state_tx.try_send(AppState::Login);
+                    self.context.shared_ctx.login_page(
+                        ctx,
+                        self.context.shared_ctx.db_tx.clone(),
+                        self.context.shared_ctx.app_state_tx.clone(),
+                    )
                 }
             },
-            app_state::AppState::Login => self.login_page(
-                ctx,
-                self.context.shared_ctx.db_tx.clone(),
-                self.context.app_state_tx.clone(),
-            ),
             _ => {}
         }
     }
@@ -190,6 +198,11 @@ async fn main() -> eframe::Result<()> {
     } else {
         let init = displays::tabs::logger::logging::builder().init();
         log::info!("Init logger: {init:?}");
+        // simplelog::WriteLogger::init(
+        //     log::LevelFilter::Info,
+        //     simplelog::Config::default(),
+        //     std::fs::File::create("output.log").unwrap()
+        // ).unwrap();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {

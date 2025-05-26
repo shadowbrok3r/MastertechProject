@@ -101,6 +101,8 @@ impl TaskNotePayload {
             return Err(anyhow::anyhow!("We need an employee ID to create notes"));
         }
 
+        log::info!("Beginning task note creation with payload: {:?}", self.clone());
+
         let id_customer_thread = if let Some(thread_id) =  self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
@@ -118,29 +120,42 @@ impl TaskNotePayload {
             }
         };
 
-        if !id_customer_thread.is_empty() && self.service_number.is_some() && !self.private {
+        // if self.id_customer_message.is_some() {
+        //     match self.create_task_note_in_db().await {
+        //         Ok(_) => log::info!("task_note/mod.rs -> handle_note_creation -> Task note created successfully in DB"),
+        //         Err(e) =>  log::error!("task_note/mod.rs -> handle_note_creation -> Failed to create task note in DB, but we have a customer message ID, continuing anyway: {e:?}"),
+        //     }
+        // }
+        
+        if !id_customer_thread.is_empty() && self.service_number.is_some() && !self.private && self.id_customer_message.is_none() {
             self.id_customer_thread = Some(id_customer_thread);
-            let response = self.create_customer_message().await?;
-            log::info!("task_note/mod.rs -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
-            // Update task note with Prestashop details
-            if !response.id.to_string().is_empty() {
-                let updated_value = TaskNotePayload {
-                    id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
-                    id_customer_message: Some(response.id.to_string().clone()),
-                    id_customer_thread: self.id_customer_thread.clone(),
-                    created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&response.date_add) {
-                        date.with_timezone(&Utc).into()
-                    } else {
-                        parse_msg_date(&response.date_add).unwrap_or(Utc::now().into())
-                    },
-                    ..self.clone() // Keep other fields the same
-                };
-                let diffs = self.diff(&updated_value);
-                self.apply_mut(diffs);
-                log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
-                self.create_task_note_in_db().await?;
-            }
+            match self.create_customer_message().await {
+                Ok(response) => {
+                    log::info!("task_note/mod.rs -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
+                    // Update task note with Prestashop details
+                    if !response.id.to_string().is_empty() {
+                        let updated_value = TaskNotePayload {
+                            id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
+                            id_customer_message: Some(response.id.to_string().clone()),
+                            id_customer_thread: self.id_customer_thread.clone(),
+                            created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&response.date_add) {
+                                date.with_timezone(&Utc).into()
+                            } else {
+                                parse_msg_date(&response.date_add).unwrap_or(Utc::now().into())
+                            },
+                            ..self.clone() // Keep other fields the same
+                        };
+                        let diffs = self.diff(&updated_value);
+                        self.apply_mut(diffs);
+                        log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
+                        self.create_task_note_in_db().await?;
+                    }
+                },
+                Err(e) => {
+                    log::error!("task_note/mod.rs -> handle_note_creation -> We probably already have a CustMessageID\nErr: {e:?}");
 
+                },
+            }
         } else if id_customer_thread.is_empty() && self.service_number.is_none()
             || (!id_customer_thread.is_empty() && self.service_number.is_some() && self.private) 
         { 
@@ -172,7 +187,7 @@ impl TaskNotePayload {
                     };
                     let diffs = self.diff(&updated_value);
                     self.apply_mut(diffs);
-                    log::error!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
+                    log::info!("task_note/mod.rs -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
                     self.create_task_note_in_db().await?;
                 }
             }
@@ -181,9 +196,11 @@ impl TaskNotePayload {
                 return Err(anyhow::anyhow!("Task ID is empty"));
             } else {
                 log::info!("task_note/mod.rs -> handle_note_creation -> This better be a private note or some bullshit i swear to god\nPS: if you see this message, probably dont tell me about it (jk pls do, but very carefully)");
-                self.create_task_note_in_db().await?;
+                match self.create_task_note_in_db().await {
+                    Ok(_) => log::info!("task_note/mod.rs -> handle_note_creation -> Task note created successfully in DB"),
+                    Err(e) => log::error!("task_note/mod.rs -> handle_note_creation -> Failed to create task note in DB: {e:?}"),
+                }
             }
-            
         } 
         self.check_tagged_user_in_note().await?;
 

@@ -1,5 +1,6 @@
 use ratatui::{layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
-use crate::{pages::login_page::Login, terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}}};
+use crate::{terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}}};
+use displays::pages::login_page::Login;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use super::LoginTab;
 

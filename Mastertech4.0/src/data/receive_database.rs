@@ -1,6 +1,6 @@
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::{app_state::{AppState, MainPages}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::app_state::MasterTechApp;
 use eframe::egui::Context;
-use crate::app_state::{AppState, MainPages, MasterTechApp};
 use log::info;
 
 
@@ -11,17 +11,19 @@ impl MasterTechApp {
             match db {
                 Ok(db) => {
                     info!("3");
+                    if !self.context.shared_ctx.load_data(ctx) {
+                        self.context.first_run = true;
+                        self.first_run();
+                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                    } else {
+                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
+                    }
+
                     if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
                         info!("10");
                         self.context.shared_ctx.current_user = db.user;
                     } else {
                         info!("11");
-                    }
-                    if !self.context.shared_ctx.load_data(ctx) {
-                        info!("12");
-                        let _ = self.context.app_state_tx.try_send(AppState::NoAuth("No user detected".to_string()));
-                    } else {
-                        let _ = self.context.app_state_tx.try_send( AppState::Authenticated(MainPages::Tasks));
                     }
                 }
                 Err(e) => {
@@ -29,9 +31,11 @@ impl MasterTechApp {
                     if e.to_string().contains("Already connected") {
                         info!("7");
                         if !self.context.shared_ctx.load_data(ctx) {
-                            let _ = self.context.app_state_tx.try_send(AppState::NoAuth("No user detected".to_string()));
+                            self.context.first_run = true;
+                            self.first_run();
+                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
-                        let _ = self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                         let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
                             kind: ToastKind::Success,
@@ -54,7 +58,7 @@ impl MasterTechApp {
                                 .duration_in_seconds(6.0),
                         };
                         toast.add(auth_toast);
-                        let _ = self.context.app_state_tx.try_send(AppState::NoAuth("Needs login".to_string()));
+                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Needs login".to_string()));
                     }
                 }
             }

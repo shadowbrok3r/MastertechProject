@@ -1,3 +1,5 @@
+use crate::DATABASE;
+
 use super::{ComputerData, CustomerData, HardwareTests, Job, CUSTOMER_TABLE, TICKET_TABLE};
 use surrealdb::{sql::Datetime, RecordId};
 use structdiff::{Difference, StructDiff};
@@ -67,6 +69,19 @@ pub struct TicketData {
     pub current_antivirus: Option<Vec<String>>,
     pub hardware_test_results: HardwareTests,
     pub jobs: Option<Vec<Job>>
+}
+
+impl TicketPayload {
+    pub async fn get_services(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let services: Vec<Self> = DATABASE
+            .query("SELECT * FROM service_order START $start LIMIT 200 FETCH computer, customer")
+            
+            .bind(("start", start))
+            .await?
+            .take(0)?;
+
+        Ok(services)
+    }
 }
 
 impl Default for TicketData {

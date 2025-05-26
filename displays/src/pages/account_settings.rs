@@ -1,6 +1,6 @@
-use displays::{tasks::task_layout::{SortField, SortOptions}, SortDirection};
+use crate::{tasks::task_layout::{SortField, SortOptions}, SortDirection};
 use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::app_state::{AppState, MainPages, SharedContext};
 use database::{schema::{Store, User}, DatabaseSelection, PlatformSpawner, Spawner, DATABASE};
 use egui_extras::{Size, StripBuilder};
 use crossbeam::channel::Sender;
@@ -43,17 +43,19 @@ impl UserPreferences {
         info!("mod_user_result: {mod_user_result:?}"); 
     }
 
-    pub async fn change_password(&self) {
+    pub fn change_password(&self) {
         let password = self.password.clone();
-        let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
-            .query("UPDATE user SET password = crypto::argon2::generate($pass) WHERE id == $auth.id")
-            .bind(("pass", password))
-            .await;
-        info!("X: {x:?}");
+        PlatformSpawner::spawn(async move {
+            let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                .query("UPDATE $auth.id SET password = crypto::argon2::generate($pass)")
+                .bind(("pass", password))
+                .await;
+            info!("X: {x:?}");
+        });
     }
 }
 
-impl MtechServer{
+impl SharedContext {
     pub fn account_settings_page(&mut self, ctx: &Context, appstate_tx: Sender<AppState>) {
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
@@ -61,9 +63,9 @@ impl MtechServer{
         {
             StripBuilder::new(ui)
                 .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
-                .size(Size::exact(500.0))
+                .size(Size::initial(300.0).at_least(200.).at_most(500.0))
                 .size(Size::remainder())
-                .size(Size::exact(500.0))
+                .size(Size::initial(300.0).at_least(200.).at_most(500.0))
                 .horizontal(|mut s| {
                     s.empty();
                     s.strip(|s| 
@@ -85,6 +87,7 @@ impl MtechServer{
                                     let avail_size = vec2(ui.available_width()/3.2, 222.);
 
                                     ui.horizontal_top(|ui| {
+                                        ui.set_min_width(avail_size.x);
                                         ui.columns(3, |ui| {
                                             ui[0].vertical_centered(|ui| {
                                                 ui.heading(RichText::new("Account Settings").strong());
@@ -95,7 +98,7 @@ impl MtechServer{
                                                         Some(ref mut usr), 
                                                         Some(acc_mod)
                                                     ) = (
-                                                        self.context.shared_ctx.current_user.clone(), 
+                                                        self.current_user.clone(), 
                                                         self.account_mut()
                                                     ){
                                                         TextEdit::singleline(&mut usr.get_name())
@@ -163,7 +166,8 @@ impl MtechServer{
                                                             if db.response.clicked(){
                                                                 let acc = acc_mod.clone();
                                                                 PlatformSpawner::spawn(async move {
-                                                                    acc.database.set_database().await;
+                                                                    let set_db = acc.database.set_database().await;
+                                                                    log::info!("Set database: {set_db:?}");
                                                                 });
                                                             }
                                                             // Use egui memory to track if we've already done the sizing pass
@@ -384,6 +388,13 @@ impl MtechServer{
                                                             ui.label(self.account_mod.user.get_version());
                                                         });
                                                     });
+                                                    // ui.horizontal(|ui| {
+                                                    //     ui.label("Database Version: ");
+                                                        
+                                                    //     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                    //         ui.label(DATABASE.version());
+                                                    //     });
+                                                    // });
                                                 });
                                             });
                                         });
@@ -394,8 +405,8 @@ impl MtechServer{
                                     ui.add_space(10.0);
 
                                     ui.group(|ui| {
-                                        let tx = self.context.shared_ctx.settings_sender.clone();
-                                        self.context.shared_ctx.theme_config.edit_ui(ui, tx);
+                                        let tx = self.settings_sender.clone();
+                                        self.theme_config.edit_ui(ui, tx);
                                     });
                                 });
                             });
