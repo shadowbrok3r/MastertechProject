@@ -1,5 +1,5 @@
-use displays::{tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
-use crate::app_state::{AppState, MtechServer};
+use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::app_state::MtechServer;
 use wasm_bindgen_futures::spawn_local;
 use std::collections::HashMap;
 use database::DATABASE; // schema::prestashop::PrestashopPayload, 
@@ -154,12 +154,12 @@ impl MtechServer {
                         });
                     }
                 }
-                self.state = d.0;
+                self.context.shared_ctx.state = d.0;
             }
             Err(e) => {
                 log::info!("2");
                 log::error!("Error with auth: {e:?}");
-                self.state = AppState::NoAuth(e.to_string());
+                self.context.shared_ctx.state = AppState::NoAuth(e.to_string());
                 self.context.shared_ctx.current_user = None;
             }
         };
@@ -196,8 +196,8 @@ impl MtechServer {
             gloo_console::info!(format!("No window"));
         }
         let logout_msg = "Logged out".to_string();
-        self.state = AppState::NoAuth(logout_msg.clone());
-        let _ = self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg));
+        self.context.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
+        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth(logout_msg));
         let toast = &mut self.context.shared_ctx.toasts;
 
         let error_toast = Toast {
@@ -214,7 +214,7 @@ impl MtechServer {
             self.context.github_releases = releases;
         }
 
-        if let Ok(state) = self.context.app_state_rx.try_recv() {
+        if let Ok(state) = self.context.shared_ctx.app_state_rx.try_recv() {
             gloo_console::info!(format!("Got a new state: {state:?}"));
             
             if let AppState::NoAuth(reason) = &state {
@@ -229,7 +229,7 @@ impl MtechServer {
                 };
                 toast.add(error_toast);
             }
-            self.state = state;
+            self.context.shared_ctx.state = state;
         }
     }
 }

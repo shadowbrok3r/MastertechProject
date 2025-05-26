@@ -1,4 +1,4 @@
-use database::schema::{LiveTaskPayload, TaskPayload, User};
+use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TaskPayload, TicketPayload, User};
 use itertools::Itertools;
 
 use crate::{get_database_users, PlatformSpawner, Spawner};
@@ -17,21 +17,36 @@ impl DatabaseEditor {
             PlatformSpawner::spawn(async move {
                 match data {
                     super::row_viewer::DatabaseTableSelection::Task => {
-                                        let tasks = LiveTaskPayload::get_tasks(start_idx).await.unwrap_or_default();
-                                        log::info!("{}", tasks.len());
-                                        for task in tasks.iter() {
-                                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Task(TaskPayload::from(task.clone())));
-                                        }
-                                    },
+                        let tasks = LiveTaskPayload::get_tasks(start_idx).await.unwrap_or_default();
+                        log::info!("{}", tasks.len());
+                        for task in tasks.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Task(TaskPayload::from(task.clone())));
+                        }
+                    },
                     super::row_viewer::DatabaseTableSelection::User => {
-                                        let users = User::get_users().await.unwrap_or_default();
-                                        for user in users.iter() {
-                                            let _ = tx.try_send(super::row_viewer::DatabaseTable::User(user.clone()));
-                                        }
-                                    },
-                    super::row_viewer::DatabaseTableSelection::Service => todo!(),
-                    super::row_viewer::DatabaseTableSelection::Customer => todo!(),
-                    super::row_viewer::DatabaseTableSelection::Computer => todo!(),
+                        let users = User::get_users().await.unwrap_or_default();
+                        for user in users.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::User(user.clone()));
+                        }
+                    },
+                    super::row_viewer::DatabaseTableSelection::Service => {
+                        let tickets = TicketPayload::get_services(start_idx).await.unwrap_or_default();
+                        for ticket in tickets.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Service(ticket.clone()));
+                        }
+                    },
+                    super::row_viewer::DatabaseTableSelection::Customer => {
+                        let customers = CustomerData::get_customers(start_idx).await.unwrap_or_default();
+                        for customer in customers.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Customer(customer.clone()));
+                        }
+                    },
+                    super::row_viewer::DatabaseTableSelection::Computer => {
+                        let computers = ComputerData::get_computers(start_idx).await.unwrap_or_default();
+                        for computer in computers.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Computer(computer.clone()));
+                        }
+                    },
                 }
             });
         }

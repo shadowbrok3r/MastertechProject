@@ -1,4 +1,4 @@
-use crate::{pages::{account_settings_page::UserPreferences, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::github_issue::GithubIssue};
+use crate::{pages::{downloads_page::GithubRelease}, tabs::github_issue::GithubIssue};
 use displays::{app_state::SharedContext, channel_manager::ChannelManager, tabs::admin_console::client_interface::WebSocketClient};
 use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database, WS_MASTER_URL};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
@@ -11,47 +11,14 @@ use anyhow::Error;
 
 #[derive(Serialize)]
 pub struct MtechServer {
-    #[serde(skip)]
-    login: Login,
-    #[serde(skip)]
-    signup: Signup,
-    pub account_mod: UserPreferences,
     pub context: MtechServerContext,
-    pub state: AppState,
     #[serde(skip)]
     pub tree: DockState<String>,
-}
-
-#[derive(Serialize, Default, Debug, PartialEq)]
-pub enum MainPages {
-    #[default]
-    Tasks,
-    ChatGpt,
-    Downloads,
-    WebConsole,
-    UserPreferences,
-}
-
-#[derive(Serialize, Debug, PartialEq)]
-pub enum AppState {
-    Authenticated(MainPages),
-    CreateAccount,
-    NoAuth(String),
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::NoAuth("Not Authenticated".to_string())
-    }
 }
 
 #[derive(Serialize)]
 pub struct MtechServerContext {
     pub shared_ctx: SharedContext,
-    #[serde(skip)]
-    pub app_state_tx: Sender<AppState>,
-    #[serde(skip)]
-    pub app_state_rx: Receiver<AppState>,
     /// {WebSocket clients by ID}
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>,
@@ -144,7 +111,7 @@ impl MtechServer {
         let tree = default_tree();
 
         let (db_tx, db_rx) = channel::unbounded();
-        let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
+        
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
@@ -173,8 +140,6 @@ impl MtechServer {
             // CHANNEL SENDERS / RECEIVERS
             db_tx,
             db_rx,
-            app_state_tx,
-            app_state_rx,
             github_releases_channel,
             bytes_channel,
             tur_channel,
@@ -209,34 +174,8 @@ impl MtechServer {
         };
 
         Self {
-            login: Login::default(),
-            signup: Signup::default(),
-            account_mod: UserPreferences::default(),
-            state: AppState::default(),
             context,
             tree: tree.0,
-        }
-    }
-
-    pub fn login_mut(&mut self) -> Option<&mut Login> {
-        match self.state {
-            AppState::NoAuth(_) => Some(&mut self.login),
-            AppState::Authenticated(MainPages::Tasks) => None,
-            _ => None,
-        }
-    }
-
-    pub fn signup_mut(&mut self) -> Option<&mut Signup> {
-        match self.state {
-            AppState::CreateAccount => Some(&mut self.signup),
-            _ => None,
-        }
-    }
-
-    pub fn account_mut(&mut self) -> Option<&mut UserPreferences> {
-        match self.state {
-            AppState::Authenticated(MainPages::UserPreferences) => Some(&mut self.account_mod),
-            _ => None,
         }
     }
 }
@@ -319,10 +258,11 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
 }
 
 #[cfg(target_arch="wasm32")]
-pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<database::schema::User>), Error> {
+pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(displays::app_state::AppState, Option<database::schema::User>), Error> {
+
     let cookie = wasm_cookies::get("jwt");
     let user_cookie: Option<Result<String, wasm_cookies::FromUrlEncodingError>> = wasm_cookies::get("user");
-    let mut state = AppState::default();
+    let mut state = displays::app_state::AppState::default();
     let mut current_user: Option<database::schema::User> = None;
     if let (Some(cookie), Some(Ok(usr))) = (cookie, user_cookie) {
         use base64::{engine::general_purpose, Engine as _};
@@ -353,7 +293,7 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> R
                 Err(err) => log::error!("sending db connection: {err:?}"),
             }
         });
-        state = AppState::Authenticated(MainPages::Tasks);
+        state = displays::app_state::AppState::Authenticated(displays::app_state::MainPages::Tasks);
     }
     // log::info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))

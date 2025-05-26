@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "0.1.0"
+version = "2.3.2"
 edition = "2024"
 
 [features]
@@ -45,6 +45,7 @@ once_cell = { workspace=true }
 egui_taffy = { workspace = true }
 rfd = { workspace = true }
 itertools = { workspace = true }
+brotli = { workspace=true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace=true, optional = true }
@@ -59,6 +60,7 @@ async-openai-wasm = { workspace = true}
 rusty-s3 = { workspace=true, features = ["wasm_bindgen"]}
 web-time = { workspace=true, optional = true }
 wasm-bindgen-futures = { workspace=true, optional = true }
+wasm-cookies = { workspace = true}
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]} # "tls"
 
 [dependencies.zvariant_derive]

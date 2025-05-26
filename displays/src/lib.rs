@@ -22,6 +22,7 @@ pub mod first_run;
 pub mod ui_tools;
 pub mod ui_data;
 pub mod modals;
+pub mod pages;
 pub mod views;
 pub mod tasks;
 pub mod chats;

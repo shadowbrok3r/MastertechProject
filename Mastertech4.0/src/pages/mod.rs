@@ -4,7 +4,7 @@ use egui_dock::{DockArea, Style};
 use crate::app_state::MasterTechApp;
 
 pub mod menu_bar;
-pub mod login_page;
+// pub mod login_page;
 
 impl MasterTechApp {
     pub fn main_page(&mut self, ctx: &Context){

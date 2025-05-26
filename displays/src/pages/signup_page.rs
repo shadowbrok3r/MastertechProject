@@ -1,11 +1,11 @@
 use serde::Serialize;
-use crate::app_state::{AppState, MtechServer};
+use crate::{app_state::{AppState, SharedContext}, PlatformSpawner, Spawner};
 use crossbeam::channel::Sender;
 use database::{schema::{Store, User}, Database};
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
-use wasm_bindgen_futures::spawn_local;
+#[cfg(target_arch = "wasm32")]
 #[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
 
@@ -24,7 +24,7 @@ pub struct Signup {
     pub id_store: Option<String>,
 }
 
-impl Signup{
+impl Signup {
     pub fn signup(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, _appstate_tx: Sender<AppState>){
         let first_initial = self.first_name.clone().chars().nth(0).unwrap_or_default();
         let last_initial = self.last_name.clone().chars().nth(0).unwrap_or_default();
@@ -43,7 +43,7 @@ impl Signup{
         };
 
         let email = signup.email.clone();
-        spawn_local(async move {
+        PlatformSpawner::spawn(async move {
             if let Ok(employee) = User::default().set_email(&email).find_employee_by_email().await {
                 signup = Signup {
                     id_prestashop: Some(employee.id.parse::<u64>().unwrap_or_default()),
@@ -99,7 +99,7 @@ impl Signup{
     }
 }
 
-impl MtechServer{
+impl SharedContext {
     pub fn signup_page(&mut self, ctx: &Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))

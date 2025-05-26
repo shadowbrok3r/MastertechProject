@@ -1,4 +1,5 @@
-use crate::{pages::login_page::Login, terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId}};
+use crate::{terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId}};
+use displays::pages::login_page::Login;
 use super::LoginTab;
 
 impl <'a> ActionHandler for LoginTab <'a> {

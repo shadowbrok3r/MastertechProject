@@ -1,13 +1,12 @@
 use crate::{filesystem::system_info::generate_client_id, tabs::{github::get_github_releases, tur_sheet::scaffold::AsanaResponse}};
-use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{ComputerData, ExtendedSeb, LocalSebData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use super::filesystem::system_info::ComputerInfo;
-use super::app_state::{AppState, MasterTechApp};
+use super::app_state::MasterTechApp;
 use eframe::egui::{Context, ViewportCommand};
 use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
-use super::pages::login_page::HASH;
 use std::sync::atomic::Ordering;
 use log::{debug, error, info};
 use surrealdb::RecordId;
@@ -133,7 +132,7 @@ impl MasterTechApp {
                         .duration_in_seconds(6.0),
                 };
                 toast.add(error_toast);
-                let _ = self.context.app_state_tx.try_send(AppState::Login);
+                let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Login);
             }
         }
     }
@@ -225,9 +224,9 @@ impl MasterTechApp {
             self.context.keys = key;
         }
 
-        if let Ok(state) = self.context.app_state_rx.try_recv() {
+        if let Ok(state) = self.context.shared_ctx.app_state_rx.try_recv() {
             info!("Got a new state: {state:?}");
-            self.state = state;
+            self.context.shared_ctx.state = state;
             ctx.request_repaint();
         }
 

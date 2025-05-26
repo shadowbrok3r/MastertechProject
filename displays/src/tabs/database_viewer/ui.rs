@@ -31,25 +31,25 @@ impl DatabaseEditor {
                             "Tasks"
                         );
                         ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::Service,
+                            "Services",
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::Customer,
+                            "Customers",
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::Computer,
+                            "Computers",
+                        );
+                        ui.selectable_value(
                             selected, 
                             DatabaseTableSelection::User, 
                             "Users"
                         );
-                        // ui.selectable_value(
-                        //     &mut selected,
-                        //     DatabaseTable::Customer,
-                        //     "Customers",
-                        // );
-                        // ui.selectable_value(
-                        //     &mut selected,
-                        //     DatabaseTable::Ticket,
-                        //     "Services",
-                        // );
-                        // ui.selectable_value(
-                        //     &mut selected,
-                        //     DatabaseTable::Computer,
-                        //     "Computers",
-                        // );
                         // ui.selectable_value(
                         //     &mut selected,
                         //     DatabaseTable::TaskNote,

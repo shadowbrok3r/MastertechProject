@@ -7,6 +7,7 @@ pub mod action_handler;
 pub mod tabs;
 pub mod render;
 
+use displays::app_state::AppState;
 pub use tabs::Tab;
 
 ////////////////////////////////
@@ -66,7 +67,7 @@ impl<'a> MenuBar<'a> {
         if let Ok(mut ctx) = self.ctx.lock() {
             ctx.receive();
             match ctx.state {
-                crate::app_state::AppState::Authenticated(_) => {
+                AppState::Authenticated(_) => {
                     if ctx.new_state {
                         ctx.new_state = false;
                         if let Ok(mut tab) = self.current_tab.try_borrow_mut() {

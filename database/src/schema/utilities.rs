@@ -170,6 +170,30 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
     Ok(())
 }
 
+impl CustomerData {
+    pub async fn get_customers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let customers: Vec<Self> = DATABASE
+            .query("SELECT * FROM customer START $start LIMIT 200")
+            .bind(("start", start))
+            .await?
+            .take(0)?;
+
+        Ok(customers)
+    }
+}
+
+impl ComputerData {
+    pub async fn get_computers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let computers: Vec<Self> = DATABASE
+            .query("SELECT * FROM computer START $start LIMIT 200")
+            .bind(("start", start))
+            .await?
+            .take(0)?;
+
+        Ok(computers)
+    }
+}
+
 pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_completed_tasks");
     let query = r#"

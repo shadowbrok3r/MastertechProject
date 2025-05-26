@@ -1,7 +1,3 @@
-pub mod github_issue;
-pub mod quote_fulfilled_tasks;
-pub mod seb_lookup;
-
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
 use displays::{tabs::{logger::logger_ui, stock::{get_extra_stock_info, get_stock}}, FilterTasks};
@@ -9,6 +5,8 @@ use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
+
+pub mod github_issue;
 
 pub const TABS: [&str; 12] = [
     "My Tasks",
@@ -25,7 +23,6 @@ pub const TABS: [&str; 12] = [
     "Database Editor",
     // "Ai",
     // "Json Viewer",
-    // "SEB Lookup",
     // "Customers",
 ];
 
@@ -48,7 +45,6 @@ impl TabViewer for MtechServerContext {
             "Database Editor" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
             // "Ai" => self.shared_ctx.ai_playground(ui),
             // "Json Viewer" => self.shared_ctx.json_viewer(ui),
-            // "SEB Lookup" => self.seb_lookup(ui),
             // "Customers" => self.shared_ctx.customer_view(ui),
             _ => {}
         }

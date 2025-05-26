@@ -1,6 +1,6 @@
-use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
+use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style, app_state::{AppState, MainPages}};
 use eframe::egui::{Color32, Context, Frame, Margin, Stroke, Vec2, Window};
-use crate::{app_state::{AppState, MainPages, MtechServer}, webworker::decode_task_payload};
+use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use egui_dock::DockState;
 use log::info;
 
@@ -198,17 +198,16 @@ impl eframe::App for MtechServer {
         // (which is clicking Mtechserver in the top middle of the page),
         // if session cookie expires (gets checked in the first_run method),
         // if manually logged out, etc
-        match &self.state {
-            // Always checking authentication
+        match &self.context.shared_ctx.state {
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
             AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-            AppState::Authenticated(MainPages::UserPreferences) => self.account_settings_page(ctx, self.context.app_state_tx.clone()),
+            AppState::Authenticated(MainPages::UserPreferences) => self.context.shared_ctx.account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
             AppState::Authenticated(MainPages::WebConsole) => self.web_console(ctx),
             AppState::Authenticated(_) => self.main_page(ctx),
-            AppState::CreateAccount => self.signup_page(
+            AppState::CreateAccount => self.context.shared_ctx.signup_page(
                 ctx,
                 self.context.db_tx.clone(),
-                self.context.app_state_tx.clone(),
+                self.context.shared_ctx.app_state_tx.clone(),
             ),
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
@@ -217,21 +216,22 @@ impl eframe::App for MtechServer {
                         if !self.context.shared_ctx.load_data(ctx) {
                             self.context.first_run = true;
                             self.first_run(frame);
-                            self.state = AppState::NoAuth("No user detected".to_string());
+                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
                     } else {
                         self.context.first_run = true;
                         self.first_run(frame)
                     }
-                    self.state = AppState::Authenticated(MainPages::Tasks);
+                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
-                    self.login_page(
+                    self.context.shared_ctx.login_page(
                         ctx,
                         self.context.db_tx.clone(),
-                        self.context.app_state_tx.clone(),
+                        self.context.shared_ctx.app_state_tx.clone(),
                     )
                 }
             }
+            AppState::Login => {},
         }
     }
 

@@ -147,15 +147,22 @@ impl DatabaseSelection {
     }
 
     pub async fn set_database(&self) -> anyhow::Result<(), anyhow::Error>{
-        DATABASE.invalidate().await?;
-        let url = self.get_db_url();
-        match self {
-            Self::Stable => DATABASE.connect::<Wss>(url).await?,
-            Self::Beta => DATABASE.connect::<Wss>(url).await?,
-            Self::Local => DATABASE.connect::<Ws>(url).await?,
-        };
+        let inv = DATABASE.invalidate().await;
+        match inv {
+            Ok(_) => {
+                let db = DATABASE.clone();
+                drop(db);
+                let url = self.get_db_url();
+                match self {
+                    Self::Stable => DATABASE.connect::<Wss>(url).await?,
+                    Self::Beta => DATABASE.connect::<Wss>(url).await?,
+                    Self::Local => DATABASE.connect::<Ws>(url).await?,
+                };
 
-        DATABASE.use_ns(NS).use_db(DB).await?;
+                DATABASE.use_ns(NS).use_db(DB).await?;
+            },
+            Err(e) => log::error!("Failed to invalidate database connection: {e}"),
+        }
         Ok(())
     }
 }

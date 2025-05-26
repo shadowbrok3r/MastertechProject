@@ -1,5 +1,6 @@
-use crate::{app_state::{AppState, MainPages}, pages::login_page::HASH, terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
+use crate::{terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
 use database::{schema::User, Database, DATABASE};
+use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH};
 
 impl <'a>TerminalApp<'a> {
     pub fn first_run(&mut self) -> anyhow::Result<(), anyhow::Error> {

@@ -10,7 +10,6 @@ use displays::{
 };
 use eframe::egui::{Align2, Color32, Stroke};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -25,7 +24,6 @@ use serde_json::Value;
 use crate::tabs::minidump::MiniDumpApp;
 
 use crate::{
-    pages::login_page::Login,
     tabs::{
         file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, seb_lookup::JsonEditor, tur_sheet::{
             get_ticket::SendRequest,
@@ -43,38 +41,10 @@ use displays::{
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: DockState<String>,
-    pub state: AppState,
-    login: Login,
-}
-
-#[derive(Serialize, Default, Debug, PartialEq)]
-pub enum MainPages {
-    #[default]
-    Tasks,
-    ChatGpt,
-    Downloads,
-    WebConsole,
-    UserPreferences,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum AppState {
-    Authenticated(MainPages),
-    CreateAccount,
-    NoAuth(String),
-    Login,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::NoAuth("Not Authenticated".to_string())
-    }
 }
 
 pub struct MastertechContext {
     pub shared_ctx: SharedContext,
-    pub app_state_tx: Sender<AppState>,
-    pub app_state_rx: Receiver<AppState>,
     pub order_rows: Vec<database::schema::prestashop_schema::OrderRow>,
     pub url: Option<String>,
     pub error: String,
@@ -180,7 +150,6 @@ pub struct MastertechContext {
     pub seb_email: String,
     pub client_friendly_name: String,
     pub client_title: String,
-
 }
 
 impl MasterTechApp {
@@ -192,7 +161,6 @@ impl MasterTechApp {
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<Vec<GetKeysResponse>>();
-        let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
         
@@ -292,8 +260,6 @@ impl MasterTechApp {
             prestashop_api_rx,
             computer_specs_tx,
             computer_specs_rx,
-            app_state_tx,
-            app_state_rx,
             bytes_tx,
             bytes_rx,
             cps_keys_tx,
@@ -327,22 +293,9 @@ impl MasterTechApp {
         Self {
             context,
             tree: tree.0,
-            login: Login::default(),
-            state: AppState::default(),
-        }
-    }
-
-    /// Private method to access login state only within NoAuth context
-    pub fn login_mut(&mut self) -> Option<&mut Login> {
-        match self.state {
-            AppState::Login => Some(&mut self.login),
-            AppState::Authenticated(MainPages::Tasks) => None,
-            _ => None,
         }
     }
 }
-
-
 
 pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let mut tree = DockState::new(vec![
@@ -350,7 +303,6 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "My Tasks".to_owned(),
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
-        // "Part Order".to_owned(),
         // "Minidump Analysis".to_owned(),
         "SEB Lookup".to_owned(),
         "Downloads".to_owned(),

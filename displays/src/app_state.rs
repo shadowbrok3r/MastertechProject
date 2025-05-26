@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -8,8 +8,33 @@ use egui_dock::DockState;
 use serde::Serialize;
 use anyhow::Error;
 
+#[derive(Serialize, Default, Debug, PartialEq)]
+pub enum MainPages {
+    #[default]
+    Tasks,
+    ChatGpt,
+    Downloads,
+    WebConsole,
+    UserPreferences,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub enum AppState {
+    Authenticated(MainPages),
+    CreateAccount,
+    NoAuth(String),
+    Login
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::NoAuth("Not Authenticated".to_string())
+    }
+}
+
 #[derive(Serialize)]
 pub struct SharedContext {
+    pub state: AppState,
     pub tree: DockState<String>,
     // User and Client Related Fields
     /// {Sends users from database}
@@ -28,6 +53,11 @@ pub struct SharedContext {
     pub task_layouts: HashMap<String, TaskLayout>,
     /// {All task data}
     pub tasks: Vec<TaskPayload>,
+
+    #[serde(skip)]
+    pub app_state_tx: Sender<AppState>,
+    #[serde(skip)]
+    pub app_state_rx: Receiver<AppState>,
 
     /// {Current UI modal}
     #[serde(skip)]
@@ -178,6 +208,11 @@ pub struct SharedContext {
     pub pending_store: Option<Store>,
     pub task_index: HashMap<String, TaskPayload>, // Index by task ID
     pub search_results: Option<Vec<TaskPayload>>, // Store global search results
+    pub account_mod: UserPreferences,
+    #[serde(skip)]
+    login: Login,
+    #[serde(skip)]
+    signup: Signup,
 }
 
 impl SharedContext {
@@ -209,6 +244,7 @@ impl SharedContext {
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
+        let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
 
         let mut serials_viewer = SerialsViewer::default();
         serials_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -219,6 +255,10 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
+            login: Login::default(),
+            signup: Signup::default(),
+            state: AppState::default(),
+            account_mod: UserPreferences::default(),
             database_viewer: DatabaseEditor::default(),
             tree,
             task_index: HashMap::new(),
@@ -246,6 +286,7 @@ impl SharedContext {
             initial_tasks_rx,
             store_users_tx,
             store_users_rx,
+            app_state_tx, app_state_rx,
             connected_clients_tx,
             connected_clients_rx,
             new_ticket_tx,
@@ -296,6 +337,28 @@ impl SharedContext {
             room_id: String::new(),
             user_chat: UserChat::default(),
             pending_store: None
+        }
+    }
+
+    pub fn account_mut(&mut self) -> Option<&mut UserPreferences> {
+        match self.state {
+            AppState::Authenticated(MainPages::UserPreferences) => Some(&mut self.account_mod),
+            _ => None,
+        }
+    }
+
+    pub fn login_mut(&mut self) -> Option<&mut Login> {
+        match self.state {
+            AppState::NoAuth(_) => Some(&mut self.login),
+            AppState::Authenticated(MainPages::Tasks) => None,
+            _ => None,
+        }
+    }
+
+    pub fn signup_mut(&mut self) -> Option<&mut Signup> {
+        match self.state {
+            AppState::CreateAccount => Some(&mut self.signup),
+            _ => None,
         }
     }
 

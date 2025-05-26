@@ -1,11 +1,12 @@
 use crossbeam::channel::Sender;
+use displays::app_state::{AppState, MainPages};
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tokio::spawn;
 use database::{Database, DATABASE};
-use crate::{app_state::{AppState, MainPages, MasterTechApp}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use crate::{app_state::MasterTechApp, utilities::crypto::pass_hash::save_encrypted_user_data};
 pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -91,7 +92,7 @@ impl MasterTechApp{
 
                                 ui.label("Please Login");
                                 ui.add_space(20.0);
-                                if let Some(login) = self.login_mut(){
+                                if let Some(login) = self.context.shared_ctx.login_mut(){
                                     let text_edit = TextEdit::singleline(&mut login.username)
                                         .font(font.clone())
                                         .desired_width(180.0);
@@ -198,7 +199,7 @@ impl MasterTechApp{
                                         });
                                     };
                                 } else {
-                                    ui.label(format!("{:?}", self.state));
+                                    ui.label(format!("{:?}", self.context.shared_ctx.state));
                                 }
                             });
                         });
