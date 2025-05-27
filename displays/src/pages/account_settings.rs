@@ -247,7 +247,7 @@ impl SharedContext {
                                                                 self.account_mod.new_status.clear();
                                                                 log::info!("Got a new status: {status}");
                                                                 PlatformSpawner::spawn(async move {
-                                                                    match User::add_custom_status(database::schema::Status::CustomStatus(status.clone())).await {
+                                                                    match User::add_custom_status(status.clone().as_str()).await {
                                                                         Ok(_) => log::info!("Created new status: {}", status),
                                                                         Err(e) => log::error!("Error creating new status: {e:?}")
                                                                     }

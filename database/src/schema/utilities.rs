@@ -421,7 +421,6 @@ pub async fn create_full_task_payload(
         }
     }
 
-    // panic!("");
     if send_specs {
         let create_computer_record: Option<Record> = DATABASE
             .upsert(computer_id)

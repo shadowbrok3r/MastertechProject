@@ -155,9 +155,10 @@ impl User {
         self.user_settings.clone()
     }
 
-    pub fn get_statuses(&self) -> Vec<Status>{
+    pub fn get_statuses(&self) -> Vec<Status> {
         let mut statuses = Status::VALUES.to_vec();
         if let Some(custom_statuses) = &self.user_statuses {
+            log::info!("Statuses: {:?}", custom_statuses);
             statuses.extend(custom_statuses.iter().cloned());
         }
         statuses
@@ -365,10 +366,10 @@ impl User {
         }
     }
 
-    pub async fn add_custom_status(status: Status) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn add_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {
         let _: Option<User> = DATABASE
             .query("UPDATE $auth.id SET user_statuses += $status")
-            .bind(("status", status))
+            .bind(("status", status.to_string()))
             .await?
             .take(0)?;
 
