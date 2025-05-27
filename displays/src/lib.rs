@@ -18,7 +18,6 @@ pub mod markdown_editor;
 pub mod file_viewer;
 pub mod viewports;
 pub mod app_state;
-pub mod first_run;
 pub mod ui_tools;
 pub mod ui_data;
 pub mod modals;

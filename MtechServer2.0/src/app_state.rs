@@ -1,4 +1,3 @@
-use crate::{pages::{downloads_page::GithubRelease}, tabs::github_issue::GithubIssue};
 use displays::{app_state::SharedContext, channel_manager::ChannelManager};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
@@ -17,10 +16,6 @@ pub struct MtechServer {
 #[derive(Serialize)]
 pub struct MtechServerContext {
     pub shared_ctx: SharedContext,
-    // Communication with other Services
-    /// {Database communication channel}
-    #[serde(skip)]
-    pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     
@@ -44,13 +39,6 @@ pub struct MtechServerContext {
     /// progress of downloading mastertech
     pub download_progress: f32,
 
-    // GitHub Issue Management
-    /// {Used to create GitHub issues from the website}
-    #[serde(skip)]
-    pub github_issue: GithubIssue,
-    /// The result of querying github for Mastertech releases
-    pub github_releases: Vec<GithubRelease>,
-
     // // Webworker Communication
     #[serde(skip)]
     pub data_update: std::rc::Rc<
@@ -70,8 +58,6 @@ pub struct MtechServerContext {
 impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         let tree = default_tree();
-    
-        let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let data_update = std::rc::Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
@@ -93,12 +79,7 @@ impl MtechServer {
             data_update,
 
             // CHANNEL SENDERS / RECEIVERS
-            github_releases_channel,
             bytes_channel,
-
-            // MODALS / LAYOUTS
-            github_issue: GithubIssue::new(),
-            github_releases: Vec::new(),
 
             search_input: String::new(),
             open_tabs: tree.1,

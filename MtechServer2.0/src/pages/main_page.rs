@@ -17,6 +17,8 @@ impl MtechServer{
         style.main_surface_border_stroke = Stroke::new(0.25, Color32::TRANSPARENT);
         style.tab_bar.height = 20.0;
         style.tab.tab_body.inner_margin = Margin::same(1);
+        style.tab.hline_below_active_tab_name = true;
+        
         DockArea::new(&mut self.tree)
             .style(style)
             .show_close_buttons(true)

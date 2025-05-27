@@ -1,9 +1,5 @@
-use displays::{app_state::{AppState, MainPages}, ui_tools::theme_config::set_custom_style};
-use app_state::MasterTechApp;
-use eframe::egui::{Context, IconData, Window};
+use displays::app_state::{AppState, MainPages};
 use std::ffi::OsStr;
-// use terminal_mode::run_terminal_mode;
-use egui_dock::DockState;
 use log::{error, info};
 
 #[cfg(target_os = "windows")]
@@ -19,71 +15,13 @@ pub mod viewports;
 pub mod first_run;
 pub mod data;
 
-impl eframe::App for MasterTechApp {
-    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+impl eframe::App for app_state::MasterTechApp {
+    fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
         ctx.options_mut(|options| {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
 
-        // most important part of the whole app.. setting up our styling
-
-        let theme_res = Window::new("Theme Configuration")
-        .open(&mut self.context.shared_ctx.modify_theme)
-        .max_height(600.)
-        .min_width(700.)
-        .title_bar(true)
-        .show(ctx, |ui|
-            self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone())
-        );
-        
-        if let Some(window_res) = theme_res {
-            if let Some(r) = window_res.inner {
-                if r.0 {
-                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.set_color_scheme(serde_json::to_value(r.1.clone()).unwrap());
-                        if let Some(storage) = frame.storage_mut() {
-                            storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
-                        }
-                    }
-                    self.context.shared_ctx.theme_config = r.1;
-                    self.context.shared_ctx.modify_theme = false;
-                }
-            }
-        }
-        
-
-        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        ctx.set_style((*custom_style).clone());
-
-        if self.context.shared_ctx.first_run { self.first_run(); }
-
-        // Get User settings from local storage
-        if let Some(user) = &self.context.shared_ctx.current_user {
-            if self.context.get_settings {
-                self.context.get_settings = false;
-                match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mastertech()){
-                    Ok(tree) => self.tree = tree,
-                    Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
-                }
-            } 
-        }
-        
-        self.context.shared_ctx.receive_ui_action();
-        self.receive_prestashop();
-        self.context.shared_ctx.receive_task();
-        self.context.shared_ctx.receive_ticket();
-        self.context.shared_ctx.receive_notes();
-        self.context.shared_ctx.receive_notification();
-        self.context.shared_ctx.receive_inventory();
-        self.context.shared_ctx.receive_client();
-        self.context.shared_ctx.handle_modals(ctx);
-        self.context.shared_ctx.toasts.show(ctx);
-        self.context.shared_ctx.receive(frame, ctx);
-        self.context.shared_ctx.handle_viewports(ctx);
-        self.receive_database(ctx);
-        self.receive(ctx);
-        self.receive_github();
-        self.viewport_loader(ctx);
+        self.receive(frame, ctx);
         self.menu_bar(ctx);
 
         match &self.context.shared_ctx.state {
@@ -200,13 +138,13 @@ async fn main() -> eframe::Result<()> {
             std::fs::File::create("output.log").unwrap()
         ).unwrap();
     } else {
-        // let init = displays::tabs::logger::logging::builder().init();
-        // log::info!("Init logger: {init:?}");
-        simplelog::WriteLogger::init(
-            log::LevelFilter::Info,
-            simplelog::Config::default(),
-            std::fs::File::create("output.log").unwrap()
-        ).unwrap();
+        let init = displays::tabs::logger::logging::builder().init();
+        log::info!("Init logger: {init:?}");
+        // simplelog::WriteLogger::init(
+        //     log::LevelFilter::Info,
+        //     simplelog::Config::default(),
+        //     std::fs::File::create("output.log").unwrap()
+        // ).unwrap();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {
@@ -220,7 +158,7 @@ async fn main() -> eframe::Result<()> {
             Box::new(|cc| {
                 Ok(
                     Box::new(
-                        MasterTechApp::new(cc)
+                        app_state::MasterTechApp::new(cc)
                     )
                 )
             }),
@@ -274,7 +212,7 @@ fn check_old_exe() -> anyhow::Result<(), anyhow::Error> {
     Ok(())
 }
 
-pub(crate) fn load_icon() -> IconData {
+pub(crate) fn load_icon() -> eframe::egui::IconData {
     let (icon_rgba, icon_width, icon_height) = {
         let icon = include_bytes!("assets/masterlogoV2.ico");
         let image = image::load_from_memory(icon)

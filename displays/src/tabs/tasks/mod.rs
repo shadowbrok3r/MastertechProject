@@ -16,7 +16,6 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
             });
             return;
         }
-
         // Initialize layout_configs
         self.init_layout_configs();
 
@@ -35,9 +34,9 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
         let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
 
-        // Always rebuild task_map and col_names to reflect current tasks
+        // Always rebuild task_map to reflect current tasks
         let mut map = BTreeMap::new();
-        let mut col_names = Vec::new();
+        let mut ordered_keys = Vec::new();
 
         // Use search_results if present, otherwise use all tasks
         let tasks_to_filter = self.search_results.clone().unwrap_or_else(|| {
@@ -45,12 +44,12 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         });
 
         if page == "My Tasks" {
+            // Collect tasks for each status
+            let mut temp_entries = Vec::new();
             for status_str in &config.valid_keys {
                 let status = Status::from_str(status_str);
                 let filtered = tasks_to_filter
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<TaskPayload>>()
+                    .clone()
                     .filter_by_status(&status)
                     .filter_by_assignee(&current_user)
                     .into_iter()
@@ -58,23 +57,36 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                     .collect::<Vec<TaskPayload>>();
 
                 if !filtered.is_empty() {
-                    map.entry(status_str.clone()).or_insert(filtered);
-                    col_names.push(status_str.clone());
+                    temp_entries.push((status_str.clone(), filtered));
                 }
             }
+            // Sort entries: Todo first, then In Repair, then others
+            temp_entries.sort_by(|(a, _), (b, _)| {
+                match (a.as_str(), b.as_str()) {
+                    ("Todo", _) => std::cmp::Ordering::Less,
+                    (_, "Todo") => std::cmp::Ordering::Greater,
+                    ("In Repair", _) => std::cmp::Ordering::Less,
+                    (_, "In Repair") => std::cmp::Ordering::Greater,
+                    _ => a.cmp(b),
+                }
+            });
+            // Insert sorted entries into task_map and build ordered_keys
+            for (status_str, filtered) in temp_entries {
+                map.insert(status_str.clone(), filtered);
+                ordered_keys.push(status_str);
+            }
         } else {
-            col_names = (config.key_provider)(&self.store_users);
             for user in self.store_users.iter() {
                 let filtered = tasks_to_filter
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<TaskPayload>>()
+                    .clone()
                     .filter_by_assignee(user)
                     .filter_by_completion(page == "Completed Tasks")
                     .filter_by_store(user, &store_selection);
 
                 if !filtered.is_empty() {
-                    map.entry(user.get_username().to_string()).or_insert(filtered);
+                    let username = user.get_username().to_string();
+                    map.insert(username.clone(), filtered);
+                    ordered_keys.push(username);
                 }
             }
         }
@@ -88,27 +100,47 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
             for &target_page in &other_pages {
                 let target_config = layout_configs.get(*target_page).expect("Layout config not found");
                 let mut target_map = BTreeMap::new();
+                let mut target_ordered_keys = Vec::new();
                 if *target_page == "My Tasks" {
+                    let mut temp_entries = Vec::new();
                     for status_str in &target_config.valid_keys {
                         let status = Status::from_str(status_str);
                         let filtered = tasks_to_filter
+                            .clone()
                             .filter_by_status(&status)
                             .filter_by_assignee(&current_user)
                             .into_iter()
                             .filter(|task| !task.completed)
                             .collect::<Vec<TaskPayload>>();
                         if !filtered.is_empty() {
-                            target_map.entry(status_str.clone()).or_insert(filtered);
+                            temp_entries.push((status_str.clone(), filtered));
                         }
+                    }
+                    // Sort entries for target page
+                    temp_entries.sort_by(|(a, _), (b, _)| {
+                        match (a.as_str(), b.as_str()) {
+                            ("Todo", _) => std::cmp::Ordering::Less,
+                            (_, "Todo") => std::cmp::Ordering::Greater,
+                            ("In Repair", _) => std::cmp::Ordering::Less,
+                            (_, "In Repair") => std::cmp::Ordering::Greater,
+                            _ => a.cmp(b),
+                        }
+                    });
+                    for (status_str, filtered) in temp_entries {
+                        target_map.insert(status_str.clone(), filtered);
+                        target_ordered_keys.push(status_str);
                     }
                 } else {
                     for user in self.store_users.iter() {
                         let filtered = tasks_to_filter
+                            .clone()
                             .filter_by_assignee(user)
                             .filter_by_completion(*target_page == "Completed Tasks")
                             .filter_by_store(user, &store_selection);
                         if !filtered.is_empty() {
-                            target_map.entry(user.get_username().to_string()).or_insert(filtered);
+                            let username = user.get_username().to_string();
+                            target_map.insert(username.clone(), filtered);
+                            target_ordered_keys.push(username);
                         }
                     }
                 }
@@ -119,20 +151,9 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                         // log::debug!("Switched to page {} with matching tasks", target_page);
                         // Update the current page to render the target page
                         let target_config = layout_configs.get(*target_page).expect("Layout config not found");
-                        let mut target_col_names = Vec::new();
-                        if *target_page == "My Tasks" {
-                            for status_str in &target_config.valid_keys {
-                                if target_map.contains_key(status_str) {
-                                    target_col_names.push(status_str.clone());
-                                }
-                            }
-                        } else {
-                            target_col_names = (target_config.key_provider)(&self.store_users);
-                            target_col_names.retain(|name| target_map.contains_key(name));
-                        }
                         let mut new_layout = TaskLayout::new(
                             target_map,
-                            target_col_names,
+                            target_ordered_keys,
                             self.store_users.clone(),
                             self.search_results.clone(),
                         );
@@ -142,7 +163,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                         }
                         self.task_layouts.insert(target_page.to_string(), new_layout);
                         if let Some(layout) = self.task_layouts.get_mut(*target_page) {
-                             layout.layout_cols(ui, self.ui_actions_tx.clone());
+                            layout.layout_cols(ui, self.ui_actions_tx.clone());
                         }
                         return;
                     } else {
@@ -157,9 +178,9 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         let layout = self.task_layouts.entry(page.to_string()).or_insert_with(|| {
             let mut layout = TaskLayout::new(
                 map.clone(),
-                col_names.clone(),
+                ordered_keys.clone(),
                 self.store_users.clone(),
-                self.search_results.clone()
+                self.search_results.clone(),
             );
             if config.update_assignees {
                 layout.update_assignees(self.store_users.clone());
@@ -169,72 +190,9 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
 
         // Update existing layout
         layout.task_map = map;
-        layout.column_names = col_names; // Assuming TaskLayout has mutable col_names
+        layout.update_col_names(ordered_keys);
 
         // Render the layout
         layout.layout_cols(ui, self.ui_actions_tx.clone());
     }
 }
-
-
-/* 
-impl SharedContext {
-    pub fn my_tasks(&mut self, ui: &mut Ui) {
-        if !self.store_users.is_empty() {
-            let page = "My Tasks";
-            let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
-
-            let mut vals = Status::VALUES;
-            // Define the custom sort order
-            let order = |name: Status| match name.as_str() {
-                "Todo" => 1,
-                "In Repair" => 2,
-                "Complete" => 3,
-                _ => 4, // Default case if there are other unexpected items
-            };
-
-            vals.sort_unstable_by_key(|x| order(x.clone()));
-
-            // Ensure the layout exists
-            self.task_layouts.entry(page.to_string()).or_insert_with(|| {
-                let mut map = BTreeMap::new();
-                let mut user_settings = [Status::Todo, Status::InRepair];
-                let mut statuses = vals
-                    .iter_mut()
-                    .filter(|s| user_settings.iter_mut().any(|st| st == *s))
-                    .collect::<Vec<&mut Status>>();
-
-                statuses.iter_mut().for_each(|status| {
-                    if Status::Complete != **status {
-                        let filtered = self
-                            .tasks
-                            .filter_by_status(&status)
-                            .filter_by_assignee(&current_user);
-                        map.entry(status.as_str().to_string()).or_insert(filtered);
-                    }
-                });
-                TaskLayout::new(
-                    map,
-                    vals
-                    .iter()
-                    .map(|v| v.as_str().to_string())
-                    .collect::<Vec<String>>(),
-                    self.ui_actions_tx.clone(),
-                    self.store_users.clone(),
-                )
-            });
-
-            // Render the layout
-            if let Some(layout) = self.task_layouts.get_mut(page) {
-                layout.layout_cols(ui);
-            }
-        } else {
-            ui.vertical_centered(|ui| {
-                ui.label("Loading..");
-                Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-            });
-        }
-    }
-}
-
- */

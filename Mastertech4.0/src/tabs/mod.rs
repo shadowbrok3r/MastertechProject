@@ -113,6 +113,10 @@ impl TabViewer for MastertechContext {
         }
     }
 
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false] // No scroll bars by default
+    }
+
     fn context_menu(
         &mut self,
         ui: &mut Ui,

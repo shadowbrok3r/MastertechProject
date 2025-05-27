@@ -1,197 +1,19 @@
-use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style, app_state::{AppState, MainPages}};
-use eframe::egui::{Color32, Context, Frame, Margin, Stroke, Vec2, Window};
-use crate::{app_state::MtechServer, webworker::decode_task_payload};
-use egui_dock::DockState;
+use displays::app_state::{AppState, MainPages};
+use crate::app_state::MtechServer;
+use eframe::egui::Context;
 use log::info;
 
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
-        // most important part of the whole app.. setting up our styling
-        // currently this just sets the style of the app, but in the near
-        // future i will be making this the setup to allow user customization
-        // to the style of any part of the app
-
-        let theme_res = Window::new("Theme Configuration")
-        .open(&mut self.context.shared_ctx.modify_theme)
-        .max_height(600.)
-        .min_width(700.)
-        .title_bar(true)
-        .show(ctx, |ui| 
-            self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone())
-        );
-        
-        if let Some(window_res) = theme_res {
-            if let Some(r) = window_res.inner {
-                if r.0 {
-                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.set_color_scheme(serde_json::to_value(r.1.clone()).unwrap());
-                        if let Some(storage) = frame.storage_mut() {
-                            storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            wasm_cookies::delete("user");
-                            let duration = web_time::Duration::from_secs(172800);
-                            let usr = serde_json::to_string(&user.clone()).unwrap();
-                            let cookie_opts = wasm_cookies::CookieOptions::default()
-                                .with_same_site(wasm_cookies::SameSite::Strict)
-                                .secure()
-                                .expires_after(duration);
-                        
-                            use brotli::CompressorReader;
-                            use base64::{engine::general_purpose, Engine as _};
-
-                            fn compress_string(input: &str) -> Vec<u8> {
-                                let mut compressed = Vec::new();
-                                {
-                                    let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
-                                    std::io::copy(&mut compressor, &mut compressed).unwrap();
-                                }
-                                compressed
-                            }
-
-                            let compressed: Vec<u8> = compress_string(&usr);
-                            let encoded: String = general_purpose::STANDARD.encode(&compressed);
-                            info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
-                            wasm_cookies::set("user", &encoded, &cookie_opts);
-                        }
-                    }
-                    self.context.shared_ctx.theme_config = r.1;
-                    self.context.shared_ctx.modify_theme = false;
-                }
-            }
-        }
-
-        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        ctx.set_style((custom_style).clone());
-
-        // Getting responses from our webworker
-        if let Some(items) = self.context.data_update.take() {
-            let tx = self.context.shared_ctx.initial_tasks_tx.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                // log::info!("Got data update from webworker: {:?}", items.len());
-                let _ = tx.try_send(decode_task_payload(&items).unwrap_or_default());
-            });
-        }
-
-        // if let Some(decompressed_data) = self.context.admin_console_data_helper.deser_data_update.take() {
-        //     if let Some(sysinfo) = deserializer::<SystemInformation>(&decompressed_data){
-        //         info!("Got sysinfo from admin console");
-        //         self.context.shared_ctx. resource_mon.set_sysinfo(sysinfo);
-        //     }
-        // }
-
-        // do some initial setting up
-        if self.context.shared_ctx.first_run { self.first_run(frame); }
-
-        if self.context.shared_ctx.web_console_layout.wants_to_undock {
-            let layout = &mut self.context.shared_ctx.web_console_layout;
-            let undock_client = layout.undock_client.clone();
-            for client in self.context.shared_ctx.clients.clone() {
-                let should_we_undock = if let Some(undock) = undock_client.get(&client.connection_string)
-                {
-                    undock
-                } else {
-                    &false
-                };
-
-                if *should_we_undock {
-                    let color = if client.connected {
-                        Color32::LIGHT_BLUE
-                    } else {
-                        Color32::LIGHT_RED
-                    };
-
-                    let column_frame = Frame::default()
-                        .fill(Color32::from_rgb(12, 12, 14))
-                        .inner_margin(Margin::same(4))
-                        .outer_margin(Margin::symmetric(5, 3))
-                        .corner_radius(eframe::egui::CornerRadius::same(10))
-                        .stroke(Stroke::new(1.0, color));
-
-                    Window::new(&client.connection_string)
-                        .frame(column_frame)
-                        .min_size(Vec2::new(700., 400.))
-                        .max_size(Vec2::new(1500., 900.))
-                        .default_size(Vec2::new(1000., 900.))
-                        .show(ctx, |ui| {
-                            ui.vertical_centered_justified(|ui| {
-                                
-                                let tx = layout.ui_actions_channel.0.clone();
-                                
-                                ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone()));
-                                if let Some(ws_client) =
-                                    layout.ws_clients.get_mut(&client.connection_string)
-                                {
-                                    ws_client.show(ui);
-                                }
-                            });
-                        });
-                }
-            }
-        }
-
         // Branch out all the different crossbeam channels to receive
         // in their own methods to clean up a lot of boilerplate code
         // as well as being able to find specific code a lot easier
         // self.receive() is the same thing but those crossbeam channels
         // being received have literally one line in them that i dont want to
         // justify creating a separate file / module for
-        self.receive();
-        self.context.shared_ctx.receive(frame, ctx);
-        self.receive_database(frame, ctx);
-        self.context.shared_ctx.receive_client();
-        self.context.shared_ctx.receive_inventory();
-        self.context.shared_ctx.receive_ui_action();
-        self.context.shared_ctx.receive_prestashop();
-        self.context.shared_ctx.receive_task();
-        self.context.shared_ctx.receive_ticket();
-        self.context.shared_ctx.receive_notes();
-        self.context.shared_ctx.receive_notification();
-        self.context.shared_ctx.handle_modals(ctx);
-        self.context.shared_ctx.handle_viewports(ctx);
-        self.context.shared_ctx.toasts.show(ctx);
+        self.receive(frame, ctx);
         self.menu_bar(ctx);
-
-        // Get User settings from local storage
-        if let Some(user) = &self.context.shared_ctx.current_user {
-            if self.context.get_settings {
-                self.context.get_settings = false;
-                match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mtechserver()){
-                    Ok(tree) => self.tree = tree,
-                    Err(e) => log::error!("Could not get UI layout from user: {e:?}: {:#?}", user.get_user_settings().get_ui_layout_mtechserver()),
-                }
-            } 
-        }
-
-        // Get User settings from local storage
-        // this bool gets switched via clicking
-        // the submit button in the crate::tabs::json_viewer
-        // module
-        if self.context.update_settings {
-            self.context.update_settings = false;
-            info!("Saving settings: {:?}", self.context.user_settings.clone());
-            frame.storage_mut().unwrap().set_string(
-                "user_settings",
-                serde_json::to_string(&self.context.user_settings).unwrap(),
-            );
-        }
-
-        if self.context.shared_ctx.ai_playground.save_chats {
-            self.context.shared_ctx.ai_playground.save_chats = false;
-            if let Some(_usr) = &self.context.shared_ctx.current_user {
-                let threads = self.context.shared_ctx.ai_playground.get_threads();
-                // for (id, thread) in threads {
-                    // thread.messages
-                // }
-                // info!("Saving chats: {:?}", threads);
-                frame.storage_mut().unwrap().set_string(
-                    "chat_history",
-                    serde_json::to_string(&threads).unwrap(),
-                );
-            }
-        }
 
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button
@@ -199,8 +21,7 @@ impl eframe::App for MtechServer {
         // if session cookie expires (gets checked in the first_run method),
         // if manually logged out, etc
         match &self.context.shared_ctx.state {
-            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-            AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
+            AppState::Authenticated(MainPages::Downloads) => self.context.shared_ctx.downloads_page(ctx),
             AppState::Authenticated(MainPages::UserPreferences) => self.context.shared_ctx.account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
             AppState::Authenticated(_) => self.main_page(ctx),
             AppState::CreateAccount => self.context.shared_ctx.signup_page(
