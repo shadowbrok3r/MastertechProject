@@ -1,8 +1,7 @@
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, TaskPayload}, DATABASE};
 use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, MtechServer};
-use displays::{app_state::{AppState, MainPages}, FilterTasks}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
-use crate::pages::downloads_page::get_github_releases;
+use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, FilterTasks}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
 use displays::ui_tools::show_notification;
 use wasm_bindgen_futures::spawn_local;
 use std::collections::BTreeSet;
@@ -214,7 +213,7 @@ impl MtechServer {
                                 if ui.add(Button::new("Downloads")).clicked() {
                                     self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
                                     
-                                    let github_releases_tx = self.context.github_releases_channel.0.clone();
+                                    let github_releases_tx = self.context.shared_ctx.github_releases_channel.0.clone();
                                     spawn_local(async move {
                                         let get_releases = get_github_releases(github_releases_tx).await;
                                         info!("get_releases: {get_releases:?}");

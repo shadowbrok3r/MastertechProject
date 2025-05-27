@@ -1,5 +1,5 @@
 use super::{filesystem::system_info::{ComputerInfo, generate_client_id}, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
-use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{ComputerData, ExtendedSeb, LocalSebData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use eframe::egui::{Context, ViewportCommand};
 use database::schema::GetKeysResponse;
@@ -146,8 +146,55 @@ impl MasterTechApp {
         }
     }
 
-    pub fn receive(&mut self, ctx: &Context) {
-        ctx.request_repaint_after_secs(0.5);
+    pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
+        if self.context.shared_ctx.first_run { self.first_run(); }
+        self.context.shared_ctx.receive_shared(frame, ctx);
+        self.receive_prestashop();
+        self.receive_database(ctx);
+        self.receive_github();
+        self.viewport_loader(ctx);
+        // ctx.request_repaint_after_secs(0.5);
+
+        // most important part of the whole app.. setting up our styling
+        let theme_res = eframe::egui::Window::new("Theme Configuration")
+        .open(&mut self.context.shared_ctx.modify_theme)
+        .max_height(600.)
+        .min_width(700.)
+        .title_bar(true)
+        .show(ctx, |ui|
+            self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone())
+        );
+        
+        if let Some(window_res) = theme_res {
+            if let Some(r) = window_res.inner {
+                if r.0 {
+                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                        user.set_color_scheme(serde_json::to_value(r.1.clone()).unwrap());
+                        if let Some(storage) = frame.storage_mut() {
+                            storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
+                        }
+                    }
+                    self.context.shared_ctx.theme_config = r.1;
+                    self.context.shared_ctx.modify_theme = false;
+                }
+            }
+        }
+        
+        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+        ctx.set_style((*custom_style).clone());
+
+        // Get User settings from local storage
+        if let Some(user) = &self.context.shared_ctx.current_user {
+            if self.context.get_settings {
+                self.context.get_settings = false;
+                match serde_json::from_value::<egui_dock::DockState<String>>(user.get_user_settings().get_ui_layout_mastertech()){
+                    Ok(tree) => self.tree = tree,
+                    Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
+                }
+            } 
+        }
+        
+
         while let Ok(message) = self.context.rx.try_recv() {
             if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty() {

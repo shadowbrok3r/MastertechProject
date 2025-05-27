@@ -6,8 +6,6 @@ use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
 
-pub mod github_issue;
-
 pub const TABS: [&str; 12] = [
     "My Tasks",
     "Store Tasks",
@@ -38,7 +36,7 @@ impl TabViewer for MtechServerContext {
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Threads" => self.shared_ctx.user_chat.ui(ui),
-            "Bug Report" => self.github(ui),
+            "Bug Report" => self.shared_ctx.github(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
             "Logs" => logger_ui().show(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
@@ -181,6 +179,9 @@ impl TabViewer for MtechServerContext {
         }
     }
 
+    fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
+        [false, false] // No scroll bars by default
+    }
 }
 
 

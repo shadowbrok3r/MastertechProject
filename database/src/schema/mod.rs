@@ -407,7 +407,7 @@ pub struct ModifyNotification {
     pub archive: Option<bool>,
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
 pub enum Status {
     #[default]
     Todo,

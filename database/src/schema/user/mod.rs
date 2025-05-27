@@ -158,7 +158,7 @@ impl User {
     pub fn get_statuses(&self) -> Vec<Status> {
         let mut statuses = Status::VALUES.to_vec();
         if let Some(custom_statuses) = &self.user_statuses {
-            log::info!("Statuses: {:?}", custom_statuses);
+            // log::info!("Statuses: {:?}", custom_statuses);
             statuses.extend(custom_statuses.iter().cloned());
         }
         statuses

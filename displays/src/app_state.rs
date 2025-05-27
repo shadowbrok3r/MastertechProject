@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -118,6 +118,8 @@ pub struct SharedContext {
     pub ai_thread_channel: (Sender<crate::openai::types::ThreadObject>, Receiver<crate::openai::types::ThreadObject>),
     #[serde(skip)]
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
+    #[serde(skip)]
+    pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     // Notifications and App State
     #[serde(skip)]
     pub notification_tx: Sender<Vec<Notification>>,
@@ -127,6 +129,10 @@ pub struct SharedContext {
     pub live_notification_tx: Sender<(Action, Notification)>,
     #[serde(skip)]
     pub live_notification_rx: Receiver<(Action, Notification)>,
+    #[serde(skip)]
+    pub live_user_tx: Sender<(Action, User)>,
+    #[serde(skip)]
+    pub live_user_rx: Receiver<(Action, User)>,
     
     /// {UI actions channel for communication between UI components and main function}
     #[serde(skip)]
@@ -212,6 +218,13 @@ pub struct SharedContext {
     #[serde(skip)]
     signup: Signup,
     pub first_run: bool,
+    // GitHub Issue Management
+    /// {Used to create GitHub issues from the website}
+    #[serde(skip)]
+    pub github_issue: GithubIssue,
+    /// The result of querying github for Mastertech releases
+    pub github_releases: Vec<GithubRelease>,
+
 }
 
 impl SharedContext {
@@ -226,17 +239,15 @@ impl SharedContext {
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (associated_notes_tx, associated_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();
-        let (connected_clients_tx, connected_clients_rx) =
-            channel::unbounded::<Vec<ConnectedClient>>();
+        let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
-        let (live_notification_tx, live_notification_rx) =
-            channel::unbounded::<(Action, Notification)>();
+        let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
+        let (live_user_tx, live_user_rx) = channel::unbounded::<(Action, User)>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
@@ -244,7 +255,8 @@ impl SharedContext {
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
-
+        let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
+        
         let mut serials_viewer = SerialsViewer::default();
         serials_viewer.stock_tx = Some(serial_channel.0.clone());
 
@@ -254,51 +266,42 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
+            tree,
             first_run: true,
             login: Login::default(),
             signup: Signup::default(),
             state: AppState::default(),
+            github_issue: GithubIssue::new(),
+            github_releases: Vec::new(),
             account_mod: UserPreferences::default(),
             database_viewer: DatabaseEditor::default(),
-            tree,
+            github_releases_channel,
             task_index: HashMap::new(),
             layout_configs: None,
             current_user: None,
             tasks: Vec::new(),
             store_users: Vec::new(),
-            ui_actions_tx,
-            ui_actions_rx,
             task_layouts: HashMap::new(),
             store_selection: 76,
             scene_editor: SceneEditor::default(),
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
-            db_tx,
-            db_rx,
-            live_tasks_tx,
-            live_tasks_rx,
-            live_clients_tx,
-            live_clients_rx,
-            tasks_tx,
-            tasks_rx,
+            db_tx, db_rx,
+            live_tasks_tx, live_tasks_rx,
+            ui_actions_tx, ui_actions_rx,
+            live_clients_tx, live_clients_rx,
+            tasks_tx, tasks_rx, 
             associated_notes_tx, associated_notes_rx,
-            initial_tasks_tx,
-            initial_tasks_rx,
-            store_users_tx,
-            store_users_rx,
+            initial_tasks_tx, initial_tasks_rx,
+            store_users_tx, store_users_rx, 
             app_state_tx, app_state_rx,
-            connected_clients_tx,
-            connected_clients_rx,
-            new_ticket_tx,
-            new_ticket_rx,
-            notes_tx,
-            notes_rx,
-            new_note_tx,
-            new_note_rx,
-            notification_tx,
-            notification_rx,
-            live_notification_tx,
-            live_notification_rx,
+            connected_clients_tx, connected_clients_rx,
+            new_ticket_tx, new_ticket_rx,
+            notes_tx, notes_rx,
+            live_user_tx, live_user_rx,
+            new_note_tx, new_note_rx,
+            notification_tx, notification_rx,
+            live_notification_tx, live_notification_rx,
             settings_sender, settings_receiver,
             bytes_channel,
             tur_channel,
@@ -366,24 +369,57 @@ impl SharedContext {
         if self.layout_configs.is_none() && !self.store_users.is_empty() {
             let mut layout_configs = HashMap::new();
 
-            // MyTasks: Current user's tasks, non-Complete, keyed by all statuses
+            // Collect all unique statuses from user, store_users, and tasks
+            let mut statuses = self
+                .current_user
+                .as_ref()
+                .map(|user| {
+                    let user_statuses = user.get_statuses();
+                    log::error!("Current user statuses: {:?}", user_statuses);
+                    user_statuses
+                })
+                .unwrap_or_else(|| {
+                    log::error!("No current user; using default statuses");
+                    Status::VALUES.to_vec()
+                });
+            // Add statuses from store_users
+            let store_user_statuses = self.store_users
+                .iter()
+                .flat_map(|u| u.get_statuses())
+                .collect::<std::collections::HashSet<Status>>();
+            log::error!("Store users statuses: {:?}", store_user_statuses);
+            statuses.extend(store_user_statuses.into_iter());
+            // Add statuses from tasks
+            let task_statuses = self.task_index
+                .values()
+                .map(|task| task.status.clone())
+                .collect::<std::collections::HashSet<Status>>();
+            log::error!("Task statuses: {:?}", task_statuses);
+            statuses.extend(task_statuses.into_iter());
+
+            // MyTasks: Current user's tasks, non-Complete and not completed, keyed by all statuses
             let valid_statuses = {
-                let statuses = self
-                    .current_user
-                    .as_ref()
-                    .map(|user| user.get_statuses())
-                    .unwrap_or_else(|| Status::VALUES.to_vec());
-                // Filter out Complete and deduplicate
-                statuses
+                log::error!("Raw statuses: {:?}", statuses);
+                let filtered_statuses = statuses
                     .into_iter()
                     .filter(|s| *s != Status::Complete)
                     .map(|s| match s {
-                        Status::CustomStatus(name) => name,
+                        Status::CustomStatus(name) => {
+                            let trimmed = name.trim();
+                            if trimmed.is_empty() {
+                                log::warn!("Empty custom status in valid_keys; using 'Invalid'");
+                                "Invalid".to_string()
+                            } else {
+                                trimmed.to_string()
+                            }
+                        }
                         _ => s.as_str().to_string(),
                     })
                     .collect::<std::collections::HashSet<String>>()
                     .into_iter()
-                    .collect::<Vec<String>>()
+                    .collect::<Vec<String>>();
+                log::error!("MyTasks valid_statuses: {:?}", filtered_statuses);
+                filtered_statuses
             };
 
             // MyTasks: Current user's tasks, non-Complete, keyed by status
