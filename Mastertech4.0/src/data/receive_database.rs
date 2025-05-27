@@ -1,5 +1,5 @@
-use displays::{app_state::{AppState, MainPages}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
-use crate::app_state::MasterTechApp;
+use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::{app_state::MasterTechApp, utilities::save_encrypted_user_data};
 use eframe::egui::Context;
 use log::info;
 
@@ -11,19 +11,26 @@ impl MasterTechApp {
             match db {
                 Ok(db) => {
                     info!("3");
-                    if !self.context.shared_ctx.load_data(ctx) {
-                        self.context.first_run = true;
-                        self.first_run();
-                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
-                    } else {
-                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
-                    }
-
                     if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
+                        let login_mut = self.context.shared_ctx.login_mut();
+                        if let Some(login) = login_mut {
+                            match save_encrypted_user_data(&login, HASH) {
+                                Ok(_) => log::info!("User data saved successfully"),
+                                Err(e) => log::error!("Failed to save user data: {e:?}"),
+                            }
+                        }
                         info!("10");
                         self.context.shared_ctx.current_user = db.user;
                     } else {
                         info!("11");
+                    }
+
+                    if !self.context.shared_ctx.load_data(ctx) {
+                        self.context.shared_ctx.first_run = true;
+                        self.first_run();
+                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                    } else {
+                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                     }
                 }
                 Err(e) => {
@@ -31,7 +38,7 @@ impl MasterTechApp {
                     if e.to_string().contains("Already connected") {
                         info!("7");
                         if !self.context.shared_ctx.load_data(ctx) {
-                            self.context.first_run = true;
+                            self.context.shared_ctx.first_run = true;
                             self.first_run();
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }

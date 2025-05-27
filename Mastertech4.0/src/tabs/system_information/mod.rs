@@ -1,13 +1,10 @@
-use eframe::egui::{Align, Layout, Ui};
+use crate::app_state::MastertechContext;
 use egui_extras::{Column, TableBuilder};
+use eframe::egui::{Align, Layout, Ui};
 use serde_json::Value;
 
-use crate::app_state::MastertechContext;
-
 impl MastertechContext{
-    pub fn system_information(&mut self, ui: &mut Ui){
-        self.first_run = false;
-
+    pub fn system_information(&mut self, ui: &mut Ui) {
         let computer_data = &self.computer_data;
         let gpu = computer_data.gpu.clone();
     

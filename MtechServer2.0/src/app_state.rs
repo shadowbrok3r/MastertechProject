@@ -1,13 +1,11 @@
 use crate::{pages::{downloads_page::GithubRelease}, tabs::github_issue::GithubIssue};
-use displays::{app_state::SharedContext, channel_manager::ChannelManager, tabs::admin_console::client_interface::WebSocketClient};
-use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database, WS_MASTER_URL};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use std::collections::{HashMap, HashSet};
-use crossbeam::channel::{self, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender};
+use database::schema::UserSettings;
 use eframe::CreationContext;
-use serde_json::Value;
+use std::collections::HashSet;
 use serde::Serialize;
-use anyhow::Error;
 
 #[derive(Serialize)]
 pub struct MtechServer {
@@ -19,40 +17,19 @@ pub struct MtechServer {
 #[derive(Serialize)]
 pub struct MtechServerContext {
     pub shared_ctx: SharedContext,
-    /// {WebSocket clients by ID}
-    #[serde(skip)]
-    pub ws_clients: HashMap<String, WebSocketClient>,
-
-
     // Communication with other Services
     /// {Database communication channel}
-    #[serde(skip)]
-    pub db_rx: Receiver<anyhow::Result<Database, Error>>,
-    #[serde(skip)]
-    pub db_tx: Sender<anyhow::Result<Database, Error>>,
     #[serde(skip)]
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
-    #[serde(skip)]
-    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
-    #[serde(skip)]
-    pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
     
-
     // UI and Application State Fields
     /// {Widgets / Modals / Ui for portions throughout the app}
-    pub new_note: bool,
     pub search_input: String,
-    pub client_search_input: String,
-    pub seb_email: String,
-    pub client_search_inputs: HashMap<String, String>,
-    pub edited_task: TaskPayload,
 
     /// {Open tabs in the UI}
     pub open_tabs: HashSet<String>,
-    #[serde(skip)]
-    pub style: Option<egui_dock::Style>,
     #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
 
@@ -60,21 +37,8 @@ pub struct MtechServerContext {
     pub user_settings: UserSettings,
     pub update_settings: bool,
     pub get_settings: bool,
-    /// {Output log from live operations}
 
     // Miscellaneous Fields
-    /// {Gets data from the first run of the main loop}
-    pub first_run: bool,
-    /// tracking for which client we want to undock
-    /// into a floating UI when we click the undock button
-    pub undock_client: HashMap<String, bool>,
-    /// The undock button was clicked for a ConnectedClient
-    pub wants_to_undock: bool,
-    /// URL to use for communication to a ConnectedClient
-    /// via a websocket connection
-    pub url: String,
-    /// Error from our ConnectedClient connection
-    pub error: String,
     /// When downloading mastertech from the website
     pub total_download_size: f32,
     /// progress of downloading mastertech
@@ -86,7 +50,6 @@ pub struct MtechServerContext {
     pub github_issue: GithubIssue,
     /// The result of querying github for Mastertech releases
     pub github_releases: Vec<GithubRelease>,
-
 
     // // Webworker Communication
     #[serde(skip)]
@@ -102,21 +65,14 @@ pub struct MtechServerContext {
     pub bridge: gloo_worker::WorkerBridge<crate::webworker::WebWorker>,
     #[serde(skip)]
     pub admin_console_data_helper: AdminConsoleDataHelper,
-    /// Do we need to refresh the UI?
-    pub refresh: bool,
 }
 
 impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         let tree = default_tree();
-
-        let (db_tx, db_rx) = channel::unbounded();
-        
+    
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
-        let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let seb_channel = <Vec<Value>>::create_unbounded_channel();
-
         let data_update = std::rc::Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
         let ctx = cc.egui_ctx.clone();
@@ -133,43 +89,25 @@ impl MtechServer {
         
         let context = MtechServerContext {
             shared_ctx,
-            first_run: true,
             bridge,
             data_update,
 
             // CHANNEL SENDERS / RECEIVERS
-            db_tx,
-            db_rx,
             github_releases_channel,
             bytes_channel,
-            tur_channel,
-            seb_channel,
 
             // MODALS / LAYOUTS
-            edited_task: TaskPayload::default(),
-            seb_email: String::new(),
             github_issue: GithubIssue::new(),
             github_releases: Vec::new(),
-            url: format!("{WS_MASTER_URL}&room_id=0"),
-            ws_clients: HashMap::new(),
-            undock_client: HashMap::new(),
-            wants_to_undock: false,
-            error: Default::default(),
 
             search_input: String::new(),
-            client_search_input: String::new(),
-            client_search_inputs: HashMap::new(),
             open_tabs: tree.1,
-            style: None,
             added_nodes: Vec::new(),
-            new_note: false,
             total_download_size: 0.0,
             download_progress: 0.0,
             user_settings: UserSettings::default(),
             update_settings: false,
             get_settings: true,
-
-            refresh: false,
             admin_console_data_helper,
         };
 
@@ -215,7 +153,6 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let mut tree = DockState::new(vec![
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
-        "SEB Lookup".to_owned(),
         "Company Stock".to_owned(),
         // "Customers".to_owned(),
         // "Database Editor".to_owned(),
@@ -258,7 +195,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
 }
 
 #[cfg(target_arch="wasm32")]
-pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(displays::app_state::AppState, Option<database::schema::User>), Error> {
+pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, anyhow::Error>>) -> Result<(displays::app_state::AppState, Option<database::schema::User>), anyhow::Error> {
 
     let cookie = wasm_cookies::get("jwt");
     let user_cookie: Option<Result<String, wasm_cookies::FromUrlEncodingError>> = wasm_cookies::get("user");
@@ -283,8 +220,7 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> R
         let _user = current_user.clone();
         let db_tx = db_tx.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let database =
-                Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
+            let database = database::Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
             match db_tx.try_send(database) {
                 Ok(_) => {
                     log::info!("Sent DB");

@@ -1,42 +1,19 @@
-use crossbeam::channel::{Receiver, Sender};
-use database::{
-    schema::{
-        prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketData, CONNECTED_CLIENT_TABLE
-    },
-    Database,
-};
-use displays::{
-    app_state::SharedContext, channel_manager::ChannelManager, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem
-};
-use eframe::egui::{Align2, Color32, Stroke};
+use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
+use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
+use displays::{modals::task_modal::SpecialPartOrder, app_state::SharedContext, channel_manager::ChannelManager, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::{atomic::AtomicBool, Arc, Mutex},
-};
+use crossbeam::channel::{Receiver, Sender};
 use surrealdb::{sql::Uuid, RecordId};
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
+use eframe::egui::Align2;
 use serde_json::Value;
 
 #[cfg(target_os = "windows")]
 use crate::tabs::minidump::MiniDumpApp;
 
-use crate::{
-    tabs::{
-        file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, seb_lookup::JsonEditor, tur_sheet::{
-            get_ticket::SendRequest,
-            scaffold::{self, HardwareTest},
-        }, websockets::WebConsoleFrontend
-    }
-};
-use displays::{
-    chats::ChatView,
-    modals::{task_modal::SpecialPartOrder, ModalType},
-    tasks::task_layout::TaskLayout,
-    // DisplayModal,
-};
+
 
 pub struct MasterTechApp {
     pub context: MastertechContext,
@@ -64,44 +41,22 @@ pub struct MastertechContext {
     pub seb_info: Vec<CarboniteResponse>,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
-    pub mention_handler: MentionHandler,
     pub ram_test_cbox: HardwareTest, // We just need one of these...
     pub hdd_test_cbox: HardwareTest,
     pub ssd_test_cbox: HardwareTest,
-
-    pub output_text: String,
-
-    pub database: Option<Database>,
     pub rx: Receiver<String>,
     pub open_tabs: HashSet<String>,
 
     pub date: DateTime<Utc>,
 
-    pub reader_bytes: u32,
-
     pub toasts: Toasts,
-    pub animate_progress_bar: bool,
-    pub first_run: bool,
-    pub taco_first_run: bool,
-    pub file_browse_run: bool,
     pub query_tasks_first_run: bool,
     pub get_specs: bool,
     pub send_specs: bool,
     pub spinner: bool,
-    pub new_note: bool,
-    pub style: Option<egui_dock::Style>,
-    pub text_color: Color32,
-    pub border_stroke_color: Stroke,
-    pub frame_counter: u64,
     pub show_deferred_viewport: Arc<AtomicBool>,
     pub show_ws_viewport: Arc<AtomicBool>,
     pub read_notifications: bool,
-    pub notifications: Vec<Notification>,
-
-    pub task_map: HashMap<String, Vec<TaskPayload>>,
-    pub task_layouts: HashMap<String, TaskLayout>,
-    pub current_modal: ModalType,
-    pub chat_modal: Option<ChatView>,
     pub task_data: LiveTaskPayload,
     pub ticket_data: TicketData,
     pub customer_data: CustomerData,
@@ -120,20 +75,14 @@ pub struct MastertechContext {
 
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
 
-    // pub presta_data: PrestaDataChannel<T>,
-    pub db_data_receiver: Receiver<Vec<TaskPayload>>,
-    pub db_data_sender: Sender<Vec<TaskPayload>>,
     pub prestashop_api_rx: Receiver<PrestashopPayload>,
     pub prestashop_api_tx: Sender<PrestashopPayload>,
-    pub computer_specs_tx: Sender<ComputerData>,
-    pub computer_specs_rx: Receiver<ComputerData>,
 
     pub cps_keys_tx: Sender<Vec<GetKeysResponse>>,
     pub cps_keys_rx: Receiver<Vec<GetKeysResponse>>,
 
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
-    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     pub scripts: Scripts,
     pub progress: (f32, f32),
     pub special_part_order: SpecialPartOrder,
@@ -144,10 +93,7 @@ pub struct MastertechContext {
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
-    pub json_editor: JsonEditor,
-    pub update_settings: bool,
     pub get_settings: bool,
-    pub seb_email: String,
     pub client_friendly_name: String,
     pub client_title: String,
 }
@@ -157,9 +103,7 @@ impl MasterTechApp {
         let tree = default_tree();
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
-        let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
-        let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<Vec<GetKeysResponse>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
@@ -167,8 +111,6 @@ impl MasterTechApp {
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
-        let tur_channel = PrestashopPayload::create_unbounded_channel();
-
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
 
         let mastertech_context = MastertechContext {
@@ -204,22 +146,16 @@ impl MasterTechApp {
             current_antivirus: "".to_string(),
             opened_file: None,
             open_file_dialog: None,
-            mention_handler: MentionHandler::default(),
-
-            database: None,
 
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
             #[cfg(target_os = "windows")]
             minidump_app: MiniDumpApp::default(),
-            output_text: "".to_string(),
 
             client_uuid,
             rx,
 
-            task_layouts: HashMap::new(),
-            task_map: HashMap::new(),
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
@@ -228,38 +164,19 @@ impl MasterTechApp {
             open_tabs: tree.1,
 
             date: chrono::offset::Utc::now(),
-            animate_progress_bar: false,
-            reader_bytes: 0,
 
             send_specs: false,
 
-            first_run: true,
-            taco_first_run: false,
-            file_browse_run: false,
             query_tasks_first_run: true,
             get_specs: false,
             spinner: false,
-            new_note: false,
             read_notifications: false,
-            notifications: Default::default(),
-            style: None,
-            text_color: Color32::from_rgb(255, 204, 230),
-            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
-
-            frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             show_ws_viewport: Arc::new(AtomicBool::new(false)),
             added_nodes: Default::default(),
 
-            current_modal: ModalType::Null,
-            chat_modal: None,
-
-            db_data_receiver,
-            db_data_sender,
             prestashop_api_tx,
             prestashop_api_rx,
-            computer_specs_tx,
-            computer_specs_rx,
             bytes_tx,
             bytes_rx,
             cps_keys_tx,
@@ -267,7 +184,6 @@ impl MasterTechApp {
             copied_items_tx,
             copied_items_rx,
             github_releases_channel,
-            tur_channel,
 
             github_issue_title: Default::default(),
             github_issue_descript: Default::default(),
@@ -281,10 +197,7 @@ impl MasterTechApp {
 
             // Data table shit
             seb_channel,
-            update_settings: false,
             get_settings: true,
-            json_editor: Default::default(),
-            seb_email: Default::default(),
             client_title: Default::default()
         };
         
@@ -304,7 +217,6 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
         // "Minidump Analysis".to_owned(),
-        "SEB Lookup".to_owned(),
         "Downloads".to_owned(),
         "Store Stock".to_owned(),
         "Company Stock".to_owned(),

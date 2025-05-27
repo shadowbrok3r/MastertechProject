@@ -1,4 +1,4 @@
-use database::{live_data::listen_data, schema::{utilities::{get_completed_tasks_for_store, get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, TaskPayload}, DATABASE};
 use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, MtechServer};
 use displays::{app_state::{AppState, MainPages}, FilterTasks}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
@@ -230,30 +230,6 @@ impl MtechServer {
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
-                                
-                                if ui.add(Button::new("Admin Console")).clicked() {
-                                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::WebConsole);
-                                    let live_clients_tx = self.context.shared_ctx.live_clients_tx.clone();
-                                    let tx = self.context.shared_ctx.connected_clients_tx.clone();
-                                    spawn_local(async move {
-                                        let get_connected_clients = get_connected_clients(tx).await;
-                                        info!("get_connected_clients: {get_connected_clients:?}");
-                                    });
-                                    spawn_local(async move {
-                                        let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
-                                        info!("listen_clients: {listen_data:?}");
-                                    });
-
-                                    match self
-                                        .context
-                                        .shared_ctx
-                                        .app_state_tx
-                                        .try_send(AppState::Authenticated(MainPages::WebConsole))
-                                    {
-                                        Ok(_) => info!("Logged out"),
-                                        Err(e) => error!("Error: {e:?}"),
-                                    }
-                                }
 
                                 ui.horizontal(|ui| {
                                     ui.add_space(ui.available_width()/2.5);
@@ -298,7 +274,7 @@ impl MtechServer {
                                 }
 
                                 if ui.add(Button::new("Refresh Data")).clicked() {
-                                    self.context.first_run = true;
+                                    self.context.shared_ctx.first_run = true;
                                 }
 
                                 if ui.add(Button::new(RichText::new("Logout").color(ui.style().visuals.error_fg_color))).clicked() {

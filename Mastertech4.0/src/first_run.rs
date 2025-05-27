@@ -1,9 +1,6 @@
-use crate::{filesystem::system_info::generate_client_id, tabs::{github::get_github_releases, tur_sheet::scaffold::AsanaResponse}};
+use super::{filesystem::system_info::{ComputerInfo, generate_client_id}, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{ComputerData, ExtendedSeb, LocalSebData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
-use super::utilities::crypto::pass_hash::load_encrypted_user_data;
-use super::filesystem::system_info::ComputerInfo;
-use super::app_state::MasterTechApp;
 use eframe::egui::{Context, ViewportCommand};
 use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
@@ -14,7 +11,7 @@ use tokio::spawn;
 
 impl MasterTechApp {
     pub fn first_run(&mut self) {
-        self.context.first_run = false;
+        self.context.shared_ctx.first_run = false;
         let github_tx = self.context.github_releases_channel.0.clone();
         let client = self.context.client.clone();
         spawn(async move {
@@ -62,7 +59,7 @@ impl MasterTechApp {
             }
         }
         if let Some(seb_inf) = &self.context.computer_data.seb_info {
-            self.context.output_text += &format!("{:#?}", &seb_inf);
+            log::info!("SEB: {seb_inf:#?}");
         }
 
         let client_hash = generate_client_id(
@@ -132,7 +129,7 @@ impl MasterTechApp {
                         .duration_in_seconds(6.0),
                 };
                 toast.add(error_toast);
-                let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Login);
+                let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Needs Login".to_string()));
             }
         }
     }
@@ -157,13 +154,7 @@ impl MasterTechApp {
                     self.context.keys = info;
                 }
                 self.context.spinner = false;
-            } else if let Ok(info) = serde_json::from_str::<AsanaResponse>(&message) {
-                if let Some(e) = info.status {
-                    self.context.output_text = format!("Status Code: {e:#?}");
-                };
-                self.context.output_text = format!("{:#?}", info.gid);
             } else {
-                self.context.output_text = format!("{}", message);
                 self.context.spinner = false;
             }
         }
@@ -178,12 +169,10 @@ impl MasterTechApp {
 
         while let Ok(res) = self.context.bytes_rx.try_recv() {
             ctx.request_repaint();
-            self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
             self.context.progress.1 = res.1 as f32;
             self.context.progress.0 += res.0 as f32;
             if res.0 == res.1 {
                 self.context.progress = (0.0, 0.0);
-                self.context.output_text += "\nFinished";
                 let current_exe = std::env::current_dir().unwrap().join("git-MasterTech.exe");
                 #[cfg(target_os = "windows")]
                 {
@@ -210,8 +199,6 @@ impl MasterTechApp {
             let key = keys.get(0).cloned().unwrap_or_default();
             if key.webroot_key.contains("Error") {
                 let toast = &mut self.context.shared_ctx.toasts;
-                self.context.output_text =
-                    "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
                 let error_toast = Toast {
                     kind: ToastKind::Error,
                     text: "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".into(),
@@ -224,19 +211,12 @@ impl MasterTechApp {
             self.context.keys = key;
         }
 
-        if let Ok(state) = self.context.shared_ctx.app_state_rx.try_recv() {
-            info!("Got a new state: {state:?}");
-            self.context.shared_ctx.state = state;
-            ctx.request_repaint();
-        }
-
         while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
-            self.context.output_text += &format!("{copied_items}\n");
+            log::info!("{copied_items}\n");
             ctx.request_repaint();
         }
 
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
-            self.context.json_editor.set_value(seb.clone()).unwrap();
             self.context.seb_info = seb.clone();
             let carbonite = seb.get(0).cloned().unwrap_or_default();
             self.context.computer_data.seb_info = Some(LocalSebData {

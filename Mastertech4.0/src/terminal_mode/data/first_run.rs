@@ -1,4 +1,4 @@
-use crate::{terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::crypto::pass_hash::load_encrypted_user_data};
+use crate::{terminal_mode::{systems::{communication_system::DataMessage, notification_system::{Notification, NotificationType}}, TerminalApp}, utilities::load_encrypted_user_data};
 use database::{schema::User, Database, DATABASE};
 use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH};
 
@@ -44,7 +44,7 @@ impl <'a>TerminalApp<'a> {
                                 }else{ 
                                     log::info!("no usr"); 
                                     let _ = DATABASE.invalidate().await;
-                                    app_state_tx.try_send(AppState::Login)?;
+                                    app_state_tx.try_send(AppState::NoAuth("Login".to_string()))?;
                                 }
                                 app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
                             },
@@ -77,7 +77,7 @@ impl <'a>TerminalApp<'a> {
                         Ok::<(), anyhow::Error>(())
                     });
                 },
-                None => ctx.app_state_tx.try_send(AppState::Login)?
+                None => ctx.app_state_tx.try_send(AppState::NoAuth("Login".to_string()))?
             }
         }
         Ok(())

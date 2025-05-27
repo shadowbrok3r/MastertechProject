@@ -368,9 +368,7 @@ impl MastertechContext {
                     .min_size(Vec2::new(140., 20.0)
                 )
             ).clicked() {
-                self.taco_first_run = true;
                 info!("Submitting TUR sheet");
-                self.output_text += "Sent TUR to Master-tech.app";
                 if self.shared_ctx.current_user.is_some() {
                     self.submit_tur_mastertech();
                 } else {

@@ -1,5 +1,5 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, Status, Store, TaskPayload, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
-use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, FilterTasks, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
+use crate::{app_state::{AppState, SharedContext}, tabs::ai_playground::ChatThread, FilterTasks, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use eframe::egui::Context;
@@ -97,7 +97,7 @@ impl SharedContext {
         }
     }
 
-    pub fn receive(&mut self, frame: &mut eframe::Frame, _ctx: &Context) {
+    pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
         if let Ok(users) = self.store_users_rx.try_recv() {
             info!("Received new store users: {} users", users.len());
 
@@ -255,6 +255,62 @@ impl SharedContext {
             self.ai_playground.selected_thread = thread_obj.id;
             self.ai_playground.set_threads(thread_map);
         }
+
+        if let Ok(state) = self.app_state_rx.try_recv() {
+            info!("Got a new state: {state:?}");
+            if let AppState::NoAuth(reason) = &state {
+                let toast = &mut self.toasts;
+                let error_toast = Toast {
+                    kind: ToastKind::Error,
+                    text: reason.into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0),
+                };
+                toast.add(error_toast);
+            }
+            self.state = state;
+            ctx.request_repaint();
+        }
+
+                // Handle changes to state from various places, such as
+        // hitting the login button, clicking the 'home page' button
+        // (which is clicking Mtechserver in the top middle of the page),
+        // if session cookie expires (gets checked in the first_run method),
+        // if manually logged out, etc
+        // match &self.state {
+        //     AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
+        //     AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
+        //     AppState::Authenticated(MainPages::UserPreferences) => self.account_settings_page(ctx, self.app_state_tx.clone()),
+        //     AppState::Authenticated(_) => self.main_page(ctx),
+        //     AppState::CreateAccount => self.signup_page(
+        //         ctx,
+        //         self.db_tx.clone(),
+        //         self.app_state_tx.clone(),
+        //     ),
+        //     AppState::NoAuth(reason) => {
+        //         if reason.to_string().contains("Already connected") {
+        //             info!("Already connected");
+        //             if self.current_user.is_some() {
+        //                 if !self.load_data(ctx) {
+        //                     self.first_run = true;
+        //                     self.first_run(frame);
+        //                     self.state = AppState::NoAuth("No user detected".to_string());
+        //                 }
+        //             } else {
+        //                 self.first_run = true;
+        //                 self.first_run(frame)
+        //             }
+        //             self.state = AppState::Authenticated(MainPages::Tasks);
+        //         } else {
+        //             self.login_page(
+        //                 ctx,
+        //                 self.db_tx.clone(),
+        //                 self.app_state_tx.clone(),
+        //             )
+        //         }
+        //     }
+        // }
 
         self.filesystem.receive();
         self.task_audit_table.receive(self.store_users.clone(), frame);

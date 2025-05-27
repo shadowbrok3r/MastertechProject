@@ -8,13 +8,13 @@ impl MtechServer {
     pub fn receive_database(&mut self, frame: &mut Frame, ctx: &Context) {
         ctx.request_repaint();
         // Retrieve our database connection, and 2. Requesting some task data
-        if let Ok(db) = self.context.db_rx.try_recv() {
+        if let Ok(db) = self.context.shared_ctx.db_rx.try_recv() {
             info!("No token");
             match db {
                 Ok(db) => {
                     info!("3");
                     if !self.context.shared_ctx.load_data(ctx) {
-                        self.context.first_run = true;
+                        self.context.shared_ctx.first_run = true;
                         self.first_run(frame);
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     } else {
@@ -35,7 +35,7 @@ impl MtechServer {
                     if e.to_string().contains("Already connected") {
                         info!("7");
                         if !self.context.shared_ctx.load_data(ctx) {
-                            self.context.first_run = true;
+                            self.context.shared_ctx.first_run = true;
                             self.first_run(frame);
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }

@@ -86,7 +86,7 @@ impl MasterTechApp{
                         {
                             ui.vertical_centered(|ui| 
                             { 
-                                ui.add_space(ui.available_height() / 2.5);
+                                ui.add_space(ui.available_height() / 3.);
                                 let font = FontId::monospace(18.0);
                                 ui.style_mut().override_font_id = Some(font.clone());
 

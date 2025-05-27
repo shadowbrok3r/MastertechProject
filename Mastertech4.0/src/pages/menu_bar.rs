@@ -133,10 +133,8 @@ impl MasterTechApp {
                                         });
                             
                                         if *selected != current {
-                                            self.context.task_map.clear();
                                             self.context.shared_ctx.store_users.clear();
                                             self.context.shared_ctx.tasks.clear();
-                                            self.context.task_map.clear();
                                             self.context.shared_ctx.task_layouts.clear();
                                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
                                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
@@ -190,7 +188,7 @@ impl MasterTechApp {
                                 }
                     
                                 if ui.add(Button::new("Refresh Data")).clicked() {
-                                    self.context.first_run = true;
+                                    self.context.shared_ctx.first_run = true;
                                 }
                     
                                 if ui.add(Button::new("Logout")).clicked() {
@@ -209,7 +207,7 @@ impl MasterTechApp {
                                         Err(e) => log::error!("*.enc File not found {e:?}"),
                                     };
 
-                                    let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Login);
+                                    let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Login".to_string()));
                                     spawn(async move {
                                         let invalidation = DATABASE.invalidate().await;
                                         info!("invalidated connection: {:?}", invalidation);
@@ -387,7 +385,6 @@ impl MasterTechApp {
                                             Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                         }
                                     });
-                                    self.context.update_settings = true;
                                 }
                                 if submit.clicked() {
                                     let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
@@ -400,7 +397,6 @@ impl MasterTechApp {
                                             Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                         }
                                     });
-                                    self.context.update_settings = true;
                                 }
                                 if organize.clicked() {
                                     ctx.memory_mut(|mem| mem.reset_areas());
@@ -459,7 +455,7 @@ impl MasterTechApp {
                         let _ = self
                             .context.shared_ctx
                             .app_state_tx
-                            .send(AppState::Login);
+                            .send(AppState::NoAuth("Login".to_string()));
                     }
                 }
             })
