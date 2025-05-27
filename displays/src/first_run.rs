@@ -135,6 +135,7 @@ impl SharedContext {
                     })
                     .collect::<HashSet<String>>()
                 });
+                
             let statuses_changed = old_statuses != new_statuses;
 
             // Update store_users

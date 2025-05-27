@@ -1,7 +1,7 @@
 use chrono::Utc;
 use surrealdb::{sql::Datetime, RecordId};
 use super::ChatMessageType;
-use crate::{schema::{User, USER_MESSAGE_TABLE}, DATABASE};
+use crate::{schema::USER_MESSAGE_TABLE, DATABASE};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct UserMessage {
