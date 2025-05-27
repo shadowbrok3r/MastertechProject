@@ -14,7 +14,6 @@ pub enum MainPages {
     Tasks,
     ChatGpt,
     Downloads,
-    WebConsole,
     UserPreferences,
 }
 
@@ -23,7 +22,6 @@ pub enum AppState {
     Authenticated(MainPages),
     CreateAccount,
     NoAuth(String),
-    Login
 }
 
 impl Default for AppState {
@@ -213,6 +211,7 @@ pub struct SharedContext {
     login: Login,
     #[serde(skip)]
     signup: Signup,
+    pub first_run: bool,
 }
 
 impl SharedContext {
@@ -255,6 +254,7 @@ impl SharedContext {
         let filesystem = FileSystem::new();
 
         Self {
+            first_run: true,
             login: Login::default(),
             signup: Signup::default(),
             state: AppState::default(),

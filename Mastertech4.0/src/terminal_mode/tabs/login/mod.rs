@@ -1,4 +1,4 @@
-use crate::{terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use crate::{terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::CATPPUCCINTHEME, systems::{communication_system::{DataMessage, Message}, notification_system::{Notification, NotificationType}}, widgets::{button::{Button, ButtonState}, input_field::InputField, ButtonType}}, utilities::save_encrypted_user_data};
 use displays::pages::login_page::{Login, HASH};
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::{schema::User, Database, DATABASE};
@@ -114,7 +114,7 @@ impl <'a> LoginTab <'a> {
                     }else{ 
                         log::info!("no usr"); 
                         let _ = DATABASE.invalidate().await;
-                        appstate_tx.try_send(AppState::Login)?;
+                        appstate_tx.try_send(AppState::NoAuth("No User".to_string()))?;
                     }
                     appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
                 },

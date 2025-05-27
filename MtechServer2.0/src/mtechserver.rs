@@ -83,7 +83,7 @@ impl eframe::App for MtechServer {
         // }
 
         // do some initial setting up
-        if self.context.first_run { self.first_run(frame); }
+        if self.context.shared_ctx.first_run { self.first_run(frame); }
 
         if self.context.shared_ctx.web_console_layout.wants_to_undock {
             let layout = &mut self.context.shared_ctx.web_console_layout;
@@ -202,11 +202,10 @@ impl eframe::App for MtechServer {
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
             AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
             AppState::Authenticated(MainPages::UserPreferences) => self.context.shared_ctx.account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
-            AppState::Authenticated(MainPages::WebConsole) => self.web_console(ctx),
             AppState::Authenticated(_) => self.main_page(ctx),
             AppState::CreateAccount => self.context.shared_ctx.signup_page(
                 ctx,
-                self.context.db_tx.clone(),
+                self.context.shared_ctx.db_tx.clone(),
                 self.context.shared_ctx.app_state_tx.clone(),
             ),
             AppState::NoAuth(reason) => {
@@ -214,24 +213,23 @@ impl eframe::App for MtechServer {
                     info!("Already connected");
                     if self.context.shared_ctx.current_user.is_some() {
                         if !self.context.shared_ctx.load_data(ctx) {
-                            self.context.first_run = true;
+                            self.context.shared_ctx.first_run = true;
                             self.first_run(frame);
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
                     } else {
-                        self.context.first_run = true;
+                        self.context.shared_ctx.first_run = true;
                         self.first_run(frame)
                     }
                     self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
                     self.context.shared_ctx.login_page(
                         ctx,
-                        self.context.db_tx.clone(),
+                        self.context.shared_ctx.db_tx.clone(),
                         self.context.shared_ctx.app_state_tx.clone(),
                     )
                 }
             }
-            AppState::Login => {},
         }
     }
 

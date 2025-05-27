@@ -137,13 +137,6 @@ impl MasterTechApp {
                 ticket.current_antivirus = Some(x);
             }
             task.service_ticket = Some(ticket.id.clone());
-
-            self.context.output_text +=
-                &serde_json::to_string_pretty(&ticket).unwrap_or("".to_string());
-            self.context.output_text +=
-                &serde_json::to_string_pretty(&customer).unwrap_or("".to_string());
-            self.context.output_text +=
-                &serde_json::to_string_pretty(&computer).unwrap_or("".to_string());
         }
     }
 }

@@ -14,7 +14,7 @@ use {
 
 impl MtechServer {
     pub fn first_run(&mut self, frame: &mut Frame) {
-        self.context.first_run = false;
+        self.context.shared_ctx.first_run = false;
         let current_version = env!("CARGO_PKG_VERSION");
 
         if let Some(storage) = frame.storage_mut() {
@@ -127,7 +127,7 @@ impl MtechServer {
         }
 
         #[cfg(target_arch="wasm32")]
-        match check_authentication(self.context.db_tx.clone()) {
+        match check_authentication(self.context.shared_ctx.db_tx.clone()) {
             Ok(d) => {
                 log::info!("1");
                 if let AppState::NoAuth(reason) = &d.0 {
@@ -212,24 +212,6 @@ impl MtechServer {
         if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
             log::debug!("Releases: {releases:?}");
             self.context.github_releases = releases;
-        }
-
-        if let Ok(state) = self.context.shared_ctx.app_state_rx.try_recv() {
-            gloo_console::info!(format!("Got a new state: {state:?}"));
-            
-            if let AppState::NoAuth(reason) = &state {
-                let toast = &mut self.context.shared_ctx.toasts;
-
-                let error_toast = Toast {
-                    kind: ToastKind::Error,
-                    text: reason.into(),
-                    options: ToastOptions::default()
-                        .show_progress(true)
-                        .duration_in_seconds(6.0),
-                };
-                toast.add(error_toast);
-            }
-            self.context.shared_ctx.state = state;
         }
     }
 }

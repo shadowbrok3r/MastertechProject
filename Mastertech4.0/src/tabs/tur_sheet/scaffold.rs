@@ -108,13 +108,3 @@ pub enum ScaffoldCalls{
     GetOrder,                                                 // ( $id_order, $full )
     ListFunctions,
 }
-
-
-
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct AsanaResponse{
-    pub gid: Option<String>,
-    //pub created_at: Option<String>,
-    pub status: Option<usize>,
-    //pub raw_resp: Option<String>,
-}

@@ -4,8 +4,7 @@ use crate::MtechServer;
 
 impl MtechServer{
     pub fn main_page(&mut self, ctx: &Context){
-        let dock_style = DockStyle::from_egui(&ctx.style());
-        let mut style = self.context.style.get_or_insert(dock_style).clone();
+        let mut style = DockStyle::from_egui(&ctx.style());
         style.overlay.selection_color = Color32::from_additive_luminance(255);
         style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
         style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);

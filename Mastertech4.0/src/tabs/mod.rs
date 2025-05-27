@@ -13,13 +13,11 @@ pub mod file_browser;
 pub mod github;
 #[cfg(target_os = "windows")]
 pub mod minidump;
-pub mod output_console;
 pub mod part_order;
 pub mod puffin_profiler;
 pub mod quality_check;
 pub mod resource_mon;
 pub mod scripts;
-pub mod seb_lookup;
 pub mod system_information;
 pub mod tur_sheet;
 pub mod websockets;
@@ -89,7 +87,6 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Scene Editor" => self.shared_ctx.scene_editor.ui(ui),
-            "Console" => self.output_console(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
@@ -105,7 +102,6 @@ impl TabViewer for MastertechContext {
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
-            "SEB Lookup" => self.seb_lookup(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Store Stock" => self.shared_ctx.stock_viewer(ui),
             "Logs" => logger_ui().show(ui),

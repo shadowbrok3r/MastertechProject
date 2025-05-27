@@ -55,7 +55,7 @@ impl eframe::App for MasterTechApp {
         let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         ctx.set_style((*custom_style).clone());
 
-        if self.context.first_run { self.first_run(); }
+        if self.context.shared_ctx.first_run { self.first_run(); }
 
         // Get User settings from local storage
         if let Some(user) = &self.context.shared_ctx.current_user {
@@ -95,21 +95,26 @@ impl eframe::App for MasterTechApp {
                     .account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
                 _ => {}
             },
+            AppState::CreateAccount => self.context.shared_ctx.signup_page(
+                ctx,
+                self.context.shared_ctx.db_tx.clone(),
+                self.context.shared_ctx.app_state_tx.clone(),
+            ),
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     if self.context.shared_ctx.current_user.is_some() {
                         if !self.context.shared_ctx.load_data(ctx) {
-                            self.context.first_run = true;
+                            self.context.shared_ctx.first_run = true;
                             self.first_run();
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         } else {
-                            self.context.first_run = true;
+                            self.context.shared_ctx.first_run = true;
                             self.first_run();
                         }
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
-                        self.context.first_run = true;
+                        self.context.shared_ctx.first_run = true;
                         self.first_run();
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     }
@@ -120,8 +125,7 @@ impl eframe::App for MasterTechApp {
                         self.context.shared_ctx.app_state_tx.clone(),
                     )
                 }
-            },
-            _ => {}
+            }
         }
     }
 
@@ -196,13 +200,13 @@ async fn main() -> eframe::Result<()> {
             std::fs::File::create("output.log").unwrap()
         ).unwrap();
     } else {
-        let init = displays::tabs::logger::logging::builder().init();
-        log::info!("Init logger: {init:?}");
-        // simplelog::WriteLogger::init(
-        //     log::LevelFilter::Info,
-        //     simplelog::Config::default(),
-        //     std::fs::File::create("output.log").unwrap()
-        // ).unwrap();
+        // let init = displays::tabs::logger::logging::builder().init();
+        // log::info!("Init logger: {init:?}");
+        simplelog::WriteLogger::init(
+            log::LevelFilter::Info,
+            simplelog::Config::default(),
+            std::fs::File::create("output.log").unwrap()
+        ).unwrap();
         let eframe_app = eframe::run_native(
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {

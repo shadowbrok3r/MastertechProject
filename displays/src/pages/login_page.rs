@@ -46,6 +46,7 @@ impl Login {
                 let database = db.clone();
                 #[allow(unused_variables)]
                 if let (Some(ref cookie), Some(ref usr)) = (database.jwt, database.user) {
+                    log::info!("Got a cookie and user");
                     #[cfg(target_arch = "wasm32")]
                     {
                         let duration = web_time::Duration::from_secs(172800);
@@ -74,16 +75,15 @@ impl Login {
 
                         wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                         wasm_cookies::set("user", &encoded, &cookie_opts);
+                        info!("set cookies");
                     }
-                    info!("set cookies");
+                    appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
+                    db_tx.try_send(Ok(db))?;
                 } else {
                     info!("no usr or no cookie");
                     let _ = DATABASE.invalidate().await;
-                    appstate_tx
-                        .try_send(AppState::NoAuth("No cookie or user was found".to_string()))?;
+                    appstate_tx.try_send(AppState::NoAuth("No cookie or user was found".to_string()))?;
                 }
-                db_tx.try_send(Ok(db))?;
-                appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
             }
             Err(e) => {
                 

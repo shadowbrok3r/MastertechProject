@@ -31,7 +31,7 @@ impl Signup {
 
         let initials = format!("{first_initial}{last_initial}").to_uppercase();
 
-        let mut signup: Signup = Self { // serde_json::json!(
+        let signup = Self { // serde_json::json!(
             name: format!("{} {}", self.first_name.clone(), self.last_name.clone()),
             email: self.email.clone(),
             password: self.password.clone(),
@@ -43,9 +43,11 @@ impl Signup {
         };
 
         let email = signup.email.clone();
+        
         PlatformSpawner::spawn(async move {
+            let signup = &mut signup.clone();
             if let Ok(employee) = User::default().set_email(&email).find_employee_by_email().await {
-                signup = Signup {
+                *signup = Signup {
                     id_prestashop: Some(employee.id.parse::<u64>().unwrap_or_default()),
                     id_store: Some(employee.id_store),
                     everest_initials: employee.initials,
