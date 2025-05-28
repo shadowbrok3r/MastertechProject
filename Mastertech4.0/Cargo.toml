@@ -75,10 +75,11 @@ self-replace = "1.5.0"
 zstd = "0.13.3"
 humansize = "2"
 
+surrealdb-alpha = { workspace = true }
+# surrealdb = { workspace=true }
 egui-data-table = { workspace = true }
 ratatui = { workspace = true }
 database = { workspace=true }
-surrealdb = { workspace=true }
 tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }

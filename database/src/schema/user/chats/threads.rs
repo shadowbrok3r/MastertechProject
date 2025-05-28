@@ -16,7 +16,7 @@ pub struct ChatThread {
 impl Default for ChatThread {
     fn default() -> Self {
         Self {
-             id: RecordId::from((CHAT_THREAD_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))), 
+             id: RecordId::from((CHAT_THREAD_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))), 
              thread_users: Default::default(),
              user_created: User::default().get_id(),
              created_at: Utc::now().into()
@@ -27,7 +27,7 @@ impl Default for ChatThread {
 impl ChatThread {
     pub fn new(user_created: User) -> Self {
         Self {
-             id: RecordId::from((CHAT_THREAD_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))), 
+             id: RecordId::from((CHAT_THREAD_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))), 
              thread_users: vec![user_created.id.clone()],
              user_created: user_created.get_id(),
              created_at: Utc::now().into()
@@ -141,7 +141,7 @@ impl ChatThread {
 
     pub fn new_group(user_created: User, users: Vec<RecordId>) -> Self {
         let mut thread = Self {
-            id: RecordId::from((CHAT_THREAD_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((CHAT_THREAD_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             thread_users: vec![user_created.get_id()],
             user_created: user_created.get_id(),
             created_at: Utc::now().into(),
@@ -186,7 +186,7 @@ impl ChatThread {
             let new_thread = Self {
                 id: RecordId::from((
                     CHAT_THREAD_TABLE,
-                    surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()),
+                    surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()),
                 )),
                 thread_users,
                 user_created: user_id,

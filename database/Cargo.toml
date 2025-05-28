@@ -5,13 +5,13 @@ edition = "2024"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
+surrealdb-alpha = { workspace = true }
+# surrealdb = { workspace=true }
 lazy_static = { workspace = true }
 rusty-s3 = { workspace=true }
 regex = { workspace=true }
 web-time = { workspace=true }
-surrealdb = { workspace=true }
 serde_json = { workspace=true }
-# dotenv = { workspace=true }
 serde = { workspace=true }
 log = { workspace=true }
 bincode = { workspace=true }
@@ -25,7 +25,6 @@ structdiff = { workspace=true }
 chrono = {workspace=true}
 bytes = {workspace = true}
 brotli = { workspace=true }
-# gloo-console = { workspace=true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }

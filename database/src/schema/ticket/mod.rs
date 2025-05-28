@@ -29,7 +29,7 @@ pub struct TicketPayload {
 impl Default for TicketPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             created_at: Default::default(),
             customer: Default::default(),
             computer: Default::default(),
@@ -87,8 +87,8 @@ impl TicketPayload {
 impl Default for TicketData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            customer: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            customer: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             created_at: Default::default(),
             computer: Default::default(),
             service_number: Default::default(),

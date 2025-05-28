@@ -56,7 +56,7 @@ impl Default for ChatView {
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
             // THIS IS ON PURPOSE SO WE CANT ACCIDENTALLY TRY AND LEAVE A NOTE WITHOUT A TASK
-            task_id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            task_id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             service_number: None,
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
@@ -349,7 +349,7 @@ impl ChatView {
                                 id_customer_thread,
                                 service_number: self.service_number.clone(),
                                 private: markdown_editor.private_note.clone(),
-                                id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+                                id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
                                 created_at: Utc::now().into(),
                                 id_customer_message: None,
                             };

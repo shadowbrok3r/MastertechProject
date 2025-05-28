@@ -31,7 +31,7 @@ pub struct User {
 impl Default for User {
     fn default() -> Self {
         Self {
-            id: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             active: false,
             name: String::new(),
             everest_initials: String::new(),

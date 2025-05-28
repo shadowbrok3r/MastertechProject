@@ -272,7 +272,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     }).inner,
                     10 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
                         ui.add_space(2.);
-                        ui.label(RichText::new(computer.customer.clone().unwrap_or(RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())))).key().to_string()))
+                        ui.label(RichText::new(computer.customer.clone().unwrap_or(RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))).key().to_string()))
                     }).inner,
                     _ => ui.label(""),
                 };
@@ -522,9 +522,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     8 => computer_l.ram.cmp(&computer_r.ram),
                     9 => computer_l.operating_system.cmp(&computer_r.operating_system),
                     10 => computer_l.customer.clone().unwrap_or(
-                        RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())))
+                        RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))
                         ).cmp(&computer_r.customer.clone().unwrap_or(
-                            RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())))
+                            RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))
                             )
                         ),
                     _ => Ordering::Equal, // Default for invalid columns

@@ -72,7 +72,7 @@ impl ServiceData {
         let task_notes = &mut self.task_notes;
         let computer = &mut self.computer_data;
 
-        task.id = RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
+        task.id = RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())));
         let service_details = presta_data.order.associations.order_service.clone();
         let mut services: Vec<RecordId> = Vec::new();
 

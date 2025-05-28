@@ -27,6 +27,8 @@ ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.
 reqwest = { version = "0.12", features = ["stream", "json"] }
 displays = { path="../displays", features = ["wasm"]}
 
+surrealdb-alpha = { workspace = true }
+# surrealdb = { workspace=true }
 wasm-cookies = { workspace = true }
 egui_plot = { workspace = true }
 brotli = { workspace=true }
@@ -35,7 +37,6 @@ wasm-bindgen-futures = { workspace=true }
 web-time = { workspace=true }
 wasm-bindgen = { workspace=true }
 database = { workspace=true }
-surrealdb = { workspace=true }
 log  = { workspace=true }
 serde = { workspace=true }
 chrono = { workspace=true }
