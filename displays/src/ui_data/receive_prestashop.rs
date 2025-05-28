@@ -22,7 +22,7 @@ impl SharedContext {
             let carobonite_tx = self.seb_channel.0.clone();
             let mut services: Vec<surrealdb::RecordId> = Vec::new();
 
-            task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
+            task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())));
 
             PlatformSpawner::spawn(async move {
                 if !customer_email.is_empty() {

@@ -28,7 +28,7 @@ impl MasterTechApp {
             let order_rows: Vec<database::schema::prestashop_schema::OrderRow> = data.order.associations.order_rows.clone();
             self.context.order_rows = order_rows;
 
-            task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand())));
+            task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())));
 
             tokio::spawn(async move {
                 if !customer_email.is_empty() {

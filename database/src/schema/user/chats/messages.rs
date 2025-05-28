@@ -16,7 +16,7 @@ pub struct UserMessage {
 impl UserMessage {
     pub fn new(thread_id: RecordId, user: RecordId, content: ChatMessageType) -> Self {
         Self {
-            id: RecordId::from((USER_MESSAGE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))), 
+            id: RecordId::from((USER_MESSAGE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))), 
             created_at: Utc::now().into(),
             thread_id,
             user,

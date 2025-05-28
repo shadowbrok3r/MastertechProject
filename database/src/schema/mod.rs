@@ -89,7 +89,7 @@ pub struct CustomerData {
 impl Default for CustomerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             cust_code: Default::default(),
             part_order_links: Default::default(),
             name: Default::default(),
@@ -130,7 +130,7 @@ pub struct Job {
 impl Default for ComputerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             customer: Default::default(),
             seb_info: Default::default(),
             hostname: Default::default(),
@@ -342,7 +342,7 @@ pub struct ConnectedClient {
 impl Default for ConnectedClient {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CONNECTED_CLIENT_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((CONNECTED_CLIENT_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             assigned_user: Default::default(),
             client_hash: Default::default(),
             connection_string: Default::default(),
@@ -373,8 +373,8 @@ pub struct Notification {
 impl Default for Notification {
     fn default() -> Self {
         Self {
-            id: RecordId::from((NOTIFICATION_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
-            user: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((NOTIFICATION_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            user: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             notification_description: Default::default(),
             notification_type: Default::default(),
             status: Default::default()

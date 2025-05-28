@@ -371,26 +371,48 @@ impl Tur {
     }
 
     pub fn tur_sheet(&mut self, ui: &mut Ui, prestashop_api_tx: Sender<PrestashopPayload>) {
-        // ui.horizontal_top(|ui| {
         let check = !self.ticket_data.service_number.is_empty();
         let stroke = Stroke::new(1.0, Color32::from_rgb(191, 33, 101));
         let txt_color = Color32::from_rgb(255, 204, 255);
         let txt = RichText::new("Pull Order").color(txt_color);
-        let button_size = Vec2::new(120.0, 25.0);
+        let button_size = Vec2::new(70.0, 25.0);
         let button = Button::new(txt).stroke(stroke).min_size(button_size);
-
-        if ui.add_enabled(check, button).clicked() {
-            let service_num = self.ticket_data.service_number.clone();
-            Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
-            self.ticket_data = TicketPayload::default();
-            self.task_data = TaskPayload::default();
-            self.customer_data = CustomerData::default();
-            // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
-            self.ticket_data.service_number = service_num;
-        }
+        
+        ui.horizontal_top(|ui| {
+            ui.add_space(ui.available_width() / 3.5);
+            if ui.add_enabled(check, button).clicked() {
+                let service_num = self.ticket_data.service_number.clone();
+                Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
+                self.ticket_data = TicketPayload::default();
+                self.task_data = TaskPayload::default();
+                self.customer_data = CustomerData::default();
+                // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
+                self.ticket_data.service_number = service_num;
+            }
+        
+            let upload = Button::new("Upload TUR")
+                .min_size(Vec2::new(70., 25.))
+                .stroke(Stroke::new(1., ui.style().visuals.warn_fg_color))
+                .ui(ui);
+            
+            if upload.clicked() {
+                // let tx = tx.clone();
+                PlatformSpawner::spawn(async move {
+                    if let Some(_file) = rfd::AsyncFileDialog::new()
+                        .set_file_name("tur.json")
+                        .pick_file()
+                        .await
+                    {
+                        // match serde_json::from_slice::<Tur>(&file.read().await) {
+                        //     Ok(tur) => { let _ = tx.try_send(tur); },
+                        //     Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
+                        // }
+                    }
+                });
+            }
+        });
 
         ui.add_space(15.0);
-
 
         TextEdit::singleline(&mut self.ticket_data.service_number)
             .hint_text(" Service #  ")

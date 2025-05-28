@@ -25,11 +25,11 @@ pub struct TaskPayload {
 impl Default for TaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             task_name: String::new(),
             service_ticket: None,
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             service_number: None,
             due_date: Utc::now().into(),
             priority: Priority::Normal,
@@ -59,11 +59,11 @@ pub struct LiveTaskPayload {
 impl Default for LiveTaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             task_name: String::new(),
             service_ticket: None,
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand()))),
+            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             service_number: None,
             due_date: Utc::now().into(),
             priority: Priority::Normal,
