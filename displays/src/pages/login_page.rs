@@ -9,10 +9,6 @@ use eframe::egui::{
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
 
-#[cfg(target_arch = "wasm32")]
-#[allow(unused_imports)]
-use wasm_cookies::CookieOptions;
-
 use crate::app_state::{AppState, MainPages, SharedContext};
 
 pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
@@ -50,7 +46,7 @@ impl Login {
                     #[cfg(target_arch = "wasm32")]
                     {
                         let duration = web_time::Duration::from_secs(172800);
-                        let cookie_opts = CookieOptions::default()
+                        let cookie_opts = wasm_cookies::CookieOptions::default()
                             .with_same_site(wasm_cookies::SameSite::Strict)
                             .secure()
                             .expires_after(duration);

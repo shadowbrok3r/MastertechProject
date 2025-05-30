@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CentralPanel, ComboBox, FontId, Grid, Hyperlink, Id, ScrollArea, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, Color32, ComboBox, FontId, Grid, Hyperlink, Id, RichText, ScrollArea, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{prestashop::{generate_orders_report, Order, OrderState, PayPeriod}, User}};
 use crate::{get_current_user_from_auth, modals::tabs::return_colors, PlatformSpawner, Spawner};
 use crate::tabs::task_audit::row_viewer::BASE_URL;
@@ -12,7 +12,8 @@ pub struct Koth {
     order_state: OrderState,
     pay_period: PayPeriod,
     user: User,
-    total: f64
+    total: f64,
+    total_w_tax: f64
 }
 
 impl Default for Koth {
@@ -29,7 +30,8 @@ impl Default for Koth {
             } else {
                 User::default()
             },
-            total: 0.0
+            total: 0.0,
+            total_w_tax: 0.0
         }
     }
 }
@@ -100,7 +102,6 @@ impl Koth {
                         .selected_text(self.pay_period.as_str())
                         .show_ui(ui, |ui| {
                             let selected = &mut self.pay_period;
-
                             ui.selectable_value(
                                 selected, 
                                 PayPeriod::Current,
@@ -111,11 +112,12 @@ impl Koth {
                                 PayPeriod::Last,
                                 PayPeriod::Last.as_str()
                             );
-
                         });
 
                     if Button::new("Pull KOTH").ui(ui).clicked() {
                         self.total = 0.0;
+                        self.total_w_tax = 0.0;
+                        self.orders = vec![];
                         let pay_period = self.pay_period.clone();
                         let state = self.order_state.clone();
                         let id = if let Some(id) = self.user.get_employee_id() {
@@ -148,7 +150,7 @@ impl Koth {
             CentralPanel::default()
                 .show_inside(ui, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("Orders");
+                        ui.heading(RichText::new("Orders").font(FontId::proportional(17.)));
                         ui.separator();
                     });
                     ui.add_space(5.);
@@ -159,17 +161,23 @@ impl Koth {
                         ui.group(|ui| {
                             Grid::new(Id::new("Orders Grid"))
                             .spacing(Vec2::new(2., 4.))
-                            .max_col_width(ui.available_width() / 4.1)
-                            .min_col_width(ui.available_width() / 4.1)
+                            .max_col_width(ui.available_width() / 5.)
+                            .min_col_width(ui.available_width() / 5.)
                             .with_row_color(|num, style| return_colors(num, style))
-                            .num_columns(4)
+                            .num_columns(5)
                             .show(ui, |ui| {
+                                    let date = match self.order_state {
+                                        OrderState::AcceptedByOdoo => "Delivery Date",
+                                        _ => "Date Updated"
+                                    };
                                     ui.style_mut().override_font_id = Some(FontId::proportional(15.));
-                                    ui.colored_label(ui.style().visuals.error_fg_color, "ID");
-                                    ui.colored_label(ui.style().visuals.error_fg_color, "Delivery Date");
-                                    ui.colored_label(ui.style().visuals.error_fg_color, "Total Paid");
-                                    ui.colored_label(ui.style().visuals.error_fg_color, "Total Without Tax");
+                                    ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("ID").underline());
+                                    ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Product").underline());
+                                    ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(date).underline());
+                                    ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Paid").underline());
+                                    ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Without Tax").underline());
                                     ui.end_row();
+                                    ui.label("");
                                     ui.label("");
                                     ui.label("");
                                     ui.label("");
@@ -177,7 +185,10 @@ impl Koth {
                                     ui.end_row();
                                     for order in self.orders.iter() {
                                         let order_id = order.id.clone();
-                                        let delivery_date = order.delivery_date.clone();
+                                        let delivery_date = match self.order_state {
+                                            OrderState::AcceptedByOdoo => order.delivery_date.clone(),
+                                            _ => order.date_upd.clone()
+                                        };
                                         let total_paid_num: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
                                         let total_paid = if total_paid_num == 0.0 {
                                             order.total_paid.clone()
@@ -191,12 +202,39 @@ impl Koth {
                                             format!("${:.2}", total_paid_tax_excl_num)
                                         };
 
+                                        let computer: String = order.associations.order_rows
+                                            .iter()
+                                            .filter_map(|o| {
+                                                if o.product_reference.to_lowercase().starts_with("lap") 
+                                                    || o.product_reference.to_lowercase().starts_with("case/")
+                                                    && !o.product_reference.to_lowercase().starts_with("case/15")
+                                                    && ! o.product_reference.to_lowercase().starts_with("case/17")
+                                                {
+                                                    Some(o.product_reference.clone())
+                                                } else { 
+                                                    None 
+                                                }
+                                            })
+                                            .next()
+                                            .unwrap_or_else(|| {
+                                                // Fall back to the first product_reference if no matches
+                                                order
+                                                    .associations
+                                                    .order_rows
+                                                    .first()
+                                                    .map(|o| o.product_reference.clone())
+                                                    .unwrap_or_default()
+                                            });
+
+                                        log::info!("Comp: {computer:?}");
+                                        
                                         Hyperlink::from_label_and_url(
-                                            order_id.clone(), 
+                                            RichText::new(order_id.clone()).underline().strong().color(Color32::LIGHT_RED), 
                                             format!("{BASE_URL}{}", order_id)
                                         )
                                         .open_in_new_tab(true)
                                         .ui(ui);
+                                        ui.label(computer);
                                         ui.label(delivery_date);
                                         ui.label(total_paid);
                                         ui.label(total_paid_tax_excl);
@@ -204,8 +242,15 @@ impl Koth {
                                     }
                                     ui.label("");
                                     ui.label("");
-                                    ui.colored_label(ui.style().visuals.error_fg_color, "Total: ");
-                                    ui.colored_label(ui.style().visuals.warn_fg_color, format!("${:.2}", self.total));
+                                    ui.label("");
+                                    ui.label("");
+                                    ui.label("");
+                                    ui.end_row();
+                                    ui.colored_label(ui.style().visuals.error_fg_color, "Totals");
+                                    ui.label("");
+                                    ui.label("");
+                                    ui.colored_label(ui.style().visuals.warn_fg_color, format!("${:.2}", self.total_w_tax));
+                                    ui.colored_label(ui.style().visuals.warn_fg_color, format!("Revenue -> ${:.2}", self.total));
                                     ui.end_row();
                                 });
                         });
@@ -219,9 +264,13 @@ impl Koth {
             // Process each order
             for order in orders {
                 let total_paid_tax_excl: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                
+                let total_paid_tax: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
+
                 if total_paid_tax_excl > 0.0 {
                     self.total += total_paid_tax_excl;
+                }
+                if total_paid_tax > 0.0 {
+                    self.total_w_tax += total_paid_tax;
                 }
             }
         }
