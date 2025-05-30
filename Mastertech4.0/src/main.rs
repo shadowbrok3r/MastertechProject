@@ -45,6 +45,7 @@ impl eframe::App for app_state::MasterTechApp {
                         if !self.context.shared_ctx.load_data(ctx) {
                             self.context.shared_ctx.first_run = true;
                             self.first_run();
+                            log::error!("1");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         } else {
                             self.context.shared_ctx.first_run = true;
