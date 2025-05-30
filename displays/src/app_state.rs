@@ -384,11 +384,11 @@ impl SharedContext {
                 .as_ref()
                 .map(|user| {
                     let user_statuses = user.get_statuses();
-                    log::error!("Current user statuses: {:?}", user_statuses);
+                    log::warn!("Current user statuses: {:?}", user_statuses);
                     user_statuses
                 })
                 .unwrap_or_else(|| {
-                    log::error!("No current user; using default statuses");
+                    log::warn!("No current user; using default statuses");
                     Status::VALUES.to_vec()
                 });
             // Add statuses from store_users
@@ -396,19 +396,19 @@ impl SharedContext {
                 .iter()
                 .flat_map(|u| u.get_statuses())
                 .collect::<std::collections::HashSet<Status>>();
-            log::error!("Store users statuses: {:?}", store_user_statuses);
+            log::warn!("Store users statuses: {:?}", store_user_statuses);
             statuses.extend(store_user_statuses.into_iter());
             // Add statuses from tasks
             let task_statuses = self.task_index
                 .values()
                 .map(|task| task.status.clone())
                 .collect::<std::collections::HashSet<Status>>();
-            log::error!("Task statuses: {:?}", task_statuses);
+            log::warn!("Task statuses: {:?}", task_statuses);
             statuses.extend(task_statuses.into_iter());
 
             // MyTasks: Current user's tasks, non-Complete and not completed, keyed by all statuses
             let valid_statuses = {
-                log::error!("Raw statuses: {:?}", statuses);
+                log::warn!("Raw statuses: {:?}", statuses);
                 let filtered_statuses = statuses
                     .into_iter()
                     .filter(|s| *s != Status::Complete)
@@ -427,7 +427,7 @@ impl SharedContext {
                     .collect::<std::collections::HashSet<String>>()
                     .into_iter()
                     .collect::<Vec<String>>();
-                log::error!("MyTasks valid_statuses: {:?}", filtered_statuses);
+                log::warn!("MyTasks valid_statuses: {:?}", filtered_statuses);
                 filtered_statuses
             };
 

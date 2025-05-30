@@ -1,17 +1,9 @@
 
 
 use crate::schema::prestashop::{Order, Prestashop};
-use chrono::{Datelike, Duration, NaiveDate, Utc};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct FilteredOrder {
-    pub id: String,
-    pub delivery_date: String,
-    pub total_paid_tax_excl: f64,
-    pub total_paid: f64,
-}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Default, Clone)]
 pub enum PayPeriod {
@@ -80,30 +72,101 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
     };
 
     let mut filtered_orders = vec![];
+    match state {
+        "239" => {
+            // Loop through each date in the range
+            let mut current_date = start_date;
+            while current_date <= end_date {
+                let mut url_params = HashMap::new();
+                // Format the date for the API filter
+                let date_filter = current_date.format("%Y-%m-%d").to_string();
+                let date = format!("%[{}]%", date_filter);
+                // Construct query parameters
+                url_params.insert("output_format", "JSON");
+                url_params.insert("filter[id_employee_sales_rep]", id_employee);
+                url_params.insert("filter[current_state]", state);
+                url_params.insert("filter[delivery_date]", &date);
 
-    // Loop through each date in the range
-    let mut current_date = start_date;
-    while current_date <= end_date {
-        // Format the date for the API filter
-        let date_filter = current_date.format("%Y-%m-%d").to_string();
-        let date = format!("%[{}]%", date_filter);
-        // Construct query parameters
-        let mut url_params = HashMap::new();
-        url_params.insert("output_format", "JSON");
-        url_params.insert("filter[id_employee_sales_rep]", id_employee);
-        match state {
-            "Accepted By Odoo" => url_params.insert("filter[delivery_date]", &date),
-            _ => url_params.insert("filter[date_upd]", &date)
-        };
+                // Make the API request
+                filtered_orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params).await?);
 
-        url_params.insert("filter[current_state]", state);
+                // Move to the next date
+                current_date = current_date + Duration::days(1);
+            }
+        },
+        _ => {
+            let start = &mut 0;
+            let limit = 5;
+            loop {
+               // Construct query parameters
+                let mut url_params = HashMap::new();
+                url_params.insert("output_format", "JSON");
+                url_params.insert("filter[id_employee_sales_rep]", id_employee);
+                url_params.insert("filter[current_state]", state);
+                url_params.insert("sort", "[id_DESC]");
+                let limit_str = format!("{},{}", start, limit);
+                url_params.insert("limit", &limit_str);
+                
+                let orders = prestashop.request_resources_wasm::<Order>("orders", url_params).await?;
+                if orders.is_empty() {
+                    break; // No more orders to fetch
+                }
 
-        // Make the API request
-        filtered_orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params).await?);
+                // Track if any order is within the date range
+                let has_orders_in_range = &mut false;
+                let all_before_start = &mut true;
 
-        // Move to the next date
-        current_date = current_date + Duration::days(1);
-    }
+                for order in orders {
+                    let order_id = order.id.clone();
+                    // Parse date_upd to check if it's in range
+                    let order_date = match NaiveDateTime::parse_from_str(&order.date_upd, "%Y-%m-%d %H:%M:%S") {
+                        Ok(dt) => dt.date(),
+                        Err(e) => {
+                            log::error!(
+                                "Failed to parse date_upd '{}' for order {}: {}",
+                                order.date_upd,
+                                order_id,
+                                e
+                            );
+                            continue; // Skip orders with invalid date_upd
+                        }
+                    };
+
+                    // Check if order_date is within range
+                    if order_date >= start_date && order_date <= end_date {
+                        filtered_orders.push(order);
+                        *has_orders_in_range = true;
+                    }
+                    // Track if order is before start_date
+                    if order_date >= start_date {
+                        *all_before_start = false;
+                    }
+                }
+
+                // Break if all orders are before start_date (no more relevant orders)
+                if *all_before_start {
+                    break;
+                }
+
+                // Move to the next page
+                *start += limit;
+
+                // Optional: Break if no orders in range and we’ve passed end_date
+                if !*has_orders_in_range {
+                    let latest_order_date = match NaiveDateTime::parse_from_str(
+                        &filtered_orders.last().map(|o| o.date_upd.as_str()).unwrap_or(""),
+                        "%Y-%m-%d %H:%M:%S",
+                    ) {
+                        Ok(dt) => dt.date(),
+                        Err(_) => continue,
+                    };
+                    if latest_order_date > end_date {
+                        break;
+                    }
+                }
+            }
+        },
+    };
 
     Ok(filtered_orders)
 }

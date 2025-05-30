@@ -190,7 +190,6 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, any
             std::io::copy(&mut decompressor, &mut decompressed).unwrap();
             String::from_utf8(decompressed).unwrap()
         }
-
         
         let decoded = general_purpose::STANDARD.decode(&usr)?;
         let decompressed = decompress_string(&decoded);
@@ -202,13 +201,47 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, any
         let db_tx = db_tx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let database = database::Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
-            match db_tx.try_send(database) {
-                Ok(_) => {
-                    log::info!("Sent DB");
-                    drop(db_tx);
+            log::warn!("Checking User");
+            if let Ok(db) = &database {
+                log::warn!("Database Ok");
+                if let Some(usr) = &db.user {
+                    log::warn!("Got a user");
+                    match serde_json::to_string(&usr) {
+                        Ok(usr_json) => {
+                            log::warn!("Deleting existing user cookie");
+                            wasm_cookies::delete("user");
+                            log::warn!("Compressing user data");
+                            use brotli::CompressorReader;
+                            use base64::{engine::general_purpose, Engine as _};
+
+                            fn compress_string(input: &str) -> Vec<u8> {
+                                let mut compressed = Vec::new();
+                                {
+                                    let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+                                    std::io::copy(&mut compressor, &mut compressed).unwrap();
+                                }
+                                compressed
+                            }
+
+                            let compressed: Vec<u8> = compress_string(&usr_json);
+                            let encoded: String = general_purpose::STANDARD.encode(&compressed);
+                            log::info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr_json.len());
+
+                            wasm_cookies::set(
+                                "user", 
+                                &encoded, 
+                                &wasm_cookies::CookieOptions::default()
+                                .with_same_site(wasm_cookies::SameSite::Strict)
+                                .secure()
+                                .expires_after(web_time::Duration::from_secs(172800))
+                            );
+                            log::warn!("Set new user cookie");
+                        },
+                        Err(e) => gloo_console::error!(format!("Error converting user to json: {e:?}"))
+                    }
                 }
-                Err(err) => log::error!("sending db connection: {err:?}"),
             }
+            let _ = db_tx.try_send(database);
         });
         state = displays::app_state::AppState::Authenticated(displays::app_state::MainPages::Tasks);
     }

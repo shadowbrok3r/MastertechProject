@@ -149,7 +149,7 @@ impl Database {
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
                 let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
                 log::info!("Session: {:?}", sess);
-
+ 
                 if !users.is_empty() {
                     if let Ok(mut users_guard) = STORE_USERS.try_lock() {
                         *users_guard = users.clone(); 

@@ -174,6 +174,14 @@ impl User {
             .collect::<Vec<Status>>()
     }
 
+    pub fn get_custom_statuses(&self) -> Vec<Status> {
+       self.user_statuses.clone().unwrap_or_default()
+    }
+
+    pub fn get_custom_statuses_mut(&mut self) -> Option<&mut Vec<Status>> {
+       self.user_statuses.as_mut()
+    }
+
     pub fn get_color_scheme(&self) -> Value {
         self.user_settings.color_scheme.clone()
     }
@@ -375,7 +383,33 @@ impl User {
 
     pub async fn add_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {
         let _: Option<User> = DATABASE
-            .query("UPDATE $auth.id SET user_statuses += $status")
+            .query(r#"
+                LET $statuses = $auth.id.user_statuses;
+                IF $statuses.is_empty() {
+                    UPDATE $auth.id SET user_statuses = array::append($statuses, $status);
+                } ELSE {
+                    LET $idx = array::find_index($statuses, $status);
+                    IF $idx == NONE {
+                        UPDATE $auth.id SET user_statuses = array::append($statuses, $status)
+                    };
+                };
+            "#)
+            .bind(("status", status.to_string()))
+            .await?
+            .take(0)?;
+
+        log::info!("user/mod.rs -> Inserted user status");
+        Ok(())
+    }
+
+    pub async fn remove_custom_status(status: &str) -> anyhow::Result<(), anyhow::Error> {
+        let _: Option<User> = DATABASE
+            .query(r#"
+                LET $idx = array::find_index($auth.id.user_statuses, $status);
+                IF $idx != NONE {
+                    UPDATE $auth.id SET user_statuses = array::remove($this.user_statuses, $idx)
+                }
+            "#)
             .bind(("status", status.to_string()))
             .await?
             .take(0)?;

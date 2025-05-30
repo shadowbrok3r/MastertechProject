@@ -657,6 +657,7 @@ pub struct OrderRow {
     pub product_quantity: String,
     pub product_name: String,
     pub product_price: String,
+    pub product_reference: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
