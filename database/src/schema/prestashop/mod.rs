@@ -10,10 +10,11 @@ const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 
 pub mod customer_messages;
 pub mod customer_threads;
+pub mod koth;
 
 pub use customer_messages::*;
 pub use customer_threads::*;
-
+pub use koth::*;
 
 #[derive(Clone)]
 pub struct Prestashop<'a> {
@@ -565,7 +566,11 @@ pub struct Order {
     #[serde(default)]
     pub total_paid: String, // ✔️
     #[serde(default)]
+    pub delivery_date: String,
+    #[serde(default)]
     pub total_products_wt: String,
+    #[serde(default)]
+    pub total_paid_tax_excl: String,
     #[serde(default)]
     pub reference: String, // what prestashop sees since order id and reference are different...
     #[serde(default)]
@@ -586,6 +591,53 @@ pub struct Associations {
     pub order_rows: Vec<OrderRow>,
     #[serde(default = "new_svc_vec")]
     pub order_service: Vec<ServiceOrder>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub enum OrderState {
+    #[default]
+    AcceptedByOdoo,
+    Shipped,
+    DeliveredToStore,
+    DoneShelf,
+    OrderPlaced,
+    PrePulled,
+    ReadyToBuild,
+    QcAndBurnin,
+    ShipToStore,
+    Returned 
+}
+
+impl OrderState {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::AcceptedByOdoo => "Accepted By Odoo",
+            Self::Shipped => "Shipped",
+            Self::DeliveredToStore => "Delivered To Store",
+            Self::DoneShelf => "Done Shelf",
+            Self::OrderPlaced => "Order Placed",
+            Self::PrePulled => "Pre Pulled",
+            Self::ReadyToBuild => "Ready To Build",
+            Self::QcAndBurnin => "Qc & Burnin",
+            Self::ShipToStore => "Ship To Store",
+            Self::Returned => "Returned",
+        }
+    }
+/*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
+    pub fn id(&self) -> i32 {
+        match self {
+            Self::AcceptedByOdoo => 239,
+            Self::Shipped => 4,
+            Self::DeliveredToStore => 238,
+            Self::DoneShelf => 40,
+            Self::OrderPlaced => 73,
+            Self::PrePulled => 70,
+            Self::ReadyToBuild => 224,
+            Self::QcAndBurnin => 71,
+            Self::ShipToStore => 236,
+            Self::Returned => 84,
+        }
+    }
 }
 
 fn new_vec() -> Vec<OrderRow> {
