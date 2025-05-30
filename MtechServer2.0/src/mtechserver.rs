@@ -36,6 +36,7 @@ impl eframe::App for MtechServer {
                         if !self.context.shared_ctx.load_data(ctx) {
                             self.context.shared_ctx.first_run = true;
                             self.first_run(frame);
+                            log::error!("4");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
                     } else {

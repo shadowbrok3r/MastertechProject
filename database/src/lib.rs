@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::{auth::{Jwt, Record as SurrealRec}, capabilities::Capabilities, Config}, Surreal};
+use surrealdb::{engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Record as SurrealRec}, Surreal};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -198,12 +198,28 @@ impl Database {
         signup: T,
         email: String,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        // let db_url = get_db_url();
-        let cap = Capabilities::all();
-        let config = Config::new().capabilities(cap);
+        if cfg!(debug_assertions) {
+            let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+            log::info!("Attempting to connect to local DB: {try_local:?}");
+        } else {
+            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+                Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+                Err(e) => {
+                    let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+                    log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}\nattempting to connect to local DB: {try_local:?}");
+                },
+            }
+        }
+        // let _ = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+        match DATABASE.use_ns(NS).use_db(DB).await {
+            Ok(_) => log::info!("Using NS: {NS:?}\nUsing DB: {DB:?}"),
+            Err(e) => log::error!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
+        }
 
-        DATABASE.connect::<Wss>((DB_URL_DEV, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
-        DATABASE.use_ns(NS).use_db(DB).await?;
+        if cfg!(debug_assertions) {
+            info!("signup: {signup:?}");
+        }
+
         // Select a specific namespace / database
         let jwt = DATABASE
             .signup(SurrealRec {
@@ -212,16 +228,23 @@ impl Database {
                 access: USER_SCOPE,
                 params: signup.clone(),
             })
-            .await?;
+            .await;
 
-        info!("signup: {signup:?}");
-        let query = "SELECT * FROM user WHERE email == $email";
-        DATABASE.set("email", email).await?;
-        let user: Option<User> = DATABASE.query(query).await?.take(0)?;
-        Ok(Self {
-            jwt: Some(jwt),
-            user,
-        })
+        match jwt {
+            Ok(j) => {
+                let query = "SELECT * FROM user WHERE email == $email";
+                DATABASE.set("email", email).await?;
+                let user: Option<User> = DATABASE.query(query).await?.take(0)?;
+                Ok(Self {
+                    jwt: Some(j),
+                    user,
+                })
+            },
+            Err(e) => {
+                log::error!("Error signing up: {e:?}");
+                return Err(anyhow::anyhow!("Error signing up: {e:?}"));
+            },
+        }
     }
 }
 

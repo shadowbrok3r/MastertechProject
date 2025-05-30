@@ -28,6 +28,7 @@ impl MasterTechApp {
                     if !self.context.shared_ctx.load_data(ctx) {
                         self.context.shared_ctx.first_run = true;
                         self.first_run();
+                        log::error!("2");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     } else {
                         self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
@@ -40,6 +41,7 @@ impl MasterTechApp {
                         if !self.context.shared_ctx.load_data(ctx) {
                             self.context.shared_ctx.first_run = true;
                             self.first_run();
+                            log::error!("3");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
