@@ -112,6 +112,7 @@ impl UserChat {
         TopBottomPanel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .default_height(150.)
+            .max_height(300.)
             .show_inside(ui, |ui| self.chat_input(ui) );
         
         CentralPanel::default()
@@ -356,7 +357,7 @@ impl UserChat {
 
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 ui.add_space(5.);
-                                if self.current_user.get_authorization().as_str() == "Admin" {
+                                if self.current_user.is_admin() {
                                     if self.allow_edit.contains(&id.to_string()) {
                                         if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
                                         .ui(ui)
@@ -385,7 +386,7 @@ impl UserChat {
                                     }
                                 }
                                 
-                                if self.current_user.get_authorization().as_str() == "Admin" {
+                                if self.current_user.is_admin() {
                                     if  Button::new(RichText::new("🗙").color(btn_txt_color))
                                     .ui(ui)
                                     .on_hover_text(

@@ -41,6 +41,8 @@ impl TabViewer for MtechServerContext {
             "Logs" => logger_ui().show(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
             "Database Editor" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
+            "Query Editor" => self.shared_ctx.query_editor.ui(ui),
+            "KOTH" => self.shared_ctx.koth.ui(ui),
             // "Ai" => self.shared_ctx.ai_playground(ui),
             // "Json Viewer" => self.shared_ctx.json_viewer(ui),
             // "Customers" => self.shared_ctx.customer_view(ui),

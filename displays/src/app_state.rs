@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -51,6 +51,8 @@ pub struct SharedContext {
     pub task_layouts: HashMap<String, TaskLayout>,
     /// {All task data}
     pub tasks: Vec<TaskPayload>,
+
+    pub query_editor: QueryEditor,
 
     #[serde(skip)]
     pub app_state_tx: Sender<AppState>,
@@ -224,7 +226,10 @@ pub struct SharedContext {
     pub github_issue: GithubIssue,
     /// The result of querying github for Mastertech releases
     pub github_releases: Vec<GithubRelease>,
-
+    pub notification_modal: Option<Notification>,
+    pub admin_notification_text: String,
+    #[serde(skip)]
+    pub koth: Koth,
 }
 
 impl SharedContext {
@@ -267,7 +272,10 @@ impl SharedContext {
 
         Self {
             tree,
+            koth: Koth::default(),
             first_run: true,
+            notification_modal: None,
+            admin_notification_text: Default::default(),
             login: Login::default(),
             signup: Signup::default(),
             state: AppState::default(),
@@ -275,6 +283,7 @@ impl SharedContext {
             github_releases: Vec::new(),
             account_mod: UserPreferences::default(),
             database_viewer: DatabaseEditor::default(),
+            query_editor: QueryEditor::default(),
             github_releases_channel,
             task_index: HashMap::new(),
             layout_configs: None,

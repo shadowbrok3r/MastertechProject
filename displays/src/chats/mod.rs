@@ -304,6 +304,7 @@ impl ChatView {
 
         TopBottomPanel::bottom(id)
             .default_height(300.)
+            // .max_height(500.)
             .resizable(false)
             .show_inside(ui, |ui| 
         {
@@ -537,7 +538,7 @@ impl ChatView {
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     ui.add_space(5.);
-                                    if self.current_user.get_authorization().as_str() == "Admin" {
+                                    if self.current_user.is_admin() {
                                         if self.allow_edit.contains(&id.to_string()) {
                                             if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
                                             .ui(ui)
@@ -564,7 +565,7 @@ impl ChatView {
                                         ui.ctx().copy_text(item.note.clone());
                                     }
                                     
-                                    if self.current_user.get_authorization().as_str() == "Admin" {
+                                    if self.current_user.is_admin() {
                                         if  Button::new(RichText::new("🗙").color(btn_txt_color))
                                         .ui(ui)
                                         .on_hover_text(

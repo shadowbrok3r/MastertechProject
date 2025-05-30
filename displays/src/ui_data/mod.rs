@@ -11,7 +11,7 @@ pub mod receive_ui_action;
 pub mod receive_inventory;
 pub mod receive_client;
 pub mod receive_users;
-
+pub mod admin_notification;
 
 impl crate::app_state::SharedContext {
     pub fn load_data(&mut self, ctx: &eframe::egui::Context) -> bool {
@@ -111,7 +111,6 @@ impl crate::app_state::SharedContext {
     }
 
     pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
-        
         if let Ok(state) = self.app_state_rx.try_recv() {
             log::info!("Got a new state: {state:?}");
             if let crate::app_state::AppState::NoAuth(reason) = &state {
@@ -129,6 +128,9 @@ impl crate::app_state::SharedContext {
             ctx.request_repaint();
         }
 
+        self.admin_notification_ui(ctx);
+        self.koth.receive();
+        self.query_editor.receive();
         self.receive_ui_action();
         self.receive_users();
         self.receive_task();
