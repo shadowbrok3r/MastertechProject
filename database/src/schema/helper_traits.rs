@@ -781,7 +781,6 @@ impl From<Store> for u64 {
     }
 }
 
-
 pub fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
     // Define the input format as per the provided string.
     let format = "%Y-%m-%d %H:%M:%S";

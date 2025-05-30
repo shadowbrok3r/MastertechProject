@@ -19,6 +19,7 @@ pub mod task_note;
 pub mod user;
 pub mod ticket;
 pub mod prestashop;
+pub mod notification;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -40,6 +41,7 @@ pub use task::*;
 pub use task_note::*;
 pub use user::*;
 pub use ticket::*;
+pub use notification::*;
 pub use prestashop as prestashop_schema;
 
 #[async_trait(?Send)]
@@ -355,56 +357,6 @@ impl Default for ConnectedClient {
             computer: Default::default(),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Difference)]
-pub struct Notification {
-    pub id: RecordId,
-    /// receiver of notification
-    pub user: RecordId,
-    /// description of notification
-    pub notification_description: String,
-    /// type of notification
-    pub notification_type: String,
-    /// Has the notification been read?
-    pub status: String,
-}
-
-impl Default for Notification {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((NOTIFICATION_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            user: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            notification_description: Default::default(),
-            notification_type: Default::default(),
-            status: Default::default()
-        }
-    }
-}
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub enum NotificationType {
-    NewMessage,
-    SpoStatusChange,
-    NewTask,
-    TaggedInComment,
-    GroupTag,
-    OverdueTask,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum NotificationStatus {
-    Read,
-    Unread,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModifyNotification {
-    pub id: RecordId,
-    /// either Read or Unread
-    pub status: Option<NotificationStatus>,
-    pub mark_all_read: Option<bool>,
-    pub mark_all_unread: Option<bool>,
-    pub archive: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]

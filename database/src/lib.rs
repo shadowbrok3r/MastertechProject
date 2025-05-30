@@ -8,6 +8,8 @@ use log::info;
 pub mod live_data;
 pub mod schema;
 
+pub use platform::PlatformSpawner;
+
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
@@ -32,64 +34,11 @@ pub static STORE_USERS: Lazy<std::sync::Mutex<Vec<User>>> = Lazy::new(|| {
     std::sync::Mutex::new(vec![]) 
 });
 
-pub use platform::PlatformSpawner;
-pub trait Spawner {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn spawn<F>(future: F)
-    where
-        F: std::future::Future<Output = ()> + Send + 'static;
-
-    #[cfg(target_arch = "wasm32")]
-    fn spawn<F>(future: F)
-    where
-        F: std::future::Future<Output = ()> + 'static;
-}
-
-#[cfg(target_arch = "wasm32")]
-mod platform {
-    use super::Spawner;
-    use wasm_bindgen_futures::spawn_local;
-
-    pub struct PlatformSpawner;
-
-    impl Spawner for PlatformSpawner {
-        fn spawn<F>(future: F)
-        where
-            F: std::future::Future<Output = ()> + 'static,
-        {
-            spawn_local(future);
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-mod platform {
-    use super::Spawner;
-    use tokio::task;
-
-    pub struct PlatformSpawner;
-
-    impl Spawner for PlatformSpawner {
-        fn spawn<F>(future: F)
-        where
-            F: std::future::Future<Output = ()> 
-                + 'static 
-                + std::marker::Send,
-                
-        {
-            task::spawn(future);
-        }
-    }
-}
-
-
-
 #[derive(Clone, Debug, Default)]
 pub struct Database {
     pub jwt: Option<Jwt>,
     pub user: Option<User>,
 }
-
 
 #[derive(Serialize)]
 pub struct Auth {
@@ -198,6 +147,9 @@ impl Database {
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
+                let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
+                log::info!("Session: {:?}", sess);
+
                 if !users.is_empty() {
                     if let Ok(mut users_guard) = STORE_USERS.try_lock() {
                         *users_guard = users.clone(); 
@@ -224,6 +176,8 @@ impl Database {
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
+                let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
+                log::info!("Session: {:?}", sess);
                 if !users.is_empty() {
                     if let Ok(mut users_guard) = STORE_USERS.try_lock() {
                         *users_guard = users.clone(); 
@@ -321,3 +275,51 @@ pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {
 }
 
 
+pub trait Spawner {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn<F>(future: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static;
+
+    #[cfg(target_arch = "wasm32")]
+    fn spawn<F>(future: F)
+    where
+        F: std::future::Future<Output = ()> + 'static;
+}
+
+#[cfg(target_arch = "wasm32")]
+mod platform {
+    use super::Spawner;
+    use wasm_bindgen_futures::spawn_local;
+
+    pub struct PlatformSpawner;
+
+    impl Spawner for PlatformSpawner {
+        fn spawn<F>(future: F)
+        where
+            F: std::future::Future<Output = ()> + 'static,
+        {
+            spawn_local(future);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod platform {
+    use super::Spawner;
+    use tokio::task;
+
+    pub struct PlatformSpawner;
+
+    impl Spawner for PlatformSpawner {
+        fn spawn<F>(future: F)
+        where
+            F: std::future::Future<Output = ()> 
+                + 'static 
+                + std::marker::Send,
+                
+        {
+            task::spawn(future);
+        }
+    }
+}

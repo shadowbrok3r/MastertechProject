@@ -1,5 +1,5 @@
 use crate::{tasks::task_layout::{SortField, SortOptions}, SortDirection};
-use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, TextEdit, Ui, UiBuilder, Vec2, Widget};
+use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
 use crate::app_state::{AppState, MainPages, SharedContext};
 use database::{schema::{Store, User}, DatabaseSelection, PlatformSpawner, Spawner, DATABASE};
 use egui_extras::{Size, StripBuilder};
@@ -240,9 +240,10 @@ impl SharedContext {
                                                         ui.label("Custom Status: ");
                                                         
                                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                                            let accepted_by_keyboard = ui.ctx().input_mut(|i| i.key_pressed(eframe::egui::Key::Enter));
-                                                            let res = TextEdit::singleline(&mut self.account_mod.new_status).desired_width(115.).show(ui);
-                                                            if ( accepted_by_keyboard || res.response.lost_focus() ) && !self.account_mod.new_status.is_empty() {
+                                                            let submit_status = ui.small_button("✔️");
+                                                            TextEdit::singleline(&mut self.account_mod.new_status).desired_width(115.).ui(ui);
+
+                                                            if submit_status.clicked() && !self.account_mod.new_status.is_empty() {
                                                                 let status = self.account_mod.new_status.clone();
                                                                 self.account_mod.new_status.clear();
                                                                 log::info!("Got a new status: {status}");
@@ -330,6 +331,31 @@ impl SharedContext {
                                                                 }
                                                             });
                                                         });
+                                                    });
+
+                                                    ScrollArea::vertical()
+                                                    .auto_shrink(false)
+                                                    .max_height(160.)
+                                                    .show(ui, |ui| {
+                                                        for (idx, status) in self.account_mod.user.get_statuses().iter().enumerate() {
+                                                            ui.horizontal(|ui| {
+                                                                ui.label(format!("{idx}: "));
+                                                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                                    if ui.button("❌").clicked() {
+                                                                        
+                                                                        // let status = status.clone();
+                                                                        // PlatformSpawner::spawn(async move {
+                                                                        //     match User::delete_custom_status(status.as_str()).await {
+                                                                        //         Ok(_) => log::info!("Deleted status: {}", status),
+                                                                        //         Err(e) => log::error!("Error deleting status: {e:?}")
+                                                                        //     }
+                                                                        // });
+                                                                    }
+                                                                    ui.add_space(5.);
+                                                                    ui.label(status.as_str());
+                                                                });
+                                                            });
+                                                        }
                                                     });
                                                 });
                                             });

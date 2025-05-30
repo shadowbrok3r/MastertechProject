@@ -1,7 +1,7 @@
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, TaskPayload}, DATABASE};
-use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use eframe::egui::{menu, vec2, Align, Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TextEdit, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, MtechServer};
-use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, FilterTasks}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
+use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, FilterTasks, PlatformSpawner, Spawner}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
 use displays::ui_tools::show_notification;
 use wasm_bindgen_futures::spawn_local;
 use std::collections::BTreeSet;
@@ -33,6 +33,8 @@ impl MtechServer {
                                 // &"Ai".to_string(),
                                 // &"Json Viewer".to_string(),
                                 &"Database Editor".to_string(),
+                                &"Query Editor".to_string(),
+                                &"KOTH".to_string()
                             ] {
                                 if ui
                                     .selectable_label(self.context.open_tabs.contains(*tab), *tab)
@@ -163,7 +165,6 @@ impl MtechServer {
                         self.context.total_download_size = 0.0;
                     }
                     
-
                     if self.context.download_progress.ne(&0.0) {
                         ui.add_space(30.);
                         ProgressBar::new(
@@ -193,11 +194,11 @@ impl MtechServer {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(8.0);
-                        let txt =
-                            RichText::new(format!(" {} ", usr.get_name())).color(ui.style().visuals.error_fg_color).strong().underline();
+                        let txt = RichText::new(format!(" {} ", usr.get_name())).color(ui.style().visuals.error_fg_color).strong().underline();
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
-                            ui.set_height(600.0);
+                            ui.set_height(800.);
+
                             ui.vertical_centered_justified(|ui| {
                                 
                                 if ui.add(Button::new("Preferences")).clicked() {
@@ -209,6 +210,7 @@ impl MtechServer {
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
+                                ui.separator();
 
                                 if ui.add(Button::new("Downloads")).clicked() {
                                     self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
@@ -229,6 +231,8 @@ impl MtechServer {
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
+                                
+                                ui.separator();
 
                                 ui.horizontal(|ui| {
                                     ui.add_space(ui.available_width()/2.5);
@@ -267,14 +271,50 @@ impl MtechServer {
                                     });
                                 });
 
+                                ui.separator();
+
                                 if ui.add(Button::new("Modify Theme")).clicked() {
                                     self.context.shared_ctx.modify_theme = true;
                                     ui.close_menu();
                                 }
+                                
+                                ui.separator();
 
                                 if ui.add(Button::new("Refresh Data")).clicked() {
                                     self.context.shared_ctx.first_run = true;
                                 }
+
+                                ui.separator();
+
+                                if usr.is_admin() {
+                                    ui.add_space(10.);
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(40.);
+                                        TextEdit::singleline(&mut self.context.shared_ctx.admin_notification_text)
+                                            .background_color(ui.style().visuals.code_bg_color)
+                                            .vertical_align(Align::Center)
+                                            .hint_text("Admin Notification")
+                                            .desired_rows(2)
+                                            .desired_width(200.)
+                                            .ui(ui);
+
+                                        ui.add_space(10.);
+                                        if Button::new("⬈").min_size(vec2(30., 30.)).stroke(Stroke::new(0.5, ui.style().visuals.error_fg_color)).ui(ui).clicked() {
+                                            let txt = self.context.shared_ctx.admin_notification_text.clone();
+                                            PlatformSpawner::spawn(async move {
+                                                let res = Notification::default()
+                                                    .set_description(txt)
+                                                    .set_type("Admin")
+                                                    .create()
+                                                    .await;
+                                                log::info!("Notification Response: {:?}", res);
+                                            });
+                                        }
+                                    });
+                                }
+
+                                ui.add_space(10.0);
+                                Separator::default().shrink(20.0).ui(ui);
 
                                 if ui.add(Button::new(RichText::new("Logout").color(ui.style().visuals.error_fg_color))).clicked() {
                                     #[cfg(target_arch = "wasm32")]
@@ -347,95 +387,99 @@ impl MtechServer {
                             let scroll_area = ScrollArea::vertical().auto_shrink(false);
                             ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
 
-                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                for row in row_range {
-                                    let mut notifications: Vec<Notification> =
-                                        if self.context.shared_ctx.read_notifications {
-                                            self.context
-                                                .shared_ctx
-                                                .notifications
-                                                .iter()
-                                                .filter(|n| n.status == "Read")
-                                                .cloned()
-                                                .collect()
-                                        } else {
-                                            self.context
-                                                .shared_ctx
-                                                .notifications
-                                                .iter()
-                                                .filter(|n| n.status == "Unread")
-                                                .cloned()
-                                                .collect()
-                                        };
+                            ui.scope(|ui| {
+                                ui.style_mut().visuals.extreme_bg_color + Color32::from_rgb(30,30,30);
+                                scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                    
+                                    for row in row_range {
+                                        let mut notifications: Vec<Notification> =
+                                            if self.context.shared_ctx.read_notifications {
+                                                self.context
+                                                    .shared_ctx
+                                                    .notifications
+                                                    .iter()
+                                                    .filter(|n| n.status == "Read")
+                                                    .cloned()
+                                                    .collect()
+                                            } else {
+                                                self.context
+                                                    .shared_ctx
+                                                    .notifications
+                                                    .iter()
+                                                    .filter(|n| n.status == "Unread")
+                                                    .cloned()
+                                                    .collect()
+                                            };
 
-                                    if let Some(notification) = notifications.get_mut(row) {
-                                        eframe::egui::Frame::new()
-                                            .fill(ui.style().visuals.extreme_bg_color)
-                                            .corner_radius(eframe::egui::CornerRadius::same(12))
-                                            .inner_margin(Margin::same(10))
-                                            .outer_margin(Margin::same(5))
-                                            .stroke(Stroke::new(
-                                                0.5,
-                                                if notification.status == "Read" {
-                                                    Color32::from_rgba_premultiplied(
-                                                        42, 222, 192, 60,
-                                                    )
-                                                } else {
-                                                    Color32::from_rgb(191, 33, 101)
-                                                },
-                                            ))
-                                            .show(ui, |ui| {
-                                                ui.horizontal_top(|ui| {
-                                                    let w = 250.0;
-                                                    ui.set_width(w);
-                                                    ui.add_space(w / 3.0);
-                                                    ui.colored_label(
+                                        if let Some(notification) = notifications.get_mut(row) {
+                                            eframe::egui::Frame::new()
+                                                .fill(ui.style().visuals.extreme_bg_color)
+                                                .corner_radius(eframe::egui::CornerRadius::same(12))
+                                                .inner_margin(Margin::same(10))
+                                                .outer_margin(Margin::same(5))
+                                                .stroke(Stroke::new(
+                                                    0.5,
+                                                    if notification.status == "Read" {
                                                         Color32::from_rgba_premultiplied(
                                                             42, 222, 192, 60,
-                                                        ),
-                                                        RichText::new(
-                                                            notification.notification_type.clone(),
                                                         )
-                                                        .font(FontId::proportional(12.0)),
-                                                    );
-                                                    ui.add_space(80.0);
-                                                    let button = Button::new(
-                                                        RichText::new("X")
-                                                            .color(Color32::from_rgb(191, 33, 101)),
-                                                    )
-                                                    .ui(ui);
-                                                    if button.clicked() {
-                                                        let mut notif = notification.clone();
-                                                        if notification.status == "Read" {
-                                                            spawn_local(async move {
-                                                                notif
-                                                                    .delete_notification()
-                                                                    .await
-                                                                    .unwrap();
-                                                            });
-                                                        } else {
-                                                            notification.status =
-                                                                "Read".to_string();
-                                                            spawn_local(async move {
-                                                                notif
-                                                                    .mark_notification()
-                                                                    .await
-                                                                    .unwrap();
-                                                            });
+                                                    } else {
+                                                        Color32::from_rgb(191, 33, 101)
+                                                    },
+                                                ))
+                                                .show(ui, |ui| {
+                                                    ui.horizontal_top(|ui| {
+                                                        let w = 250.0;
+                                                        ui.set_width(w);
+                                                        ui.add_space(w / 3.0);
+                                                        ui.colored_label(
+                                                            Color32::from_rgba_premultiplied(
+                                                                42, 222, 192, 60,
+                                                            ),
+                                                            RichText::new(
+                                                                notification.notification_type.clone(),
+                                                            )
+                                                            .font(FontId::proportional(12.0)),
+                                                        );
+                                                        ui.add_space(80.0);
+                                                        let button = Button::new(
+                                                            RichText::new("X")
+                                                                .color(Color32::from_rgb(191, 33, 101)),
+                                                        )
+                                                        .ui(ui);
+                                                        if button.clicked() {
+                                                            let mut notif = notification.clone();
+                                                            if notification.status == "Read" {
+                                                                spawn_local(async move {
+                                                                    notif
+                                                                        .delete_notification()
+                                                                        .await
+                                                                        .unwrap();
+                                                                });
+                                                            } else {
+                                                                notification.status =
+                                                                    "Read".to_string();
+                                                                spawn_local(async move {
+                                                                    notif
+                                                                        .mark_notification()
+                                                                        .await
+                                                                        .unwrap();
+                                                                });
+                                                            }
                                                         }
-                                                    }
-                                                });
-                                                show_notification(
-                                                    ui,
-                                                    &notification.notification_description,
-                                                    &inputs,
-                                                    self.context.shared_ctx.ui_actions_tx.clone(),
-                                                    &self.context.shared_ctx.tasks,
-                                                );
-                                            })
-                                            .inner;
+                                                    });
+                                                    show_notification(
+                                                        ui,
+                                                        &notification.notification_description,
+                                                        &inputs,
+                                                        self.context.shared_ctx.ui_actions_tx.clone(),
+                                                        &self.context.shared_ctx.tasks,
+                                                    );
+                                                })
+                                                .inner;
+                                        }
                                     }
-                                }
+                                });
                             });
                         });
 

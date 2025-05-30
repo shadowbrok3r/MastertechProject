@@ -23,53 +23,56 @@ impl SharedContext {
             info!("Action: {action:?} - Notification: {notification:?}");
             match action {
                 Action::Create => {
-                    let username_regex = Regex::new(r"tagged (\w+\.\w+)").unwrap();
-                    let task_name_regex = Regex::new(r"in task (.+)").unwrap();
+                    if notification.notification_type.as_str() == "Admin" {
+                        self.notification_modal = Some(notification.clone());
+                    } else {
+                        let username_regex = Regex::new(r"tagged (\w+\.\w+)").unwrap();
+                        let task_name_regex = Regex::new(r"in task (.+)").unwrap();
 
-                    if let Some(usr) = self.current_user.as_ref() {
-                        // Find the username
-                        if let Some(captures) =
-                            username_regex.captures(&notification.notification_description)
-                        {
-                            let username = captures.get(1).unwrap().as_str();
-                            info!("Found username: {}", username);
-                        } else {
-                            info!("Username not found");
-                        }
-                        // Find the task name
-                        if let Some(captures) =
-                            task_name_regex.captures(&notification.notification_description)
-                        {
-                            let task_name = captures.get(1).unwrap().as_str();
-                            // Check if the task name exists in the inputs BTreeSet
-                            if inputs.contains(task_name) {
-                                info!("Found task name: {}", task_name);
+                        if let Some(usr) = self.current_user.as_ref() {
+                            // Find the username
+                            if let Some(captures) =
+                                username_regex.captures(&notification.notification_description)
+                            {
+                                let username = captures.get(1).unwrap().as_str();
+                                info!("Found username: {}", username);
                             } else {
-                                info!("Task name not found in inputs");
+                                info!("Username not found");
                             }
-                        } else {
-                            info!("Task name not found");
+                            // Find the task name
+                            if let Some(captures) =
+                                task_name_regex.captures(&notification.notification_description)
+                            {
+                                let task_name = captures.get(1).unwrap().as_str();
+                                // Check if the task name exists in the inputs BTreeSet
+                                if inputs.contains(task_name) {
+                                    info!("Found task name: {}", task_name);
+                                } else {
+                                    info!("Task name not found in inputs");
+                                }
+                            } else {
+                                info!("Task name not found");
+                            }
+                            if notification.user == usr.get_id() {
+                                self.read_notifications = false;
+                                let toast = &mut self.toasts;
+                                let auth_toast = Toast {
+                                    kind: ToastKind::Info,
+                                    text: RichText::new(format!(
+                                        "Notification\n\n{}",
+                                        notification.notification_description
+                                    ))
+                                    .color(Color32::LIGHT_GREEN)
+                                    .font(FontId::proportional(15.))
+                                    .into(),
+                                    options: ToastOptions::default().duration(None),
+                                };
+                                toast.add(auth_toast);
+                            }
                         }
-                        if notification.user == usr.get_id() {
-                            self.read_notifications = false;
-                            let toast = &mut self.toasts;
-                            let auth_toast = Toast {
-                                kind: ToastKind::Info,
-                                text: RichText::new(format!(
-                                    "Notification\n\n{}",
-                                    notification.notification_description
-                                ))
-                                .color(Color32::LIGHT_GREEN)
-                                .font(FontId::proportional(15.))
-                                .into(),
-                                options: ToastOptions::default().duration(None),
-                            };
-                            toast.add(auth_toast);
-                        }
+                        
+                        update_or_insert_anything(&mut self.notifications, notification.clone()).unwrap_or(())
                     }
-
-                    update_or_insert_anything(&mut self.notifications, notification.clone())
-                        .unwrap_or(())
                 }
                 Action::Update => {
                     update_or_insert_anything(&mut self.notifications, notification.clone())
