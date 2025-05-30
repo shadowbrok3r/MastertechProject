@@ -119,6 +119,13 @@ impl User {
         self.version.clone()
     }
 
+    pub fn is_admin(&self) -> bool {
+        match self.authorization {
+            UserAuthorization::User => false,
+            UserAuthorization::Admin => true,
+        }
+    }
+
     pub fn get_authorization(&self) -> UserAuthorization {
         self.authorization.clone()
     }

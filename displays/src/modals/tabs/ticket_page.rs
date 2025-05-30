@@ -20,7 +20,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 .num_columns(4)
                 .show(ui, |ui| 
             {
-                if current_user.get_authorization().as_str() == "Admin" {
+                if current_user.is_admin() {
                     ui.colored_label(Color32::LIGHT_RED, "Service#");
                     ui.push_id(format!("Service #{:?}", task.service_number), |ui| {
                         task.interact_service_number(ui);
