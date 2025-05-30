@@ -16,7 +16,8 @@ impl MtechServer {
                         log::info!("Couldnt load data, running first_run");
                         self.context.shared_ctx.first_run = true;
                         self.first_run(frame);
-                        tx.try_send(AppState::NoAuth("No user detected".to_string())).unwrap();
+                        log::error!("5");
+                        // tx.try_send(AppState::NoAuth("No user detected".to_string())).unwrap();
                     } else {
                         log::info!("Loaded Data");
                         tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap();
@@ -38,6 +39,7 @@ impl MtechServer {
                         if !self.context.shared_ctx.load_data(ctx) {
                             self.context.shared_ctx.first_run = true;
                             self.first_run(frame);
+                            log::error!("6");
                             let _ = tx.try_send(AppState::NoAuth("No user detected".to_string()));
                         }
                         let _ = tx.try_send(AppState::Authenticated(MainPages::Tasks));

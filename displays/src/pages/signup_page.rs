@@ -30,10 +30,17 @@ impl Signup {
         let last_initial = self.last_name.clone().chars().nth(0).unwrap_or_default();
 
         let initials = format!("{first_initial}{last_initial}").to_uppercase();
+        let email = if self.email.contains('@') {
+            self.email.clone()
+        } else {
+            let mut new = self.email.clone();
+            new.push_str("@pclaptops.com");
+            new
+        };
 
         let signup = Self { // serde_json::json!(
             name: format!("{} {}", self.first_name.clone(), self.last_name.clone()),
-            email: self.email.clone(),
+            email,
             password: self.password.clone(),
             everest_initials: initials,
             store: self.store.clone(),
