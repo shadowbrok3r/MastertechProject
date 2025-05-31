@@ -623,6 +623,23 @@ impl OrderState {
             Self::Returned => "Returned",
         }
     }
+
+    pub fn from_id_str(id: &str) -> &str {
+        match id {
+            "239" => "Accepted By Odoo",
+            "4" => "Shipped",
+            "238" => "Delivered To Store",
+            "40" => "Done Shelf",
+            "73" => "Order Placed",
+            "70" => "Pre Pulled",
+            "224" => "Ready To Build",
+            "71" => "Qc & Burnin",
+            "236" => "Ship To Store",
+            "84" => "Returned",
+            _ => "Accepted By Odoo"
+        }
+    }
+
 /*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
     pub fn id(&self) -> i32 {
         match self {

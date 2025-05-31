@@ -6,7 +6,6 @@ use serde_json::Value;
 use std::fmt::Display;
 use serde::Serialize;
 use editor::Show;
-
 pub mod editor;
 
 #[derive(Serialize)]
