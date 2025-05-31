@@ -54,15 +54,15 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn num_columns(&mut self) -> usize {
-        9
+        10
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Device", "Model", "Checkin Notes"][column].into()
+        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "# Missed Calls", "Device", "Model", "Checkin Notes"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true, true, true, true][column]
+        [true, true, true, true, true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
@@ -127,9 +127,21 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let split = parse_email_user(&emp.email);
                 ui.label(format!(" {split}"));
             },
-            6 => { ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg)); },
-            7 => { ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model)); },
-            8 => { Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui); },
+            6 => {
+                let call = self.missed_calls.iter().find(|o| o.id == row.order.id).cloned();
+                if let Some(missed_call) = call {
+                    let num = missed_call.missing_days.len();
+                    let txt = if num == 1 {
+                        format!(" {num} Missed Call")
+                    } else {
+                        format!(" {num} Missed Calls")
+                    };
+                    ui.colored_label(ui.style().visuals.error_fg_color, txt);
+                }
+            },
+            7 => { ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg)); },
+            8 => { ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model)); },
+            9 => { Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui); },
             _ => {},
         };
     }
@@ -145,7 +157,8 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             5 => col_config.resizable(true).at_least(100.).at_most(150.),
             6 => col_config.resizable(true).at_least(100.).at_most(150.),
             7 => col_config.resizable(true).at_least(100.).at_most(150.),
-            8 => col_config.resizable(true).at_least(150.),
+            8 => col_config.resizable(true).at_least(100.).at_most(150.),
+            9 => col_config.resizable(true).at_least(150.),
             _ => col_config,
         }
     }
@@ -214,9 +227,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             3 => dst.order.current_state = src.order.current_state.clone(),
             4 => dst.sales_rep = src.sales_rep.clone(),
             5 => dst.split_rep = src.split_rep.clone(),
-            8 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
-            6 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
-            7 => dst.sales_rep = src.sales_rep.clone(),
+            7 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
+            8 => dst.sales_rep = src.sales_rep.clone(),
+            9 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
             _ => {},
         }
     }
@@ -246,10 +259,19 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let name1 = format!("{} {}", emp1.firstname, emp1.lastname);
                 name.cmp(&name1)
             },
-            6 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
-            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
-            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
-            _ => row_l.sales_rep.clone().unwrap_or_default().lastname.cmp(&row_r.sales_rep.clone().unwrap_or_default().lastname)
+            6 => {
+                let call_l = self.missed_calls.iter().find(|o| o.id == row_l.order.id).cloned();
+                let call_r = self.missed_calls.iter().find(|o| o.id == row_r.order.id).cloned();
+                if let (Some(missed_l), Some(missed_r)) = (call_l, call_r) {
+                    missed_l.missing_days.len().cmp(&missed_r.missing_days.len())
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            }
+            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
+            9 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
+            _ => std::cmp::Ordering::Equal
         }
     }
 

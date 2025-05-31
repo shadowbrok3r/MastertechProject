@@ -1,5 +1,5 @@
 use egui_data_table::viewer::{DecodeErrorBehavior, RowCodec};
-use database::schema::prestashop_schema::PrestashopPayload;
+use database::schema::{prestashop::OrderState, prestashop_schema::PrestashopPayload};
 use chrono::{DateTime, NaiveDateTime, Utc};
 
 /* -------------------------------------------- Codec ------------------------------------------- */
@@ -26,7 +26,7 @@ impl RowCodec<PrestashopPayload> for Codec {
                 let formatted_date = datetime.format("%m/%d/%Y").to_string();
                 dst.push_str(&formatted_date);
             },
-            3 => dst.push_str(&src_row.order.current_state),
+            3 => dst.push_str(OrderState::from_id_str(&src_row.order.current_state)),
             4 => {
                 let emp = src_row.sales_rep.clone().unwrap_or_default();
                 log::info!("Employee: {emp:?}");
@@ -39,10 +39,16 @@ impl RowCodec<PrestashopPayload> for Codec {
                 let name = format!("{} {}", emp.firstname, emp.lastname);
                 dst.push_str(&name);
             },
-            6 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
+            // 6 => {
+            //     let call = self.missed_calls.iter().find(|o| o.id == row.order.id).cloned();
+            //     if let Some(missed_call) = call {
+            //         let num = missed_call.missing_days.len();
+            //         dst.push_str(&format!("name"));
+            //     }
+            // },
             7 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
             8 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
-            9 => dst.push_str("False"),
+            9 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
             _ => {},
         }
     }
@@ -66,10 +72,10 @@ impl RowCodec<PrestashopPayload> for Codec {
                 let dst = &mut dst_row.split_rep.clone().unwrap_or_default().firstname;
                 *dst = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?
             },
-            6 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             7 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             8 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            9 => {},
+            9 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            // 9 => {},
             _ => {},
         }
         Ok(())
