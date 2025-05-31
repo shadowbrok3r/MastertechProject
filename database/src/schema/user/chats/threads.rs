@@ -192,10 +192,16 @@ impl ChatThread {
                 user_created: user_id,
                 created_at: Utc::now().into(),
             };
+
+            log::info!("New Thread: {new_thread:?}");
+
             let created_thread: Option<Self> = DATABASE
                 .create(CHAT_THREAD_TABLE)
                 .content(new_thread.clone())
                 .await?;
+
+            log::warn!("CreatedThread: {created_thread:?}");
+            
             created_thread.ok_or_else(|| anyhow::anyhow!("Failed to create thread"))
         }
     }

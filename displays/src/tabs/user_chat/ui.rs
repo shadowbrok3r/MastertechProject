@@ -1,8 +1,9 @@
 
-use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Image, ImageSource, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{ChatAction, ChatMessageType, ChatThread, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
+use rfd::AsyncFileDialog;
 use super::UserChat;
 
 impl UserChat {
@@ -21,7 +22,7 @@ impl UserChat {
         } else {
             "Select a chat to get started".to_string()
         };
-        
+
         TopBottomPanel::top(self.chat_title.clone())
             .frame(Frame::default().inner_margin(Margin::same(4)))
             .exact_height(28.)
@@ -114,7 +115,7 @@ impl UserChat {
             .default_height(150.)
             .max_height(300.)
             .show_inside(ui, |ui| self.chat_input(ui) );
-        
+
         CentralPanel::default()
             .frame(Frame::dark_canvas(ui.style()))
             .show_inside(ui, |ui| self.display_thread(ui) );
@@ -128,7 +129,7 @@ impl UserChat {
             .selected_thread
             .as_ref()
             .and_then(|thread| threads.get(&thread.id));
-
+        
         // messages.sort_by_key(|message| message.created_at.clone() );
         ui.allocate_ui(
             Vec2::new(ui.available_width(), ui.available_height()),
@@ -157,16 +158,13 @@ impl UserChat {
             // ui.visuals_mut().code_bg_color = Color32::BLACK;
             // ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             // let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
-            
             // let markdown_editor = &mut self.markdown_editor;
             // markdown_editor.inputs = self.users.clone();
-
             // if let Some(response) = markdown_editor.ui(ui) {
             //     if response.clicked() || enter_pressed {
             //         let txt = markdown_editor.submit();
             //         info!("chats/mod.rs -> Txt: {txt}");
             //         markdown_editor.clear();
-
             //     }
             // }
         if self.selected_thread.is_some() {
@@ -180,10 +178,17 @@ impl UserChat {
 
                 ui.vertical_centered(|ui| {
                     if Button::new(RichText::new(" 🖻 ").heading())
-                        .min_size(Vec2::new(ui.available_width(), 25.))
-                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
-                        .ui(ui).clicked() {
-                        // Self::submit_input(thread, self.response_tx.clone());
+                    .min_size(Vec2::new(ui.available_width(), 25.))
+                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                    .ui(ui)
+                    .clicked() {
+                        let tx = self.chat_action_tx.clone();
+                        PlatformSpawner::spawn(async move {
+                            let dialog = AsyncFileDialog::new().pick_files().await;
+                            if let Some(files) = dialog {
+                                let _ = tx.try_send(ChatAction::UploadedFiles(files));
+                            }
+                        });
                     }
 
                     ui.add_space(10.);
@@ -443,19 +448,14 @@ impl UserChat {
                                             bytes: egui_bytes,
                                         };
                                         
-                                        let modal = eframe::egui::Modal::new(
-                                            Id::new(format!("{file_id}"))
-                                        ).show(ui.ctx(), |ui| {
-                                            if self.image_id.eq(file_id) {
-                                                Image::new(image_source)
-                                                    .show_loading_spinner(true)
-                                                    .fit_to_original_size(0.8)
-                                                    .max_size(Vec2::new(800., 700.))
-                                                    .ui(ui);
-                                                log::info!("Available size: {:?}", ui.available_size());
-                                            }
-                                        });
-                                        // .button(ui, "Close")
+                                        if self.image_id.eq(file_id) {
+                                            Image::new(image_source)
+                                                .show_loading_spinner(true)
+                                                .fit_to_original_size(0.8)
+                                                .max_size(Vec2::new(800., 700.))
+                                                .ui(ui);
+                                            log::info!("Available size: {:?}", ui.available_size());
+                                        }
 
                                         if Button::new(
                                             RichText::new(
@@ -472,9 +472,9 @@ impl UserChat {
                                         // if Image::new(image_source.clone()).show_loading_spinner(true).max_size(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
                                         }
                                         
-                                        if modal.backdrop_response.clicked() {
-                                            let _ = self.chat_action_tx.try_send(ChatAction::OpenModal((false, file_id.clone())));
-                                        }
+                                        // if modal.backdrop_response.clicked() {
+                                        //     let _ = self.chat_action_tx.try_send(ChatAction::OpenModal((false, file_id.clone())));
+                                        // }
                                     }
                                 }
                             }
