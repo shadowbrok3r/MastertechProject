@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use database::{live_data::listen_data, schema::{ChatAction, ChatMessageType, ChatThread, User, UserMessage, CHAT_THREAD_TABLE, USER_MESSAGE_TABLE}};
 use crate::{get_current_user_from_auth, get_database_users, PlatformSpawner, Spawner};
 // use surrealdb::RecordId;
@@ -111,18 +112,43 @@ impl UserChat {
                     });
                 },
                 ChatAction::SubmitMessage(chat_message_type) => {
-                    if let Some(thread) = &self.selected_thread {
-                        match chat_message_type {
-                            ChatMessageType::Text(txt) => self.submit_text(thread.clone(), txt.clone()),
-                            ChatMessageType::Image(_) => {},
-                        }
-
+                    if let Some(thread) = self.selected_thread.clone() {
+                        let user: surrealdb::RecordId = self.current_user.get_id().clone();
+                        let tx = self.chat_msg_tx.clone();
+                        PlatformSpawner::spawn(async move {
+                            match Self::submit_message(thread.clone(), chat_message_type, tx, user).await {
+                                Ok(_) => log::info!("Created Message"),
+                                Err(e) => log::error!("Error creating message: {e:?}")
+                            }
+                        });
                     }
                 },
                 ChatAction::OpenModal((open, file_id)) => {
                     self.open_modal = open;
                     self.image_id = file_id.clone();
                 },
+                ChatAction::UploadedFiles(files) => {
+                    if let Some(thread) = self.selected_thread.clone() {
+                        let user = self.current_user.clone();
+                        let tx = self.chat_msg_tx.clone();
+                        PlatformSpawner::spawn(async move {
+                            for file in files.iter() {
+                                let img = file.read().await; 
+                                let id = file.file_name();
+                                let bytes = Bytes::copy_from_slice(&img);
+                                match Self::submit_message(
+                                    thread.clone(), 
+                                    ChatMessageType::Image((id, bytes)), 
+                                    tx.clone(), 
+                                    user.get_id()
+                                ).await {
+                                    Ok(_) => log::info!("Created Message"),
+                                    Err(e) => log::error!("Error creating message: {e:?}")
+                                }
+                            }
+                        });
+                    }
+                }
                 // ChatAction::SaveNote(record_id) => {
                 //     if self.allow_edit.contains(&record_id) {
                 //         if let Some(msg) = self.edit_text.get_mut(&task_note.id.to_string()){
@@ -227,20 +253,24 @@ impl UserChat {
         });
     }
 
-    pub fn submit_text(&self, thread: ChatThread, message: String) {
-        let user = self.current_user.get_id().clone();
-        let tx = self.chat_msg_tx.clone();
-        PlatformSpawner::spawn(async move {
-            match UserMessage::new(thread.id.clone(), user, ChatMessageType::Text(message))
-                .create_message()
-                .await {
-                    Ok(msg) => {
-                        if let Some(msg) = msg {
-                            let _ = tx.try_send(msg);
-                        }
-                    },
-                    Err(e) => log::error!("Error creating message: {e:?}"),
-                }
-        });
+    pub async fn submit_message(
+        thread: ChatThread, 
+        message: ChatMessageType, 
+        tx: crossbeam::channel::Sender<UserMessage>, 
+        user: surrealdb::RecordId
+    ) -> anyhow::Result<(), anyhow::Error> {
+        let msg = UserMessage::new(
+            thread.id.clone(),
+            user, 
+            message
+        )
+        .create_message()
+        .await?;
+
+        if let Some(msg) = msg {
+            let _ = tx.try_send(msg);
+        }
+
+        Ok(())
     }
 }
