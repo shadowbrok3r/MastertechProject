@@ -1,11 +1,9 @@
 use database::schema::{ChatAction, ChatThread, User, UserMessage};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{HashMap, HashSet};
+use crate::get_current_user_from_auth;
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
-
-use crate::get_current_user_from_auth;
-
 pub mod data;
 pub mod ui;
 

@@ -1,5 +1,6 @@
 use eframe::egui::{Button, CentralPanel, Color32, ComboBox, FontId, Grid, Hyperlink, Id, RichText, ScrollArea, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{prestashop::{generate_orders_report, Order, OrderState, PayPeriod}, User}};
+use itertools::Itertools;
 use crate::{get_current_user_from_auth, modals::tabs::return_colors, PlatformSpawner, Spawner};
 use crate::tabs::task_audit::row_viewer::BASE_URL;
 use crossbeam::channel::{Receiver, Sender};
@@ -226,7 +227,7 @@ impl Koth {
                                                     .unwrap_or_default()
                                             });
 
-                                        log::info!("Comp: {computer:?}");
+                                        // log::info!("Comp: {computer:?}");
                                         
                                         Hyperlink::from_label_and_url(
                                             RichText::new(order_id.clone()).underline().strong().color(Color32::LIGHT_RED), 
@@ -260,7 +261,17 @@ impl Koth {
 
     pub fn receive(&mut self) {
         if let Ok(orders) = self.response_rx.try_recv() {
-            self.orders = orders.clone().iter().filter(|o| **o != Order::default()).cloned().collect();
+        self.orders = orders
+            .clone()
+            .iter()
+            .filter(|o| **o != Order::default())
+            .sorted_by(|a, b| {
+                let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+                let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+                b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()
+            .collect();
             // Process each order
             for order in orders {
                 let total_paid_tax_excl: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
