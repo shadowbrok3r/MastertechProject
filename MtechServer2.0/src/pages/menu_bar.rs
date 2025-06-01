@@ -31,7 +31,6 @@ impl MtechServer {
                                 &"Logs".to_string(),
                                 &"Admin Console".to_string(),
                                 // &"Ai".to_string(),
-                                // &"Json Viewer".to_string(),
                                 &"Database Editor".to_string(),
                                 &"Query Editor".to_string(),
                                 &"KOTH".to_string()
@@ -44,6 +43,7 @@ impl MtechServer {
                                         self.tree.remove_tab(index);
                                         self.context.open_tabs.remove(*tab);
                                     } else {
+                                        self.context.open_tabs.insert(tab.to_string());
                                         self.tree.push_to_focused_leaf(tab.to_string());
                                     }
                                     ui.close_menu();

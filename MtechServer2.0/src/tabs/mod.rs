@@ -44,8 +44,6 @@ impl TabViewer for MtechServerContext {
             "Query Editor" => self.shared_ctx.query_editor.ui(ui),
             "KOTH" => self.shared_ctx.koth.ui(ui),
             // "Ai" => self.shared_ctx.ai_playground(ui),
-            // "Json Viewer" => self.shared_ctx.json_viewer(ui),
-            // "Customers" => self.shared_ctx.customer_view(ui),
             _ => {}
         }
     }
@@ -77,13 +75,12 @@ impl TabViewer for MtechServerContext {
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
-        // for tab in TABS{
-        //     if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-        //         self.tree.remove_tab(index);
-        //         self.context.open_tabs.remove(*tab);
-        //     } else {
-        //         self.tree.push_to_focused_leaf(tab.to_string());
-        //     }
+        // if let Some(index) = self.tree.find_tab(&tab.to_string()) {
+        //     self.tree.remove_tab(index);
+        //     self.open_tabs.remove(*tab);
+        // } else {
+        //     self.open_tabs.insert(tab.to_string());
+        //     self.tree.push_to_focused_leaf(tab.to_string());
         // }
     }
 

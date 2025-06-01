@@ -1,16 +1,14 @@
 use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use crate::{app_state::MasterTechApp, utilities::save_encrypted_user_data};
 use eframe::egui::Context;
-use log::info;
-
 
 impl MasterTechApp {
-    pub fn receive_database(&mut self, ctx: &Context) { // , frame: &mut eframe::Frame
+    pub fn receive_database(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.shared_ctx.db_rx.try_recv() {
             match db {
                 Ok(db) => {
-                    info!("3");
+                    log::info!("3");
                     if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
                         let login_mut = self.context.shared_ctx.login_mut();
                         if let Some(login) = login_mut {
@@ -18,45 +16,52 @@ impl MasterTechApp {
                                 Ok(_) => log::info!("User data saved successfully"),
                                 Err(e) => log::error!("Failed to save user data: {e:?}"),
                             }
+                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
+                        } else {
+                            log::error!("No login mut");
                         }
-                        info!("10");
+                        log::info!("10");
                         self.context.shared_ctx.current_user = db.user;
                     } else {
-                        info!("11");
+                        log::info!("11");
                     }
 
-                    if !self.context.shared_ctx.load_data(ctx) {
+                    let usr = self.context.shared_ctx.current_user.clone();
+                    if let Some(user) = usr {
+                        self.context.shared_ctx.load_data(ctx, &user);
+                    } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run();
+                        self.first_run(frame);
                         log::error!("2");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
-                    } else {
-                        self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                     }
                 }
                 Err(e) => {
-                    info!("6");
+                    log::info!("6");
                     if e.to_string().contains("Already connected") {
-                        info!("7");
-                        if !self.context.shared_ctx.load_data(ctx) {
+                        log::info!("7");
+                        let usr = self.context.shared_ctx.current_user.clone();
+                        if let Some(user) = usr {
+                            self.context.shared_ctx.load_data(ctx, &user);
+                            let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                            let toast = &mut self.context.shared_ctx.toasts;
+                            let auth_toast = Toast {
+                                kind: ToastKind::Success,
+                                text: format!("{e:?}").into(),
+                                options: ToastOptions::default()
+                                    .show_progress(true)
+                                    .duration_in_seconds(6.0),
+                            };
+                            toast.add(auth_toast);
+                        } else {
                             self.context.shared_ctx.first_run = true;
-                            self.first_run();
-                            log::error!("3");
+                            self.first_run(frame);
+                            log::error!("2");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
-                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
-                        let toast = &mut self.context.shared_ctx.toasts;
-                        let auth_toast = Toast {
-                            kind: ToastKind::Success,
-                            text: format!("Already Connected").into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0),
-                        };
-                        toast.add(auth_toast);
                     } else {
-                        info!("8");
-                        info!("{e:?}");
+                        log::info!("8");
+                        log::info!("{e:?}");
                         // eframe::web::storage::local_storage_get(key)
                         let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {

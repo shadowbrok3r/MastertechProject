@@ -81,15 +81,8 @@ impl <'a> LoginTab <'a> {
     {
 
         tokio::spawn(async move {
-            let email = if !login.username.contains("@pclaptops.com") {
-                format!("{}@pclaptops.com", login.username)
-            } else {
-                login.username.clone()
-            };
-
-            log::info!("Usr: {email:?}");
             let database = Database::new(
-                email.clone(), 
+                login.username.clone(), 
                 login.password.clone(), 
                 None
             ).await;
@@ -98,7 +91,7 @@ impl <'a> LoginTab <'a> {
                 Ok(db) => {
                     if let Some(ref usr) = db.user{
                         save_encrypted_user_data(&Login {
-                            username: email.clone(),
+                            username: login.username.clone(),
                             password: login.password.clone(),
                         }, HASH)?;
                         data_tx.send(Box::new(Notification::new(
@@ -129,7 +122,7 @@ impl <'a> LoginTab <'a> {
                         log::info!("user: {user:?}");
                         if let Some(usr) = user {
                             save_encrypted_user_data(&Login {
-                                username: email.clone(),
+                                username: login.username.clone(),
                                 password: login.password.clone(),
                             }, HASH)?;
 

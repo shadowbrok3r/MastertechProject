@@ -436,16 +436,14 @@ impl UserChat {
                                 match &item.content {
                                     ChatMessageType::Text(msg) => easy_mark(ui, &msg),
                                     ChatMessageType::Image((file_id, bytes)) => {
-                                        // log::info!("Got an img: {bytes:?}"));
-                                        // Convert `bytes::Bytes` into `Arc<[u8]>` required by `egui::load::Bytes`
-                                        let egui_bytes: eframe::egui::load::Bytes = eframe::egui::load::Bytes::Shared(Arc::from(bytes.to_vec()));
-                                        
-                                        let unique_uri = format!("bytes://{file_id}.png");
-                                        let uri = Cow::from(unique_uri);
+                                        let txt = if self.image_id.eq(file_id) { "⏶" } else { "⏷" };
+                                        if Button::new(RichText::new(format!("{txt} {file_id}")).strong()).ui(ui).clicked() {
+                                            let _ = self.chat_action_tx.try_send(ChatAction::OpenImage(file_id.clone()));
+                                        }
 
                                         let image_source = ImageSource::Bytes {
-                                            uri,
-                                            bytes: egui_bytes,
+                                            uri: Cow::from(format!("bytes://{file_id}")),
+                                            bytes: eframe::egui::load::Bytes::Shared(Arc::from(bytes.to_vec())),
                                         };
                                         
                                         if self.image_id.eq(file_id) {
@@ -454,27 +452,7 @@ impl UserChat {
                                                 .fit_to_original_size(0.8)
                                                 .max_size(Vec2::new(800., 700.))
                                                 .ui(ui);
-                                            log::info!("Available size: {:?}", ui.available_size());
                                         }
-
-                                        if Button::new(
-                                            RichText::new(
-                                                format!("Image {}", file_id)
-                                            )
-                                            .color(
-                                                Color32::from_rgb(155, 12, 165)
-                                            )
-                                            .strong()
-                                        )
-                                        .ui(ui)
-                                        .clicked() {
-                                            let _ = self.chat_action_tx.try_send(ChatAction::OpenModal((true, file_id.clone())));
-                                        // if Image::new(image_source.clone()).show_loading_spinner(true).max_size(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
-                                        }
-                                        
-                                        // if modal.backdrop_response.clicked() {
-                                        //     let _ = self.chat_action_tx.try_send(ChatAction::OpenModal((false, file_id.clone())));
-                                        // }
                                     }
                                 }
                             }
