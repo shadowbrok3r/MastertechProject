@@ -49,6 +49,9 @@ impl UserChat {
             ui.ctx().request_repaint();
             let messages = self.thread_messages.entry(msg.thread_id.clone()).or_insert(Vec::new());
             if !messages.iter().any(|m| m.id == msg.id) {
+                if let ChatMessageType::Image((id, _)) = &msg.content {
+                    self.image_id = id.clone();
+                }
                 messages.push(msg.clone());
                 messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
             }
@@ -75,8 +78,7 @@ impl UserChat {
                     });
                 },
                 ChatAction::NewThread(user_id) => {
-                    let thread = ChatThread::new(self.current_user.clone())
-                        .insert_user_to_thread(user_id.clone());
+                    let thread = ChatThread::new(self.current_user.clone()).insert_user_to_thread(user_id.clone());
                     if !self.threads.iter().any(|t| t.id == thread.id) {
                         self.threads.push(thread.clone());
                     }
@@ -123,9 +125,12 @@ impl UserChat {
                         });
                     }
                 },
-                ChatAction::OpenModal((open, file_id)) => {
-                    self.open_modal = open;
-                    self.image_id = file_id.clone();
+                ChatAction::OpenImage(file_id) => {
+                    if self.image_id.is_empty() {
+                        self.image_id = file_id.clone();
+                    } else {
+                        self.image_id.clear();
+                    }
                 },
                 ChatAction::UploadedFiles(files) => {
                     if let Some(thread) = self.selected_thread.clone() {

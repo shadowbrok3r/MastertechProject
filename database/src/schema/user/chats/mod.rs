@@ -19,7 +19,7 @@ pub enum ChatAction {
     ArchiveChat(surrealdb::RecordId),
     RemoveChat(surrealdb::RecordId),
     AddUser(surrealdb::RecordId),
-    OpenModal((bool, String)),
+    OpenImage(String),
     Edit(surrealdb::RecordId),
     CancelEdit(surrealdb::RecordId),
     SaveNote(UserMessage),

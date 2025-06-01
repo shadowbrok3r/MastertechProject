@@ -1,7 +1,7 @@
 use super::{filesystem::system_info::{ComputerInfo, generate_client_id}, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::{Toast, ToastKind, ToastOptions}}};
-use database::{schema::{ComputerData, ExtendedSeb, LocalSebData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
-use eframe::egui::{Context, ViewportCommand};
+use database::{schema::{ComputerData, CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
+use eframe::{egui::{Context, ViewportCommand}, Frame};
 use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::Ordering;
@@ -10,8 +10,17 @@ use surrealdb::RecordId;
 use tokio::spawn;
 
 impl MasterTechApp {
-    pub fn first_run(&mut self) {
+    pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.shared_ctx.first_run = false;
+        if let Some(storage) = frame.storage() {
+            self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+            self.context.computer_data = storage.get_string("computer_data").map_or(ComputerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+            self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+            self.context.customer_data = storage.get_string("customer_data").map_or(CustomerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+            self.context.seb_info = storage.get_string("seb_info").map_or(vec![], |f| serde_json::from_str(&f).unwrap_or_default());
+            // self.context.tas
+        }
+
         let github_tx = self.context.github_releases_channel.0.clone();
         let client = self.context.client.clone();
         spawn(async move {
@@ -88,6 +97,9 @@ impl MasterTechApp {
         );
 
         let loaded_data = load_encrypted_user_data(HASH);
+        if cfg!(debug_assertions) {
+            log::error!("loaded data: {loaded_data:?}");
+        }
         match loaded_data {
             Some(login) => {
                 spawn(async move {
@@ -147,10 +159,10 @@ impl MasterTechApp {
     }
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
-        if self.context.shared_ctx.first_run { self.first_run(); }
+        if self.context.shared_ctx.first_run { self.first_run(frame); }
         self.context.shared_ctx.receive_shared(frame, ctx);
         self.receive_prestashop();
-        self.receive_database(ctx);
+        self.receive_database(ctx, frame);
         self.receive_github();
         self.viewport_loader(ctx);
         // ctx.request_repaint_after_secs(0.5);

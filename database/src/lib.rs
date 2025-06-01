@@ -146,7 +146,7 @@ impl Database {
                 info!("Have a JWT, attempting token auth");
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
+                let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
                 let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
                 log::info!("Session: {:?}", sess);
  
@@ -163,19 +163,23 @@ impl Database {
             }
             None => {
                 info!("No JWT, sigining in: {:?}", email.clone());
-
+                let full_email = if email.ends_with("@pclaptops.com") {
+                    email.clone()
+                } else {
+                    format!("{}@pclaptops.com", email.clone())
+                };
                 // Select a specific namespace / database
                 let jwt = DATABASE
                     .signin(SurrealRec {
                         namespace: NS,
                         database: DB,
                         access: USER_SCOPE,
-                        params: Auth { email, password },
+                        params: Auth { email: full_email, password },
                     })
                     .await?;
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                let users: Vec<User> = DATABASE.query("SELECT * FROM user").await?.take(0)?;
+                let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
                 let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
                 log::info!("Session: {:?}", sess);
                 if !users.is_empty() {

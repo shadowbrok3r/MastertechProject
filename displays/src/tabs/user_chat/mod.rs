@@ -1,6 +1,5 @@
 use database::schema::{ChatAction, ChatThread, User, UserMessage};
 use crossbeam::channel::{Receiver, Sender};
-use rfd::AsyncFileDialog;
 use std::collections::{HashMap, HashSet};
 use crate::get_current_user_from_auth;
 use surrealdb::{Action, RecordId};
@@ -38,13 +37,10 @@ pub struct UserChat {
     #[serde(skip)]
     chat_msg_rx: Receiver<UserMessage>,
     image_id: String,
-    open_modal: bool,
     first_run:  bool,
     input: String,
     edit_text: HashMap<String, UserMessage>,
     allow_edit: HashSet<String>,
-    #[serde(skip)]
-    open_file_dialog: Option<AsyncFileDialog>
 }
 
 impl Default for UserChat {
@@ -67,7 +63,6 @@ impl Default for UserChat {
             chat_msg_tx, chat_msg_rx,
             thread_tx, thread_rx,
             image_id: String::new(),
-            open_modal: false,
             current_user: if let Some(user) = get_current_user_from_auth() {
                 user
             } else {
@@ -78,7 +73,6 @@ impl Default for UserChat {
             input: String::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
-            open_file_dialog: None
         }
     }
 }

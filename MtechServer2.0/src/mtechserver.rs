@@ -32,18 +32,16 @@ impl eframe::App for MtechServer {
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
-                    if self.context.shared_ctx.current_user.is_some() {
-                        if !self.context.shared_ctx.load_data(ctx) {
-                            self.context.shared_ctx.first_run = true;
-                            self.first_run(frame);
-                            log::error!("4");
-                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
-                        }
+                    let usr = self.context.shared_ctx.current_user.clone();
+                    if let Some(user) = usr {
+                        self.context.shared_ctx.load_data(ctx, &user);
+                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run(frame)
+                        self.first_run(frame);
+                        log::error!("1");
+                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
-                    self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
                     self.context.shared_ctx.login_page(
                         ctx,
@@ -54,23 +52,4 @@ impl eframe::App for MtechServer {
             }
         }
     }
-
-    fn persist_egui_memory(&self) -> bool {
-        true
-    }
-
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self)
-    }
-
-    // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-    //     if let Some(window) = web_sys::window() {
-    //         if let Ok(storage) = window.local_storage() {
-    //             if let Some(storage) = storage {
-    //                 let clear = storage.clear();
-    //                 info!("Clearing storage: {clear:?}");
-    //             }
-    //         }
-    //     }
-    // }
 }

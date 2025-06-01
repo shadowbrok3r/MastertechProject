@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2024"
-ProductVersion = "4.4.5"
+ProductVersion = "4.4.6"
 FileDescription = "Mastertech"
 
 [features]
@@ -51,7 +51,7 @@ hex = "0.4.3"
 ring = "0.17.14"
 rust-s3 = "0.35"
 semver = "1.0.23"
-nvml-wrapper = { version = "0.10.0", features = ["serde"] }
+nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5.0"
 # planif = "1"
 ratatui-splash-screen = "0.1.4"
