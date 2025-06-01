@@ -5,16 +5,6 @@ use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH};
 impl <'a>TerminalApp<'a> {
     pub fn first_run(&mut self) -> anyhow::Result<(), anyhow::Error> {
         if let Ok(ctx) = self.ctx.lock() {
-
-            // let mut client = get_client_hash();
-
-            // let connection_url = format!(
-            //     "{WS_CLIENT_URL}&room_id={}",
-            //     client.id
-            // );
-
-            // ctx.url = Some(connection_url.clone());
-
             let loaded_data = load_encrypted_user_data(HASH);
             let app_state_tx = ctx.app_state_tx.clone();
             let data_tx = ctx.data_sender.clone();

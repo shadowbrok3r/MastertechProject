@@ -19,7 +19,6 @@ impl MasterTechApp {
                         for tab in &[
                             &"TUR Sheet".to_string(),
                             &"Console".to_string(),
-                            // &"Part Order".to_string(),
                             &"Scene Editor".to_string(),
                             &"Scripts".to_string(),
                             &"File Browser 📂".to_string(),
@@ -27,7 +26,6 @@ impl MasterTechApp {
                             &"Minidump Analysis".to_string(),
                             &"Ai".to_string(),
                             &"Resource Monitor".to_string(),
-                            // &"QC ☑️".to_string(),
                             &"My Tasks".to_string(),
                             &"Store Tasks".to_string(),
                             &"Completed Tasks".to_string(),
@@ -50,6 +48,7 @@ impl MasterTechApp {
                                     self.tree.remove_tab(index);
                                     self.context.open_tabs.remove(*tab);
                                 } else {
+                                    self.context.open_tabs.insert(tab.to_string());
                                     self.tree.push_to_focused_leaf(tab.to_string());
                                 }
                                 ui.close_menu();

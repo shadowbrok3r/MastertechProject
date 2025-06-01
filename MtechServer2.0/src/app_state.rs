@@ -9,7 +9,6 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct MtechServer {
     pub context: MtechServerContext,
-    #[serde(skip)]
     pub tree: DockState<String>,
 }
 
@@ -93,8 +92,8 @@ impl MtechServer {
         };
 
         Self {
-            context,
             tree: tree.0,
+            context,
         }
     }
 }
