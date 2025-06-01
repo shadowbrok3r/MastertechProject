@@ -51,9 +51,20 @@ fn decrypt_data(data: &[u8], key: &[u8]) -> Vec<u8> {
 pub fn save_encrypted_user_data(user_data: &Login, password: &[u8]) 
     -> anyhow::Result<(), anyhow::Error> 
 {
+    let email = if user_data.username.ends_with("@pclaptops.com") {
+        user_data.username.clone()
+    } else {
+        format!("{}@pclaptops.com", user_data.username)
+    };
+
+    let login = &Login {
+        username: email.clone(),
+        password: user_data.password.clone(),
+    };
+
     let salt = generate_salt();
     let key = generate_key(password, &salt);
-    let serialized_data = encode_to_vec(user_data, standard())?;
+    let serialized_data = encode_to_vec(login, standard())?;
     // let serialized_data = serde_json::to_vec(&user_data)?;
     let encrypted_data = encrypt_data(&serialized_data, &key);
     

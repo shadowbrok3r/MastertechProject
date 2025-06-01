@@ -41,21 +41,15 @@ impl eframe::App for app_state::MasterTechApp {
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
-                    if self.context.shared_ctx.current_user.is_some() {
-                        if !self.context.shared_ctx.load_data(ctx) {
-                            self.context.shared_ctx.first_run = true;
-                            self.first_run();
-                            log::error!("1");
-                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
-                        } else {
-                            self.context.shared_ctx.first_run = true;
-                            self.first_run();
-                        }
+                    let usr = self.context.shared_ctx.current_user.clone();
+                    if let Some(user) = usr {
+                        self.context.shared_ctx.load_data(ctx, &user);
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run();
-                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                        self.first_run(frame);
+                        log::error!("1");
+                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
                 } else {
                     self.context.shared_ctx.login_page(
@@ -68,7 +62,21 @@ impl eframe::App for app_state::MasterTechApp {
         }
     }
 
-    // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {}
+    fn persist_egui_memory(&self) -> bool { true }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let ticket_data = serde_json::to_string(&self.context.ticket_data).unwrap_or_default();
+        let computer_data = serde_json::to_string(&self.context.computer_data).unwrap_or_default();
+        let task_data = serde_json::to_string(&self.context.task_data).unwrap_or_default();
+        let customer_data = serde_json::to_string(&self.context.customer_data).unwrap_or_default();
+        let seb_info = serde_json::to_string(&self.context.seb_info).unwrap_or_default();
+        storage.set_string("ticket_data", ticket_data);
+        storage.set_string("computer_data", computer_data);
+        storage.set_string("task_data", task_data);
+        storage.set_string("customer_data", customer_data);
+        storage.set_string("seb_info", seb_info);
+        storage.flush();
+    }
 }
 
 #[tokio::main]

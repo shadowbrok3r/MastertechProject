@@ -12,15 +12,28 @@ impl MtechServer {
             match db {
                 Ok(db) => {
                     log::info!("3");
-                    if !self.context.shared_ctx.load_data(ctx) {
-                        log::info!("Couldnt load data, running first_run");
+                    if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
+                        let login_mut = self.context.shared_ctx.login_mut();
+                        if login_mut.is_some() {
+                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
+                        } else {
+                            log::error!("No login mut");
+                        }
+                        log::info!("10");
+                        self.context.shared_ctx.current_user = db.user;
+                    } else {
+                        log::info!("11");
+                    }
+
+                    let usr = self.context.shared_ctx.current_user.clone();
+                    if let Some(user) = usr {
+                        self.context.shared_ctx.load_data(ctx, &user);
+                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                    } else {
                         self.context.shared_ctx.first_run = true;
                         self.first_run(frame);
-                        log::error!("5");
-                        // tx.try_send(AppState::NoAuth("No user detected".to_string())).unwrap();
-                    } else {
-                        log::info!("Loaded Data");
-                        tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap();
+                        log::error!("1");
+                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
                     
                     if let Some(token) = db.jwt.clone() {
@@ -36,22 +49,25 @@ impl MtechServer {
                     log::info!("6");
                     if e.to_string().contains("Already connected") {
                         log::info!("7");
-                        if !self.context.shared_ctx.load_data(ctx) {
+                        let usr = self.context.shared_ctx.current_user.clone();
+                        if let Some(user) = usr {
+                            self.context.shared_ctx.load_data(ctx, &user);
+                            let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                            let toast = &mut self.context.shared_ctx.toasts;
+                            let auth_toast = Toast {
+                                kind: ToastKind::Success,
+                                text: format!("{e:?}").into(),
+                                options: ToastOptions::default()
+                                    .show_progress(true)
+                                    .duration_in_seconds(6.0),
+                            };
+                            toast.add(auth_toast);
+                        } else {
                             self.context.shared_ctx.first_run = true;
                             self.first_run(frame);
-                            log::error!("6");
-                            let _ = tx.try_send(AppState::NoAuth("No user detected".to_string()));
+                            log::error!("1");
+                            self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }
-                        let _ = tx.try_send(AppState::Authenticated(MainPages::Tasks));
-                        let toast = &mut self.context.shared_ctx.toasts;
-                        let auth_toast = Toast {
-                            kind: ToastKind::Success,
-                            text: format!("Already Connected").into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0),
-                        };
-                        toast.add(auth_toast);
                     } else {
                         log::info!("8");
                         log::info!("{e:?}");

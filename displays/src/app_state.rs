@@ -12,7 +12,6 @@ use anyhow::Error;
 pub enum MainPages {
     #[default]
     Tasks,
-    ChatGpt,
     Downloads,
     UserPreferences,
 }

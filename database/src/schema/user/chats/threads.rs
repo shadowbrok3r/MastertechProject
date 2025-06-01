@@ -152,7 +152,7 @@ impl ChatThread {
         thread
     }
 
-/// Finds an existing thread for the given users or creates a new one.
+    /// Finds an existing thread for the given users or creates a new one.
     /// For one-on-one chats, users should contain exactly two RecordIds.
     pub async fn find_or_create_thread(
         user_created: User,
@@ -172,9 +172,8 @@ impl ChatThread {
         thread_users.sort();
 
         // Query for an existing thread with exactly these users
-        let query = "SELECT * FROM chat_thread WHERE thread_users = $users";
         let existing_thread: Option<Self> = DATABASE
-            .query(query)
+            .query("SELECT * FROM chat_thread WHERE thread_users = $users")
             .bind(("users", thread_users.clone()))
             .await?
             .take(0)?;
@@ -195,14 +194,15 @@ impl ChatThread {
 
             log::info!("New Thread: {new_thread:?}");
 
-            let created_thread: Option<Self> = DATABASE
-                .create(CHAT_THREAD_TABLE)
+            Ok(DATABASE
+                .create(new_thread.clone().id)
                 .content(new_thread.clone())
-                .await?;
+                .await
+                .unwrap().unwrap())
 
-            log::warn!("CreatedThread: {created_thread:?}");
+            // log::warn!("CreatedThread: {created_thread:?}");
             
-            created_thread.ok_or_else(|| anyhow::anyhow!("Failed to create thread"))
+            // created_thread.ok_or_else(|| anyhow::anyhow!("Failed to create thread"))
         }
     }
 }
