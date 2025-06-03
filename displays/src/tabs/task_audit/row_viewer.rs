@@ -1,6 +1,6 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
 use eframe::egui::{Color32, Hyperlink, KeyboardShortcut, Label, Widget};
-use database::schema::{helper_traits::parse_email_user, prestashop_schema::{MissedCallOrder, PrestashopPayload}, TaskNotePayload};
+use database::schema::{helper_traits::parse_email_user, prestashop::OrderState, prestashop_schema::{MissedCallOrder, PrestashopPayload}, TaskNotePayload};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use egui_data_table::{viewer::{default_hotkeys, RowCodec, UiActionContext}, RowViewer, UiAction};
 use crate::PlatformSpawner;
@@ -105,18 +105,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                     ui.colored_label(ui.style().visuals.warn_fg_color, split2.1)
                 }).inner;
             },
-            3 => {
-                let status = match row.order.current_state.as_str() {
-                    "30" => "In Repair",
-                    "40" => "Done Shelf",
-                    "4" => "Shipped",
-                    "29" => "Check-in Shelf",
-                    "239" => "Accepted by Odoo",
-                    _ => ""
-                };
-
-                ui.label(format!(" {status}"));
-            },
+            3 => { ui.label(format!(" {}", OrderState::from_id_str(&row.order.current_state))); },
             4 => {
                 let emp = row.sales_rep.clone().unwrap_or_default();
                 let split = parse_email_user(&emp.email);

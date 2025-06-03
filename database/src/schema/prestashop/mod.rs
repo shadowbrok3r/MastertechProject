@@ -636,6 +636,8 @@ impl OrderState {
             "71" => "Qc & Burnin",
             "236" => "Ship To Store",
             "84" => "Returned",
+            "30" => "In Repair",
+            "29" => "Check-in Shelf",
             _ => "Accepted By Odoo"
         }
     }
