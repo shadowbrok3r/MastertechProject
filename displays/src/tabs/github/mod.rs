@@ -13,7 +13,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
+use crate::{app_state::SharedContext, markdown_editor, PlatformSpawner, Spawner};
 
 pub const TOKEN: &str = "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";
 
@@ -118,7 +118,7 @@ pub async fn create_new_issue(
 ) -> anyhow::Result<String, anyhow::Error> {
     let params = serde_json::json!({ "title": title, "body": body, "assignees": ["shadowbrok3r"], "labels": ["bug"] });
     let res = client
-        .post("https://api.github.com/repos/shadowbrok3r/MastertechProject/issues")
+        .post("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/issues")
         .bearer_auth(TOKEN)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
@@ -167,7 +167,7 @@ impl SharedContext {
                         let releases = self.github_releases.clone();
 
                         TableBuilder::new(ui)
-                            .striped(true)
+                            .striped(false)
                             .cell_layout(Layout::top_down_justified(Align::Min))
                             .cell_layout(Layout::top_down_justified(Align::Min))
                             .cell_layout(Layout::top_down_justified(Align::Min))
@@ -222,7 +222,7 @@ impl SharedContext {
                                         });
                                         row.col(|ui| {
                                             ui.add_space(5.0);
-                                            ui.label(&release.body);
+                                            markdown_editor::viewer::easy_mark(ui, &release.body);
                                         });
                                     });
                                 }
