@@ -184,6 +184,10 @@ impl Koth {
                                     ui.label("");
                                     ui.label("");
                                     ui.end_row();
+                                    let warranty_ratio = self
+                                        .orders
+                                        .iter()
+                                        .map(|o|o.associations)
                                     for order in self.orders.iter() {
                                         let order_id = order.id.clone();
                                         let delivery_date = match self.order_state {
