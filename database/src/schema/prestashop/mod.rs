@@ -533,8 +533,9 @@ pub struct Employee {
 pub struct Order {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub order_type_name: Option<String>,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // #[serde(deserialize_with = "deserialize_to_string")]
+    pub id_order_type: String,
     #[serde(default)]
     pub id_address_delivery: String, // ✔️
     #[serde(default)]
@@ -677,6 +678,30 @@ pub struct OrderRow {
     pub product_name: String,
     pub product_price: String,
     pub product_reference: String
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct OrderPayment {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
+    pub order_reference: String,
+    pub id_currency: String,
+    pub amount: String,
+    pub payment_method: String,
+    pub conversion_rate: String,
+    pub transaction_id: String,
+    pub card_number: String,
+    pub card_brand: String,
+    pub card_expiration: String,
+    pub card_holder: String,
+    pub date_add: String,
+    pub payment_period: String,
+    pub check_finance_num: String,
+    pub chargeafter_response: String,
+    pub capture_number: String,
+    pub id_order: String,
+    pub id_module: String,
+    pub id_odoo_payment: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
