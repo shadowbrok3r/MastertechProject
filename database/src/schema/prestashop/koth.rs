@@ -1,6 +1,6 @@
 
 
-use crate::schema::prestashop::{Order, Prestashop};
+use crate::schema::prestashop::{Order, OrderPayment, Prestashop};
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -169,4 +169,15 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
     };
 
     Ok(filtered_orders)
+}
+
+pub async fn get_order_payments(id_order: &str) -> anyhow::Result<OrderPayment, anyhow::Error> {
+    let prestashop = Prestashop::default();
+    let mut url_params = HashMap::new();
+    url_params.insert("output_format", "JSON");
+    url_params.insert("filter[id_order]", id_order);
+
+    let payment: OrderPayment = prestashop.find_resource_wasm("order_payments", url_params).await?;
+    
+    Ok(payment)
 }
