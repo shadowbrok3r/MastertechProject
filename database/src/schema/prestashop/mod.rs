@@ -643,7 +643,23 @@ impl OrderState {
         }
     }
 
-/*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
+    pub fn state_from_id_str(id: &str) -> Self {
+        match id {
+            "239" => Self::AcceptedByOdoo,
+            "4" => Self::Shipped,
+            "238" => Self::DeliveredToStore,
+            "40" => Self::DoneShelf,
+            "73" => Self::OrderPlaced,
+            "70" => Self::PrePulled,
+            "224" => Self::ReadyToBuild,
+            "71" => Self::QcAndBurnin,
+            "236" => Self::ShipToStore,
+            "84" => Self::Returned,
+            _ => Self::AcceptedByOdoo
+        }
+    }
+
+    /*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
     pub fn id(&self) -> i32 {
         match self {
             Self::AcceptedByOdoo => 239,
@@ -658,6 +674,19 @@ impl OrderState {
             Self::Returned => 84,
         }
     }
+
+    pub const VALUES: [Self; 10] = [
+        Self::AcceptedByOdoo,
+        Self::Shipped,
+        Self::DeliveredToStore,
+        Self::DoneShelf,
+        Self::OrderPlaced,
+        Self::PrePulled,
+        Self::ReadyToBuild,
+        Self::QcAndBurnin,
+        Self::ShipToStore,
+        Self::Returned,
+    ];
 }
 
 fn new_vec() -> Vec<OrderRow> {

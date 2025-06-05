@@ -30,8 +30,27 @@ impl MastertechContext {
                 ui.add_space(10.);
 
                 ui.horizontal(|ui| {
-                    ui.add_space(250.);
                     let style = ui.style().clone();
+                    ui.add_space(20.);
+
+                    if Button::new( 
+                        RichText::new("Reset Data")
+                        .color(style.visuals.error_fg_color) 
+                    )
+                    .min_size(Vec2::new(150.0, 25.0))
+                    .ui(ui)
+                    .clicked() {
+                        self.ticket_data = TicketData::default();
+                        self.task_data = LiveTaskPayload::default();
+                        self.customer_data = CustomerData::default();
+                        self.seb_info.clear();
+                        self.order_rows.clear();
+                        self.service_details.clear();
+                        self.task_notes.clear();
+                    }
+
+                    ui.add_space(305.);
+                    
                     if ui.add_enabled(
                         enabled, 
                         Button::new( 
@@ -39,7 +58,7 @@ impl MastertechContext {
                             .color(style.visuals.warn_fg_color) 
                         )
                         .stroke(style.visuals.window_stroke)
-                        .min_size(Vec2::new(160.0, 25.0))
+                        .min_size(Vec2::new(150.0, 25.0))
                     ).clicked() {
                         let service_num = self.ticket_data.service_number.clone();
                         self.presta_api();
@@ -48,7 +67,12 @@ impl MastertechContext {
                         self.customer_data = CustomerData::default();
                         self.task_notes = Vec::new();
                         self.ticket_data.service_number = service_num;
-                    }    
+                    }
+                
+                    ui.horizontal(|ui| {
+                        ui.add_space(200.);
+                        ui.label(RichText::new("Hardware").strong().underline().font(FontId::proportional(13.)).underline().heading());
+                    });
                 });
 
                 ui.add_space(10.);
@@ -62,31 +86,42 @@ impl MastertechContext {
                     ui.add_space(10.);
 
                     ui.vertical_centered(|ui| {
-                        ui.group(|ui| self.device_info_grid(ui) );
+                        ui.group(|ui| self.computer_info_grid(ui));
 
                         ui.add_space(10.);
 
                         ui.horizontal(|ui| {
-                            ui.add_space(140.);
-                            ui.label(RichText::new("SEB Info").strong().heading());
+                            ui.add_space(178.);
+                            ui.label(RichText::new("Device Info").strong().underline().font(FontId::proportional(13.)).heading());
                         });
 
-                        ui.group(|ui| self.seb_info_grid(ui) );
+                        ui.group(|ui| self.device_info_grid(ui) );
                     });
                 });
 
-                ui.add_space(10.);
+                // ui.add_space(10.);
 
                 ui.horizontal_top(|ui| {
                     ui.add_space(10.);
                     ui.group(|ui| self.recommendations_grid(ui) );
                     
-                        ui.add_space(10.);
+                    ui.add_space(10.);
 
                     ui.vertical_centered(|ui| {
+                        ui.add_space(10.);
+
                         ui.horizontal(|ui| {
-                            ui.add_space(135.);
-                            ui.label(RichText::new("Products").strong().heading());
+                            ui.add_space(180.);
+                            ui.label(RichText::new("SEB Info").strong().underline().font(FontId::proportional(13.)).heading());
+                        });
+
+                        ui.group(|ui| self.seb_info_grid(ui) );
+
+                        ui.add_space(10.);
+
+                        ui.horizontal(|ui| {
+                            ui.add_space(180.);
+                            ui.label(RichText::new("Products").strong().underline().font(FontId::proportional(13.)).heading());
                         });
                         
                         ui.group(|ui| self.product_info_grid(ui) );
@@ -343,11 +378,19 @@ impl MastertechContext {
 
             ui.label("");
 
+            let is_windows = if cfg!(target_os = "windows") {
+                self.send_specs && !self.computer_data.cpu.is_empty()
+            } else {
+                !self.computer_data.cpu.is_empty()
+                && !self.computer_data.ram.is_empty()
+            };
+
             let check = !self.ticket_data.service_number.is_empty()
                 && !self.customer_data.name.is_empty()
                 && !self.customer_data.phone_number.is_empty()
                 && !self.ticket_data.salesman.is_empty()
-                && !self.ticket_data.tech.is_empty();
+                && !self.ticket_data.tech.is_empty()
+                && is_windows; // HIGHLIGHT ALL THE REQUIRED FIELDS IN RED
 
             if ui.add_enabled(
                 false, 
@@ -392,8 +435,8 @@ impl MastertechContext {
         let text_edit_size = vec2( 140., 15.0);
         Grid::new("Device Details Grid")
             .spacing(vec2(4.0, 7.0))
-            .min_col_width(150.)
-            .max_col_width(150.)
+            .min_col_width(200.)
+            .max_col_width(200.)
             .num_columns(2)
             .show(ui, |ui| 
         {
@@ -451,11 +494,79 @@ impl MastertechContext {
         });
     }
 
+    fn computer_info_grid(&mut self, ui: &mut Ui) {
+        let text_edit_size = vec2( 140., 15.0);
+        Grid::new("Computer Specs")
+            .spacing(vec2(4.0, 7.0))
+            .min_col_width(200.)
+            .max_col_width(200.)
+            .num_columns(2)
+            .show(ui, |ui| 
+        {
+            let computer_data = &mut self.computer_data;
+                                /*     ROW 1     */
+            TextEdit::singleline(&mut computer_data.cpu)
+                .hint_text(" CPU")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            TextEdit::singleline(&mut computer_data.gpu)
+                .hint_text(" GPU")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            ui.end_row();
+                                /*     ROW 2     */
+            TextEdit::singleline(&mut computer_data.ram)
+                .hint_text(" RAM")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            TextEdit::singleline(&mut computer_data.operating_system)
+                .hint_text(" OS")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+            
+            ui.end_row();
+
+                                /*     ROW 3     */
+            TextEdit::singleline(&mut computer_data.hostname)
+                .hint_text(" Hostname")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            /* 
+                if + .clicked() {
+                    drive 1: 1tb ssd, etc
+                }
+
+                TextEdit::singleline(&mut computer_data.)
+                    .hint_text(" Device Power Supply")
+                    .vertical_align(Align::Center)
+                    .margin(vec2(4.0, 4.0))
+                    .min_size(text_edit_size)
+                    .ui(ui);
+             */
+
+            ui.end_row();
+        });
+    }
+
     fn product_info_grid(&mut self, ui: &mut Ui) {
         Grid::new("Product Detail Grid")
             .spacing(vec2(4.0, 7.0))
-            .min_col_width(150.)
-            .max_col_width(150.)
+            .min_col_width(200.)
+            .max_col_width(200.)
             .num_columns(2)
             .show(ui, |ui| 
         {
@@ -473,36 +584,70 @@ impl MastertechContext {
             }
         });
     }
+
     fn seb_info_grid(&mut self, ui: &mut Ui) {
         let text_edit_size = vec2( 140., 15.0);
-
-        Grid::new("SEB Info Grid")
-            .spacing(vec2(4.0, 7.0))
-            .min_col_width(150.)
-            .max_col_width(150.)
-            .num_columns(2)
-            .show(ui, |ui| 
-        {
-            let seb_info = &self.seb_info;
-            let mut seb_details = seb_info.get(0).cloned().unwrap_or_default();
+        let seb_info = &self.seb_info;
+        let mut seb_details = seb_info.get(0).cloned().unwrap_or_default();
+        ui.horizontal_top(|ui| {
+            ui.add_space(55.);
+            
             TextEdit::singleline(&mut seb_details.device_name)
                 .hint_text(" Carbonite Device Name")
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
-                .min_size(text_edit_size)
+                .min_size(vec2( 280., 12.0))
                 .ui(ui);
+        });
 
-            TextEdit::singleline(&mut seb_details.device_id)
-                .hint_text(" Device ID")
-                .vertical_align(Align::Center)
-                .margin(vec2(4.0, 4.0))
-                .min_size(text_edit_size)
-                .ui(ui);
+        ui.add_space(5.);
 
-            ui.end_row();
-            
+        ui.horizontal_top(|ui| {
+            ui.add_space(60.);
+            let id = if !seb_details.activation_code.is_empty() {
+                seb_details.activation_code.to_uppercase()
+            } else {
+                "SEB Code".to_string()
+            };
+
+            if Button::new(RichText::new(id).color(ui.style().visuals.error_fg_color))
+            .min_size(vec2( 280., 12.0))
+            .ui(ui)
+            .on_hover_text("Click To Copy SEB Code to Clipboard")
+            .clicked() { 
+                ui.ctx().copy_text(seb_details.activation_code.to_uppercase());
+            };
+        });
+
+        ui.add_space(5.);
+
+        ui.horizontal_top(|ui| {
+            ui.add_space(60.);
+            let id = if !seb_details.device_id.is_empty() {
+                seb_details.device_id.to_uppercase()
+            } else {
+                "Device ID".to_string()
+            };
+
+            if Button::new(id)
+            .min_size(vec2( 280., 12.0))
+            .ui(ui)
+            .on_hover_text("Click To Copy Device ID to Clipboard")
+            .clicked() { 
+                ui.ctx().copy_text(seb_details.device_id.to_uppercase());
+            };
+        });
+        ui.add_space(10.);
+
+        Grid::new("SEB Info Grid")
+            .spacing(vec2(4.0, 7.0))
+            .min_col_width(200.)
+            .max_col_width(200.)
+            .num_columns(2)
+            .show(ui, |ui| 
+        {
             TextEdit::singleline(&mut seb_details.activated)
-                .hint_text(" Activation Code")
+                .hint_text(" Date Activated")
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
@@ -517,7 +662,7 @@ impl MastertechContext {
 
             ui.end_row();
 
-            TextEdit::singleline(&mut seb_details.usage_gb)
+            TextEdit::singleline(&mut format!("{} Gb", seb_details.usage_gb))
                 .hint_text(" Usage (Gb)")
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
@@ -539,18 +684,18 @@ impl MastertechContext {
         {
             TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                 .hint_text(RichText::new("Checkin Notes").weak())
-                .font(FontId::proportional(15.0))
+                .font(FontId::proportional(14.0))
                 .margin(Margin::symmetric(10, 6))
                 .desired_width(f32::INFINITY)
-                .desired_rows(10)
+                .desired_rows(13)
                 .ui(ui);
     
             TextEdit::multiline(&mut self.task_data.task_description)
                 .hint_text(RichText::new("Recommendations").weak())
-                .font(FontId::proportional(15.0))
+                .font(FontId::proportional(14.0))
                 .margin(Margin::symmetric(10, 6))
                 .desired_width(f32::INFINITY)
-                .desired_rows(10)
+                .desired_rows(13)
                 .ui(ui);
         });
     }

@@ -1,3 +1,4 @@
+use bincode::config::Configuration;
 use displays::pages::login_page::Login;
 use log::info;
 use ring::aead;
@@ -51,6 +52,10 @@ fn decrypt_data(data: &[u8], key: &[u8]) -> Vec<u8> {
 pub fn save_encrypted_user_data(user_data: &Login, password: &[u8]) 
     -> anyhow::Result<(), anyhow::Error> 
 {
+    if user_data.password.is_empty() || user_data.username.is_empty() {
+        return Err(anyhow::anyhow!("Username || Password is empty"));
+    }
+
     let email = if user_data.username.ends_with("@pclaptops.com") {
         user_data.username.clone()
     } else {
@@ -82,15 +87,24 @@ fn generate_salt() -> [u8; SALT_LEN] {
 }
 
 pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
-    match read("data.enc"){
+    let path = "data.enc";
+    match read(path){
         Ok(data) => {
             let salt = &data[..SALT_LEN];
             let encrypted_data = &data[SALT_LEN..];
             let key = generate_key(password, salt);
             let decrypted_data = decrypt_data(encrypted_data, &key);
             // let login: Login = serde_json::from_slice(&decrypted_data).unwrap();
-            match decode_from_slice(&decrypted_data, standard()) {
-                Ok((login, _)) => Some(login),
+            match decode_from_slice::<Login, Configuration>(&decrypted_data, standard()) {
+                Ok((login, _)) => {
+                    if login.username.is_empty() || login.password.is_empty(){
+                        let rm = std::fs::remove_file(path);
+                        log::info!("Rm file: {rm:?}");
+                        None
+                    } else {
+                        Some(login)
+                    }
+                },
                 Err(e) => {
                     log::error!("Failed to decode data: {e:?}");
                     None

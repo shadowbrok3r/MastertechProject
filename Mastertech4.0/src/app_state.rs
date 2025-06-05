@@ -113,6 +113,12 @@ impl MasterTechApp {
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
 
+        let send_specs = if cfg!(target_os = "windows") {
+            true
+        } else {
+            false
+        };
+        
         let mastertech_context = MastertechContext {
             shared_ctx: SharedContext::new(cc, tree.0.clone()),
             // terminal: Terminal::new(backend).unwrap(),
@@ -165,7 +171,7 @@ impl MasterTechApp {
 
             date: chrono::offset::Utc::now(),
 
-            send_specs: false,
+            send_specs,
 
             query_tasks_first_run: true,
             get_specs: false,
