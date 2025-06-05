@@ -233,7 +233,7 @@ impl DisplayModal for TaskModal {
                         let store_users = self.store_users.clone();
                         // Ensure full width and height
                         ui.set_min_width(ui.available_width());
-                        ui.set_min_height(ui.available_height());
+                        ui.set_min_height(ui.available_height()/1.1);
                         match self.current_page_state {
                             ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users, self.user.clone()),
                             ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
