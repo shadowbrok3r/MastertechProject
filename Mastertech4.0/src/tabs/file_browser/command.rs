@@ -1,4 +1,5 @@
 use std::{env, fs::create_dir, path::PathBuf, process::Stdio};
+use chrono::Utc;
 use tokio::{fs, io::{AsyncBufReadExt, BufReader}};
 use crossbeam::channel::Sender;
 use fs_extra::dir::get_size;
@@ -225,6 +226,7 @@ pub async fn run_robocopy(
         .arg("/ZB")
         .arg("/bytes")
         .arg("/np")
+        .arg(format!("/LOG:Robocopy-{}", Utc::now().date_naive().format("%Y-%m-%d")))
         .arg(format!("/MT:{}", sysinfo::System::physical_core_count().unwrap_or(4)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

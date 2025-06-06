@@ -1,24 +1,24 @@
 use std::fmt::Display;
 use ratatui::widgets::ListState;
-#[cfg(target_os="windows")]
-use super::script_checks::{ScriptOutcome, ScriptTask};
+// #[cfg(target_os="windows")]
+// use super::script_checks::{ScriptOutcome, ScriptTask};
 
-#[cfg(target_os = "windows")]
-pub struct TaskReport {
-    pub name: String,
-    pub outcome: Option<ScriptOutcome>,
-    pub progress: Option<(u64, u64)>, // (current, total)
-    pub details: String,
-}
+// #[cfg(target_os = "windows")]
+// pub struct TaskReport {
+//     pub name: String,
+//     pub outcome: Option<ScriptOutcome>,
+//     pub progress: Option<(u64, u64)>, // (current, total)
+//     pub details: String,
+// }
 
-#[cfg(target_os = "windows")]
-// UPDATED REPORTABLE TASK TRAIT TO EXTEND ScriptTask
-pub trait ReportableTask: ScriptTask {
-    /// Provides a detailed report based on criteria defined for this task.
-    fn report(&self) -> TaskReport;
-    /// Updates the report based on the given outcome.
-    fn update_report(&mut self, outcome: ScriptOutcome);
-}
+// #[cfg(target_os = "windows")]
+// // UPDATED REPORTABLE TASK TRAIT TO EXTEND ScriptTask
+// pub trait ReportableTask: ScriptTask {
+//     /// Provides a detailed report based on criteria defined for this task.
+//     fn report(&self) -> TaskReport;
+//     /// Updates the report based on the given outcome.
+//     fn update_report(&mut self, outcome: ScriptOutcome);
+// }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
