@@ -133,13 +133,9 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
-        simplelog::WriteLogger::init(
-            log::LevelFilter::Info,
-            simplelog::Config::default(),
-            std::fs::File::create("tui-output.log").unwrap()
-        ).unwrap();
+        let init = tui_logger::init_logger(log::LevelFilter::Info);
         let res = terminal_mode::run_terminal_mode().await;
-        log::info!("TERM MODE: {res:?}");
+        log::info!("TERM MODE: {res:?}\n{init:?}");
     } else if matches.get_flag("log") {
         simplelog::WriteLogger::init(
             log::LevelFilter::Trace,

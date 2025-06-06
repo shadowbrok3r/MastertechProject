@@ -105,7 +105,7 @@ pub struct ScriptsTab<'a> {
 }
 
 impl<'a> ScriptsTab<'a> {
-    const ROBOCOPY_DISPLAY_LINES: usize = 15; // Adjust as needed
+    pub const ROBOCOPY_DISPLAY_LINES: usize = 15; // Adjust as needed
 
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         #[cfg(target_os="windows")]

@@ -1,7 +1,6 @@
-use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent, WidgetId}, tabs::scripts::render::Reporter, widgets::ButtonType}};
+use crate::{tabs::file_browser::command::run_robocopy, terminal_mode::{events::action_handler::{ActionHandler, ApiEvent, WidgetButton, WidgetEvent, WidgetId}, widgets::ButtonType}};
 use ratatui::layout::Rect;
 use std::path::PathBuf;
-
 use super::ScriptsTab;
 
 impl<'a> ActionHandler for ScriptsTab<'a> {
@@ -21,7 +20,6 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
             WidgetId("ServiceNumberScriptsPage".to_string()),
             WidgetId("CustomSourceTransferPath".to_string()),
             WidgetId("CustomDestinationTransferPath".to_string()),
-            // Add any other widget IDs handled by this tab
         ];
 
         for btn in self.data_path_buttons.iter() {
@@ -166,14 +164,9 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                                     let data_transfer_progress_tx = self.data_transfer_progress_tx.clone();
                                     let source_clone = self.source_directories.clone();
                                     let destination_clone = destination.clone();
-                                    let reporter = self.current_reporter.try_borrow_mut();
-                                    if let Ok(mut reporter) = reporter {
-                                        *reporter = Reporter::Robocopy;
-                                    }
 
                                     // let custom_source = self.custom_source_field.get_text()[0].clone();
                                     // let custom_destination = self.custom_destination_field.get_text()[0].clone();
-
                                     // if !custom_source.is_empty() && !custom_destination.is_empty() {
                                     //     tokio::spawn(async move {
                                     //         log::info!("Source: {:?}\nDestination: {:?}", custom_source, custom_destination);
@@ -188,7 +181,6 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                                     //     });
                                     //     break;
                                     // }
-
                                     /*
                                     * If source and destination is filled out, use the buttons like normal,
                                     * If Source is filled out and not the destination, the source should be the folder you left click on,
