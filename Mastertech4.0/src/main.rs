@@ -147,8 +147,8 @@ async fn main() -> eframe::Result<()> {
             std::fs::File::create("output.log").unwrap()
         ).unwrap();
     } else {
-        let init = displays::tabs::logger::logging::builder().init();
-        log::info!("Init logger: {init:?}");
+        // let init = displays::tabs::logger::logging::builder().init();
+        // log::info!("Init logger: {init:?}");
         // simplelog::WriteLogger::init(
         //     log::LevelFilter::Info,
         //     simplelog::Config::default(),
@@ -192,6 +192,7 @@ async fn main() -> eframe::Result<()> {
             }
         } else {
             let _x = displays::tabs::logger::logging::builder().init();
+            println!("Logger setup: {_x:?}");
         }
     }
     
