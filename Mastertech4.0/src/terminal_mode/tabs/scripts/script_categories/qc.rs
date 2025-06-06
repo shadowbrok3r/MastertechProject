@@ -1,9 +1,7 @@
-use crate::{terminal_mode::tabs::{checklist::Category, scripts::Reporter, script_categories::get_data_transfer_candidates, ScriptsTab}, utilities::{scripts::{install_program, StartupProgram, StartupState}, windows::{registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}}};
+use crate::{terminal_mode::tabs::{checklist::Category, script_categories::get_data_transfer_candidates, ScriptsTab}, utilities::{scripts::{install_program, StartupProgram, StartupState}, windows::{registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}, windows_update::install_windows_updates}}};
 
 impl <'a> ScriptsTab <'a> {
-    pub fn handle_qc(&mut self, item_text: &str, category: &Category){
-        self.current_reporter.replace(Reporter::Qc);
-        self.log_message(&format!("Running QC check: {}", item_text));
+    pub fn handle_qc(&mut self, item_text: &str, category: &Category){        
         match item_text {
             "Data Transfer" => self.data_transfer(item_text, category),
             "Install LibreOffice" => self.install_libreoffice(item_text, category),
