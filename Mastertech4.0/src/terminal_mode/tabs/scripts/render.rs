@@ -58,8 +58,14 @@ impl<'a> ScriptsTab<'a> {
         let inner_area = main_content[0];
 
         block.render_ref(outer_area, f.buffer_mut());
+        // Check if robocopy logs exist
+        let has_robocopy_logs = !self.robocopy_reports.borrow().is_empty();
 
-        let log_text: Vec<Line> = self.reports.borrow().iter().enumerate().map(|(index, r)| {
+        // Combine regular and robocopy logs
+        let mut log_text: Vec<Line> = Vec::new();
+
+        // Add regular logs
+        log_text.extend(self.reports.borrow().iter().enumerate().map(|(index, r)| {
             let color = BASE_COLORS[index % BASE_COLORS.len()];
             let (left_text, right_text) = match r.msg.split_once(" => ") {
                 Some((left, right)) => (left.trim(), right.trim()),
@@ -72,10 +78,25 @@ impl<'a> ScriptsTab<'a> {
             let formatted_msg = format!("{:?} => {:<} {:>width$}", r.reporter, left_text, right_text, width = width);
 
             Line::from(Span::styled(formatted_msg, Style::default().fg(color)))
-        }).collect();
+        }));
+
+        // Add robocopy logs (up to ROBOCOPY_DISPLAY_LINES) if present
+        if has_robocopy_logs {
+            let robocopy_logs: Vec<Line> = self.robocopy_reports.borrow().iter().rev() // Latest first
+                .take(Self::ROBOCOPY_DISPLAY_LINES)
+                .rev() // Restore order
+                .enumerate()
+                .map(|(index, r)| {
+                    let color = BASE_COLORS[index % BASE_COLORS.len()];
+                    let formatted_msg = format!("Robocopy: {}", r.msg);
+                    Line::from(Span::styled(formatted_msg, Style::default().fg(color)))
+                })
+                .collect();
+            log_text.extend(robocopy_logs);
+        }
 
         let log_lines = log_text.len() as u16;
-        let visible_height = inner_area.height; // No extra subtraction since block is outside
+        let visible_height = inner_area.height; // Full area height
         let max_line_width = log_text.iter()
             .map(|line| line.width() as u16)
             .max()
@@ -89,10 +110,26 @@ impl<'a> ScriptsTab<'a> {
         let scroll_x = scroll_state.offset().x.min(max_line_width.saturating_sub(inner_area.width));
         scroll_state.set_offset(Position { x: scroll_x, y: scroll_y });
 
-        let start_line = scroll_y as usize;
-        let end_line = (scroll_y + visible_height).min(log_lines) as usize;
-        let visible_lines = if start_line < log_text.len() {
-            &log_text[start_line..end_line]
+        // Adjust scroll_y to ensure robocopy logs are visible when present
+        let effective_visible_height = if has_robocopy_logs {
+            visible_height.saturating_sub(Self::ROBOCOPY_DISPLAY_LINES as u16)
+        } else {
+            visible_height
+        };
+
+        let start_line = if has_robocopy_logs && log_lines > visible_height {
+            // Ensure the last ROBOCOPY_DISPLAY_LINES are visible
+            let robocopy_count = log_text.len().saturating_sub(self.reports.borrow().len()).min(Self::ROBOCOPY_DISPLAY_LINES) as u16;
+            let regular_lines = log_lines.saturating_sub(robocopy_count);
+            let max_scroll = regular_lines.saturating_sub(effective_visible_height);
+            scroll_y.min(max_scroll)
+        } else {
+            scroll_y
+        };
+
+        let end_line = (start_line + visible_height).min(log_lines) as usize;
+        let visible_lines = if start_line < log_text.len() as u16 {
+            &log_text[start_line as usize..end_line]
         } else {
             &[]
         };
@@ -106,13 +143,12 @@ impl<'a> ScriptsTab<'a> {
         // Vertical Scrollbar
         if log_lines > visible_height {
             let mut v_scrollbar_state = ScrollbarState::new(log_lines.saturating_sub(visible_height) as usize);
-            v_scrollbar_state = v_scrollbar_state.position(scroll_y as usize);
+            v_scrollbar_state = v_scrollbar_state.position(start_line as usize);
 
             let v_scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
                 .begin_symbol(Some("🢁"))
                 .track_style(Style::new().fg(CATPPUCCIN.base))
                 .track_symbol(Some("║║"))
-                // .thumb_symbol("|▮|") // ⦕ ⦖
                 .thumb_symbol("⦕⦖")
                 .thumb_style(Style::new().fg(CATPPUCCIN.sky))
                 .end_symbol(Some("🢃"));
