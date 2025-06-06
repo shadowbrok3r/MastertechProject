@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "MtechServer2.0", "Mastertech4.0"] # ,  #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
+members = [ "database" , "displays", "Mastertech4.0"] # ,  #  , "websocket_server2" , , "axum_middleware", "websocket_server",   
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -54,12 +54,12 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
 
 
 # tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
