@@ -1,12 +1,12 @@
 use crate::{utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
-use database::schema::Node;
-use displays::virtual_filesystem::FileSystem;
-use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
+use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use checklist::{Category, Status, TodoItem, TodoList};
+use displays::virtual_filesystem::FileSystem;
 use crossbeam::channel::{Receiver, Sender};
 use tui_scrollview::ScrollViewState;
 use render::{Report, Reporter};
+use database::schema::Node;
 use reqwest::Client;
 
 #[cfg(target_os="windows")]
@@ -15,9 +15,8 @@ use crate::utilities::{scripts::{AntiVirusProduct, InstalledProgram}, windows::w
 pub mod action_handler;
 pub mod render;
 pub mod checklist;
-
 #[cfg(target_os="windows")]
-pub mod script_checks;
+pub mod script_categories;
 
 /* A Reporting System for each of these things like the AHS tuneup */
 
@@ -28,6 +27,8 @@ pub mod script_checks;
 // #[derive(Debug)]
 pub struct ScriptsTab<'a> {
     service_number_field: InputField<'a>,
+    custom_source_field: InputField<'a>,
+    custom_destination_field: InputField<'a>,
     tuneup_btn: Button<'a>,
     user_scripts_btn: Button<'a>,
     qc_btn: Button<'a>,
@@ -100,9 +101,12 @@ pub struct ScriptsTab<'a> {
     filesystem: FileSystem,
     user_scripts_to_run: Vec<String>,
     scripts_waiting_for_data: Vec<TodoItem>,
+    robocopy_reports: RefCell<Vec<Report>>, // Robocopy-specific logs
 }
 
 impl<'a> ScriptsTab<'a> {
+    const ROBOCOPY_DISPLAY_LINES: usize = 15; // Adjust as needed
+
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         #[cfg(target_os="windows")]
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
@@ -231,6 +235,8 @@ impl<'a> ScriptsTab<'a> {
 
         Self {
             service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
+            custom_source_field: InputField::new("Source Path", WidgetId("CustomSourceTransferPath".to_string())),
+            custom_destination_field: InputField::new("Destination Path", WidgetId("CustomDestinationTransferPath".to_string())),
             tuneup_btn: Button::new("Tuneup =>", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
             user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
             qc_btn: Button::new("Quality Check =>", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
@@ -247,6 +253,7 @@ impl<'a> ScriptsTab<'a> {
             // taskbar_items: Vec::new(),
 
             reports: RefCell::new(vec![]),
+            robocopy_reports: RefCell::new(vec![]),
             current_reporter: RefCell::new(Reporter::Unknown),
             service_number: String::new(),
             #[cfg(target_os="windows")]
@@ -295,21 +302,31 @@ impl<'a> ScriptsTab<'a> {
     /// Logs a message under the current `Reporter`
     pub fn log_message(&self, msg: impl Display) {
         let reporter = self.current_reporter.borrow().clone();
-        let log_lines = self.reports.borrow().len() as u16;
+        let is_robocopy = reporter == Reporter::Robocopy;
         let log_entry = Report {
             reporter,
             msg: msg.to_string(),
         };
-        self.reports.borrow_mut().push(log_entry); // ✅ Store log
-        let mut scroll_state = self.report_scroll_state.borrow_mut();
-        let scroll_x = scroll_state.offset().x;
-        let visible_height = self.report_area.borrow().map_or(0, |area| area.height.saturating_sub(2));
 
-        if !*self.has_scrolled_manually.borrow() && log_lines > visible_height {
-            let scroll_y = log_lines.saturating_sub(visible_height);
-            scroll_state.set_offset(Position { x: scroll_x, y: scroll_y });
+        if is_robocopy {
+            // Store in robocopy logs
+            self.robocopy_reports.borrow_mut().push(log_entry);
+        } else {
+            // Store in general logs
+            let log_lines = self.reports.borrow().len() as u16;
+            self.reports.borrow_mut().push(log_entry);
+            let mut scroll_state = self.report_scroll_state.borrow_mut();
+            let scroll_x = scroll_state.offset().x;
+            let visible_height = self.report_area
+                .borrow()
+                .map_or(0, |area| area.height.saturating_sub(2 + Self::ROBOCOPY_DISPLAY_LINES as u16));
+
+            if !*self.has_scrolled_manually.borrow() && log_lines > visible_height {
+                let scroll_y = log_lines.saturating_sub(visible_height);
+                scroll_state.set_offset(Position { x: scroll_x, y: scroll_y });
+            }
+            *self.has_scrolled_manually.borrow_mut() = false;
         }
-        *self.has_scrolled_manually.borrow_mut() = false;
     }
 
     pub fn receive(&mut self) {
@@ -329,7 +346,7 @@ impl<'a> ScriptsTab<'a> {
             self.data_path_buttons.clear();
             for (path, size) in path_info {
                 self.log_message(&format!("Path {:<5} Size: {:>5}", path.clone(), size.clone()));
-                let btn =                     Button::new(
+                let btn = Button::new(
                     format!(" {} | {} ", path.clone(), size.clone()), 
                     WidgetId(path)
                 )
@@ -342,7 +359,6 @@ impl<'a> ScriptsTab<'a> {
 
         if let Ok(data_transfer_progress) = self.data_transfer_progress_rx.try_recv() {
             let out = String::from_utf8(data_transfer_progress);
-            log::info!("Robocopy Output: {out:?}");
             match out {
                 Ok(output) => {
                     // Replace tabs with 4 spaces

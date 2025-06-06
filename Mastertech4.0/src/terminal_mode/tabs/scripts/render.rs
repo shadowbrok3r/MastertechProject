@@ -9,7 +9,7 @@ pub struct Report {
     pub msg: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Reporter {
     Tuneup,
     Qc,
@@ -18,6 +18,7 @@ pub enum Reporter {
     Informational,
     JunkwareRemoval,
     UserScript,
+    Robocopy,
     Unknown
 }
 
@@ -248,14 +249,14 @@ impl<'a> ScriptsTab<'a> {
         let button_count = self.data_path_buttons.len();
         let rows = (button_count + 1) / 2; // 2 columns
 
-        let popup_width: u16 = 70; // Fixed width, adjust as needed
+        let popup_width: u16 = 80; // Fixed width, adjust as needed
         
         let inner_width = popup_width.saturating_sub(2); // Account for margins
         let text_lines = (popup_text.len() as u16 + inner_width - 1) / inner_width; // Ceiling division
         let text_height = text_lines.max(2); // Ensure at least 2 lines, adjust as needed
     
         // Calculate popup height
-        let popup_height = text_height + 2 + rows as u16 * 3 + 2; // Text + padding + buttons + borders
+        let popup_height = text_height + 2 + rows as u16 * 5 + 2; // Text + padding + buttons + borders
 
         // Center the popup in the provided area
         let popup_area = Rect::new(
@@ -288,6 +289,8 @@ impl<'a> ScriptsTab<'a> {
                 Constraint::Length(text_height + 1), // Text area with padding
                 Constraint::Length(1), // Padding
                 Constraint::Min(rows as u16 * 3), // Buttons
+                Constraint::Length(6), // Custom_path_field
+                Constraint::Length(6), // Custom_path_field
             ])
             .split(inner_area);
 
@@ -317,6 +320,10 @@ impl<'a> ScriptsTab<'a> {
             // f.render_widget(Clear, popup_area);
             f.render_widget(button, col_chunks[col].shrink(1, 0));
         }
+
+        self.custom_source_field.render_ref(content_chunks[3].shrink(1, 0), f.buffer_mut());
+        self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
+
     }
 
     fn draw_context_menu(&self, f: &mut Frame) {
@@ -1008,6 +1015,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     self.run_btn.handle_mouse_event(&mouse_event);
                     self.user_scripts_btn.handle_mouse_event(&mouse_event);
                 } else {
+                    self.custom_source_field.handle_mouse_event(&mouse_event);
+                    self.custom_destination_field.handle_mouse_event(&mouse_event);
                     for btn in self.data_path_buttons.iter() {
                         btn.handle_mouse_event(&mouse_event);
                     }
@@ -1051,6 +1060,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
             KeyCode::Down => {
                 log::info!("DOWN");
+                
                 let mut list_state = self.list_state.borrow_mut();
                 let selected = list_state.selected();
                 if key_event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -1082,14 +1092,17 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             }
             KeyCode::Enter => {
-                let list_state = self.list_state.borrow();
-                if let Some(selected) = list_state.selected() {
-                    let (full_list, item_to_flat_index) = self.build_full_list();
+                // let popup_open = *self.is_popup_open.borrow();
+                // if !popup_open {
+                    let list_state = self.list_state.borrow();
+                    if let Some(selected) = list_state.selected() {
+                        let (full_list, item_to_flat_index) = self.build_full_list();
 
-                    let flat_selected = item_to_flat_index.iter().position(|&i| i == selected).unwrap();
-                    let (current_category, current_item) = full_list[flat_selected].clone();
-                    log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
-                }
+                        let flat_selected = item_to_flat_index.iter().position(|&i| i == selected).unwrap();
+                        let (current_category, current_item) = full_list[flat_selected].clone();
+                        log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
+                    }
+                // }
                 true
             }
             KeyCode::PageUp => {

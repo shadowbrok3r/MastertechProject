@@ -14,7 +14,7 @@ use anyhow::Context;
 use super::SYSINFO;
 
 #[cfg(target_os = "windows")]
-use crate::{terminal_mode::tabs::script_checks::check_windows_activation, utilities::scripts::InstalledProgram};
+use crate::terminal_mode::tabs::script_categories::check_windows_activation;
 
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
