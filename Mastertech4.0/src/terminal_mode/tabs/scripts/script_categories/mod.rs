@@ -74,7 +74,13 @@ impl <'a> ScriptsTab <'a> {
 
             self.current_reporter.replace(match category {
                 Category::Tuneup => Reporter::Tuneup,
-                Category::Qc => Reporter::Qc,
+                Category::Qc => {
+                    if item.text.as_str() == "Data Transfer" {
+                        Reporter::Robocopy
+                    } else {
+                        Reporter::Qc
+                    }
+                },
                 Category::WindowsUpdates => Reporter::WindowsUpdates,
                 Category::RunPrechecks => Reporter::RunPrechecks,
                 Category::Informational => Reporter::Informational,
