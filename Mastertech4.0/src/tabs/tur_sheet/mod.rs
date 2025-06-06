@@ -147,31 +147,31 @@ impl MastertechContext {
             let tech_check = self.ticket_data.tech.is_empty();
             
             let service_number_color = if service_number_check {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
 
             let name_color = if name_check {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
 
             let phone_number_color = if phone_number_check {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
 
             let salesman_color = if salesman_check {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
 
             let tech_color = if tech_check {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
@@ -302,7 +302,7 @@ impl MastertechContext {
                 ui.ctx().copy_text(webroot);
             }
                 
-            let err_color = ui.style().visuals.error_fg_color;
+            let err_color = ui.style().visuals.error_fg_color.gamma_multiply_u8(160);
 
             if Button::new(
                 RichText::new(format!("{}", self.keys.superanti_key))
@@ -547,7 +547,7 @@ impl MastertechContext {
             let computer_data = &mut self.computer_data;
 
             let color = if computer_data.cpu.is_empty() {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
@@ -659,7 +659,7 @@ impl MastertechContext {
                 "SEB Code".to_string()
             };
 
-            if Button::new(RichText::new(id).color(ui.style().visuals.error_fg_color))
+            if Button::new(RichText::new(id).color(ui.style().visuals.error_fg_color.gamma_multiply_u8(160)))
             .min_size(vec2( 280., 12.0))
             .ui(ui)
             .on_hover_text("Click To Copy SEB Code to Clipboard")
@@ -742,7 +742,7 @@ impl MastertechContext {
             let recommendations_check = self.task_data.task_description.is_empty();
             
             let color = if recommendations_check {
-                ui.style().visuals.error_fg_color
+                ui.style().visuals.error_fg_color.gamma_multiply_u8(160)
             } else {
                 ui.style().visuals.extreme_bg_color
             };
