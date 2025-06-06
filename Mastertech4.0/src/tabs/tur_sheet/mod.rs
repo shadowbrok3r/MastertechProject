@@ -140,10 +140,47 @@ impl MastertechContext {
             .num_columns(4)
             .show(ui, |ui| 
         {
+            let service_number_check = self.ticket_data.service_number.is_empty();
+            let name_check = self.customer_data.name.is_empty();
+            let phone_number_check = self.customer_data.phone_number.is_empty();
+            let salesman_check = self.ticket_data.salesman.is_empty();
+            let tech_check = self.ticket_data.tech.is_empty();
+            
+            let service_number_color = if service_number_check {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
+            let name_color = if name_check {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
+            let phone_number_color = if phone_number_check {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
+            let salesman_color = if salesman_check {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
+            let tech_color = if tech_check {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
             let text_edit_size = vec2( 140., 15.0);
 
             let service_num = TextEdit::singleline(&mut self.ticket_data.service_number)
                 .hint_text(" Service #  ")
+                .background_color(service_number_color)
                 .char_limit(11)
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
@@ -166,6 +203,7 @@ impl MastertechContext {
 
             TextEdit::singleline(&mut self.customer_data.name)
                 .hint_text(" Customer Name  ")
+                .background_color(name_color)
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
@@ -173,6 +211,7 @@ impl MastertechContext {
 
             TextEdit::singleline(&mut self.customer_data.phone_number)
                 .hint_text(" Phone Number 1")
+                .background_color(phone_number_color)
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size).ui(ui);
@@ -201,6 +240,7 @@ impl MastertechContext {
             {
                 text_edit
                     .hint_text(" Assignee")
+                    .background_color(salesman_color)
                     .min_size(text_edit_size)
                     .desired_rows(1)
                     .font(FontId::proportional(12.0))
@@ -216,6 +256,7 @@ impl MastertechContext {
             {
                 text_edit
                     .hint_text(" Tech")
+                    .background_color(tech_color)
                     .min_size(text_edit_size)
                     .font(FontId::proportional(12.0))
                     .frame(true)
@@ -504,9 +545,17 @@ impl MastertechContext {
             .show(ui, |ui| 
         {
             let computer_data = &mut self.computer_data;
+
+            let color = if computer_data.cpu.is_empty() {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
                                 /*     ROW 1     */
             TextEdit::singleline(&mut computer_data.cpu)
                 .hint_text(" CPU")
+                .background_color(color)
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
@@ -690,8 +739,17 @@ impl MastertechContext {
                 .desired_rows(13)
                 .ui(ui);
     
+            let recommendations_check = self.task_data.task_description.is_empty();
+            
+            let color = if recommendations_check {
+                ui.style().visuals.error_fg_color
+            } else {
+                ui.style().visuals.extreme_bg_color
+            };
+
             TextEdit::multiline(&mut self.task_data.task_description)
                 .hint_text(RichText::new("Recommendations").weak())
+                .background_color(color)
                 .font(FontId::proportional(14.0))
                 .margin(Margin::symmetric(10, 6))
                 .desired_width(f32::INFINITY)
