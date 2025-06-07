@@ -13,8 +13,6 @@ use serde_json::Value;
 #[cfg(target_os = "windows")]
 use crate::tabs::minidump::MiniDumpApp;
 
-
-
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: DockState<String>,
