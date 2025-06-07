@@ -1,5 +1,6 @@
 use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
-use crate::{app_state::MasterTechApp, utilities::save_encrypted_user_data};
+use crate::{app_state::MasterTechApp, filesystem::system_info::ComputerInfo, utilities::save_encrypted_user_data};
+use database::schema::ComputerData;
 use eframe::egui::Context;
 
 impl MasterTechApp {
@@ -17,6 +18,24 @@ impl MasterTechApp {
                                 Err(e) => log::error!("Failed to save user data: {e:?}"),
                             }
                             self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
+
+                            if self.context.computer_data.cpu.is_empty() {
+                                let specs_tx = self.context.computer_data_tx.clone();
+                                let current_antivirus_tx = self.context.current_antivirus_tx.clone();
+                                tokio::spawn(async move {
+                                    match ComputerData::default().get_computer_data().await {
+                                        Ok(data) => { let _ = specs_tx.try_send(data); }
+                                        Err(e) => log::error!("Error getting specs: {e:?}"),
+                                    }
+
+                                    #[cfg(target_os = "windows")]
+                                    {
+                                        let installed_antivirus = ComputerData::get_antivirus().await.unwrap_or_default();
+                                        log::error!("installed_antivirus: {installed_antivirus:?}");
+                                        let _ = current_antivirus_tx.try_send(installed_antivirus);
+                                    }
+                                });
+                            }
                         } else {
                             log::error!("No login mut");
                         }

@@ -3,7 +3,6 @@ use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::reque
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Networks, System};
 use num_format::{Locale, ToFormattedString};
-use tokio::{io::{self, ErrorKind}, spawn};
 use crossbeam::channel::Sender;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -12,6 +11,7 @@ use log::{error, info};
 use reqwest::Client;
 use anyhow::Context;
 use super::SYSINFO;
+use chrono::Utc;
 
 #[cfg(target_os = "windows")]
 use crate::terminal_mode::tabs::script_categories::check_windows_activation;
@@ -26,7 +26,7 @@ pub trait ComputerInfo {
     #[allow(unused)]
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error>;
     #[cfg(target_os = "windows")]
-    fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>>;
+    async fn get_antivirus() -> std::io::Result<Vec<(String, Option<bool>)>>;
 }
 
 #[async_trait]
@@ -265,94 +265,102 @@ impl ComputerInfo for ComputerData {
     }
 
     #[cfg(target_os = "windows")]
-    fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>> {
-        let (sender, receiver) = crossbeam::channel::unbounded();
-
+    async fn get_antivirus() -> std::io::Result<Vec<(String, Option<bool>)>> {
+        // Record start time
+        let start_time = Utc::now();
+        // Predefined antivirus search terms and their display names
         let av_to_search = vec![
-            "mbam",             // MALWAREBYTES
-            "aswtoolssvc",      // AVAST
-            "avgToolsSvc",      // AVG
-            "mcuicnt",          // MCAFFEE
-            "norton",           // NORTON
-            "wrsa",             // WEBROOT
-            "egui",             // ESET
-            "superantispyware", // SUPERANTI
+            ("mbam", "Malwarebytes"),
+            ("aswtoolssvc", "Avast"),
+            ("avgToolsSvc", "AVG"),
+            ("mcuicnt", "McAfee"),
+            ("norton", "Norton"),
+            ("wrsa", "Webroot"),
+            ("egui", "ESET"),
+            ("superantispyware", "SuperAntiSpyware"),
         ];
 
+        // Create an async channel with sufficient buffer
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<(String, Option<bool>)>(av_to_search.len());
+
+        // Create a shared mapping for antivirus names
         let antivirus_mapping = Arc::new(
-            [
-                ("mbam", "Malwarebytes"),
-                ("aswtoolssvc", "Avast"),
-                ("avgToolsSvc", "AVG"),
-                ("mcuicnt", "McAfee"),
-                ("norton", "Norton"),
-                ("wrsa", "Webroot"),
-                ("egui", "ESET"),
-                ("superantispyware", "SuperAntiSpyware"),
-            ]
-            .iter()
-            .cloned()
-            .collect::<HashMap<&str, &str>>(),
+            av_to_search
+                .iter()
+                .cloned()
+                .collect::<HashMap<&str, &str>>(),
         );
 
-        for antivirus in av_to_search.clone().into_iter() {
-            let sender = sender.clone();
-            let antivirus_mapping = Arc::clone(&antivirus_mapping);
+        // Spawn tasks concurrently
+        let tasks: Vec<_> = av_to_search
+            .clone()
+            .into_iter()
+            .map(|(antivirus, _)| {
+                let sender = sender.clone();
+                let antivirus_mapping = Arc::clone(&antivirus_mapping);
+                tokio::task::spawn(async move {
+                    let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
 
-            spawn(async move {
-                let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
+                    let output = tokio::process::Command::new("cmd")
+                        .args(&["/C"])
+                        .args(&where_cmd)
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output()
+                        .await;
 
-                let output = tokio::process::Command::new("cmd")
-                    .args(&["/C"])
-                    .args(where_cmd)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-                    .await
-                    .map_err(|e| {
-                        io::Error::new(
-                            ErrorKind::Other,
-                            format!("Failed to execute command: {}", e),
-                        )
-                    })?;
+                    let result = match output {
+                        Ok(output) => {
+                            let exists = if output.stdout.is_empty() {
+                                None
+                            } else {
+                                Some(true)
+                            };
+                            let name = antivirus_mapping
+                                .get(antivirus)
+                                .unwrap_or(&antivirus)
+                                .to_string();
+                            (name, exists)
+                        }
+                        Err(e) => {
+                            // Log error but don't fail the task
+                            eprintln!("Error checking {}: {}", antivirus, e);
+                            (antivirus_mapping.get(antivirus).unwrap_or(&antivirus).to_string(), None)
+                        }
+                    };
 
-                let exists = if output.stdout.is_empty() {
-                    None
-                } else {
-                    Some(true)
-                };
-
-                let name = antivirus_mapping.get(antivirus).unwrap_or(&antivirus);
-
-                sender.try_send((name.to_string(), exists)).map_err(|_| {
-                    io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel")
+                    // Send result, ignore send errors if channel is closed
+                    let _ = sender.send(result).await;
                 })
-            });
+            })
+            .collect();
+
+        // Drop the original sender to allow the channel to close when all tasks complete
+        drop(sender);
+
+        // Collect results
+        let mut antivirus_exists = Vec::with_capacity(av_to_search.len());
+        while let Some(result) = receiver.recv().await {
+            antivirus_exists.push(result);
         }
 
-        let mut antivirus_exists = Vec::new();
-        for _ in 0..av_to_search.len() {
-            let exists = receiver.try_recv().map_err(|_| {
-                io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel")
-            })?;
-            antivirus_exists.push(exists);
+        // Wait for all tasks to complete
+        for task in tasks {
+            if let Err(e) = task.await {
+                eprintln!("Task error: {}", e);
+            }
         }
+
+        // Record end time and calculate duration
+        let end_time = Utc::now();
+        let duration = end_time - start_time;
+        log::error!(
+            "get_antivirus execution time: {} ms",
+            duration.num_milliseconds()
+        );
 
         Ok(antivirus_exists)
     }
 }
-
-// #[async_trait]
-// pub trait SysInf {
-//     fn init_machine(&mut self);
-//     fn get_cpu(&mut self);
-//     fn get_gpu(&mut self);
-//     fn get_memory(&mut self);
-//     fn get_disks(&mut self);
-//     fn get_processes(&mut self);
-//     fn get_components(&mut self);
-//     fn get_static_info(&mut self);
-//     fn get_network_interfaces(&mut self);
-// }
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let machine = get_machine_instance().await?.clone();

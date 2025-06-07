@@ -1,11 +1,9 @@
-use super::{filesystem::system_info::{ComputerInfo, generate_client_id}, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
+use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{ComputerData, CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use eframe::{egui::{Context, ViewportCommand}, Frame};
 use database::schema::GetKeysResponse;
-use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::Ordering;
-use log::{debug, error, info};
 use surrealdb::RecordId;
 use tokio::spawn;
 
@@ -22,115 +20,30 @@ impl MasterTechApp {
             self.context.seb_info = storage.get_string("seb_info").map_or(vec![], |f| serde_json::from_str(&f).unwrap_or_default());
             // self.context.tas
         }
-
+        
         let github_tx = self.context.github_releases_channel.0.clone();
         let client = self.context.client.clone();
+        let tx = self.context.shared_ctx.db_tx.clone();
+
         spawn(async move {
             match get_github_releases(github_tx, client).await {
-                Ok(_) => info!("get_github_releases ran ok"),
-                Err(e) => error!("Error getting github releases: {e:?}"),
-            }
-        });
-        
-        let tx = self.context.shared_ctx.db_tx.clone();
-        let pair = Arc::new(
-            (Mutex::new(ComputerData::default()), Condvar::new())
-        );
-        let pair_clone = Arc::clone(&pair);
-
-        spawn(async move {
-            match ComputerData::default().get_computer_data().await {
-                // sysinfo_tx
-                Ok(data) => {
-                    let (lock, cvar) = &*pair_clone;
-                    let mut comp_data = lock.lock().unwrap();
-                    *comp_data = data;
-                    // info!("Computer Data: {comp_data:?}");
-                    cvar.notify_one();
-                }
-                Err(e) => error!("Error getting specs: {e:?}"),
+                Ok(_) => log::info!("get_github_releases ran ok"),
+                Err(e) => log::error!("Error getting github releases: {e:?}"),
             }
         });
 
-        // Wait for the spawned task to complete and notify the condition variable
-        let (lock, cvar) = &*pair;
-        let mut comp_data = lock.lock().unwrap();
-        while comp_data.cpu.is_empty() {
-            comp_data = cvar.wait(comp_data).unwrap();
-        }
-        // Access the shared data after notification
-        self.context.computer_data = comp_data.clone();
-        for disk in &self.context.computer_data.drives {
-            self.context.disk_num += 1;
-            if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                let disk_json = serde_json::to_value(&disk).unwrap_or_default();
-                disks_arr.push(disk_json);
-            } else {
-                debug!("Expected self.context.drives to be an Array");
-            }
-        }
-        if let Some(seb_inf) = &self.context.computer_data.seb_info {
-            log::info!("SEB: {seb_inf:#?}");
-        }
-
-        let client_hash = generate_client_id(
-            self.context.computer_data.hostname.clone(), 
-            self.context.computer_data.cpu.trim().to_string()
-        );
-
-        let url_string = format!(
-            "{}:{}", 
-            self.context.computer_data.hostname.clone(), 
-            client_hash.split_at(9).0
-        );
-
-        self.context.client_title = url_string.clone();
-
-        self.context.url = Some(
-            format!(
-                "{WS_CLIENT_URL}&room_id={}",
-                url_string.clone()
-            )
-        );
-        
-        self.context.client_uuid = RecordId::from_table_key(
-            CONNECTED_CLIENT_TABLE.to_string(), 
-            url_string.clone().as_str()
-        );
-
-        let loaded_data = load_encrypted_user_data(HASH);
-        if cfg!(debug_assertions) {
-            log::error!("loaded data: {loaded_data:?}");
-        }
-        match loaded_data {
+        match load_encrypted_user_data(HASH) {
             Some(login) => {
+                if cfg!(debug_assertions) {
+                    log::error!("loaded data: {login:?}");
+                }
                 spawn(async move {
                     let db = Database::new(login.username, login.password, None).await;
                     match tx.try_send(db) {
                         Ok(_) => drop(tx),
-                        Err(e) => error!("Error sending specs: {e:?}"),
+                        Err(e) => log::error!("Error sending specs: {e:?}"),
                     }
                 });
-
-                #[cfg(target_os = "windows")]
-                {
-                    let cps = &mut self.context.current_antivirus.clone();
-                    let installed_antivirus = ComputerData::get_antivirus()
-                        .map_err(|e| {
-                            *cps += format!("Error checking antivirus: {e}\n").as_str()
-                        })
-                        .unwrap_or(Vec::new());
-
-                    for (name, is_installed) in installed_antivirus {
-                        match is_installed {
-                            Some(true) => {
-                                *cps += "\n";
-                                *cps += &format!("{name}");
-                            }
-                            _ => {}
-                        }
-                    }
-                }
             }
             None => {
                 let toast = &mut self.context.shared_ctx.toasts;
@@ -208,11 +121,10 @@ impl MasterTechApp {
             } 
         }
         
-
         while let Ok(message) = self.context.rx.try_recv() {
-            if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
-                if !info.webroot_key.is_empty() || !info.superanti_key.is_empty() {
-                    self.context.keys = info;
+            if let Ok(keys) = serde_json::from_str::<GetKeysResponse>(&message) {
+                if !keys.webroot_key.is_empty() || !keys.superanti_key.is_empty() {
+                    self.context.keys = keys;
                 }
                 self.context.spinner = false;
             } else {
@@ -220,13 +132,59 @@ impl MasterTechApp {
             }
         }
 
-        // if let Some(dialog) = &mut self.context.open_file_dialog {
-        //     if dialog.show(ctx).selected() {
-        //         if let Some(file) = dialog.path() {
-        //             self.context.opened_file = Some(file.to_path_buf());
-        //         }
-        //     }
-        // }
+        if let Ok(computer_data) = self.context.computer_data_rx.try_recv() {
+            self.context.computer_data = computer_data.clone();
+            for disk in &self.context.computer_data.drives {
+                self.context.disk_num += 1;
+                if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                    let disk_json = serde_json::to_value(&disk).unwrap_or_default();
+                    disks_arr.push(disk_json);
+                } else {
+                    log::debug!("Expected self.context.drives to be an Array");
+                }
+            }
+            if let Some(seb_inf) = &self.context.computer_data.seb_info {
+                log::info!("SEB: {seb_inf:#?}");
+            }
+
+            let client_hash = generate_client_id(
+                self.context.computer_data.hostname.clone(), 
+                self.context.computer_data.cpu.trim().to_string()
+            );
+
+            let url_string = format!(
+                "{}:{}", 
+                self.context.computer_data.hostname.clone(), 
+                client_hash.split_at(9).0
+            );
+
+            self.context.client_title = url_string.clone();
+
+            self.context.url = Some(
+                format!(
+                    "{WS_CLIENT_URL}&room_id={}",
+                    url_string.clone()
+                )
+            );
+            
+            self.context.client_uuid = RecordId::from_table_key(
+                CONNECTED_CLIENT_TABLE.to_string(), 
+                url_string.clone().as_str()
+            );
+        }
+
+        if let Ok(antivirus) = self.context.current_antivirus_rx.try_recv() {
+            let cps = &mut self.context.current_antivirus.clone();
+            for (name, is_installed) in antivirus {
+                match is_installed {
+                    Some(true) => {
+                        *cps += "\n";
+                        *cps += &format!("{name}");
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         while let Ok(res) = self.context.bytes_rx.try_recv() {
             ctx.request_repaint();
@@ -312,5 +270,13 @@ impl MasterTechApp {
             });
             ctx.request_repaint();
         }
+        
+        // if let Some(dialog) = &mut self.context.open_file_dialog {
+        //     if dialog.show(ctx).selected() {
+        //         if let Some(file) = dialog.path() {
+        //             self.context.opened_file = Some(file.to_path_buf());
+        //         }
+        //     }
+        // }
     }
 }
