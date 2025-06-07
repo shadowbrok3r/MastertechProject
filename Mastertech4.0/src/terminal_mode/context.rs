@@ -45,6 +45,8 @@ impl TerminalContext {
 
 impl TerminalContext {
     pub fn receive(&mut self) {
+        self.service_data.receive_computer_data();
+        
         if let Ok(tasks) = self.tasks_rx.try_recv() {
             self.new_tasks = true;
             self.tasks = tasks;
