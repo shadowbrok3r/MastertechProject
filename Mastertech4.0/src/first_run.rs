@@ -1,6 +1,6 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::{Toast, ToastKind, ToastOptions}}};
-use database::{schema::{ComputerData, CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
+use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use eframe::{egui::{Context, ViewportCommand}, Frame};
 use database::schema::GetKeysResponse;
 use std::sync::atomic::Ordering;
@@ -14,7 +14,7 @@ impl MasterTechApp {
         log::info!("Init logger: {init:?}");
         if let Some(storage) = frame.storage() {
             self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
-            self.context.computer_data = storage.get_string("computer_data").map_or(ComputerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+            // self.context.computer_data = storage.get_string("computer_data").map_or(ComputerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.customer_data = storage.get_string("customer_data").map_or(CustomerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.seb_info = storage.get_string("seb_info").map_or(vec![], |f| serde_json::from_str(&f).unwrap_or_default());

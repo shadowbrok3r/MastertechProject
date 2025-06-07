@@ -20,7 +20,10 @@ impl SharedContext {
                 inputs.insert(task.task_name.clone());
             }
 
-            info!("Action: {action:?} - Notification: {notification:?}");
+            let user = self.current_user.clone().unwrap_or_default();
+            if notification.user == user.get_id() {
+                info!("Action: {action:?} - Notification: {notification:?}");
+            }
             match action {
                 Action::Create => {
                     if notification.notification_type.as_str() == "Admin" {
