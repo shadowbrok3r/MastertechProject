@@ -63,7 +63,6 @@ pub struct MastertechContext {
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
     pub service_details: Vec<database::schema::prestashop_schema::ServiceOrder>,
-    // pub computer_data_test: Arc<Mutex<ComputerData>>,
 
     pub client_uuid: RecordId,
     pub disks: Value,
@@ -81,6 +80,10 @@ pub struct MastertechContext {
     pub cps_keys_tx: Sender<Vec<GetKeysResponse>>,
     pub cps_keys_rx: Receiver<Vec<GetKeysResponse>>,
 
+    pub current_antivirus_tx: Sender<Vec<(String, Option<bool>)>>,
+    pub current_antivirus_rx: Receiver<Vec<(String, Option<bool>)>>,
+    pub computer_data_tx: Sender<ComputerData>,
+    pub computer_data_rx: Receiver<ComputerData>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
     pub scripts: Scripts,
@@ -107,6 +110,8 @@ impl MasterTechApp {
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<Vec<GetKeysResponse>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
+        let (computer_data_tx, computer_data_rx) = crossbeam::channel::unbounded();
+        let (current_antivirus_tx, current_antivirus_rx) = crossbeam::channel::unbounded();
         
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
@@ -136,7 +141,6 @@ impl MasterTechApp {
 
             task_data: LiveTaskPayload::default(),
             computer_data: ComputerData::default(),
-            // computer_data_test: Arc::new(Mutex::new(ComputerData::default())),
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
@@ -181,14 +185,12 @@ impl MasterTechApp {
             show_ws_viewport: Arc::new(AtomicBool::new(false)),
             added_nodes: Default::default(),
 
-            prestashop_api_tx,
-            prestashop_api_rx,
-            bytes_tx,
-            bytes_rx,
-            cps_keys_tx,
-            cps_keys_rx,
-            copied_items_tx,
-            copied_items_rx,
+            prestashop_api_tx, prestashop_api_rx,
+            bytes_tx, bytes_rx,
+            cps_keys_tx, cps_keys_rx,
+            copied_items_tx, copied_items_rx,
+            computer_data_tx, computer_data_rx,
+            current_antivirus_tx, current_antivirus_rx,
             github_releases_channel,
 
             github_issue_title: Default::default(),

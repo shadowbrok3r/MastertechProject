@@ -1,8 +1,8 @@
-use crate::app_state::MasterTechApp;
 use database::schema::{ComputerData, helper_traits::parse_email_user, prestashop_schema::ServiceOrder, CarboniteResponse, HardwareTests, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
+use crate::app_state::MasterTechApp;
 
-#[cfg(target_os="windows")]
-use crate::filesystem::system_info::ComputerInfo;
+// #[cfg(target_os="windows")]
+// use crate::filesystem::system_info::ComputerInfo;
 
 impl MasterTechApp {
     pub fn receive_prestashop(&mut self) {
@@ -117,25 +117,25 @@ impl MasterTechApp {
             ticket.computer = Some(computer.id.clone());
             log::warn!("Ticket.Computer.SEB: {:#?}", computer.seb_info);
 
-            #[cfg(target_os = "windows")]
-            {
-                let cps = &mut self.context.current_antivirus;
-                let installed_antivirus = ComputerData::get_antivirus()
-                    .map_err(|e| *cps += format!("Error checking antivirus: {e}\n").as_str())
-                    .unwrap_or(Vec::new());
+            // #[cfg(target_os = "windows")]
+            // {
+            //     let cps = &mut self.context.current_antivirus;
+            //     let installed_antivirus = ComputerData::get_antivirus()
+            //         .map_err(|e| *cps += format!("Error checking antivirus: {e}\n").as_str())
+            //         .unwrap_or(Vec::new());
                 
-                let x: Vec<String> = installed_antivirus
-                    .iter()
-                    .map(|cps| {
-                        if let Some(true) = cps.1 {
-                            cps.0.clone()
-                        } else {
-                            "Not installed".to_string()
-                        }
-                    })
-                    .collect::<Vec<String>>();
-                ticket.current_antivirus = Some(x);
-            }
+            //     let x: Vec<String> = installed_antivirus
+            //         .iter()
+            //         .map(|cps| {
+            //             if let Some(true) = cps.1 {
+            //                 cps.0.clone()
+            //             } else {
+            //                 "Not installed".to_string()
+            //             }
+            //         })
+            //         .collect::<Vec<String>>();
+            //     ticket.current_antivirus = Some(x);
+            // }
             task.service_ticket = Some(ticket.id.clone());
         }
     }
