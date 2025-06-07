@@ -23,6 +23,12 @@ impl MasterTechApp {
         style.main_surface_border_stroke = Stroke::new(0.25, Color32::TRANSPARENT);
         style.tab_bar.height = 20.0;
         style.tab.tab_body.inner_margin = Margin::same(1);
+        style.tab.focused = egui_dock::TabInteractionStyle {
+            outline_color: Color32::from_additive_luminance(std::u8::MAX),
+            text_color: Color32::from_additive_luminance(std::u8::MAX),
+            bg_fill: Color32::BLACK,
+            ..Default::default()
+        };
         
         DockArea::new(&mut self.tree)
             .style(style)

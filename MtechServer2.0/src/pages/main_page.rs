@@ -1,3 +1,4 @@
+
 use eframe::egui::{Color32, Context, Margin, Stroke};
 use egui_dock::{DockArea, Style as DockStyle};
 use crate::MtechServer;
@@ -18,7 +19,14 @@ impl MtechServer{
         style.tab_bar.height = 20.0;
         style.tab.tab_body.inner_margin = Margin::same(1);
         style.tab.hline_below_active_tab_name = true;
-        
+
+        style.tab.focused = egui_dock::TabInteractionStyle {
+            outline_color: Color32::from_additive_luminance(std::u8::MAX),
+            text_color: Color32::from_additive_luminance(std::u8::MAX),
+            bg_fill: Color32::BLACK,
+            ..Default::default()
+        };
+
         DockArea::new(&mut self.tree)
             .style(style)
             .show_close_buttons(true)
