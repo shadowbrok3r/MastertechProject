@@ -1,69 +1,60 @@
 
 use database::schema::{helper_traits::parse_email_user, prestashop_schema::{PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE};
-use displays::remote_viewer::ratagui::TerminalEvent;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use displays::remote_viewer::ratagui::TerminalEvent;
 use crate::filesystem::system_info::ComputerInfo;
-use chrono::Utc;
-use std::sync::{Arc, Condvar, Mutex};
-use surrealdb::RecordId;
+use crossbeam::channel::Receiver;
 use egui::{Key, Modifiers};
-// use reqwest::Client;
+use surrealdb::RecordId;
+use chrono::Utc;
 
 use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
 
 pub mod first_run;
 
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ServiceData {
     pub task_data: TaskPayload,
     pub ticket_data: TicketPayload,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
+    // pub computer_data_tx: Sender<ComputerData>,
+    pub computer_data_rx: Receiver<ComputerData>,
     send_specs: bool,
     // client: Client,
 }
 
 impl ServiceData {
     pub fn new() -> Self {
-        let pair = Arc::new(
-            (Mutex::new(ComputerData::default()), Condvar::new())
-        );
-        let pair_clone = Arc::clone(&pair);
-
+        let (computer_data_tx, computer_data_rx) = crossbeam::channel::unbounded();
+        let tx = computer_data_tx.clone();
         tokio::spawn(async move {
             match ComputerData::default().get_computer_data().await {
-                // sysinfo_tx
-                Ok(data) => {
-                    let (lock, cvar) = &*pair_clone;
-                    let mut comp_data = lock.lock().unwrap();
-                    *comp_data = data;
-                    // log::info!("Computer Data: {comp_data:?}");
-                    cvar.notify_one();
-                }
+                Ok(data) => { let _ = tx.try_send(data); }
                 Err(e) => log::error!("Error getting specs: {e:?}"),
             }
         });
-
-        // Wait for the spawned task to complete and notify the condition variable
-        let (lock, cvar) = &*pair;
-        let mut comp_data = lock.lock().unwrap();
-        while comp_data.cpu.is_empty() {
-            comp_data = cvar.wait(comp_data).unwrap();
-        }
-
+        log::info!("COMPUTER DATA RETRIEVAL");
         Self {
             task_data: Default::default(),
             ticket_data: Default::default(),
             customer_data: Default::default(),
-            computer_data: comp_data.clone(),
+            computer_data: ComputerData::default(),
             task_notes: Default::default(),
+            computer_data_rx,
             send_specs: true,
             // client: Client::new(),
         }
     }
-    
+    pub fn receive_computer_data(&mut self) {
+        if let Ok(computer) = self.computer_data_rx.try_recv() {
+            log::info!("GOT PC DATA");
+            self.computer_data = computer;
+        }
+    }
+
     pub fn receive(&mut self, presta_data: PrestashopPayload) {
         log::info!("{:?}", serde_json::to_value(&presta_data).unwrap_or_default());
         let customer = &mut self.customer_data;
