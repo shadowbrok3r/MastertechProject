@@ -32,13 +32,6 @@ static SPLASH_CONFIG: SplashConfig = SplashConfig {
     use_colors: true,
 };
 
-static SPLASH_CONFIG2: SplashConfig = SplashConfig {
-    image_data: include_bytes!("../assets/pcllogo.png"),
-    sha256sum: None,
-    render_steps: 30,
-    use_colors: true,
-};
-
 pub struct TerminalApp<'a> {
     logger: Logger,
     menu_bar: Rc<RefCell<MenuBar<'a>>>,
@@ -176,7 +169,6 @@ impl <'a>TerminalApp<'a> {
 
         // render splash screen
         let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
-        let mut splash_screen2 = SplashScreen::new(SPLASH_CONFIG2)?;
 
         let notifications: Arc<Mutex<Vec<Notification>>> = self.render_system.notifications.clone();
         let ui_messages: Arc<Mutex<Vec<Box<dyn Message>>>> = self.render_system.ui_messages.clone();
@@ -251,8 +243,8 @@ impl <'a>TerminalApp<'a> {
             }
 
             terminal.draw(|f| {
-                if !splash_screen.is_rendered() && !splash_screen2.is_rendered() {
-                    Self::render_splash_screen(f, &mut splash_screen, &mut splash_screen2);
+                if !splash_screen.is_rendered() {
+                    Self::render_splash_screen(f, &mut splash_screen);
                 } else {
                     // Process events from egui via WebSocket
                     while let Ok(event) = event_rx.try_recv() {
@@ -348,17 +340,27 @@ impl <'a>TerminalApp<'a> {
         Ok(())
     }
 
-    fn render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen, splash_screen2: &mut SplashScreen) {
-        let layout = Layout::default()
+    fn render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen) {
+        let layout_cols = Layout::default()
         .direction(Direction::Horizontal)
         .margin(1)
         .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
+            Constraint::Percentage(30),
+            Constraint::Percentage(40),
+            Constraint::Percentage(30),
         ]).split(f.area());
-        f.render_widget(splash_screen, layout[0]);
-        f.render_widget(splash_screen2, layout[1]);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let layout_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Percentage(20),
+            Constraint::Percentage(60),
+            Constraint::Percentage(20),
+        ]).split(layout_cols[1]);
+
+        f.render_widget(splash_screen, layout_rows[1]);
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     fn render_systems<B: Backend>(
