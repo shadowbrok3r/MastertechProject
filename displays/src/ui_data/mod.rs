@@ -1,4 +1,4 @@
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
 use crate::{app_state::{AppState, MainPages}, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
 use crate::{PlatformSpawner, Spawner};
 
@@ -53,6 +53,11 @@ impl crate::app_state::SharedContext {
             });
 
             PlatformSpawner::spawn(async move {
+                let get_qcs = get_qcs().await;
+                log::error!("get_qcs: {get_qcs:?}");
+            });
+
+            PlatformSpawner::spawn(async move {
                 let get_notifications = get_notifications(notifs_tx).await;
                 log::info!("get_notifications: {get_notifications:?}");
             });
@@ -93,6 +98,8 @@ impl crate::app_state::SharedContext {
             Err(e) => log::error!("Error setting theme config: {e:?}"),
         }
 
+        ctx.request_repaint();
+        
         let toast = &mut self.toasts;
         let auth_toast = Toast {
             kind: ToastKind::Success,
@@ -210,10 +217,12 @@ impl crate::app_state::SharedContext {
 
         if let Ok(releases) = self.github_releases_channel.1.try_recv() {
             log::debug!("Releases: {releases:?}");
+            ctx.request_repaint();
             self.github_releases = releases;
         }
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
+            ctx.request_repaint();
             self.theme_config = settings;
         }
 
