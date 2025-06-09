@@ -292,17 +292,18 @@ unsafe fn install_updates_from_collection(
                 log::info!("BeginDownload Err => {e:?}")
             )?;
 
+        let last_percent = &mut 0;
         while !download_job.IsCompleted()?.as_bool() {
             let progress = download_job.GetProgress()?;
             let percent = progress.PercentComplete()?;
-            // let cloned_percent = percent.clone();
-            if percent > 0 {
+            if percent > last_percent {
                 let _ = event_sender.try_send(WindowsUpdateEvent::UpdateLogs(
                     format!("Download Progress: {percent}%")
                 ));
+                *last_percent = percent;
             }
-            // std::thread::sleep(std::time::Duration::from_secs(5));
         }
+
         download_job.CleanUp()?;
         log::info!("Download completed. Installing updates...");
 
