@@ -130,6 +130,22 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         ui.label(
+                            RichText::new("Checkin Notes:")
+                                .font(FontId::proportional(15.0)),
+                        );
+
+                        ui.add_space(10.);
+                        let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
+                        
+                        TextEdit::multiline(&mut ticket.checkin_notes)
+                        .margin(Margin::symmetric(10, 3))
+                        .desired_rows(15)
+                        .desired_width(ui.available_width())
+                        .ui(ui);
+                    });
+
+                    ui.vertical_centered_justified(|ui| {
+                        ui.label(
                             RichText::new("Recommendations:")
                                 .font(FontId::proportional(15.0))
                         );
@@ -160,22 +176,6 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2
                                 };
                             });
                         }
-                    });
-
-                    ui.vertical_centered_justified(|ui| {
-                        ui.label(
-                            RichText::new("Checkin Notes:")
-                                .font(FontId::proportional(15.0)),
-                        );
-
-                        ui.add_space(10.);
-                        let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
-                        
-                        TextEdit::multiline(&mut ticket.checkin_notes)
-                        .margin(Margin::symmetric(10, 3))
-                        .desired_rows(15)
-                        .desired_width(ui.available_width())
-                        .ui(ui);
                     });
                     ui.end_row();
                 });
