@@ -296,7 +296,7 @@ unsafe fn install_updates_from_collection(
         while !download_job.IsCompleted()?.as_bool() {
             let progress = download_job.GetProgress()?;
             let percent = progress.PercentComplete()?;
-            if percent > last_percent {
+            if percent > *last_percent {
                 let _ = event_sender.try_send(WindowsUpdateEvent::UpdateLogs(
                     format!("Download Progress: {percent}%")
                 ));
