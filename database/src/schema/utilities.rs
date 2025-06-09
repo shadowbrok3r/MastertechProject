@@ -1,7 +1,7 @@
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_TABLE
+        prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_TABLE
     }, PlatformSpawner, Spawner, DATABASE
 };
 use anyhow::{Error, Result};
@@ -136,6 +136,16 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     tx.try_send(query_results)?;
     Ok(())
 }
+
+pub async fn get_qcs() -> anyhow::Result<Vec<Qc>, anyhow::Error> {
+    let qcs: Vec<Qc> = DATABASE
+        .query("SELECT * FROM qc")
+        .await?
+        .take(0)?;
+
+    Ok(qcs)
+}
+
 
 pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_tasks");

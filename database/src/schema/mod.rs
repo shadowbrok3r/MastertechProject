@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use surrealdb::RecordId;
 use serde_json::Value;
-use crate::DATABASE;
+use crate::{schema::prestashop::Order, DATABASE};
 use anyhow::Error;
 
 pub mod helper_traits;
@@ -35,6 +35,7 @@ pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 pub const CHAT_THREAD_TABLE: &str = "chat_thread";
 pub const USER_MESSAGE_TABLE: &str = "user_message";
+pub const QC_TABLE: &str = "qc";
 
 
 pub use task::*;
@@ -72,6 +73,12 @@ pub struct RecordResult {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordSuccess {
     pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Difference)]
+pub struct Qc {
+    pub task: RecordId,
+    pub order: Order,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
