@@ -26,7 +26,7 @@ pub mod context;
 pub mod websockets;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
-    image_data: include_bytes!("../assets/masterlogoV2.png"),
+    image_data: include_bytes!("../assets/masterlogoV3.png"),
     sha256sum: None,
     render_steps: 30,
     use_colors: true,
@@ -345,18 +345,18 @@ impl <'a>TerminalApp<'a> {
         .direction(Direction::Horizontal)
         .margin(1)
         .constraints([
-            Constraint::Percentage(30),
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
+            Constraint::Percentage(15),
+            Constraint::Percentage(70),
+            Constraint::Percentage(15),
         ]).split(f.area());
 
         let layout_rows = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Percentage(20),
-            Constraint::Percentage(60),
-            Constraint::Percentage(20),
+            Constraint::Percentage(10),
+            Constraint::Percentage(80),
+            Constraint::Percentage(10),
         ]).split(layout_cols[1]);
 
         f.render_widget(splash_screen, layout_rows[1]);

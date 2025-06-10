@@ -65,6 +65,7 @@ pub struct DummyCompletedCallback {}
 pub enum WindowsUpdateEvent {
     UpdateLogs(String),
     ReturnedUpdates(WindowsUpdates),
+    ProgressPercentage(i32)
 }
 
 
@@ -297,9 +298,7 @@ unsafe fn install_updates_from_collection(
             let progress = download_job.GetProgress()?;
             let percent = progress.PercentComplete()?;
             if percent > *last_percent {
-                let _ = event_sender.try_send(WindowsUpdateEvent::UpdateLogs(
-                    format!("Download Progress: {percent}%")
-                ));
+                let _ = event_sender.try_send(WindowsUpdateEvent::ProgressPercentage(percent));
                 *last_percent = percent;
             }
         }
