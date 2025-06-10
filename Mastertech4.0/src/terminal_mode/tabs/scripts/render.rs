@@ -654,6 +654,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         f.render_widget(script_textarea, button_grid[7].shrink(4, 1));
 
         let mut progress_mut = self.progress.borrow_mut();
+        let mut update_progress_mut = self.update_progress.borrow_mut();
         if let Some(progress) = *progress_mut {
             let gauge = Gauge::default()
                 .block(Block::bordered().title(format!("{script_name} Progress")))
@@ -665,6 +666,17 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             if progress.0 == progress.1 {
                 *progress_mut = None;
             }
+        } else if let Some(update_progress) = *update_progress_mut {
+            let gauge = Gauge::default()
+                .block(Block::bordered().title("Windows update %"))
+                .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
+                .ratio(progress.0 as f64 / progress.1 as f64);
+
+            f.render_widget(&gauge, button_grid[7].shrink(2, 1));
+
+            if progress.0 == progress.1 {
+                *progress_mut = None;
+            }  
         } else {
             let total = self.filesystem.total_size;
             let progress = self.filesystem.progress;

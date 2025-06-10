@@ -46,9 +46,10 @@ pub struct ScriptsTab<'a> {
     update_log_rx: Receiver<WindowsUpdateEvent>,
     path_size_tx: Sender<Vec<(String, String)>>,
     path_size_rx: Receiver<Vec<(String, String)>>,
-    progress_rx: Receiver<(u64, u64)>, // Receive progress updates
     progress_tx: Sender<(u64, u64)>, // Receive progress updates
+    progress_rx: Receiver<(u64, u64)>, // Receive progress updates
     progress: RefCell<Option<(u64, u64)>>,
+    update_progress: RefCell<Option<u64>>,
     
     service_number: String,
     /// Antivirus tab
@@ -113,6 +114,8 @@ impl<'a> ScriptsTab<'a> {
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
         let (data_transfer_progress_tx, data_transfer_progress_rx) = crossbeam::channel::unbounded();
         let (progress_tx, progress_rx) = crossbeam::channel::unbounded();
+        // let (update_progress_tx, update_progress_rx) = crossbeam::channel::unbounded();
+
         let mut checklists = HashMap::new();
         
         // Define checklists with categories
@@ -287,6 +290,7 @@ impl<'a> ScriptsTab<'a> {
             // destination_directory: String::new(),
             source_directories: Vec::new(),
             progress: RefCell::new(None),
+            update_progress: RefCell::new(None),
             has_scrolled_manually: RefCell::new(false),
             init: RefCell::new(true),
             check_for_scripts: false,
@@ -378,6 +382,9 @@ impl<'a> ScriptsTab<'a> {
                     WindowsUpdateEvent::ReturnedUpdates(windows_updates) => {
                         self.log_message(&format!("{windows_updates:#?}"));
                         self.windows_updates = windows_updates;
+                    },
+                    WindowsUpdateEvent::ProgressPercentage(percent) => {
+                        self.update_progress.replace(Some(percent as u64));
                     },
                 }
             }
