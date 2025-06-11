@@ -219,7 +219,7 @@ fn check_old_exe() -> anyhow::Result<(), anyhow::Error> {
 }
 
 pub(crate) fn load_icon() -> eframe::egui::IconData {
-    let (icon_rgba, icon_width, icon_height) = {
+    let (icon_rgba, _icon_width, _icon_height) = {
         let icon = include_bytes!("assets/masterlogoV3.ico");
         let image = image::load_from_memory(icon)
             .expect("Failed to open icon path")
@@ -231,8 +231,8 @@ pub(crate) fn load_icon() -> eframe::egui::IconData {
 
     eframe::egui::IconData {
         rgba: icon_rgba,
-        width: icon_width,
-        height: icon_height,
+        width: 256,
+        height: 256,
     }
 }
 
