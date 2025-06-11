@@ -14,11 +14,9 @@ impl MasterTechApp {
         log::info!("Init logger: {init:?}");
         if let Some(storage) = frame.storage() {
             self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
-            // self.context.computer_data = storage.get_string("computer_data").map_or(ComputerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.customer_data = storage.get_string("customer_data").map_or(CustomerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.seb_info = storage.get_string("seb_info").map_or(vec![], |f| serde_json::from_str(&f).unwrap_or_default());
-            // self.context.tas
         }
         
         let github_tx = self.context.github_releases_channel.0.clone();
@@ -76,7 +74,7 @@ impl MasterTechApp {
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
         if self.context.shared_ctx.first_run { self.first_run(frame); }
         self.context.shared_ctx.receive_shared(frame, ctx);
-        self.receive_prestashop();
+        self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
         self.receive_github();
         self.viewport_loader(ctx);
