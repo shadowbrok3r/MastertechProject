@@ -15,7 +15,7 @@ use windows::{
             Shutdown::{self, ExitWindowsEx, EWX_FORCE, EWX_REBOOT}, 
             Threading::OpenProcessToken, 
             UpdateAgent::{
-                IDownloadCompletedCallback_Impl, IDownloadJob, IDownloadProgressChangedCallbackArgs, IDownloadProgressChangedCallback_Impl, IUpdateCollection, IUpdateDownloader, IUpdateSearcher, IUpdateServiceManager, IUpdateSession, OperationResultCode, ServerSelection, UpdateType
+                IDownloadCompletedCallback_Impl, IDownloadJob, IDownloadProgressChangedCallbackArgs, IDownloadProgressChangedCallback_Impl, IInstallationCompletedCallbackArgs, IInstallationCompletedCallback_Impl, IInstallationJob, IInstallationProgressChangedCallbackArgs, IInstallationProgressChangedCallback_Impl, IUpdateCollection, IUpdateDownloader, IUpdateSearcher, IUpdateServiceManager, IUpdateSession, OperationResultCode, ServerSelection, UpdateType
             }, 
             Variant::VARIANT
         }
@@ -61,11 +61,20 @@ pub struct DummyProgressCallback {}
 #[implement(windows::Win32::System::UpdateAgent::IDownloadCompletedCallback)]
 pub struct DummyCompletedCallback {}
 
+#[derive(Default)]
+#[implement(windows::Win32::System::UpdateAgent::IInstallationProgressChangedCallback)]
+pub struct DummyInstallProgressCallback {}
+
+#[derive(Default)]
+#[implement(windows::Win32::System::UpdateAgent::IInstallationCompletedCallback)]
+pub struct DummyInstallCompletedCallback {}
+
 #[derive(Debug)]
 pub enum WindowsUpdateEvent {
     UpdateLogs(String),
     ReturnedUpdates(WindowsUpdates),
-    ProgressPercentage(i32)
+    DownloadPercentage(i32),
+    InstallPercentage(i32)
 }
 
 
@@ -91,6 +100,34 @@ impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
         &self, 
         _downloadjob: windows_core::Ref<'_, IDownloadJob>, 
         _callbackargs: windows_core::Ref<'_, windows::Win32::System::UpdateAgent::IDownloadCompletedCallbackArgs>
+    ) -> windows_core::Result<()> {
+        Ok(())
+    }
+}
+
+impl IInstallationProgressChangedCallback_Impl for DummyInstallProgressCallback_Impl {
+    fn Invoke(
+        &self,
+        installjob: Ref<'_, IInstallationJob>,
+        _callbackargs: Ref<'_, IInstallationProgressChangedCallbackArgs>,
+    ) -> Result<()> {
+        unsafe {
+            let _progress = installjob.unwrap().GetProgress()?.PercentComplete()?;
+            let cb = _callbackargs.unwrap();
+            let current_upd_percentage_complete = cb.Progress()?.CurrentUpdatePercentComplete()?;
+            let total_percentage_complete = cb.Progress()?.PercentComplete()?;
+            log::info!(
+                "Current Update Percentage Complete: {current_upd_percentage_complete:?}\n Total Percentage Complete: {total_percentage_complete:?}");
+        }
+        Ok(())
+    }
+}
+
+impl IInstallationCompletedCallback_Impl for DummyInstallCompletedCallback_Impl {
+    fn Invoke(
+        &self, 
+        _installjob: windows_core::Ref<'_, IInstallationJob>, 
+        _callbackargs: windows_core::Ref<'_, IInstallationCompletedCallbackArgs>
     ) -> windows_core::Result<()> {
         Ok(())
     }
@@ -276,6 +313,8 @@ unsafe fn install_updates_from_collection(
     updates: &IUpdateCollection,
     dummy_progress_cb: DummyProgressCallback,
     dummy_completed_cb: DummyCompletedCallback,
+    dummy_install_progress_cb: DummyInstallProgressCallback,
+    dummy_install_completed_cb: DummyInstallCompletedCallback,
     event_sender: Sender<WindowsUpdateEvent>
 ) -> Result<bool> {
     unsafe { 
@@ -283,6 +322,7 @@ unsafe fn install_updates_from_collection(
         update_downloader.SetUpdates(updates)?;
         log::info!("Beginning download of updates...");
         let async_result = VARIANT::default();
+        let install_async_result = VARIANT::default();
         let download_job: IDownloadJob = update_downloader
             .BeginDownload(
                 Some(&dummy_progress_cb.into()), 
@@ -298,7 +338,7 @@ unsafe fn install_updates_from_collection(
             let progress = download_job.GetProgress()?;
             let percent = progress.PercentComplete()?;
             if percent > *last_percent {
-                let _ = event_sender.try_send(WindowsUpdateEvent::ProgressPercentage(percent));
+                let _ = event_sender.try_send(WindowsUpdateEvent::DownloadPercentage(percent));
                 *last_percent = percent;
             }
         }
@@ -308,17 +348,43 @@ unsafe fn install_updates_from_collection(
 
         let installer = update_session.CreateUpdateInstaller()?;
         installer.SetUpdates(updates)?;
-        let install_result = installer.Install()?;
+        let reboot_required = installer.RebootRequiredBeforeInstallation()?.as_bool();
+
+        if reboot_required {
+            let _ = event_sender.try_send(WindowsUpdateEvent::UpdateLogs(format!("Reboot is required")));
+        }
+
+        let install_job = installer.BeginInstall(
+            Some(&dummy_install_progress_cb.into()), 
+            Some(&dummy_install_completed_cb.into()), 
+            &install_async_result
+        )?;
+
+        let last_percent = &mut 0;
+        
+        while !install_job.IsCompleted()?.as_bool() {
+            let install_percentage = install_job.GetProgress()?.PercentComplete()?;
+            if install_percentage > *last_percent {
+                let _ = event_sender.try_send(WindowsUpdateEvent::InstallPercentage(install_percentage));
+                *last_percent = install_percentage;
+            }
+        }
+
+        install_job.CleanUp()?;
+
+        let install_result = installer.EndInstall(&install_job)?;
+
         log::info!("--------- Installation result ---------");
-        match install_result.ResultCode()? {
-            OperationResultCode(0) => log::info!("orcNotStarted"),
-            OperationResultCode(1) => log::info!("orcInProgress"),
-            OperationResultCode(2) => log::info!("orcSucceeded"),
-            OperationResultCode(3) => log::info!("orcSucceededWithErrors"),
-            OperationResultCode(4) => log::info!("orcFailed"),
-            OperationResultCode(5) => log::info!("orcAborted"),
-            _ => {}
-        }   
+        let res = match install_result.ResultCode()? {
+            OperationResultCode(0) => "orcNotStarted",
+            OperationResultCode(1) => "orcInProgress",
+            OperationResultCode(2) => "orcSucceeded",
+            OperationResultCode(3) => "orcSucceededWithErrors",
+            OperationResultCode(4) => "orcFailed",
+            OperationResultCode(5) => "orcAborted",
+            _ => ""
+        };
+        let _ = event_sender.try_send(WindowsUpdateEvent::UpdateLogs(res.to_string()));
         
         // update_downloader.EndDownload(value)
         Ok(install_result.RebootRequired()?.as_bool())
@@ -362,8 +428,10 @@ unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &I
             let shutdown_required = install_updates_from_collection(
                 update_session, 
                 &update_collection,
-                DummyProgressCallback::default().into(),
-                DummyCompletedCallback::default().into(),
+                DummyProgressCallback::default(),
+                DummyCompletedCallback::default(),
+                DummyInstallProgressCallback::default(),
+                DummyInstallCompletedCallback::default(),
                 event_sender.clone()
             );
 

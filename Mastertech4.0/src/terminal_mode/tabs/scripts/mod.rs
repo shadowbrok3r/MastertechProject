@@ -50,6 +50,7 @@ pub struct ScriptsTab<'a> {
     progress_rx: Receiver<(u64, u64)>, // Receive progress updates
     progress: RefCell<Option<(u64, u64)>>,
     update_progress: RefCell<Option<u64>>,
+    windows_installation: RefCell<bool>,
     
     service_number: String,
     /// Antivirus tab
@@ -300,6 +301,7 @@ impl<'a> ScriptsTab<'a> {
             filesystem: FileSystem::new(),
             user_scripts_to_run: Vec::new(),
             scripts_waiting_for_data: Vec::new(),
+            windows_installation: RefCell::new(false),
         }
     }
 
@@ -383,7 +385,11 @@ impl<'a> ScriptsTab<'a> {
                         self.log_message(&format!("{windows_updates:#?}"));
                         self.windows_updates = windows_updates;
                     },
-                    WindowsUpdateEvent::ProgressPercentage(percent) => {
+                    WindowsUpdateEvent::DownloadPercentage(percent) => {
+                        self.update_progress.replace(Some(percent as u64));
+                    },
+                    WindowsUpdateEvent::InstallPercentage(percent) => {
+                        self.windows_installation.replace(true);
                         self.update_progress.replace(Some(percent as u64));
                     },
                 }
