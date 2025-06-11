@@ -667,16 +667,24 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 *progress_mut = None;
             }
         } else if let Some(update_progress) = *update_progress_mut {
+            let mut install = self.windows_installation.borrow_mut();
+            let title = if *install {
+                "Windows update install %"
+            } else {
+                "Windows update download %"
+            };
+
             let gauge = Gauge::default()
-                .block(Block::bordered().title("Windows update %"))
+                .block(Block::bordered().title(title))
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
-                .ratio(progress.0 as f64 / progress.1 as f64);
+                .ratio(update_progress as f64 / 100.0);
 
-            f.render_widget(&gauge, button_grid[7].shrink(2, 1));
+            f.render_widget(&gauge, button_grid[8].shrink(2, 1));
 
-            if progress.0 == progress.1 {
-                *progress_mut = None;
-            }  
+            if update_progress == 100 {
+                *update_progress_mut = None;
+                *install = false;
+            }
         } else {
             let total = self.filesystem.total_size;
             let progress = self.filesystem.progress;
@@ -697,7 +705,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
         }
         
-        f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
+        f.render_widget(&self.run_btn, button_grid[9].shrink(4, 1));
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);
