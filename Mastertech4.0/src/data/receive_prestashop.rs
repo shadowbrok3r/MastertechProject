@@ -1,11 +1,12 @@
 use database::schema::{ComputerData, helper_traits::parse_email_user, prestashop_schema::ServiceOrder, CarboniteResponse, HardwareTests, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
+use eframe::Frame;
 use crate::app_state::MasterTechApp;
 
 // #[cfg(target_os="windows")]
 // use crate::filesystem::system_info::ComputerInfo;
 
 impl MasterTechApp {
-    pub fn receive_prestashop(&mut self) {
+    pub fn receive_prestashop(&mut self, frame: &mut Frame) {
         if let Ok(data) = self.context.prestashop_api_rx.try_recv() {
             let service_details = data.order.associations.order_service.clone();
             self.context.service_details = service_details.clone();
@@ -123,7 +124,6 @@ impl MasterTechApp {
             //     let installed_antivirus = ComputerData::get_antivirus()
             //         .map_err(|e| *cps += format!("Error checking antivirus: {e}\n").as_str())
             //         .unwrap_or(Vec::new());
-                
             //     let x: Vec<String> = installed_antivirus
             //         .iter()
             //         .map(|cps| {
@@ -137,6 +137,12 @@ impl MasterTechApp {
             //     ticket.current_antivirus = Some(x);
             // }
             task.service_ticket = Some(ticket.id.clone());
+
+            if let Some(storage) = frame.storage_mut() {
+                storage.set_string("ticket_data", serde_json::to_string(&ticket).unwrap_or_default());
+                storage.set_string("task_data", serde_json::to_string(&task).unwrap_or_default());
+                storage.set_string("customer_data", serde_json::to_string(&customer).unwrap_or_default());
+            }
         }
     }
 }
