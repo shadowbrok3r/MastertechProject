@@ -43,6 +43,7 @@ impl TabViewer for MtechServerContext {
             "Database Editor" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
             "Query Editor" => self.shared_ctx.query_editor.ui(ui),
             "KOTH" => self.shared_ctx.koth.ui(ui),
+            "Create Prestashop Order" => self.shared_ctx.prestashop_order_form.ui(ui),
             // "Ai" => self.shared_ctx.ai_playground(ui),
             _ => {}
         }

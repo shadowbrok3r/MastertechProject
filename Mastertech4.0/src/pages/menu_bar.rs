@@ -36,6 +36,7 @@ impl MasterTechApp {
                             &"Store Stock".to_string(),
                             &"Task Audit".to_string(),
                             &"Company Stock".to_string(),
+                            &"Create Prestashop Order".to_string(),
                             &"Downloads".to_string(),
                             &"Threads".to_string(),
                             &"Logs".to_string(),
