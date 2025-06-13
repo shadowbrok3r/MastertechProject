@@ -33,7 +33,8 @@ impl MtechServer {
                                 // &"Ai".to_string(),
                                 &"Database Editor".to_string(),
                                 &"Query Editor".to_string(),
-                                &"KOTH".to_string()
+                                &"KOTH".to_string(),
+                                &"Create Prestashop Order".to_string()
                             ] {
                                 if ui
                                     .selectable_label(self.context.open_tabs.contains(*tab), *tab)

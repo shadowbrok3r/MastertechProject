@@ -491,8 +491,119 @@ pub async fn create_full_task_payload(
     Ok(())
 }
 
-impl PrestashopPayload {
+impl PrestashopPayload {}
+/* 
+impl Customer {
+    pub async fn find_customer_by_email(email: &str) -> anyhow::Result<Self, anyhow::Error> {
+        let api_call = Prestashop::default();
+        let mut query = HashMap::new();
+        let tmp_customer = &mut Customer::default();
+        query.insert("filter[email]", email);
+        query.insert("output_format", "JSON");
 
+        let customers: Vec<Customer> = api_call
+            .request_resources_wasm("customers",  query)
+            .await?;
+
+        if let Some(customer) = customers.get(0) {
+            *tmp_customer = customer.clone();
+        }
+
+        Ok(tmp_customer.clone())
+    }
+
+    pub async fn find_customer_address(mut self) -> anyhow::Result<Address, anyhow::Error> {
+        let api_call = Prestashop::default();
+        let mut tmp_address = Address::default();
+
+        let address: Address = api_call
+            .request_subresources_by_id_wasm("customers", self.)
+            .await?;
+
+        Ok(CustomerData { 
+            id: RecordId::from((
+                CUSTOMER_TABLE.to_string(),
+                id_customer,
+            )),
+            cust_code: id_customer.to_string(),
+            name: format!("{} {}", &cust.firstname, &cust.lastname),
+            phone_number: tmp_address.phone.clone().to_string(),
+            email: cust.email,
+            phone_number_2: tmp_address.phone_mobile.clone().to_string(),
+            ..Default::default()
+        })
+    }
+}
+ */
+
+impl Customer {
+    pub async fn find_customer_by_email(email: &str) -> anyhow::Result<(Customer, Address), anyhow::Error> {
+        let api_call = Prestashop::default();
+        let mut query = HashMap::new();
+        let mut tmp_address = Address::default();
+        query.insert("filter[email]", email);
+        query.insert("output_format", "JSON");
+
+        let addresses: Vec<Address> = api_call
+            .request_resources_wasm("addresses", query.clone())
+            .await?;
+
+        if let Some(address) = addresses.get(0) {
+            tmp_address = address.clone();
+        }
+
+        if tmp_address.id_customer.is_empty() {
+            return Err(anyhow::anyhow!("Error pulling address info"));
+        }
+
+        /* 
+        let mut query = HashMap::new();
+        query.insert("filter[email]", email);
+        query.insert("output_format", "JSON");
+
+        let cust: Vec<Customer> = api_call
+            .request_resources_wasm("customers", &tmp_address.id_customer)
+            .await?;
+        */
+        let cust: Customer = api_call
+            .request_subresources_by_id_wasm("customers", "customer", &tmp_address.id_customer)
+            .await?;
+
+        Ok((cust, tmp_address))
+    }
+
+    pub async fn find_customer_by_phone(phone: &str) -> anyhow::Result<(Customer, Address), anyhow::Error> {
+        let api_call = Prestashop::default();
+
+        let mut tmp_address = Address::default();
+        for phone_number in format_us_phone_number(phone).iter() {
+            let mut query = HashMap::new();
+            query.insert("filter[phone]", phone_number.as_str());
+            query.insert("output_format", "JSON");
+        
+            let customer_addresses: Vec<Address> = api_call
+                .request_resources_wasm("addresses", query.clone())
+                .await?;
+
+            log::info!("Addresses: {customer_addresses:#?}");
+
+            if let Some(address) = customer_addresses.get(0) {
+                tmp_address = address.clone();
+                break;
+            }
+        }
+
+        if tmp_address == Default::default() {
+            return Err(
+                anyhow::anyhow!("Could not find customer info from phone number")
+            );
+        }
+        let cust: Customer = api_call
+            .request_subresources_by_id_wasm("customers", "customer", &tmp_address.id_customer)
+            .await?;
+
+        Ok((cust, tmp_address))
+    }
 }
 
 impl CustomerData {

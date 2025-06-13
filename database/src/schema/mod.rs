@@ -20,6 +20,7 @@ pub mod user;
 pub mod ticket;
 pub mod prestashop;
 pub mod notification;
+pub mod odoo;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
