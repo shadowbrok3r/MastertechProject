@@ -10,10 +10,12 @@ const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 
 pub mod customer_messages;
 pub mod customer_threads;
+pub mod order;
 pub mod koth;
 
 pub use customer_messages::*;
 pub use customer_threads::*;
+pub use order::*;
 pub use koth::*;
 
 #[derive(Clone)]
@@ -530,186 +532,6 @@ pub struct Employee {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct Order {
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub id: String,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // #[serde(deserialize_with = "deserialize_to_string")]
-    pub id_order_type: String,
-    #[serde(default)]
-    pub id_address_delivery: String, // ✔️
-    #[serde(default)]
-    pub id_address_invoice: String,  // ✔️
-    #[serde(default)]
-    pub id_customer: String,         // ✔️
-    #[serde(default)]
-    pub current_state: String,
-    #[serde(default)]
-    pub invoice_number: String,
-    #[serde(default)]
-    pub invoice_date: String,  
-    #[serde(default)]
-    pub payment: String,
-    #[serde(default)]
-    pub date_add: String,
-    #[serde(default)]
-    pub date_upd: String,
-    #[serde(default)]
-    pub id_employee_sales_rep: String,
-    #[serde(default)]
-    pub id_employee_split_rep: String,
-    #[serde(default)]
-    pub id_employee_editing: String,
-    #[serde(default)]
-    pub id_order_everest: String,
-    #[serde(default)]
-    pub id_store: String,   // 1 = warehouse
-    #[serde(default)]
-    pub total_paid: String, // ✔️
-    #[serde(default)]
-    pub delivery_date: String,
-    #[serde(default)]
-    pub total_products_wt: String,
-    #[serde(default)]
-    pub total_paid_tax_excl: String,
-    #[serde(default)]
-    pub reference: String, // what prestashop sees since order id and reference are different...
-    #[serde(default)]
-    pub id_order_parent: String, // no idea
-    #[serde(default)]
-    pub shipping_number: String, // Tracking number
-    #[serde(default)]
-    pub order_type: String, // Configurator / Sales Order
-    // note: String,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub associations: Associations,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct Associations {
-    #[serde(default = "new_vec")]
-    pub order_rows: Vec<OrderRow>,
-    #[serde(default = "new_svc_vec")]
-    pub order_service: Vec<ServiceOrder>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub enum OrderState {
-    #[default]
-    AcceptedByOdoo,
-    Shipped,
-    DeliveredToStore,
-    DoneShelf,
-    OrderPlaced,
-    PrePulled,
-    ReadyToBuild,
-    QcAndBurnin,
-    ShipToStore,
-    Returned 
-}
-
-impl OrderState {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::AcceptedByOdoo => "Accepted By Odoo",
-            Self::Shipped => "Shipped",
-            Self::DeliveredToStore => "Delivered To Store",
-            Self::DoneShelf => "Done Shelf",
-            Self::OrderPlaced => "Order Placed",
-            Self::PrePulled => "Pre Pulled",
-            Self::ReadyToBuild => "Ready To Build",
-            Self::QcAndBurnin => "Qc & Burnin",
-            Self::ShipToStore => "Ship To Store",
-            Self::Returned => "Returned",
-        }
-    }
-
-    pub fn from_id_str(id: &str) -> &str {
-        match id {
-            "239" => "Accepted By Odoo",
-            "4" => "Shipped",
-            "238" => "Delivered To Store",
-            "40" => "Done Shelf",
-            "73" => "Order Placed",
-            "70" => "Pre Pulled",
-            "224" => "Ready To Build",
-            "71" => "Qc & Burnin",
-            "236" => "Ship To Store",
-            "84" => "Returned",
-            "30" => "In Repair",
-            "29" => "Check-in Shelf",
-            _ => "Accepted By Odoo"
-        }
-    }
-
-    pub fn state_from_id_str(id: &str) -> Self {
-        match id {
-            "239" => Self::AcceptedByOdoo,
-            "4" => Self::Shipped,
-            "238" => Self::DeliveredToStore,
-            "40" => Self::DoneShelf,
-            "73" => Self::OrderPlaced,
-            "70" => Self::PrePulled,
-            "224" => Self::ReadyToBuild,
-            "71" => Self::QcAndBurnin,
-            "236" => Self::ShipToStore,
-            "84" => Self::Returned,
-            _ => Self::AcceptedByOdoo
-        }
-    }
-
-    /*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
-    pub fn id(&self) -> i32 {
-        match self {
-            Self::AcceptedByOdoo => 239,
-            Self::Shipped => 4,
-            Self::DeliveredToStore => 238,
-            Self::DoneShelf => 40,
-            Self::OrderPlaced => 73,
-            Self::PrePulled => 70,
-            Self::ReadyToBuild => 224,
-            Self::QcAndBurnin => 71,
-            Self::ShipToStore => 236,
-            Self::Returned => 84,
-        }
-    }
-
-    pub const VALUES: [Self; 10] = [
-        Self::AcceptedByOdoo,
-        Self::Shipped,
-        Self::DeliveredToStore,
-        Self::DoneShelf,
-        Self::OrderPlaced,
-        Self::PrePulled,
-        Self::ReadyToBuild,
-        Self::QcAndBurnin,
-        Self::ShipToStore,
-        Self::Returned,
-    ];
-}
-
-fn new_vec() -> Vec<OrderRow> {
-    Vec::new()
-}
-
-fn new_svc_vec() -> Vec<ServiceOrder> {
-    Vec::new()
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct OrderRow {
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub id: String,
-    pub id_order_config: String,
-    pub product_id: String,
-    pub product_quantity: String,
-    pub product_name: String,
-    pub product_price: String,
-    pub product_reference: String
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct OrderPayment {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -748,36 +570,6 @@ pub struct OrderDetails {
     pub id_order: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
-pub struct ServiceOrder {
-    // pub id: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub id_order_service: String,
-    // pub id_order: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub device_name: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub device_mfg: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub device_model: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub device_serial: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub device_password: String,
-    // pub id_status_service: String, // This is fucky
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub device_power_supply: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub other_hardware_software: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub physical_damage: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub check_in_notes: String,
-    #[serde(deserialize_with = "deserialize_to_string")]
-    pub intake_notes: String,
-    // pub id_employee_qc_tech: String,
-    // pub id_employee_qc_signoff: String,
-}
 
 #[derive(Serialize, Debug, Default, PartialEq)]
 pub struct Resources {
