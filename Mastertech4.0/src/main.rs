@@ -154,7 +154,7 @@ async fn main() -> eframe::Result<()> {
             format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
             eframe::NativeOptions {
                 viewport: eframe::egui::ViewportBuilder::default()
-                    .with_inner_size([945.0, 750.0])
+                    .with_inner_size([1000.0, 750.0])
                     .with_drag_and_drop(true)
                     .with_icon(load_icon()),
                     // .with_always_on_top(),
