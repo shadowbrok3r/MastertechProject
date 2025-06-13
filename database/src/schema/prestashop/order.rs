@@ -214,20 +214,86 @@ pub struct ServiceOrder {
     // pub id_employee_qc_signoff: String,
 }
 
-
+/*
+isUnsignedId
+isUnsignedId
+isUnsignedId
+isUnsignedId
+isUnsignedId
+isUnsignedId
+isUnsignedId
+isModuleName
+isGenericName
+isPrice
+isPrice
+isFloat
+*/
 impl Order {
     pub async fn create_prestashop_order(&self, client: Client) ->anyhow::Result<(), anyhow::Error> {
                 // Prepare the XML payload
         let payload = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
-                <customer_message>
-                    <id_lang>1</id_lang>
-                    <id_employee>{{}}</id_employee>
-                    <id_customer_thread>{{}}</id_customer_thread>
-                    <message>{{}}</message>
-                    <private>1</private>
-                    <id_order_message_type>0</id_order_message_type>
-                </customer_message>
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+            <prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
+                <order>
+                    <id_address_delivery required="true"></id_address_delivery>
+                    <id_address_invoice required="true"></id_address_invoice>
+                    <id_cart required="true"></id_cart>
+                    <id_currency required="true"></id_currency>
+                    <id_lang required="true"></id_lang>
+                    <id_customer required="true"></id_customer>
+                    <id_carrier required="true"></id_carrier>
+                    <module required="true"></module>
+                    <payment required="true"></payment>
+                    <total_products required="true"></total_products>
+                    <total_products_wt required="true"></total_products_wt>
+                    <conversion_rate required="true"></conversion_rate>
+                    <associations>
+                        <order_rows nodeType="order_row" virtualEntity="true">
+                            <order_row>
+                                <id></id>
+                                <id_order_config read_only="true" readOnly="true"></id_order_config>
+                                <product_id xlink:href="https://pclaptops.mojo11.com/api/products/" required="true"></product_id>
+                                <product_attribute_id required="true"></product_attribute_id>
+                                <product_quantity required="true"></product_quantity>
+                            </order_row>
+                        </order_rows>
+                        <order_serial nodeType="order_serial" virtualEntity="true">
+                            <order_serial>
+                                <id_order></id_order>
+                                <id_order_detail></id_order_detail>
+                                <product_reference></product_reference>
+                                <serial_number></serial_number>
+                                <id_order_config></id_order_config>
+                            </order_serial>
+                        </order_serial>
+                        <order_config nodeType="order_config" virtualEntity="true">
+                            <order_config>
+                                <id_order_config></id_order_config>
+                                <id_order></id_order>
+                                <name></name>
+                                <id_config></id_config>
+                            </order_config>
+                        </order_config>
+                        <order_service nodeType="order_service" api="order_service">
+                            <order_service>
+                                <id_order_service></id_order_service>
+                                <device_name></device_name>
+                                <device_mfg></device_mfg>
+                                <device_model></device_model>
+                                <device_serial></device_serial>
+                                <device_password></device_password>
+                                <id_status_service></id_status_service>
+                                <device_power_supply></device_power_supply>
+                                <other_hardware_software></other_hardware_software>
+                                <physical_damage></physical_damage>
+                                <check_in_notes></check_in_notes>
+                                <intake_notes></intake_notes>
+                                <id_employee_qc_tech></id_employee_qc_tech>
+                                <id_employee_qc_signoff></id_employee_qc_signoff>
+                            </order_service>
+                        </order_service>
+                    </associations>
+                </order>
             </prestashop>"#
         );
 
