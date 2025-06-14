@@ -16,7 +16,7 @@ pub async fn search_odoo_products(search_term: &str) -> anyhow::Result<JsonRpcRe
         vec![
             json!(["default_code", "ilike", search_term]),
             json!(["product_variant_ids.default_code", "ilike", search_term]),
-            json!(["name", "ilike", search_term])
+            // json!(["name", "ilike", search_term])
         ]
     ];
 

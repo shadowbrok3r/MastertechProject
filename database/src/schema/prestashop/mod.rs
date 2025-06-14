@@ -557,6 +557,8 @@ pub struct OrderPayment {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct Customer {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
     pub lastname: String,
     pub firstname: String,
     pub email: String,
@@ -566,7 +568,6 @@ pub struct Customer {
 pub struct OrderDetails {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
-
     pub id_order: Option<String>,
 }
 
@@ -610,6 +611,183 @@ pub struct Resources {
     /// 	The stores
     pub stores: String,
 }
+
+#[derive(Serialize, Debug, Default, PartialEq, Clone)]
+pub enum DeviceMfg {
+    Acer,
+    Alienware,
+    Apple,
+    Asus,
+    Custom,
+    CyberPower,
+    Dell,
+    #[serde(rename="HP")]
+    Hp,
+    #[serde(rename="iBuyPower")]
+    IbuyPower,
+    Lenovo,
+    #[serde(rename="LG")]
+    Lg,
+    Microsoft,
+    #[serde(rename="MSI")]
+    Msi,
+    Nzxt,
+    #[serde(rename="PC Laptops PCL")]
+    #[default]
+    PcLaptops
+}
+
+impl DeviceMfg {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Acer => "Acer",
+            Self::Alienware => "Alienware",
+            Self::Apple => "Apple",
+            Self::Asus => "Asus",
+            Self::Custom => "Custom/Misc",
+            Self::CyberPower => "CyberPower",
+            Self::Dell => "Dell",
+            Self::Hp => "HP",
+            Self::IbuyPower => "iBuyPower",
+            Self::Lenovo => "Lenovo",
+            Self::Lg => "LG",
+            Self::Microsoft => "Microsoft",
+            Self::Msi => "MSI",
+            Self::Nzxt => "NZXT",
+            Self::PcLaptops => "PC Laptops",
+        }
+    }
+
+    pub const VALUES: [Self; 15] = [
+        Self::Acer,
+        Self::Alienware,
+        Self::Apple,
+        Self::Asus,
+        Self::Custom,
+        Self::CyberPower,
+        Self::Dell,
+        Self::Hp,
+        Self::IbuyPower,
+        Self::Lenovo,
+        Self::Lg,
+        Self::Microsoft,
+        Self::Msi,
+        Self::Nzxt,
+        Self::PcLaptops
+    ];
+}
+
+#[derive(Serialize, Debug, Default, PartialEq, Clone)]
+pub enum Device {
+    #[default]
+    Laptop,
+    Desktop,
+    AllInOne,
+    Other
+}
+
+impl Device {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Laptop => "Laptop",
+            Self::Desktop => "Desktop",
+            Self::AllInOne => "All-In-One",
+            Self::Other => "Other",
+        }
+    }
+
+    pub const VALUES: [Self; 4] = [
+        Self::Laptop,
+        Self::Desktop,
+        Self::AllInOne,
+        Self::Other
+    ];
+}
+
+#[derive(Serialize, Debug, Default, PartialEq, Clone)]
+pub enum LaptopModel {
+    Smt2,
+    #[default]
+    Sm3,
+    Sm5,
+    Smt7,
+    Smt8,
+    Sm10,
+    Katana,
+    Other
+}
+
+impl LaptopModel {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Smt2 => "Smt2",
+            Self::Sm3 => "Sm3",
+            Self::Sm5 => "Sm5",
+            Self::Smt7 => "Smt7",
+            Self::Smt8 => "Smt8",
+            Self::Sm10 => "Sm10",
+            Self::Katana => "Katana",
+            Self::Other => "Other",
+        }
+    }
+
+    pub const VALUES: [Self; 8] = [
+        Self::Smt2,
+        Self::Sm3,
+        Self::Sm5,
+        Self::Smt7,
+        Self::Smt8,
+        Self::Sm10,
+        Self::Katana,
+        Self::Other
+    ];
+}
+
+#[derive(Serialize, Debug, Default, PartialEq, Clone)]
+pub enum DesktopModel {
+    #[default]
+    S2,
+    S4,
+    S6,
+    S8,
+    S10,
+    Katana,
+    Photon,
+    Annihilator,
+    Atomic,
+    Other
+}
+
+impl DesktopModel {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::S2 => "S2",
+            Self::S4 => "S4",
+            Self::S6 => "S6",
+            Self::S8 => "S8",
+            Self::S10 => "S10",
+            Self::Katana => "Katana",
+            Self::Photon => "Photon",
+            Self::Annihilator => "Annihilator",
+            Self::Atomic => "Atomic",
+            Self::Other => "Other",
+        }
+    }
+
+    pub const VALUES: [Self; 10] = [
+        Self::S2,
+        Self::S4,
+        Self::S6,
+        Self::S8,
+        Self::S10,
+        Self::Katana,
+        Self::Photon,
+        Self::Annihilator,
+        Self::Atomic,
+        Self::Other,
+    ];
+}
+
 
 pub trait SubResource {
     fn get_subresource(&self, field: &str) -> Option<String>;

@@ -537,45 +537,43 @@ impl Customer {
  */
 
 impl Customer {
-    pub async fn find_customer_by_email(email: &str) -> anyhow::Result<(Customer, Address), anyhow::Error> {
+    pub async fn find_customer_by_email(email: &str) -> anyhow::Result<Vec<(Customer, Address)>, anyhow::Error> {
         let api_call = Prestashop::default();
         let mut query = HashMap::new();
-        let mut tmp_address = Address::default();
+        let customers = &mut vec![];
         query.insert("filter[email]", email);
         query.insert("output_format", "JSON");
 
-        let addresses: Vec<Address> = api_call
-            .request_resources_wasm("addresses", query.clone())
+        let possible_customers: Vec<Customer> = api_call
+            .request_resources_wasm("customers", query.clone())
             .await?;
 
-        if let Some(address) = addresses.get(0) {
-            tmp_address = address.clone();
+        for cust in possible_customers.iter() {
+            if !cust.id.is_empty() {
+                let mut query = HashMap::new();
+                query.insert("filter[id_customer]", cust.id.as_str());
+                query.insert("output_format", "JSON");
+
+                let addresses: Vec<Address> = api_call
+                    .request_resources_wasm("addresses", query.clone())
+                    .await?;
+
+                for addr in addresses.iter() {
+                    if addr.id_customer == cust.id {
+                        customers.push((cust.clone(), addr.clone()));
+                    }
+                }
+            }
         }
 
-        if tmp_address.id_customer.is_empty() {
-            return Err(anyhow::anyhow!("Error pulling address info"));
-        }
-
-        /* 
-        let mut query = HashMap::new();
-        query.insert("filter[email]", email);
-        query.insert("output_format", "JSON");
-
-        let cust: Vec<Customer> = api_call
-            .request_resources_wasm("customers", &tmp_address.id_customer)
-            .await?;
-        */
-        let cust: Customer = api_call
-            .request_subresources_by_id_wasm("customers", "customer", &tmp_address.id_customer)
-            .await?;
-
-        Ok((cust, tmp_address))
+        Ok(customers.clone())
     }
 
-    pub async fn find_customer_by_phone(phone: &str) -> anyhow::Result<(Customer, Address), anyhow::Error> {
+    pub async fn find_customer_by_phone(phone: &str) -> anyhow::Result<Vec<(Customer, Address)>, anyhow::Error> {
         let api_call = Prestashop::default();
 
-        let mut tmp_address = Address::default();
+        let customers = &mut vec![];
+
         for phone_number in format_us_phone_number(phone).iter() {
             let mut query = HashMap::new();
             query.insert("filter[phone]", phone_number.as_str());
@@ -587,22 +585,19 @@ impl Customer {
 
             log::info!("Addresses: {customer_addresses:#?}");
 
-            if let Some(address) = customer_addresses.get(0) {
-                tmp_address = address.clone();
-                break;
+            for addr in customer_addresses.iter() {
+                if !addr.id_customer.is_empty() {
+                    let cust: Customer = api_call
+                        .request_subresources_by_id_wasm("customers", "customer", &addr.id_customer)
+                        .await?;
+
+                    customers.push((cust.clone(), addr.clone()));
+                }
+
             }
         }
 
-        if tmp_address == Default::default() {
-            return Err(
-                anyhow::anyhow!("Could not find customer info from phone number")
-            );
-        }
-        let cust: Customer = api_call
-            .request_subresources_by_id_wasm("customers", "customer", &tmp_address.id_customer)
-            .await?;
-
-        Ok((cust, tmp_address))
+        Ok(customers.clone())
     }
 }
 
