@@ -238,6 +238,9 @@ impl Koth {
                             .filter(|a| a.product_reference.to_lowercase().starts_with("lap/"))
                             .count();
 
+
+                        // Ticket count, how many services tech's are completing
+
                         let total_desktops = self
                             .orders
                             .iter()
@@ -245,7 +248,13 @@ impl Koth {
                             .flat_map(|o| o.associations.order_rows.iter())
                             .filter_map(|o| {
                                 if !o.product_reference.to_lowercase().starts_with("lap/") 
-                                    && o.product_reference.to_lowercase().starts_with("case/")
+                                    && (
+                                        o.product_reference.to_lowercase().starts_with("case/")
+                                        || o.product_reference.to_lowercase().starts_with("bsd/")
+                                        || o.product_reference.to_lowercase().starts_with("rci/")
+                                        || o.product_reference.to_lowercase().starts_with("r2r/")
+                                        || o.product_reference.to_lowercase().starts_with("rtr/")
+                                    )
                                     && !o.product_reference.to_lowercase().starts_with("case/15")
                                     && !o.product_reference.to_lowercase().starts_with("case/17")
                                 {
@@ -299,6 +308,10 @@ impl Koth {
                             .filter_map(|o| {
                                 if o.product_reference.to_lowercase().starts_with("lap") 
                                     || o.product_reference.to_lowercase().starts_with("case/")
+                                    || o.product_reference.to_lowercase().starts_with("bsd/")
+                                    || o.product_reference.to_lowercase().starts_with("rci/")
+                                    || o.product_reference.to_lowercase().starts_with("r2r/")
+                                    || o.product_reference.to_lowercase().starts_with("rtr/")
                                     && !o.product_reference.to_lowercase().starts_with("case/15")
                                     && ! o.product_reference.to_lowercase().starts_with("case/17")
                                 {
@@ -322,6 +335,7 @@ impl Koth {
                             .iter()
                             .filter_map(|o| {
                                 if o.product_reference.to_lowercase().starts_with("wty/")
+                                && !o.product_price.starts_with("0.0")
                                 {
                                     Some(o.product_reference.clone())
                                 } else { 

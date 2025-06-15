@@ -1,5 +1,9 @@
 {
     "search.useIgnoreFiles": false,
     "IDX.aI.enableInlineCompletion": true,
-    "IDX.aI.enableCodebaseIndexing": true
+    "IDX.aI.enableCodebaseIndexing": true,
+    "workbench.editor.decorations.colors": true,
+    "workbench.editor.decorations.badges": true,
+    "diffEditor.experimental.showEmptyDecorations": false,
+    "diffEditor.codeLens": false
 }
