@@ -30,6 +30,7 @@ displays = { path="../displays", features = ["wasm"]}
 surrealdb-alpha ={ workspace = true }
 # surrealdb = { workspace=true }
 wasm-cookies = { workspace = true }
+egui_logger = {workspace = true }
 egui_plot = { workspace = true }
 brotli = { workspace=true }
 base64 = { workspace=true }
