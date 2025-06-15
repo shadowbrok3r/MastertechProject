@@ -1,6 +1,6 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
+use displays::{tabs::stock::{get_extra_stock_info, get_stock}, FilterTasks};
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
-use displays::{tabs::{logger::logger_ui, stock::{get_extra_stock_info, get_stock}}, FilterTasks};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
@@ -38,7 +38,16 @@ impl TabViewer for MtechServerContext {
             "Threads" => self.shared_ctx.user_chat.ui(ui),
             "Bug Report" => self.shared_ctx.github(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
-            "Logs" => logger_ui().show(ui),
+            "Logs" => egui_logger::logger_ui()
+                .warn_color(ui.style().visuals.warn_fg_color) 
+                .error_color(ui.style().visuals.error_fg_color) 
+                .log_levels([true, true, true, false, false])
+                // there should be a way to set default false...
+                .enable_category("eframe".to_string(), false)
+                .enable_category("eframe::native::glow_integration".to_string(), false)
+                .enable_category("egui_glow::shader_version".to_string(), false)
+                .enable_category("egui_glow::painter".to_string(), false)
+                .show(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
             "Database Editor" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
             "Query Editor" => self.shared_ctx.query_editor.ui(ui),

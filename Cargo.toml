@@ -11,6 +11,7 @@ wasm-cookies = { version= "0.2" }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
 surrealdb-alpha = { version = "3.0.5", features = ["protocol-ws"] }
 # # surrealdb = { version = "2.3.3", features = ["protocol-ws"] } 
+egui_logger = { version = "0.7" }
 egui_dock = { version = "0.16", features = ["serde"]} # 
 structdiff = {version = "0.7.3", features = ["rustc_hash"]}
 bincode = { version="2", features = ["serde", "derive"] }
