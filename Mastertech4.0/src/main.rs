@@ -96,6 +96,23 @@ async fn main() -> eframe::Result<()> {
         Err(e) => log::error!("check_old_exe Err: {e:?}"),
     }
 
+    // Create an EguiLogger; multi_log will take care of initialization.
+    let egui_logger = Box::new(egui_logger::builder().build());
+
+    // And add another one.
+    // let tui_logger = Box::new(tui_logger::init_logger(log::LevelFilter::Info));
+    // Early initialization of the logger
+    let drain = tui_logger::Drain::new();
+    // instead of tui_logger::init_logger, we use `env_logger`
+    let tui_log = Box::new(
+        env_logger::Builder::default()
+        .format(move |_buf, record|
+            // patch the env-logger entry through our drain to the tui-logger
+            Ok(drain.log(record))
+        ).build()
+    );
+    
+    multi_log::MultiLogger::init(vec![egui_logger, tui_log], log::Level::Info).expect("Error initializing multi_logger");
 
     // tokio::spawn(async move {
     //     utilities::ai::run_mcp_server_tcp().await?;
@@ -133,9 +150,9 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
-        let init = tui_logger::init_logger(log::LevelFilter::Info);
+        // let init = tui_logger::init_logger(log::LevelFilter::Info);
         let res = terminal_mode::run_terminal_mode().await;
-        log::info!("TERM MODE: {res:?}\n{init:?}");
+        log::info!("TERM MODE: {res:?}"); // \n{init:?}
     } else if matches.get_flag("log") {
         simplelog::WriteLogger::init(
             log::LevelFilter::Trace,
@@ -171,11 +188,12 @@ async fn main() -> eframe::Result<()> {
 
         if let Err(e) = eframe_app { 
             // displays::tabs::logger::logging::builder().init()
-            // Set max_log_level to Trace
-            let init = tui_logger::init_logger(log::LevelFilter::Info);
-            log::info!("Init logger: {init:?}");
-            // // Set default level for unknown targets to Trace
+
+            // let init = tui_logger::init_logger(log::LevelFilter::Info);
+            // log::info!("Init logger: {init:?}");
+
             // tui_logger::set_default_level(log::LevelFilter::Info);
+
             // simplelog::WriteLogger::init(
             //     log::LevelFilter::Info,
             //     simplelog::Config::default(),
@@ -187,8 +205,8 @@ async fn main() -> eframe::Result<()> {
                 error!("Error running terminal app: {e:?}");
             }
         } else {
-            let _x = displays::tabs::logger::logging::builder().init();
-            println!("Logger setup: {_x:?}");
+            // let _x = egui_logger::builder().init();
+            // println!("Logger setup: {_x:?}");
         }
     }
     

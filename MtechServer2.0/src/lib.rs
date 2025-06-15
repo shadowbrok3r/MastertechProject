@@ -20,14 +20,13 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn run() {
-    gloo_console::info!("STARTING APP");
     use eframe::wasm_bindgen::JsCast as _;
     // use log::LevelFilter;
-    use displays::tabs::logger::logging::builder;
+    // use displays::tabs::logger::logging::builder;
     use web_sys::HtmlCanvasElement;
 
     gloo_console::info!("INIT LOGGER");
-    builder().init().unwrap();
+    egui_logger::builder().init();
     // Redirect `log` message to `console.log` and friends:
     // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 

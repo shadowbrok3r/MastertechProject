@@ -825,7 +825,7 @@ pub struct MissedCallOrder {
     pub missing_days: Vec<String>,
 }
 
-#[derive(Default, Deserialize, Serialize, PartialEq)]
+#[derive(Default, Deserialize, Serialize, PartialEq, Clone)]
 pub enum PrestashopOrderType {
     #[default]
     CheckinShelf,
@@ -836,9 +836,9 @@ pub enum PrestashopOrderType {
 impl PrestashopOrderType {
     pub fn as_str(&self) -> &str {
         match self {
-            Self::CheckinShelf => "checkinShelf",
-            Self::InRepair => "inRepair",
-            Self::DoneShelf => "doneShelf",
+            Self::CheckinShelf => "Check-In Shelf",
+            Self::InRepair => "In Repair",
+            Self::DoneShelf => "Done Shelf",
         }
     }
 

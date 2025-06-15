@@ -1,5 +1,5 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, Store};
-use displays::{tabs::{logger::logger_ui, stock::{get_extra_stock_info, get_stock}}, FilterTasks};
+use displays::{tabs::stock::{get_extra_stock_info, get_stock}, FilterTasks};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
@@ -104,7 +104,15 @@ impl TabViewer for MastertechContext {
             "Downloads" => self.downloads_page(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Store Stock" => self.shared_ctx.stock_viewer(ui),
-            "Logs" => logger_ui().show(ui),
+            "Logs" => egui_logger::logger_ui()
+                .log_levels([true, true, true, false, false])
+                .warn_color(ui.style().visuals.warn_fg_color) 
+                .error_color(ui.style().visuals.error_fg_color) 
+                .enable_category("eframe".to_string(), false)
+                .enable_category("eframe::native::glow_integration".to_string(), false)
+                .enable_category("egui_glow::shader_version".to_string(), false)
+                .enable_category("egui_glow::painter".to_string(), false)
+                .show(ui),
             "Resource Monitor" => self.show_resource_monitor(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),

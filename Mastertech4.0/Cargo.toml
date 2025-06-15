@@ -66,7 +66,7 @@ tui-logger = "0.17"
 arboard = "3"
 tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
-nvme = "0.2"
+# nvme = "0.2.2"
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = ["server", "transport-sse-server", "transport-io"]}
 xcap = "0.6.0"
 display-info = "0.5.4"
@@ -74,10 +74,13 @@ enigo = { version = "0.5.0", features = ["serde"] }
 self-replace = "1.5.0"
 zstd = "0.13.3"
 humansize = "2"
+multi_log = "0.1"
+env_logger = "*"
 
 surrealdb-alpha ={ workspace = true }
 # surrealdb = { workspace=true }
 egui-data-table = { workspace = true }
+egui_logger = {workspace = true }
 ratatui = { workspace = true }
 database = { workspace=true }
 tokio = { workspace=true }
