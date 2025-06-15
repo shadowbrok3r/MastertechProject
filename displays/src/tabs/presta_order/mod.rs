@@ -1,7 +1,8 @@
-use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Grid, Id, Layout, Rect, RichText, ScrollArea, Sense, TextEdit, TopBottomPanel, Ui, UiBuilder, Widget};
+use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, Sense, TextEdit, TopBottomPanel, Ui, UiBuilder, Widget};
 use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, CustomerData, Status, User}, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
-use crate::modals::tabs::return_colors;
+use itertools::Itertools;
+use crate::{get_current_user_from_auth, get_database_users, modals::tabs::return_colors};
 use web_time::{Duration, Instant};
 
 pub struct PrestashopOrderForm {
@@ -20,7 +21,11 @@ pub struct PrestashopOrderForm {
     store_users: Vec<User>,
     current_user: User,
     order_state: PrestashopOrderType,
-    
+    first_ui_run: bool,
+    sales_rep: User,
+    add_split_rep: bool,
+    split_rep: User,
+
     action_tx: Sender<UiAction>,
     action_rx: Receiver<UiAction>,
     search_results_tx: Sender<Vec<(Customer, Address)>>,
@@ -77,6 +82,11 @@ impl PrestashopOrderForm {
             state: UiState::SelectCustomer,
             order_state: PrestashopOrderType::default(),
             data: vec![],
+            first_ui_run: true,
+            sales_rep: User::default(),
+            split_rep: User::default(),
+            add_split_rep: false,
+
             action_tx, action_rx,
             search_results_tx, search_results_rx,
             odoo_search_tx, odoo_search_rx,
@@ -155,6 +165,7 @@ impl PrestashopOrderForm {
 
         TopBottomPanel::top("PrestashopOrderTopPanel")
         .exact_height(25.)
+        .frame(Frame::dark_canvas(ui.style()))
         .show_inside(ui, |ui|{
             ui.horizontal_top(|ui| {
                 ui.add_space(5.);
@@ -291,8 +302,18 @@ impl PrestashopOrderForm {
     }
 
     pub fn create_order(&mut self, ui: &mut Ui) {
+        if self.first_ui_run {
+            log::error!("User email is empty: {:?}", self.current_user.get_email().is_empty());
+            self.current_user = get_current_user_from_auth().unwrap_or_default();
+            self.sales_rep = self.current_user.clone();
+            self.split_rep = self.current_user.clone();
+            self.store_users = get_database_users();
+            self.first_ui_run = false;
+        }
+
         ui.add_space(10.);
 
+        #[allow(const_item_mutation)]
         let product_search_rect = &mut Rect::ZERO;
 
         ui.columns(2, |ui| {
@@ -534,7 +555,7 @@ impl PrestashopOrderForm {
                         // ui.colored_label(ui.style().visuals.error_fg_color, "Product Name");
                         ui.colored_label(ui.style().visuals.error_fg_color, "Product Code");
                         ui.colored_label(ui.style().visuals.error_fg_color, "Qty Avail");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "List Price");
+                        ui.colored_label(ui.style().visuals.error_fg_color, "Cost");
                         ui.colored_label(ui.style().visuals.error_fg_color, "Standard Price");
                         ui.label("");
                         ui.end_row();
@@ -558,7 +579,11 @@ impl PrestashopOrderForm {
                             }
                             ui.end_row();
                         }
-                        
+                        ui.label("");
+                        ui.label("");
+                        ui.label("");
+                        ui.label("");
+                        ui.label("");
                         ui.end_row();
                     });
                 }).response.rect;
@@ -566,141 +591,118 @@ impl PrestashopOrderForm {
             
             ui[1].vertical_centered(|ui| {
                 ui.vertical_centered(|ui| {
-                    ui.set_width(350.);
+                    ui.set_width(435.);
                     ui.group(|ui| {
                         ui.heading(RichText::new("Service Details").underline().font(FontId::proportional(15.)));
                         ui.add_space(10.);
                         ui.separator();
                         ui.add_space(10.);
-                    
-                        ui.scope_builder(
-                        UiBuilder::new()
-                        .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Min)), 
-                        |ui| {
-                            let is_sizing_pass = ui.is_sizing_pass();
-                            let available_width = ui.available_width();
-                            let combo_width = 115.0; // Fixed width of each ComboBox
-                            let total_content_width = combo_width * 3.0; // Two ComboBoxes side by side
 
-                            // In the rendering pass, add spacing to center the content
-                            if !is_sizing_pass && available_width > total_content_width {
-                                let padding = (available_width - total_content_width) / 2.0;
-                                ui.add_space(padding);
-                            }
+                        let current_name = self.store_users
+                            .iter()
+                            .filter(|u| u.is_active())
+                            .find(|u| u.get_id() == self.sales_rep.get_id())
+                            .map(|u| u.get_username().to_owned())
+                            .unwrap_or_else(|| "Sales Rep".to_string());
 
+                        let current_split_rep = self.store_users
+                            .iter()
+                            .filter(|u| u.is_active() && u.get_id() != self.sales_rep.get_id())
+                            .find_or_first(|u| u.get_id() == self.split_rep.get_id())
+                            .map(|u| u.get_username().to_owned())
+                            .unwrap_or_else(|| "Split Rep".to_string());
 
-                            let current_name = self.store_users
-                                .iter()
-                                .filter(|u| u.is_active())
-                                .find(|u| u.get_id() == self.current_user.get_id())
-                                .map(|u| u.get_username().to_owned())
-                                .unwrap_or_else(|| "Unassigned".to_string());
+                        let my_store = self.sales_rep.get_store();
+                        let mut sorted_users: Vec<&User> = self.store_users
+                            .iter()
+                            .filter(|u| u.is_active())
+                            .collect();
 
+                        sorted_users.sort_by_key(|u| {
+                            (
+                                // same‑store? (false=first, true=later)
+                                u.get_store() != my_store,
+                                // then by username (case‑insensitive)
+                                u.get_username().to_lowercase(),
+                            )
+                        });
 
-                            let my_store = self.current_user.get_store();
-                            let mut sorted_users: Vec<&User> = self.store_users
-                                .iter()
-                                .filter(|u| u.is_active())
-                                .collect();
-
-                            sorted_users.sort_by_key(|u| {
-                                (
-                                    // same‑store? (false=first, true=later)
-                                    u.get_store() != my_store,
-                                    // then by username (case‑insensitive)
-                                    u.get_username().to_lowercase(),
-                                )
+                        ui.horizontal(|ui| {
+                            ui.colored_label(ui.style().visuals.error_fg_color, "Sales Rep:");
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ComboBox::from_id_salt("Sales Rep Selection")
+                                .selected_text(&current_name)
+                                .width(125.)
+                                .show_ui(ui, |ui| {
+                                    for user in sorted_users.iter().cloned() {
+                                        ui.selectable_value(
+                                            &mut self.sales_rep,       // current_value: &mut RecordId
+                                            user.clone(),    // selected_value: RecordId
+                                            user.get_username(),      // text: &str or String
+                                        );
+                                    }
+                                });
                             });
+                        });
 
-                            ComboBox::from_id_salt("Sales Rep Selection")
-                                .selected_text(current_name)
-                                .width(100.)
-                                .height(150.)
-                                .show_ui(ui, |ui| {
-                                    for user in sorted_users {
-                                        let assignee_selection = ui.selectable_value(
-                                            &mut self.current_user.get_employee_id(),       // current_value: &mut RecordId
-                                            user.get_employee_id(),    // selected_value: RecordId
-                                            user.get_username(),      // text: &str or String
-                                        );
-                                    }
-                                })
-                                .response;
+                        ui.add_space(5.);
 
-                            ui.add_space(5.);
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.add_split_rep, RichText::new("Split Rep:").color(ui.style().visuals.error_fg_color));
                             
-                            ComboBox::from_id_salt("Split Rep Selection")
-                                .selected_text(current_name)
-                                .width(100.)
-                                .height(150.)
-                                .show_ui(ui, |ui| {
-                                    for user in sorted_users {
-                                        let assignee_selection = ui.selectable_value(
-                                            &mut self.current_user.get_employee_id(),       // current_value: &mut RecordId
-                                            user.get_employee_id(),    // selected_value: RecordId
-                                            user.get_username(),      // text: &str or String
-                                        );
-                                    }
-                                })
-                                .response;
-
-                            ui.add_space(5.);
-
-                            ComboBox::new("Order State", "")
-                                .selected_text(RichText::new(format!("{:?}", &self.order_state.as_str())))
-                                .show_ui(ui, |ui| {
-                                    for status in PrestashopOrderType::VALUES {
-                                        if ui.selectable_value(
-                                            &mut self.order_state, 
-                                            status, 
-                                            status.as_str()
-                                        ).clicked() {
-
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if self.add_split_rep {
+                                    ComboBox::from_id_salt("Split Rep Selection")
+                                    .selected_text(&current_split_rep)
+                                    .width(125.)
+                                    .show_ui(ui, |ui| {
+                                        // let users = sorted_users.clone
+                                        for user in sorted_users.iter().filter(|u| u.get_id() != self.sales_rep.get_id()).cloned() {
+                                            ui.selectable_value(
+                                                &mut self.split_rep,       // current_value: &mut RecordId
+                                                user.clone(),    // selected_value: RecordId
+                                                user.get_username(),      // text: &str or String
+                                            );
                                         }
+                                    });
+                                }
+                            });
+                        });
+
+                        ui.add_space(5.);
+
+                        ui.horizontal(|ui| {
+                            ui.colored_label(ui.style().visuals.error_fg_color, "Order Type:");
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ComboBox::new("Order State", "")
+                                .selected_text(self.order_state.as_str())
+                                .width(125.)
+                                .show_ui(ui, |ui| {
+                                    for status in PrestashopOrderType::VALUES.iter() {
+                                        ui.selectable_value(
+                                            &mut self.order_state, 
+                                            status.clone(), 
+                                            status.as_str()
+                                        );
                                     }
-                                })
-                                .response;
+                                });
+                            });
+                        });
                             
-                            // Use egui memory to track if we've already done the sizing pass
-                            let sizing_pass_done = ui.memory(|mem| mem.data.get_temp::<bool>(Id::new("combo_sizing_done")).unwrap_or(false));
-
-                            if is_sizing_pass && !sizing_pass_done {
-                                ui.ctx().request_discard("Centering ComboBox sizing pass");
-                                ui.ctx().request_repaint();
-                                ui.memory_mut(|mem| mem.data.insert_temp(Id::new("combo_sizing_done"), true));
-                            }
-
-                            // Reset the flag if the UI is repainted for other reasons (e.g., window resize)
-                            if !is_sizing_pass && sizing_pass_done {
-                                ui.memory_mut(|mem| mem.data.insert_temp(Id::new("combo_sizing_done"), false));
-                            }
-                        });
-
                         ui.add_space(5.);
-                        TextEdit::singleline(&mut self.service_details.device_pw).hint_text("Device Password").ui(ui);
-                        ui.add_space(5.);
-                        let rect = TextEdit::singleline(&mut self.service_details.device_serial).hint_text("Device Serial").ui(ui).rect;
-                        ui.add_space(5.);
-                        ui.horizontal_top(|ui| {
-                            let cord = &mut self.service_details.power_cord;
-                            let checkbox_pos = pos2(rect.min.x, rect.max.y + 5.0); // 5.0 for a small gap
-                            let new_rect = Rect::from_min_size(checkbox_pos, vec2(100., 20.));
-                            ui.put(new_rect, Checkbox::new(cord, "Power Cord?"));
-                            // ui.add_space(ui.available_width()/3.5);
-                            ui.add_space(10.);
-                            if *cord {
-                                TextEdit::singleline(&mut self.service_details.power_cord_serial)
-                                    .hint_text("Power Cord Serial")
-                                    .desired_width(150.)
-                                    .ui(ui);
-                            }
-                        });
-                        ui.add_space(5.);
-                        TextEdit::multiline(&mut self.service_details.checkin_notes).hint_text("Check-In Notes").desired_rows(6).ui(ui);
-
+                        ui.add_space(30.);
                         ui.add_space(13.);
                     });
                 });
+
+                // Calculate the space needed to align the "Added Products" group with the "Product Search Results" group
+                let target_y = product_search_rect.min.y; // Top y-coordinate of "Product Search Results"
+                let current_y = ui.cursor().min.y; // Current y-position in the right column
+                let space_to_add = target_y - current_y; // Space needed to align tops
+
+                if space_to_add > 0.0 {
+                    ui.add_space(space_to_add); // Add space to push "Added Products" down
+                }
 
                 ui.group(|ui| {
                     ui.heading(RichText::new("Added Products").underline().font(FontId::proportional(15.)));
@@ -719,12 +721,14 @@ impl PrestashopOrderForm {
                         // ui.colored_label(ui.style().visuals.error_fg_color, "Product Name");
                         ui.colored_label(ui.style().visuals.error_fg_color, "Product Code");
                         ui.colored_label(ui.style().visuals.error_fg_color, "Qty Avail");
-                        ui.colored_label(ui.style().visuals.error_fg_color, "List Price");
+                        ui.colored_label(ui.style().visuals.error_fg_color, "Cost");
                         ui.colored_label(ui.style().visuals.error_fg_color, "Standard Price");
                         ui.label("");
                         ui.end_row();
 
+                        let total = &mut 0.0;
                         for product in self.added_products.iter() {
+                            *total += product.list_price;
                             // ui.label(&product.name);
                             ui.label(&product.default_code);
                             ui.label(product.qty_available.to_string());
@@ -735,6 +739,12 @@ impl PrestashopOrderForm {
                             }
                             ui.end_row();
                         }
+
+                        ui.label("");
+                        ui.label("");
+                        ui.label("");
+                        ui.label("");
+                        ui.colored_label(ui.style().visuals.error_fg_color, format!("Subtotal: $ {:.2}", total));
                         
                         ui.end_row();
                     });
@@ -742,4 +752,70 @@ impl PrestashopOrderForm {
             });
         });
     }
+
+    pub fn submit_order(&mut self) -> anyhow::Result<(), anyhow::Error> {
+        self.order = Order::default(); //{
+        //     id_order_type: todo!(),
+        //     id_address_delivery: todo!(),
+        //     id_address_invoice: todo!(),
+        //     id_customer: todo!(),
+        //     current_state: todo!(),
+        //     invoice_number: todo!(),
+        //     invoice_date: todo!(),
+        //     payment: todo!(),
+        //     date_add: todo!(),
+        //     date_upd: todo!(),
+        //     id_employee_sales_rep: todo!(),
+        //     id_employee_split_rep: todo!(),
+        //     id_employee_editing: todo!(),
+        //     id_order_everest: todo!(),
+        //     id_store: todo!(),
+        //     total_paid: todo!(),
+        //     delivery_date: todo!(),
+        //     total_products_wt: todo!(),
+        //     total_paid_tax_excl: todo!(),
+        //     reference: todo!(),
+        //     id_order_parent: todo!(),
+        //     shipping_number: todo!(),
+        //     order_type: todo!(),
+        //     associations: todo!(),
+        // };
+
+        Ok(())
+    }
 }
+
+/* // Required Fields
+// Use quickxml_to_serde
+{
+  "order": {
+    "id_address_delivery": "175741",
+    "id_address_invoice": "225960",
+    "id_cart": "5327739",
+    "id_currency": "1",
+    "id_lang": "1",
+    "id_customer": "22569",
+    "id_carrier": "255",
+    "module": "ps_creditcard",
+    "payment": "Credit Card (manual)",
+    "total_products": "99.980000",
+    "total_products_wt": "107.420000",
+    "conversion_rate": "1.000000",
+    "associations": {
+      "order_rows": [
+        {
+          "product_id": "16418",
+          "product_attribute_id": "0",
+          "product_quantity": "1"
+        },
+        {
+          "product_id": "16418",
+          "product_attribute_id": "0",
+          "product_quantity": "1"
+        }
+      ]
+    }
+  }
+}
+
+*/
