@@ -10,8 +10,6 @@ use tokio::spawn;
 impl MasterTechApp {
     pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.shared_ctx.first_run = false;
-        let init = displays::tabs::logger::logging::builder().init();
-        log::info!("Init logger: {init:?}");
         if let Some(storage) = frame.storage() {
             self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
