@@ -134,8 +134,6 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
         "Company Stock".to_owned(),
-        // "Customers".to_owned(),
-        // "Database Editor".to_owned(),
         "Store Stock".to_owned(),
         "Logs".to_owned(),
     ]);
@@ -156,8 +154,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         vec![
             "My Tasks".to_owned(),
             "Bug Report".to_owned(),
-            // "Task Audit".to_owned(),
-            "Ai".to_owned(),
+            "Task Audit".to_owned(),
         ],
     );
 

@@ -85,13 +85,6 @@ impl TabViewer for MtechServerContext {
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
-        // if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-        //     self.tree.remove_tab(index);
-        //     self.open_tabs.remove(*tab);
-        // } else {
-        //     self.open_tabs.insert(tab.to_string());
-        //     self.tree.push_to_focused_leaf(tab.to_string());
-        // }
     }
 
     fn add_popup(&mut self, ui: &mut Ui, surface_index: SurfaceIndex, node_index: NodeIndex) {
@@ -103,9 +96,13 @@ impl TabViewer for MtechServerContext {
             {
                 if !self.open_tabs.contains(tab) {
                     self.on_add(surface_index, node_index);
-                    /*
-                    self.tree.push_to_focused_leaf(tab.to_string());
-                     */
+                    // if let Some(index) = self.shared_ctx.tree.find_tab(&tab.to_string()) {
+                    //     self.shared_ctx.tree.remove_tab(index);
+                    //     self.open_tabs.remove(tab);
+                    // } else {
+                    //     self.open_tabs.insert(tab.to_string());
+                    //     self.shared_ctx.tree.push_to_focused_leaf(tab.to_string());
+                    // }
                 }
             }
         }

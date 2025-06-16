@@ -1,6 +1,5 @@
 pub mod tasks;
 pub mod aging_tasks;
-pub mod logger;
 pub mod task_audit;
 pub mod stock;
 pub mod stock_quantities;

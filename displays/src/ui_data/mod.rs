@@ -127,34 +127,36 @@ impl crate::app_state::SharedContext {
                 toast.add(error_toast);
             }
 
+            self.state = state;
+
+            /* 
             if state == crate::app_state::AppState::Authenticated(MainPages::Tasks)
                 && self.state == AppState::NoAuth("Needs Login".to_string()) 
             {
                 
             } else {
-                // match state {
-                //     AppState::Authenticated(main_pages) => {
-                //         match main_pages {
-                //             MainPages::Tasks => {
-                //                 if self.state == AppState::NoAuth("Needs Login".to_string()) {
-
-                //                 } else {
-                //                     self.state = state;
-                //                 }
-                //             },
-                //             MainPages::Downloads => todo!(),
-                //             MainPages::UserPreferences => todo!(),
-                //         }
-                //     },
-                //     AppState::CreateAccount => self.signup_page(
-                //         ctx,
-                //         self.db_tx.clone(),
-                //         self.app_state_tx.clone(),
-                //     ),
-                //     AppState::NoAuth(_) => todo!(),
-                // }
-                self.state = state;
+                match state {
+                    AppState::Authenticated(main_pages) => {
+                        match main_pages {
+                            MainPages::Tasks => {
+                                if self.state == AppState::NoAuth("Needs Login".to_string()) {
+                                } else {
+                                    self.state = state;
+                                }
+                            },
+                            MainPages::Downloads => todo!(),
+                            MainPages::UserPreferences => todo!(),
+                        }
+                    },
+                    AppState::CreateAccount => self.signup_page(
+                        ctx,
+                        self.db_tx.clone(),
+                        self.app_state_tx.clone(),
+                    ),
+                    AppState::NoAuth(_) => todo!(),
+                } 
             }
+            */
             ctx.request_repaint();
         }
 
@@ -163,8 +165,7 @@ impl crate::app_state::SharedContext {
         //         MainPages::UserPreferences => self.account_settings_page(ctx, self.app_state_tx.clone()),
         //         _ => {}
         //     },
-        //     AppState::Authenticated(page) => {
-                
+        //     AppState::Authenticated(page) => {      
         //         if self.current_user.is_none() {
         //             self.state = AppState::NoAuth("AppState was Authenticated, but user is not set.".to_string());
         //         }
