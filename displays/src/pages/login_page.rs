@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
 use database::{Database, DATABASE};
 use serde::{Deserialize, Serialize};
-use crate::{tabs::logger::logger_ui, PlatformSpawner, Spawner};
+use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{
     Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, TopBottomPanel, Vec2, Widget
 };
@@ -85,8 +85,10 @@ impl Login {
                 
                 log::error!("{}", e.to_string());
                 if e.to_string().contains("Already connected") {
+                    log::error!("1. Already connected");
                     appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
                 } else {
+                    log::error!("2. No Auth");
                     appstate_tx.try_send(AppState::NoAuth(e.to_string()))?;
                 }
             },
@@ -102,7 +104,8 @@ impl SharedContext {
         db_tx: Sender<anyhow::Result<Database, anyhow::Error>>,
         appstate_tx: Sender<AppState>,
     ) {
-        TopBottomPanel::bottom(Id::new("logger_ui")).exact_height(400.).show(ctx, |ui| logger_ui().show(ui));
+        TopBottomPanel::bottom(Id::new("logger_ui")).exact_height(400.).show(ctx, |ui| egui_logger::logger_ui().show(ui));
+
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
             .show(ctx, |ui| {
@@ -187,12 +190,11 @@ impl SharedContext {
                                                         // info!("ENTER PRESSED");
                                                         let user = login.username.clone();
                                                         let pass = login.password.clone();
-                                                        let email = format!("{user}@pclaptops.com");
                                                         let tx = db_tx.clone();
                                                         let app_tx = appstate_tx.clone();
                                                         PlatformSpawner::spawn(async move {
                                                             let _ = Login::login(
-                                                                email,
+                                                                user,
                                                                 pass,
                                                                 tx,
                                                                 app_tx.clone(),
@@ -215,7 +217,10 @@ impl SharedContext {
 
                                                 // ui.add_enabled(enabled, button);
 
-                                                if button.clicked() {
+                                                if button.clicked() 
+                                                    && !login.password.is_empty()
+                                                    && !login.username.is_empty()
+                                                {
                                                     Spinner::new()
                                                         .size(30.0)
                                                         .color(Color32::from_rgb(100, 10, 80))
@@ -251,18 +256,7 @@ impl SharedContext {
                                                             appstate_tx.clone(),
                                                         )
                                                         .await;
-                                                        match res {
-                                                            Ok(_) => appstate_tx
-                                                                .try_send(AppState::Authenticated(
-                                                                    MainPages::Tasks,
-                                                                ))
-                                                                .unwrap(),
-                                                            Err(e) => appstate_tx
-                                                                .try_send(AppState::NoAuth(
-                                                                    e.to_string(),
-                                                                ))
-                                                                .unwrap(),
-                                                        }
+                                                    log::warn!("Result: {res:?}");
                                                     });
                                                 }
 
