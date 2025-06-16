@@ -602,7 +602,7 @@ impl MtechServer {
                 } else {
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                         if Button::new("Login").ui(ui).clicked() {
-                            self.context.shared_ctx.state = AppState::Authenticated(MainPages::Downloads);
+                            self.context.shared_ctx.state = AppState::NoAuth("Needs Login".to_string());
                             match self
                                 .context
                                 .shared_ctx
