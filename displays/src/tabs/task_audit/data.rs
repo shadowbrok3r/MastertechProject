@@ -16,7 +16,8 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
         order_tx: Sender<prestashop_schema::PrestashopPayload>, 
         current_orders: Vec<String>,
         start_idx: i32,
-        missed_calls_tx: Sender<Vec<MissedCallOrder>>
+        missed_calls_tx: Sender<Vec<MissedCallOrder>>,
+        id_store: String
     ) {
         let time = web_time::Instant::now();
         let usr = current_user.clone().unwrap_or_default();
@@ -24,12 +25,13 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
         let mut employee = Employee::default();
         employee.id = format!("{id}");
         employee.id_store = usr.get_store_id().unwrap_or_default();
+        let id_store = id_store.clone();
         PlatformSpawner::spawn(async move {
             match selected {
                 TaskAudit::CheckinShelf => {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("29", start_idx, start_idx+30)
+                        .get_services_by_status("29", start_idx, start_idx+30, &id_store)
                         .await;
 
                     // Handle the fetched services
@@ -73,7 +75,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 TaskAudit::InRepair => {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("30", start_idx, start_idx+30)
+                        .get_services_by_status("30", start_idx, start_idx+30, &id_store)
                         .await;
 
                     // Handle the fetched services
@@ -95,7 +97,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 TaskAudit::DoneShelf => {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("40", start_idx, start_idx+30)
+                        .get_services_by_status("40", start_idx, start_idx+30, &id_store)
                         .await;
 
                     // Handle the fetched services

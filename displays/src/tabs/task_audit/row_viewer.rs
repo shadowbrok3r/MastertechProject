@@ -26,7 +26,8 @@ pub struct TaskRowViewer {
     pub notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
-    pub missed_calls: Vec<MissedCallOrder>
+    pub missed_calls: Vec<MissedCallOrder>,
+    pub store_selection: u64,
 }
 
 impl Default for TaskRowViewer {
@@ -44,6 +45,7 @@ impl Default for TaskRowViewer {
             chat_view: ChatView::default(),
             order_data: PrestashopPayload::default(),
             missed_calls: Vec::new(),
+            store_selection: 76,
         }
     }
 }
