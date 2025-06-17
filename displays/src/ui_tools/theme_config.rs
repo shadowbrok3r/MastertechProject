@@ -1,17 +1,14 @@
-use std::sync::Arc;
-
-use crossbeam::channel::Sender;
-use database::DATABASE;
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
-use log::info;
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
+use crate::{ui_tools::tokyo_dark::{TokyoNight, TokyoNightStorm}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
-use serde_json::to_vec;
+use crossbeam::channel::Sender;
 use derivative::Derivative;
-use crate::{PlatformSpawner, Spawner};
+use database::DATABASE;
+use serde_json::to_vec;
+use std::sync::Arc;
+use log::info;
 
 use super::carl_dark::{Aesthetix, CarlDark};
-
-
 
 #[derive(Serialize, Clone, Deserialize, Debug, Derivative)]
 #[derivative(PartialEq)]
@@ -77,7 +74,9 @@ pub struct ThemeConfig {
     /// Uniform rounding for visuals
     pub rounding: eframe::egui::CornerRadius,
     pub font: FontFamily,
-    pub font_size: f32
+    pub font_size: f32,
+    #[serde(skip)]
+    pub preset_style: PresetStyles
 }
 
 impl Default for ThemeConfig {
@@ -114,13 +113,14 @@ impl Default for ThemeConfig {
             window_stroke_color: Color32::from_rgb(42, 195, 222),
             rounding: eframe::egui::CornerRadius::same(4),
             font: FontFamily::Proportional,
-            font_size: 12.0
+            font_size: 12.0,
+            preset_style: PresetStyles::Custom,
         }
     }
 }
 
 impl ThemeConfig {
-    pub fn edit_ui(&mut self, ui: &mut Ui, tx: Sender<ThemeConfig>) -> (bool, Self) {
+    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<ThemeConfig>) -> (bool, Self) {
         let mut ret = (false, self.clone());
         TopBottomPanel::top("Theme Menu top bar")
         .exact_height(30.)
@@ -146,6 +146,73 @@ impl ThemeConfig {
                     ret = (true, ThemeConfig::default());
                 }
 
+                ui.add_space(10.);
+
+                let selection = &mut self.preset_style;
+                let current = selection.clone();
+
+                ComboBox::new("Style Preset", "")
+                .selected_text(selection.as_str())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(selection, PresetStyles::CarlDark, "Carl Dark");
+                    ui.selectable_value(selection, PresetStyles::TokyoNightStorm, "TokyoNight Storm");
+                    ui.selectable_value(selection, PresetStyles::TokyoNight, "TokyoNight");
+                    ui.selectable_value(selection, PresetStyles::Custom, "Custom");
+                });
+
+
+                if *selection != current {
+                    log::info!("Fire once");
+                    let style = match *selection {
+                        PresetStyles::CarlDark => CarlDark.custom_style(),
+                        PresetStyles::TokyoNightStorm => TokyoNightStorm.custom_style(),
+                        PresetStyles::TokyoNight => TokyoNight.custom_style(),
+                        PresetStyles::Custom => return,
+                    };
+
+                    // Non-widget fields
+                    self.background_color = style.visuals.window_fill;
+                    self.text_color = style.visuals.override_text_color.unwrap_or(Color32::WHITE); // Default to WHITE if None
+                    self.faint_bg_color = style.visuals.faint_bg_color;
+                    self.extreme_bg_color = style.visuals.extreme_bg_color;
+                    self.code_bg_color = style.visuals.code_bg_color;
+                    self.warn_color = style.visuals.warn_fg_color;
+                    self.error_color = style.visuals.error_fg_color;
+                    self.link_color = style.visuals.hyperlink_color;
+                    self.window_stroke_color = style.visuals.window_stroke.color;
+                    self.rounding = style.visuals.window_corner_radius; // Assuming Rounding::same for consistency
+
+                    // Selection fields
+                    self.selection_bg_fill = style.visuals.selection.bg_fill;
+                    self.selection_stroke_color = style.visuals.selection.stroke.color;
+
+                    // Widget fields (using noninteractive as the source for shared fields)
+                    self.widget_bg_fill = style.visuals.widgets.noninteractive.bg_fill;
+                    self.widget_weak_bg_fill = style.visuals.widgets.noninteractive.weak_bg_fill;
+                    self.widget_bg_stroke_color = style.visuals.widgets.noninteractive.bg_stroke.color;
+                    self.widget_fg_stroke_color = style.visuals.widgets.noninteractive.fg_stroke.color;
+
+                    // Hovered widget fields
+                    self.hovered_bg_fill = style.visuals.widgets.hovered.bg_fill;
+                    self.hovered_weak_bg_fill = style.visuals.widgets.hovered.weak_bg_fill;
+                    self.hovered_bg_stroke_color = style.visuals.widgets.hovered.bg_stroke.color;
+                    self.hovered_fg_stroke_color = style.visuals.widgets.hovered.fg_stroke.color;
+
+                    // Active widget fields
+                    self.active_bg_fill = style.visuals.widgets.active.bg_fill;
+                    self.active_weak_bg_fill = style.visuals.widgets.active.weak_bg_fill;
+                    self.active_bg_stroke_color = style.visuals.widgets.active.bg_stroke.color;
+                    self.active_fg_stroke_color = style.visuals.widgets.active.fg_stroke.color;
+
+                    // Open widget fields
+                    self.open_bg_fill = style.visuals.widgets.open.bg_fill;
+                    self.open_weak_bg_fill = style.visuals.widgets.open.weak_bg_fill;
+                    self.open_bg_stroke_color = style.visuals.widgets.open.bg_stroke.color;
+                    self.open_fg_stroke_color = style.visuals.widgets.open.fg_stroke.color;
+                    let s = Arc::new(style);
+                    ctx.set_style((s).clone());
+                }
+
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let save = Button::new("Save")
                         .min_size(Vec2::new(70., 25.))
@@ -153,7 +220,7 @@ impl ThemeConfig {
                         .ui(ui);
                     
                     if save.clicked() {
-                        let color_settings = self.clone();
+                        let color_settings = ctx.style().clone();
                         PlatformSpawner::spawn(async move {
                             match DATABASE
                                 .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
@@ -175,7 +242,7 @@ impl ThemeConfig {
                         .ui(ui);
                     
                     if save_local.clicked() {
-                        let color_settings = self.clone();
+                        let color_settings = ctx.style().clone();
                         
                         PlatformSpawner::spawn(async move {
                             // Serialize the struct into JSON
@@ -229,6 +296,14 @@ impl ThemeConfig {
 
         ui.add_space(10.);
 
+        ScrollArea::vertical()
+        .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
+        .max_height(800.)
+        .show(ui, |ui| 
+        {
+            ctx.settings_ui(ui);
+        });
+        /*
         ScrollArea::vertical()
             .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
             .max_height(800.)
@@ -528,114 +603,212 @@ impl ThemeConfig {
             ui.add(DragValue::new(&mut self.rounding.ne).speed(0.1).prefix("NE:"));
             ui.add(DragValue::new(&mut self.rounding.sw).speed(0.1).prefix("SW:"));
             ui.add(DragValue::new(&mut self.rounding.se).speed(0.1).prefix("SE:"));
-        });
+        }); 
+        */
 
         ret
     }
 }
 
+#[derive(Default, Clone, Debug, PartialEq)]
+pub enum PresetStyles {
+    CarlDark,
+    TokyoNightStorm,
+    TokyoNight,
+    #[default]
+    Custom
+}
+
+impl PresetStyles {
+    pub fn as_str(&self) -> &str {
+        match self {
+            PresetStyles::CarlDark => "Carl Dark",
+            PresetStyles::TokyoNightStorm => "TokyoNight Storm",
+            PresetStyles::TokyoNight => "TokyoNight",
+            PresetStyles::Custom => "Custom",
+        }
+    }
+
+    pub fn from_str(str: &str) -> Self {
+        match str {
+            "Carl Dark" => Self::CarlDark,
+            "TokyoNight Storm" => Self::TokyoNightStorm,
+            "TokyoNight" => Self::TokyoNight,
+            "Custom" => Self::Custom,
+            _ => Self::Custom
+        }
+    }
+}
 
 pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
-    let theme = CarlDark; // Assuming a theme object or struct
-    let mut custom_style: Style = theme.custom_style();
-    // Font settings
-    let mut font = FontId::default();
-    font.size = config.font_size;
-    // font.family = FontFamily::Proportional;
-    font.family = config.font.clone();
+    match config.preset_style {
+        PresetStyles::CarlDark => {
+            let mut custom_style = CarlDark.custom_style();
+            // Font settings
+            let mut font = FontId::default();
+            font.size = config.font_size;
+            // font.family = FontFamily::Proportional;
+            font.family = config.font.clone();
 
-    // Assign custom font
-    custom_style.override_font_id = Some(font);
+            // Assign custom font
+            custom_style.override_font_id = Some(font);
 
-    // Adjust spacing and interactions
-    custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
-    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-    custom_style.spacing.combo_height = 200.0;
-    custom_style.spacing.combo_width = 100.0;
-    custom_style.interaction.selectable_labels = true;
-    custom_style.interaction.interact_radius = 10.0;
-    custom_style.interaction.show_tooltips_only_when_still = false;
-    custom_style.interaction.tooltip_delay = 0.1;
-    
-    custom_style.visuals = Visuals {
-        dark_mode: true,
-        override_text_color: Some(config.text_color),
-        widgets: Widgets {
-            noninteractive: WidgetVisuals {
-                bg_fill: config.widget_bg_fill,
-                weak_bg_fill: config.widget_weak_bg_fill,
-                bg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
-                corner_radius: config.rounding,
-                fg_stroke: Stroke::new(1.0, config.widget_fg_stroke_color),
-                expansion: 0.0,
-            },
-            inactive: WidgetVisuals {
-                bg_fill: config.widget_bg_fill,
-                weak_bg_fill: Color32::from_rgb(18, 18, 20),
-                bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
-                corner_radius: config.rounding,
-                fg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
-                expansion: 0.2,
-            },
-            hovered: WidgetVisuals {
-                bg_fill: config.hovered_bg_fill,
-                weak_bg_fill: config.hovered_weak_bg_fill,
-                bg_stroke: Stroke::new(0.5, config.hovered_bg_stroke_color),
-                corner_radius: config.rounding,
-                fg_stroke: Stroke::new(1.0, config.hovered_fg_stroke_color),
-                expansion: 0.2,
-            },
-            active: WidgetVisuals {
-                bg_fill: config.active_bg_fill,
-                weak_bg_fill: config.active_weak_bg_fill,
-                bg_stroke: Stroke::new(1.0, config.active_bg_stroke_color),
-                corner_radius: config.rounding,
-                fg_stroke: Stroke::new(1.0, config.active_fg_stroke_color),
-                expansion: 0.2,
-            },
-            open: WidgetVisuals {
-                bg_fill: config.open_bg_fill,
-                weak_bg_fill: config.open_weak_bg_fill,
-                bg_stroke: Stroke::new(1.0, config.open_bg_stroke_color),
-                corner_radius: config.rounding,
-                fg_stroke: Stroke::new(1.0, config.open_fg_stroke_color),
-                expansion: 0.2,
-            },
+            // Adjust spacing and interactions
+            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
+            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+            custom_style.spacing.combo_height = 200.0;
+            custom_style.spacing.combo_width = 100.0;
+            custom_style.interaction.selectable_labels = true;
+            custom_style.interaction.interact_radius = 10.0;
+            custom_style.interaction.show_tooltips_only_when_still = false;
+            custom_style.interaction.tooltip_delay = 0.1;
+            Arc::new(custom_style)
         },
-        selection: Selection {
-            bg_fill: config.selection_bg_fill,
-            stroke: Stroke::new(1.0, config.selection_stroke_color),
+        PresetStyles::TokyoNightStorm => {
+            let mut custom_style = TokyoNightStorm.custom_style();
+            // Font settings
+            let mut font = FontId::default();
+            font.size = config.font_size;
+            // font.family = FontFamily::Proportional;
+            font.family = config.font.clone();
+
+            // Assign custom font
+            custom_style.override_font_id = Some(font);
+
+            // Adjust spacing and interactions
+            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
+            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+            custom_style.spacing.combo_height = 200.0;
+            custom_style.spacing.combo_width = 100.0;
+            custom_style.interaction.selectable_labels = true;
+            custom_style.interaction.interact_radius = 10.0;
+            custom_style.interaction.show_tooltips_only_when_still = false;
+            custom_style.interaction.tooltip_delay = 0.1;
+            Arc::new(custom_style)
         },
-        hyperlink_color: config.link_color,
-        faint_bg_color: config.faint_bg_color,
-        extreme_bg_color: config.extreme_bg_color,
-        code_bg_color: config.code_bg_color,
-        warn_fg_color: config.warn_color,
-        error_fg_color: config.error_color,
-        window_fill: config.background_color,
-        window_stroke: Stroke::new(1.0, config.window_stroke_color),
-        window_corner_radius: config.rounding,
-        menu_corner_radius: config.rounding,
-        panel_fill: config.background_color,
-        popup_shadow: Shadow::default(),
-        resize_corner_size: 10.0,
-        text_cursor: TextCursorStyle::default(),
-        clip_rect_margin: 5.0,
-        button_frame: true,
-        collapsing_header_frame: true,
-        indent_has_left_vline: true,
-        striped: true,
-        slider_trailing_fill: true,
-        handle_shape: HandleShape::Circle,
-        interact_cursor: Some(CursorIcon::PointingHand),
-        image_loading_spinners: true,
-        numeric_color_space: NumericColorSpace::Linear, // How numeric values are displayed
-        ..Default::default()
-    };
+        PresetStyles::TokyoNight => {
+            let mut custom_style = TokyoNight.custom_style();
+            // Font settings
+            let mut font = FontId::default();
+            font.size = config.font_size;
+            // font.family = FontFamily::Proportional;
+            font.family = config.font.clone();
 
-    // info!("config.text_color: {:?} - {:?}", config.text_color, ThemeConfig::default().text_color);
+            // Assign custom font
+            custom_style.override_font_id = Some(font);
 
-    Arc::new(custom_style)
+            // Adjust spacing and interactions
+            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
+            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+            custom_style.spacing.combo_height = 200.0;
+            custom_style.spacing.combo_width = 100.0;
+            custom_style.interaction.selectable_labels = true;
+            custom_style.interaction.interact_radius = 10.0;
+            custom_style.interaction.show_tooltips_only_when_still = false;
+            custom_style.interaction.tooltip_delay = 0.1;
+            Arc::new(custom_style)
+        },
+        PresetStyles::Custom => {
+            let theme = CarlDark;
+            let mut custom_style: Style = theme.custom_style();
+            // Font settings
+            let mut font = FontId::default();
+            font.size = config.font_size;
+            // font.family = FontFamily::Proportional;
+            font.family = config.font.clone();
+
+            // Assign custom font
+            custom_style.override_font_id = Some(font);
+
+            // Adjust spacing and interactions
+            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
+            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+            custom_style.spacing.combo_height = 200.0;
+            custom_style.spacing.combo_width = 100.0;
+            custom_style.interaction.selectable_labels = true;
+            custom_style.interaction.interact_radius = 10.0;
+            custom_style.interaction.show_tooltips_only_when_still = false;
+            custom_style.interaction.tooltip_delay = 0.1;
+            
+            custom_style.visuals = Visuals {
+                dark_mode: true,
+                override_text_color: Some(config.text_color),
+                widgets: Widgets {
+                    noninteractive: WidgetVisuals {
+                        bg_fill: config.widget_bg_fill,
+                        weak_bg_fill: config.widget_weak_bg_fill,
+                        bg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
+                        corner_radius: config.rounding,
+                        fg_stroke: Stroke::new(1.0, config.widget_fg_stroke_color),
+                        expansion: 0.0,
+                    },
+                    inactive: WidgetVisuals {
+                        bg_fill: config.widget_bg_fill,
+                        weak_bg_fill: Color32::from_rgb(18, 18, 20),
+                        bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
+                        corner_radius: config.rounding,
+                        fg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
+                        expansion: 0.2,
+                    },
+                    hovered: WidgetVisuals {
+                        bg_fill: config.hovered_bg_fill,
+                        weak_bg_fill: config.hovered_weak_bg_fill,
+                        bg_stroke: Stroke::new(0.5, config.hovered_bg_stroke_color),
+                        corner_radius: config.rounding,
+                        fg_stroke: Stroke::new(1.0, config.hovered_fg_stroke_color),
+                        expansion: 0.2,
+                    },
+                    active: WidgetVisuals {
+                        bg_fill: config.active_bg_fill,
+                        weak_bg_fill: config.active_weak_bg_fill,
+                        bg_stroke: Stroke::new(1.0, config.active_bg_stroke_color),
+                        corner_radius: config.rounding,
+                        fg_stroke: Stroke::new(1.0, config.active_fg_stroke_color),
+                        expansion: 0.2,
+                    },
+                    open: WidgetVisuals {
+                        bg_fill: config.open_bg_fill,
+                        weak_bg_fill: config.open_weak_bg_fill,
+                        bg_stroke: Stroke::new(1.0, config.open_bg_stroke_color),
+                        corner_radius: config.rounding,
+                        fg_stroke: Stroke::new(1.0, config.open_fg_stroke_color),
+                        expansion: 0.2,
+                    },
+                },
+                selection: Selection {
+                    bg_fill: config.selection_bg_fill,
+                    stroke: Stroke::new(1.0, config.selection_stroke_color),
+                },
+                hyperlink_color: config.link_color,
+                faint_bg_color: config.faint_bg_color,
+                extreme_bg_color: config.extreme_bg_color,
+                code_bg_color: config.code_bg_color,
+                warn_fg_color: config.warn_color,
+                error_fg_color: config.error_color,
+                window_fill: config.background_color,
+                window_stroke: Stroke::new(1.0, config.window_stroke_color),
+                window_corner_radius: config.rounding,
+                menu_corner_radius: config.rounding,
+                panel_fill: config.background_color,
+                popup_shadow: Shadow::default(),
+                resize_corner_size: 10.0,
+                text_cursor: TextCursorStyle::default(),
+                clip_rect_margin: 5.0,
+                button_frame: true,
+                collapsing_header_frame: true,
+                indent_has_left_vline: true,
+                striped: true,
+                slider_trailing_fill: true,
+                handle_shape: HandleShape::Circle,
+                interact_cursor: Some(CursorIcon::PointingHand),
+                image_loading_spinners: true,
+                numeric_color_space: NumericColorSpace::Linear,
+                ..Default::default()
+            };
+
+            Arc::new(custom_style)
+        },
+    }
 }
 
 // use egui_colors::{Colorix, tokens::ThemeColor};
