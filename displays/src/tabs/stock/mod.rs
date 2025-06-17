@@ -15,7 +15,7 @@ impl SharedContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
         SidePanel::right("Hotkeys")
             .default_width(300.)
-            .show_inside(ui, |ui| {
+            .show_animated_inside(ui, self.serials_viewer.show_hotkeys, |ui| {
                 ui.vertical_centered_justified(|ui| {
                     ui.heading("Hotkeys");
                     ui.separator();
@@ -30,6 +30,7 @@ impl SharedContext {
                     });
                 });
             });
+
         TopBottomPanel::top("StockTopPanel")
             .exact_height(30.)
             .show_inside(ui, |ui| {

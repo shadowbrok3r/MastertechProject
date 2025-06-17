@@ -39,7 +39,7 @@ pub trait EmployeeHelper {
     /// Get all Orders of which are my Return For Service's
     async fn get_my_return_for_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get all Orders of which are In the given status
-    async fn get_services_by_status(&mut self, status: &str, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
+    async fn get_services_by_status(&mut self, status: &str, start_idx: i32, offset: i32, id_store: &str) -> Result<Vec<OrderNumber>, Error>;
     /// Get all services in my store
     async fn get_all_services_in_my_store(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
     /// Get all Return For Service's in my store
@@ -294,14 +294,14 @@ impl EmployeeHelper for Employee {
         Ok(orders)
     }
  
-    async fn get_services_by_status(&mut self, status: &str, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error> {
+    async fn get_services_by_status(&mut self, status: &str, start_idx: i32, offset: i32, id_store: &str) -> Result<Vec<OrderNumber>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
         let pagination = format!("{},{}",start_idx.clone(), offset);
 
         info!("helper_traits -> Pagination: {pagination}");
 
-        query.insert("filter[id_store]", &self.id_store);
+        query.insert("filter[id_store]", id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("filter[current_state]", status);
         query.insert("sort", "[id_DESC]");

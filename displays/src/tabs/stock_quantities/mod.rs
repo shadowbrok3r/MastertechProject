@@ -9,23 +9,6 @@ pub use row_viewer::*;
 
 impl SharedContext {
     pub fn stock_quantities_viewer(&mut self, ui: &mut Ui) {
-        // SidePanel::right("Hotkeys")
-        //     .default_width(500.)
-        //     .show_inside(ui, |ui| {
-        //         ui.vertical_centered_justified(|ui| {
-        //             ui.heading("Hotkeys");
-        //             ui.separator();
-        //             ui.add_space(0.);
-        //             ScrollArea::new([false, true]).show(ui, |ui| {
-        //                 for (k, a) in &self.stock_quantity_viewer.hotkeys {
-        //                     Button::new(format!("{a:?}"))
-        //                         .shortcut_text(ui.ctx().format_shortcut(k))
-        //                         .ui(ui);
-        //                     ui.add_space(10.);
-        //                 }
-        //             });
-        //         });
-        //     });
         TopBottomPanel::top("StockTopPanel-Quantities")
             .exact_height(30.)
             .show_inside(ui, |ui| {
