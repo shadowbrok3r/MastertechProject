@@ -442,7 +442,7 @@ impl SharedContext {
 
                                     ui.group(|ui| {
                                         let tx = self.settings_sender.clone();
-                                        self.theme_config.edit_ui(ui, tx);
+                                        self.theme_config.edit_ui(ui, ctx, tx);
                                     });
                                 });
                             });

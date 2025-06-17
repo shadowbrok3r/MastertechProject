@@ -223,9 +223,9 @@ impl MtechServer {
         .max_height(600.)
         .min_width(700.)
         .title_bar(true)
-        .show(ctx, |ui| 
-            self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone())
-        );
+        .show(ctx, |ui| {
+            self.context.shared_ctx.theme_config.edit_ui(ui, ctx, self.context.shared_ctx.settings_sender.clone())
+        });
         
         if let Some(window_res) = theme_res {
             if let Some(r) = window_res.inner {
@@ -269,8 +269,10 @@ impl MtechServer {
             }
         }
 
-        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        ctx.set_style((custom_style).clone());
+        if !self.context.shared_ctx.modify_theme {
+            let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+            ctx.set_style((custom_style).clone());
+        }
 
         // Getting responses from our webworker
         if let Some(items) = self.context.data_update.take() {
