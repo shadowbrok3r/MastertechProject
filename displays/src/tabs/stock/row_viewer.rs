@@ -57,6 +57,7 @@ pub struct SerialsViewer {
     pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
     #[serde(skip)]
     pub stock_tx: Option<Sender<SerialData>>,
+    pub show_hotkeys: bool,
 }
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
