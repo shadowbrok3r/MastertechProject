@@ -26,7 +26,7 @@ pub struct TaskAuditViewer {
     time: Option<web_time::Instant>,
     pub service_map: HashMap<String, DataTable<PrestashopPayload>>,
     pub missed_calls_tx: Sender<Vec<MissedCallOrder>>,
-    pub missed_calls_rx: Receiver<Vec<MissedCallOrder>>
+    pub missed_calls_rx: Receiver<Vec<MissedCallOrder>>,
 }
 
 impl TaskAuditViewer {

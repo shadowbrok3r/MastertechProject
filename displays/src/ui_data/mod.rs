@@ -1,5 +1,5 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
-use crate::{app_state::{AppState, MainPages}, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
+use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
 use crate::{PlatformSpawner, Spawner};
 
 pub mod receive_notes;
@@ -97,6 +97,19 @@ impl crate::app_state::SharedContext {
             },
             Err(e) => log::error!("Error setting theme config: {e:?}"),
         }
+
+        let stock_tx = self.extra_stock_channel.0.clone();
+        PlatformSpawner::spawn(async move {
+            let stock = get_extra_stock_info(stock_tx.clone()).await;
+            log::info!("Stock call: {stock:?}");
+        });
+
+        let stock_tx = self.stock_channel.0.clone();
+        let store_selection = self.store_selection;
+        PlatformSpawner::spawn(async move {
+            let stock = get_stock(stock_tx.clone(), store_selection).await;
+            log::info!("Stock call: {stock:?}");
+        });
 
         ctx.request_repaint();
         

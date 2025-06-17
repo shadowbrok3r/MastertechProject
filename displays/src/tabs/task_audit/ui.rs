@@ -1,7 +1,7 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use eframe::egui::{Color32, Grid, Style};
 use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::schema::User;
+use database::schema::{Store, User};
 use egui_data_table::Renderer;
 use crate::PlatformSpawner;
 use crate::Spawner;
@@ -21,7 +21,7 @@ impl TaskAuditViewer {
                 .max_width(900.)
                 .resizable(true)
                 .show_separator_line(true)
-                .show_inside(ui, |ui| 
+                .show_animated_inside(ui, self.services_viewer.selected.is_some(), |ui|
             {
                 ui.vertical_centered_justified(|ui| {
                     ui.add_space(5.);
@@ -33,6 +33,10 @@ impl TaskAuditViewer {
                     .auto_shrink(true)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            if ui.button("Close ->").clicked() {
+                                self.services_viewer.selected = None;
+                            }
+
                             ui.add_space(10.);
                             ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                                 if ui.button(RichText::new("Create Task").code().color(ui.style().visuals.error_fg_color)).clicked() {
@@ -155,12 +159,36 @@ impl TaskAuditViewer {
                     .ui(ui);
 
                 ui.add_space(10.);
+                let selected = &mut self.services_viewer.store_selection;
+
+                let selected_text = match selected {
+                    76 => Store::RIV.as_str(),
+                    73 => Store::LTN.as_str(),
+                    74 => Store::MUR.as_str(),
+                    78 => Store::WJ.as_str(),
+                    75 => Store::ORE.as_str(),
+                    72 => Store::AF.as_str(),
+                    77 => Store::SAN.as_str(),
+                    _ => Store::RIV.as_str(),
+                };
+
+                ComboBox::new("TaskAudit Store Selection", "")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(selected, 76, "RIV");
+                    ui.selectable_value(selected, 73, "LTN");
+                    ui.selectable_value(selected, 74, "MUR");
+                    ui.selectable_value(selected, 78, "WJ");
+                    ui.selectable_value(selected, 75, "ORE");
+                    ui.selectable_value(selected, 72, "AF");
+                    ui.selectable_value(selected, 77, "SAN");
+                });
 
                 let selected_text = self.audit_selection.as_str().to_string();
                 let selected = &mut self.audit_selection;
                 let current_selection = selected.clone();
 
-                ComboBox::new("Store_Selection", "")
+                ComboBox::new("TaskAudit Type Selection", "")
                     .selected_text(selected_text)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(selected, TaskAudit::MyInRepair, " My In Repair ");
@@ -186,7 +214,7 @@ impl TaskAuditViewer {
                     };
                     info!("Services from cache: {:?}", svcs.clone());
                     self.time = Some(web_time::Instant::now());
-                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone());
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
                 
                 if let Some(time) = self.time.clone() {
@@ -212,7 +240,7 @@ impl TaskAuditViewer {
                         Vec::new()
                     };
                     self.time = Some(web_time::Instant::now());
-                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone());
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
                 ui.add_space(10.);
                 if Button::new(" Load +10 ").ui(ui).clicked() {
@@ -233,7 +261,7 @@ impl TaskAuditViewer {
                         Vec::new()
                     };
                     self.time = Some(web_time::Instant::now());
-                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone());
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
                 ui.add_space(10.);
                 let label = if self.services_viewer.open_hotkeys {

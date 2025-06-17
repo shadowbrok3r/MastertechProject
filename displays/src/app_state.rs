@@ -176,10 +176,11 @@ pub struct SharedContext {
     /// generic data table (currently used for inventory tab)
     #[serde(skip)]
     pub serials_table: egui_data_table::DataTable<SerialsData>,
+    pub serial_table_first_run: bool,
     /// Data viewer for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_viewer: StockQuantityViewer,
-
+    pub stock_table_first_run: bool,
     /// Data for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_table: DataTable<StockQuantityData>,
@@ -350,7 +351,9 @@ impl SharedContext {
             web_console_layout,
             room_id: String::new(),
             user_chat: UserChat::default(),
-            pending_store: None
+            pending_store: None,
+            serial_table_first_run: true,
+            stock_table_first_run: true,
         }
     }
 
