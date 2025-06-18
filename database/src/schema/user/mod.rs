@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display};
-use surrealdb::RecordId;
+use surrealdb::{sql::Bytes, RecordId};
 use serde_json::Value;
 use crate::DATABASE;
 
@@ -60,7 +60,7 @@ pub enum UserAuthorization {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
-    color_scheme: Value,
+    color_scheme: Option<Bytes>,
     ui_layout: UiLayout
 }
 
@@ -182,8 +182,12 @@ impl User {
        self.user_statuses.as_mut()
     }
 
-    pub fn get_color_scheme(&self) -> Value {
-        self.user_settings.color_scheme.clone()
+    pub fn get_color_scheme(&self) -> Vec<u8> {
+        if let Some(bytes) = self.user_settings.color_scheme.clone() {
+            bytes.to_vec()
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn get_minio_secret_key(&self) -> Option<String> {
@@ -214,8 +218,8 @@ impl User {
         self
     }
 
-    pub fn set_color_scheme(&mut self, color_scheme: Value) -> &mut Self {
-        self.user_settings.color_scheme = color_scheme;
+    pub fn set_color_scheme(&mut self, color_scheme: Vec<u8>) -> &mut Self {
+        self.user_settings.color_scheme = Some(color_scheme.into());
         self
     }
 
@@ -415,6 +419,21 @@ impl User {
             .take(0)?;
 
         log::info!("user/mod.rs -> Inserted user status");
+        Ok(())
+    }
+
+    pub async fn update_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
+        log::error!("color_scheme BYTES: {color_scheme:?}");
+
+        match DATABASE  
+            .query("UPDATE $auth.id SET user_settings.color_scheme = $color_scheme")
+            .bind(("color_scheme", color_scheme))
+            .await 
+        {
+            Ok(res) => log::info!("Res: {res:?}"),
+            Err(e) => log::error!("Error updating User Settings: {e:?}"),
+        };
+
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use eframe::{Frame, egui::{Color32, Margin, Stroke, Vec2, Window}};
@@ -231,7 +231,8 @@ impl MtechServer {
             if let Some(r) = window_res.inner {
                 if r.0 {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.set_color_scheme(serde_json::to_value(r.1.clone()).unwrap());
+                        user.set_color_scheme(encode_style(&r.1.clone()).unwrap_or_default());
+                        ctx.set_style(r.1.clone());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
                         }
@@ -263,16 +264,16 @@ impl MtechServer {
                             wasm_cookies::set("user", &encoded, &cookie_opts);
                         }
                     }
-                    self.context.shared_ctx.theme_config = r.1;
+                    self.context.shared_ctx.theme = r.1;
                     self.context.shared_ctx.modify_theme = false;
                 }
             }
         }
 
-        if !self.context.shared_ctx.modify_theme {
-            let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-            ctx.set_style((custom_style).clone());
-        }
+        // if !self.context.shared_ctx.modify_theme {
+        //     let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+        //     ctx.set_style((custom_style).clone());
+        // }
 
         // Getting responses from our webworker
         if let Some(items) = self.context.data_update.take() {
