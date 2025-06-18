@@ -1,6 +1,5 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
-use eframe::egui::Style;
-use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use crate::{PlatformSpawner, Spawner};
 
 pub mod receive_notes;
@@ -91,7 +90,7 @@ impl crate::app_state::SharedContext {
             log::info!("listen_notifications: {listen_data:?}");
         });
 
-        match serde_json::from_value::<Style>(user.get_color_scheme()) {
+        match decode_style(&user.get_color_scheme()) {
             Ok(color_settings) => {
                 ctx.set_style(color_settings);
                 ctx.request_repaint();
