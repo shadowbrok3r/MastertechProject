@@ -13,19 +13,18 @@ pub fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
         &mut ComputerData{ id: RecordId::from((COMPUTER_TABLE, "")), ..Default::default() } 
     };
 
-    ui.horizontal(|ui: &mut Ui| ui.add_space(10.0));
 
     ScrollArea::vertical()
         .max_height(f32::INFINITY)
-        .max_width(680.0)
+        .max_width(avail_size.x)
         .auto_shrink(Vec2b::new(false, false))
         .show(ui, |ui|
     {
         ui.vertical_centered(|ui| {
             ui.group(|ui| {
                 Grid::new(format!("{} grid", computer.cpu))
-                .max_col_width(avail_size.x / 2.15)
-                .min_col_width(avail_size.x / 2.15)
+                .max_col_width(avail_size.x / 2.14)
+                .min_col_width(avail_size.x / 2.14)
                 .with_row_color(|num, style| return_colors(num, style))
                 .show(ui, |ui| {
                     ui.colored_label(Color32::LIGHT_RED, "ID");
@@ -39,10 +38,10 @@ pub fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
                     }
 
                     ui.colored_label(Color32::LIGHT_RED, "Hostname");
-                    TextEdit::singleline(&mut computer.hostname).desired_width(avail_size.x / 2.15).ui(ui);
+                    TextEdit::singleline(&mut computer.hostname).desired_width(avail_size.x / 2.14).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Operating System");
-                    TextEdit::singleline(&mut computer.operating_system).desired_width(avail_size.x / 2.15).ui(ui);
+                    TextEdit::singleline(&mut computer.operating_system).desired_width(avail_size.x / 2.14).ui(ui);
                     ui.end_row();
                     if let Some(active) = &computer.windows_active {
                         ui.colored_label(Color32::LIGHT_RED, "Windows Active");
@@ -50,17 +49,17 @@ pub fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
                         ui.end_row();
                     }
                     ui.colored_label(Color32::LIGHT_RED, "CPU");
-                    TextEdit::singleline(&mut computer.cpu).desired_width(avail_size.x / 2.15).ui(ui);
+                    TextEdit::singleline(&mut computer.cpu).desired_width(avail_size.x / 2.14).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "GPU");
-                    TextEdit::singleline(&mut computer.gpu).desired_width(avail_size.x / 2.15).ui(ui);
+                    TextEdit::singleline(&mut computer.gpu).desired_width(avail_size.x / 2.14).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "RAM");
-                    TextEdit::singleline(&mut computer.ram).desired_width(avail_size.x / 2.15).ui(ui);
+                    TextEdit::singleline(&mut computer.ram).desired_width(avail_size.x / 2.14).ui(ui);
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Name");
                     if let Some(device_name) = computer.device_name.as_mut() {
-                        TextEdit::singleline(device_name).desired_width(avail_size.x / 2.15).ui(ui);
+                        TextEdit::singleline(device_name).desired_width(avail_size.x / 2.14).ui(ui);
                     } else {
                         ui.label(&format!(" - "));
                     }
@@ -68,21 +67,21 @@ pub fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
 
                     ui.colored_label(Color32::LIGHT_RED, "Device Mfg");
                     if let Some(device_mfg) = computer.device_mfg.as_mut() {
-                        TextEdit::singleline(device_mfg).desired_width(avail_size.x / 2.15).ui(ui);
+                        TextEdit::singleline(device_mfg).desired_width(avail_size.x / 2.14).ui(ui);
                     } else {
                         ui.label(&format!(" - "));
                     }
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Model");
                     if let Some(device_model) = computer.device_model.as_mut() {
-                        TextEdit::singleline(device_model).desired_width(avail_size.x / 2.15).ui(ui);
+                        TextEdit::singleline(device_model).desired_width(avail_size.x / 2.14).ui(ui);
                     } else {
                         ui.label(&format!(" - "));
                     }
                     ui.end_row();
                     ui.colored_label(Color32::LIGHT_RED, "Device Serial");
                     if let Some(device_serial) = computer.device_serial.as_mut() {
-                        TextEdit::singleline(device_serial).desired_width(avail_size.x / 2.15).ui(ui);
+                        TextEdit::singleline(device_serial).desired_width(avail_size.x / 2.14).ui(ui);
                     } else {
                         ui.label(&format!(" - "));
                     }

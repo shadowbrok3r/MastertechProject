@@ -1,5 +1,6 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
-use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}}};
+use eframe::egui::Style;
+use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use crate::{PlatformSpawner, Spawner};
 
 pub mod receive_notes;
@@ -90,9 +91,9 @@ impl crate::app_state::SharedContext {
             log::info!("listen_notifications: {listen_data:?}");
         });
 
-        match serde_json::from_value::<ThemeConfig>(user.get_color_scheme()) {
+        match serde_json::from_value::<Style>(user.get_color_scheme()) {
             Ok(color_settings) => {
-                self.theme_config = color_settings.clone();
+                ctx.set_style(color_settings);
                 ctx.request_repaint();
             },
             Err(e) => log::error!("Error setting theme config: {e:?}"),
@@ -238,7 +239,7 @@ impl crate::app_state::SharedContext {
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
-            self.theme_config = settings;
+            ctx.set_style(settings);
         }
 
         if let Ok(thread_obj) = self.ai_thread_channel.1.try_recv() {

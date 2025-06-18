@@ -1,4 +1,4 @@
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
 use crate::{ui_tools::tokyo_dark::{TokyoNight, TokyoNightStorm}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -120,7 +120,7 @@ impl Default for ThemeConfig {
 }
 
 impl ThemeConfig {
-    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<ThemeConfig>) -> (bool, Self) {
+    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Self) {
         let mut ret = (false, self.clone());
         TopBottomPanel::top("Theme Menu top bar")
         .exact_height(30.)
@@ -280,7 +280,7 @@ impl ThemeConfig {
                                 .pick_file()
                                 .await
                             {
-                                match serde_json::from_slice::<ThemeConfig>(&file.read().await) {
+                                match serde_json::from_slice::<Style>(&file.read().await) {
                                     Ok(theme) => tx.try_send(theme).unwrap(),
                                     Err(e) => log::error!("Error converting bytes to Theme: {e:?}"),
                                 }
