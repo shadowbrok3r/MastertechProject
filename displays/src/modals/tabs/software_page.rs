@@ -8,7 +8,6 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
     let computer = if let Some(computer) = ticket.computer.as_ref() { computer } else { &ComputerData::default() };
 
     let seb_info = computer.seb_info.as_ref();
-    ui.horizontal(|ui: &mut Ui| ui.add_space(15.0));
 
     ScrollArea::vertical()
         .max_height(f32::INFINITY)
@@ -32,8 +31,8 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
 
                     // ui.colored_label(Color32::LIGHT_RED, "Order Details");
                     Grid::new("group3").spacing(Vec2::new(0.0, 6.0))
-                    .max_col_width(avail_size.x / 2.15)
-                    .min_col_width(avail_size.x / 2.15)
+                    .max_col_width(avail_size.x / 2.14)
+                    .min_col_width(avail_size.x / 2.14)
                     .with_row_color(|num, style| return_colors(num, style))
                     .show(ui, |ui| {
                         ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
@@ -71,7 +70,7 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
                 if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
                     ui.group(|ui| {
                         // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
-                        Grid::new("customer_data").max_col_width(avail_size.x / 2.15).min_col_width(avail_size.x / 2.15).with_row_color(|num, style| return_colors(num, style))
+                        Grid::new("customer_data").max_col_width(avail_size.x / 2.14).min_col_width(avail_size.x / 2.14).with_row_color(|num, style| return_colors(num, style))
                         .show(ui, |ui| {
                             ui.colored_label(Color32::LIGHT_RED, "email:");
                             ui.label(&extended_seb.email);
@@ -145,8 +144,8 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
                     Grid::new("other_software_grid")
                         .spacing(Vec2::new(0.0, 6.0))
                         .spacing(Vec2::new(2., 4.))
-                        .max_col_width(avail_size.x / 2.15)
-                        .min_col_width(avail_size.x / 2.15)
+                        .max_col_width(avail_size.x / 2.14)
+                        .min_col_width(avail_size.x / 2.14)
                         .with_row_color(|num, style| return_colors(num, style))
                         .num_columns(2)
                         .show(ui, |ui| 

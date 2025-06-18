@@ -45,7 +45,6 @@ bytes = { workspace=true }
 regex = { workspace=true }
 async-trait = { workspace = true }
 once_cell = { workspace=true }
-egui_taffy = { workspace = true }
 rfd = { workspace = true }
 itertools = { workspace = true }
 brotli = { workspace=true }

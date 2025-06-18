@@ -142,9 +142,9 @@ pub struct SharedContext {
     #[serde(skip)]
     pub ui_actions_rx: Receiver<TaskUiActions>,
     #[serde(skip)]
-    pub settings_sender: Sender<ThemeConfig>,
+    pub settings_sender: Sender<Style>,
     #[serde(skip)]
-    pub settings_receiver: Receiver<ThemeConfig>,
+    pub settings_receiver: Receiver<Style>,
 
     #[serde(skip)]
     pub toasts: Toasts,
@@ -259,7 +259,7 @@ impl SharedContext {
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
-        let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
+        let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<Style>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
