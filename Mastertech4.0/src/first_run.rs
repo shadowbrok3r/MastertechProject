@@ -85,7 +85,7 @@ impl MasterTechApp {
         .min_width(700.)
         .title_bar(true)
         .show(ctx, |ui|
-            self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone())
+            self.context.shared_ctx.theme_config.edit_ui(ui, ctx, self.context.shared_ctx.settings_sender.clone())
         );
         
         if let Some(window_res) = theme_res {
