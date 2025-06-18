@@ -1,8 +1,6 @@
-use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Id, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, Store, TaskPayload, User}};
-use egui_taffy::{taffy::{self, prelude::line}, tui, TuiBuilderLogic};
-use taffy::{prelude::{fr, length, percent}, Style as TaffyStyle};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
@@ -86,172 +84,125 @@ impl TaskModal {
 
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
-        let avail_size = Vec2::new(715.0, 700.0);
+        let avail_size = Vec2::new(700.0, 700.0);
         let max_space = Vec2::new(715.0, 700.0);
-        ui.set_min_size(avail_size);
+        ui.set_min_size(max_space);
         ui.set_max_size(max_space);
         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
         TopBottomPanel::top(format!("Top panel header {}", self.task.id.key().to_string())).exact_height(28.).show_inside(ui, |ui| {
-            tui(ui, format!("Grid  layout 4 {}", self.task.id.key().to_string()))
-            .reserve_available_space()
-            .style(TaffyStyle {
-                display: taffy::Display::Flex,
-                flex_direction: taffy::FlexDirection::Row,
-                justify_content: Some(taffy::JustifyContent::SpaceBetween),
-                size: percent(1.),
-                gap: length(0.0),  
-                ..Default::default()
-            })
-            .show(|tui| {
-                tui.style(TaffyStyle {
-                    flex_grow: 1.0,                  // ← equal slice of row
-                    flex_basis: percent(0.0),        // ← ignore intrinsic width
-                    align_self: Some(taffy::AlignItems::Stretch), // stretch to full row height
-                    flex_direction: taffy::FlexDirection::Column,
-                    align_content: Some(taffy::AlignContent::Center),
-                    ..Default::default()
-                }).add(|tui| {
-                    tui.ui(|ui| {
-                        let full_w = ui.available_width();
-                        let delete_btn = Button::new(
-                            RichText::new("Delete Task").color(Color32::LIGHT_RED),
-                        )
-                        .min_size([full_w/1.7, 22.0].into())
-                        .ui(ui)
-                        .on_hover_text("Double Click To Delete Task");
 
-                        if delete_btn.double_clicked() {
-                            let task_id = self.task.id.clone();
-                            PlatformSpawner::spawn(async move {
-                                match delete_task(task_id).await {
-                                    Ok(_) => info!("Deleted task"),
-                                    Err(e) => log::error!("Error: {e:?}"),
-                                }
-                            });
-                            self.current_page_state = ModalAction::Close;
-                        }
-                    });
-                });
+            ui.columns(3, |ui| {
+                ui[0].with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let delete_btn = Button::new(
+                        RichText::new("Delete Task").color(Color32::LIGHT_RED),
+                    )
+                    .min_size([150., 22.0].into())
+                    .ui(ui)
+                    .on_hover_text("Double Click To Delete Task");
 
-                tui.style(TaffyStyle {
-                    flex_grow: 1.0,                  // ← equal slice of row
-                    flex_basis: percent(0.0),        // ← ignore intrinsic width
-                    align_self: Some(taffy::AlignItems::Center), // stretch to full row height
-                    flex_direction: taffy::FlexDirection::Column,
-                    align_content: Some(taffy::AlignContent::Center),
-                    align_items: Some(taffy::AlignItems::Center),
-                    ..Default::default()
-                }).add_with_border(|tui| {
-                    tui.ui(|ui| {
-                        ui.with_layout(
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                macro_rules! icon {
-                                    ($state:expr, $page:expr, $glyph:literal) => {
-                                        if ui
-                                            .add_sized(
-                                                [22., 22.],
-                                                eframe::egui::SelectableLabel::new(
-                                                    $state == $page,
-                                                    RichText::new($glyph).heading(),
-                                                ),
-                                            )
-                                            .clicked()
-                                        {
-                                            $state = $page;
-                                        }
-                                    };
-                                }
-
-                                // if self.task.service_ticket.is_some() {
-                                    icon!(self.current_page_state, ModalAction::TicketInfoPage,   "🖹");
-                                    icon!(self.current_page_state, ModalAction::ComputerInfoPage, "🖥");
-                                    icon!(self.current_page_state, ModalAction::SoftwareInfoPage, "💾");
-                                // } else {
-                                    // icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
-                                // }
-                                // icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
-                                icon!(self.current_page_state, ModalAction::TaskNotePage,  "💬");
-                            },
-                        );
-                    });
-                });
-
-                tui.style(TaffyStyle {
-                    flex_grow: 1.0,                  // ← equal slice of row
-                    flex_basis: percent(0.0),        // ← ignore intrinsic width
-                    align_self: Some(taffy::AlignItems::Stretch), // stretch to full row height
-                    flex_direction: taffy::FlexDirection::Column,
-                    align_content: Some(taffy::AlignContent::Center),
-                    ..Default::default()
-                }).add(|tui| {
-                    tui.ui(|ui| {
-                        ui.with_layout(
-                            Layout::right_to_left(Align::Center),
-                            |ui| 
-                        {
-                            ui.push_id(
-                                format!("Completed {}", self.task.completed),
-                                |ui| self.task.interact_completed(ui),
-                            );
-                            ui.add_space(6.0);
-                            ui.colored_label(Color32::LIGHT_RED, "Completed:");
+                    if delete_btn.double_clicked() {
+                        let task_id = self.task.id.clone();
+                        PlatformSpawner::spawn(async move {
+                            match delete_task(task_id).await {
+                                Ok(_) => info!("Deleted task"),
+                                Err(e) => log::error!("Error: {e:?}"),
+                            }
                         });
+                        self.current_page_state = ModalAction::Close;
+                    }
+                });
+
+                ui[1].vertical_centered(|ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(75.);
+                        macro_rules! icon {
+                            ($state:expr, $page:expr, $glyph:literal) => {
+                                if ui
+                                    .add_sized(
+                                        [22., 22.],
+                                        eframe::egui::SelectableLabel::new(
+                                            $state == $page,
+                                            RichText::new($glyph).heading(),
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    $state = $page;
+                                }
+                            };
+                        }
+                        icon!(self.current_page_state, ModalAction::TicketInfoPage,   "🖹");
+                        icon!(self.current_page_state, ModalAction::ComputerInfoPage, "🖥");
+                        icon!(self.current_page_state, ModalAction::SoftwareInfoPage, "💾");
+                        icon!(self.current_page_state, ModalAction::TaskNotePage,  "💬");
                     });
+                    // if self.task.service_ticket.is_some() {
+                    // } else {
+                        // icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
+                    // }
+                    // icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
+                });
+
+                ui[2].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.push_id(
+                        format!("Completed {}", self.task.completed),
+                        |ui| self.task.interact_completed(ui),
+                    );
+                    ui.add_space(6.0);
+                    ui.colored_label(Color32::LIGHT_RED, "Completed:");
                 });
             });
         });
 
         ui.add_space(10.);
-        tui(ui, format!("Grid layout {}", self.task.id.key().to_string()))
-            .reserve_space(max_space)
-            .style(TaffyStyle {
-                display: taffy::Display::Grid,
-                grid_template_columns: vec![
-                    length(15.0),   // left gutter
-                    fr(1.0),      // stretchy middle track
-                    length(10.0),   // right gutter
-                ],
-                grid_template_rows: vec![fr(1.0)],
-                ..Default::default()
-            })
-            .show(|tui| {
-                tui.style(TaffyStyle {
-                    grid_column: line(1),
-                    ..Default::default()
-                })
-                .add_empty();
-                // put the page body in column 2 (1‑based index)
-                tui.style(TaffyStyle {
-                    grid_column: line(2),
-                    ..Default::default()
-                })
-                .add(|tui| {
-                    // tui.ui(|ui| ui.set_min_width(ui.available_width()) );
-                    tui.ui(|ui| {
-                        let store_users = self.store_users.clone();
-                        // Ensure full width and height
-                        ui.set_min_width(ui.available_width());
-                        ui.set_min_height(ui.available_height()/1.1);
-                        match self.current_page_state {
-                            ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users, self.user.clone()),
-                            ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
-                            ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
-                            ModalAction::JobBuilderPage   => display_job_builder_page(ui),
-                            ModalAction::TaskNotePage     => self.chat_view.ui(ui),
-                            // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
-                            _ => {}
-                        }
-                    });
-                });
-                
-                tui.style(TaffyStyle {
-                    grid_column: line(3),
-                    ..Default::default()
-                })
-                .add_empty();
-            });
+        ui.scope_builder(
+        UiBuilder::new()
+        .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Min)), 
+        |ui| {
+            let is_sizing_pass = ui.is_sizing_pass();
+            let available_width = 715.;
+            let total_content_width = match self.current_page_state {
+                ModalAction::TicketInfoPage => 670.,
+                ModalAction::SoftwareInfoPage => 670.,
+                ModalAction::ComputerInfoPage => 670.,
+                ModalAction::JobBuilderPage => 670.,
+                ModalAction::TaskNotePage => 715.,
+                _ => 715.
+            };
+
+            // In the rendering pass, add spacing to center the content
+            if !is_sizing_pass && available_width > total_content_width {
+                let padding = (available_width - total_content_width) / 2.0;
+                ui.add_space(padding);
+            }
+
+            let store_users = self.store_users.clone();
+            match self.current_page_state {
+                ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users, self.user.clone()),
+                ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
+                ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
+                ModalAction::JobBuilderPage   => display_job_builder_page(ui),
+                ModalAction::TaskNotePage     => self.chat_view.ui(ui),
+                // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
+                _ => {}
+            }
+
+            let id = format!("{:?} Sizing ID", self.task.id);
+            // Use egui memory to track if we've already done the sizing pass
+            let sizing_pass_done = ui.memory(|mem| mem.data.get_temp::<bool>(Id::new(&id)).unwrap_or(false));
+
+            if is_sizing_pass && !sizing_pass_done {
+                ui.ctx().request_discard("Centering ComboBox sizing pass");
+                ui.ctx().request_repaint();
+                ui.memory_mut(|mem| mem.data.insert_temp(Id::new(&id), true));
+            }
+
+            // Reset the flag if the UI is repainted for other reasons (e.g., window resize)
+            if !is_sizing_pass && sizing_pass_done {
+                ui.memory_mut(|mem| mem.data.insert_temp(Id::new(&id), false));
+            }
+        });
 
         if self.current_page_state == ModalAction::Close {
             action_handler(ModalAction::Close);
