@@ -1,4 +1,6 @@
-use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, TextFormat, Ui, Widget};
+use anyhow::Context;
+use bincode::{config::standard, serde::{decode_from_slice, encode_to_vec}};
+use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, Style, TextFormat, Ui, Widget};
 use database::schema::TaskPayload;
 use std::collections::BTreeSet;
 use regex::Regex;
@@ -11,6 +13,24 @@ pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;
 pub mod theme_config;
+
+const ZSTD_LEVEL: i32 = 9;
+
+pub fn encode_style(message: &Style) -> anyhow::Result<Vec<u8>> {
+    let bincoded = encode_to_vec(message, standard()).context("Failed to serialize buffer")?;
+    let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), ZSTD_LEVEL).context("zstd")?;
+    log::info!("Compressed: {compressed:?}");
+    Ok(compressed.into())
+}
+
+pub fn decode_style(packet: &[u8]) -> anyhow::Result<Style> {
+    log::info!("Got bytes: {packet:?}");
+    let bincoded = zstd::decode_all(packet).context("zstd")?;
+    log::info!("bincoded: {bincoded:?}");
+    let (message, _) = decode_from_slice(&bincoded, standard()).context("bincode")?;
+    log::info!("style: {message:?}");
+    Ok(message)
+}
 
 pub fn find_task_in_description(
     notification_description: &str,

@@ -1,12 +1,11 @@
 use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
-use crate::{ui_tools::tokyo_dark::{TokyoNight, TokyoNightStorm}, PlatformSpawner, Spawner};
+use crate::{ui_tools::{encode_style, tokyo_dark::{TokyoNight, TokyoNightStorm}}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use derivative::Derivative;
-use database::DATABASE;
+use database::schema::User;
 use serde_json::to_vec;
 use std::sync::Arc;
-use log::info;
 
 use super::carl_dark::{Aesthetix, CarlDark};
 
@@ -120,8 +119,8 @@ impl Default for ThemeConfig {
 }
 
 impl ThemeConfig {
-    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Self) {
-        let mut ret = (false, self.clone());
+    pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Arc<Style>) {
+        let mut ret = (false, ctx.style());
         TopBottomPanel::top("Theme Menu top bar")
         .exact_height(30.)
         .show_inside(ui, |ui| {
@@ -133,17 +132,17 @@ impl ThemeConfig {
                 
                 if reset.clicked() {
                     PlatformSpawner::spawn(async move {
-                        let theme = ThemeConfig::default();
-                        match DATABASE 
-                            .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
-                            .bind(("color_settings", theme.clone()))
-                            .await 
-                        {
-                            Ok(res) => info!("Res: {res:?}"),
-                            Err(e) => log::error!("Error updating User Settings: {e:?}"),
-                        }
+                        let theme = Style::default();
+                            match User::update_color_scheme(
+                                encode_style(
+                                    &theme.clone()
+                                ).unwrap_or_default().into()
+                            ).await {
+                                Ok(_) => log::info!("Updated Color Settings"),
+                                Err(e) => log::error!("Error updating color settings: {e:?}"),
+                            }
                     });
-                    ret = (true, ThemeConfig::default());
+                    ret = (true, Style::default().into());
                 }
 
                 ui.add_space(10.);
@@ -222,16 +221,23 @@ impl ThemeConfig {
                     if save.clicked() {
                         let color_settings = ctx.style().clone();
                         PlatformSpawner::spawn(async move {
-                            match DATABASE
-                                .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
-                                .bind(("color_settings", color_settings.clone()))
-                                .await 
-                            {
-                                Ok(res) => info!("Result: {res:?}"),
-                                Err(e) => log::error!("Error updating User Settings: {e:?}"),
+                            match User::update_color_scheme(
+                                encode_style(
+                                    &color_settings.clone()
+                                ).unwrap_or_default().into()
+                            ).await {
+                                Ok(_) => log::info!("Updated Color Settings"),
+                                Err(e) => log::error!("Error updating color settings: {e:?}"),
                             }
                         });
-                        ret = (true, self.clone());
+                        let style = match self.preset_style {
+                            PresetStyles::CarlDark => CarlDark.custom_style(),
+                            PresetStyles::TokyoNightStorm => TokyoNightStorm.custom_style(),
+                            PresetStyles::TokyoNight => TokyoNight.custom_style(),
+                            PresetStyles::Custom => return,
+                        };
+
+                        ret = (true, style.clone().into());
                     }
 
                     ui.add_space(5.);
@@ -276,6 +282,7 @@ impl ThemeConfig {
                         PlatformSpawner::spawn(async move {
                             // Show the save file dialog
                             if let Some(file) = rfd::AsyncFileDialog::new()
+                                .add_filter("Json", &["json"])
                                 .set_file_name("mastertech_color_scheme.json") // Default file name
                                 .pick_file()
                                 .await

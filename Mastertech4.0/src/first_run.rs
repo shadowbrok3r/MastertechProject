@@ -1,9 +1,9 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
-use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::{Toast, ToastKind, ToastOptions}}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{decode_style, encode_style, theme_config::set_custom_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use eframe::{egui::{Context, ViewportCommand}, Frame};
 use database::schema::GetKeysResponse;
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Arc};
 use surrealdb::RecordId;
 use tokio::spawn;
 
@@ -59,8 +59,8 @@ impl MasterTechApp {
 
     pub fn load_data(&mut self, ctx: &Context) {
         if let Some(usr) = self.context.shared_ctx.current_user.clone() {
-            match serde_json::from_value::<ThemeConfig>(usr.get_color_scheme()) {
-                Ok(color_settings) => self.context.shared_ctx.theme_config = color_settings.clone(),
+            match decode_style(&usr.get_color_scheme()) {
+                Ok(color_settings) => self.context.shared_ctx.theme = Arc::new(color_settings),
                 Err(e) => log::error!("Error setting theme config: {e:?}"),
             }
             ctx.request_repaint();
@@ -92,12 +92,12 @@ impl MasterTechApp {
             if let Some(r) = window_res.inner {
                 if r.0 {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.set_color_scheme(serde_json::to_value(r.1.clone()).unwrap());
+                        user.set_color_scheme(encode_style(&r.1).unwrap_or_default());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
                         }
                     }
-                    self.context.shared_ctx.theme_config = r.1;
+                    self.context.shared_ctx.theme = r.1;
                     self.context.shared_ctx.modify_theme = false;
                 }
             }
