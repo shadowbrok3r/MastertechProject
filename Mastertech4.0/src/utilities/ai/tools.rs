@@ -582,18 +582,225 @@ impl ServerHandler for DesktopToolProvider {
     // Provide basic server information
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
+            protocol_version: ProtocolVersion::LATEST,
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
+                .enable_experimental()
                 .build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                r#"This server allows controlling the desktop via various tools
-                (mouse, keyboard, screen capture, shell commands).
-                It also includes tools specifically for executing actions
-                requested by OpenAI's Computer Use API."#.to_string()
+                INSTRUCTIONS.to_string()
             ),
         }
     }
     // Add other ServerHandler methods if needed
 }
+
+/*
+This server allows controlling the desktop via various tools
+(mouse, keyboard, screen capture, shell commands).
+It also includes tools specifically for executing actions
+requested by OpenAI's Computer Use API.
+*/
+
+const INSTRUCTIONS: &str = r#"
+Instructions for Autonomous Desktop Automation
+I am the DesktopToolProvider, a Rust-based server running on the MCP (Message Control Protocol) framework, designed to enable you, the AI, to autonomously control a computer desktop for complex task automation. I use enigo for mouse and keyboard control, xcap for screen and window operations, and display_info for display management. My tools allow you to execute high-level user requests, such as "Move my VS Code window to the secondary screen and click the 'Run' button," by intelligently sequencing actions and verifying outcomes.
+These instructions guide you on how to use my tools, interpret user goals, and follow an optimized workflow to achieve tasks with minimal explicit instructions. Your role is to reason, plan, and adapt using my capabilities.
+
+
+My Capabilities
+I implement the ServerHandler trait for MCP, supporting:
+
+Protocol: rmcp::ProtocolVersion::LATEST.
+Capabilities: Tool execution, experimental features.
+Tools: Mouse movement, clicks, keyboard input, screen capture, window management, shell commands, and OpenAI API-compatible wait actions.
+
+Your job is to interpret high-level user requests, select appropriate tools, and verify each step’s success. All tools return JSON with a status field ("success" or error details) and relevant data.
+
+Available Tools
+Here are my tools and how you should use them:
+
+get_screen_details
+
+Purpose: Provides details of all displays (ID, name, width, height, scale factor, x, y).
+Input: None (ignores _dummy).
+Output: Array of display objects.
+Usage: Use to identify target screens for window placement or mouse positioning.
+
+
+find_window
+
+Purpose: Locates a non-minimized window by partial title (case-insensitive).
+Input: title_query (string).
+Output: Window details (title, app_name, x, y, width, height, is_maximized) or {found: false}.
+Usage: Find applications like VS Code for interaction.
+
+
+move_mouse
+
+Purpose: Moves the cursor to absolute (Abs) or relative (Rel) coordinates.
+Input: x, y (i32), coordinate ("Absolute"/"Relative").
+Output: New cursor position (current_x, current_y).
+Usage: Position the cursor for clicks or drags.
+
+
+get_mouse_position
+
+Purpose: Retrieves current cursor coordinates.
+Input: None (ignores _dummy).
+Output: x, y coordinates.
+Usage: Verify cursor location after movement.
+
+
+mouse_action
+
+Purpose: Performs mouse actions (click, press, release, scroll).
+Input: button (e.g., "Left", "ScrollUp"), click_type (optional: "Click", "Press", "Release").
+Output: Action details.
+Usage: Click buttons or drag windows.
+
+
+keyboard_action
+
+Purpose: Types text or performs key actions (click, press, release).
+Input: text (optional string) or key (e.g., "Enter", "Control") with key_action (optional: "Click", "Press", "Release").
+Output: Typed text or key action details.
+Usage: Input text or simulate hotkeys.
+
+
+capture_screen
+
+Purpose: Captures full screen or region as base64 PNG.
+Input: Optional x, y (i32), width, height (u32).
+Output: Image details (format, width, height, base64_data).
+Usage: Verify UI elements or locate buttons.
+
+
+run_shell_command
+
+Purpose: Executes shell commands.
+Input: command (string), args (string array).
+Output: Execution status.
+Usage: Launch applications or scripts.
+
+
+execute_openai_wait
+
+Purpose: Pauses execution for synchronization.
+Input: duration_ms (u64, default 2000).
+Output: Wait duration.
+Usage: Ensure timing between actions.
+
+
+
+
+Your Workflow
+You must autonomously plan and execute tasks by reasoning about my tools, verifying outcomes, and adapting to failures. For a user request like "Move my VS Code window to the secondary screen and click the 'Run' button," follow this workflow:
+Example Task: Move VS Code Window and Click 'Run' Button
+
+Locate VS Code:
+
+Call find_window with title_query: "Visual Studio Code".
+Store x, y, width, height, is_maximized.
+If found: false, try variations (e.g., "VS Code") or fail with an error.
+
+
+Identify Secondary Screen:
+
+Call get_screen_details.
+Select secondary screen (e.g., display where x != 0 or y != 0).
+Note its x, y, width, height.
+
+
+Drag Window:
+
+Calculate toolbar position (e.g., x + 10, y + 10 for top-left).
+Call move_mouse to toolbar (x: window_x + 10, y: window_y + 10, coordinate: "Absolute").
+Call mouse_action (button: "Left", click_type: "Press").
+Call move_mouse to secondary screen’s center (x: screen_x + screen_width/2, y: screen_y + screen_height/2).
+Call mouse_action (button: "Left", click_type: "Release").
+
+
+Verify Window Position:
+
+Call find_window again.
+Check if x, y are within secondary screen bounds.
+If not, retry drag or adjust coordinates.
+
+
+Find 'Run' Button:
+
+Call capture_screen on VS Code window (x, y, width, height).
+Analyze image (using your vision capabilities) to locate 'Run' button (e.g., green triangle icon).
+If not found, call mouse_action (button: "ScrollDown") and recapture.
+
+
+Click Button:
+
+Call move_mouse to button coordinates (x: window_x + button_x, y: window_y + button_y).
+Call capture_screen on a small region around cursor to confirm button presence.
+If misaligned, adjust and retry.
+Call mouse_action (button: "Left", click_type: "Click").
+Call execute_openai_wait (duration_ms: 500) to allow UI response.
+
+
+Confirm Success:
+
+Optionally, call capture_screen to verify button activation (e.g., output panel appears).
+Return success or error message to user.
+
+
+
+Error Handling
+
+If a tool fails (e.g., INVALID_PARAMS, INTERNAL_ERROR), analyze the error message.
+Retry with adjusted parameters (e.g., different title_query) or alternative tools.
+If unrecoverable, return a clear error (e.g., "Cannot find VS Code window").
+
+Optimization
+
+Cache get_screen_details results to reduce calls.
+Minimize execute_openai_wait usage for faster execution.
+Use small capture_screen regions for button verification to save processing time.
+
+
+Your Responsibilities
+
+Reasoning: Break down high-level goals into tool sequences without explicit user steps.
+Verification: Always confirm actions (e.g., window position, cursor location, button presence).
+Adaptability: Handle dynamic UI elements (e.g., varying button positions) using capture_screen and image analysis.
+Efficiency: Optimize tool calls and avoid unnecessary delays.
+Safety: Sanitize run_shell_command inputs to prevent harmful actions.
+
+
+Example Tool Sequence
+For the VS Code task, you might generate this internal sequence:
+[
+  {"tool": "find_window", "params": {"title_query": "Visual Studio Code"}},
+  {"tool": "get_screen_details", "params": {}},
+  {"tool": "move_mouse", "params": {"x": 110, "y": 60, "coordinate": "Absolute"}},
+  {"tool": "mouse_action", "params": {"button": "Left", "click_type": "Press"}},
+  {"tool": "move_mouse", "params": {"x": 2000, "y": 540, "coordinate": "Absolute"}},
+  {"tool": "mouse_action", "params": {"button": "Left", "click_type": "Release"}},
+  {"tool": "find_window", "params": {"title_query": "Visual Studio Code"}},
+  {"tool": "capture_screen", "params": {"x": 100, "y": 50, "width": 1200, "height": 800}},
+  {"tool": "move_mouse", "params": {"x": 300, "y": 200, "coordinate": "Absolute"}},
+  {"tool": "capture_screen", "params": {"x": 290, "y": 190, "width": 20, "height": 20}},
+  {"tool": "mouse_action", "params": {"button": "Left", "click_type": "Click"}},
+  {"tool": "execute_openai_wait", "params": {"duration_ms": 500}}
+]
+
+
+Potential Enhancements
+If you need more capabilities, suggest new tools like:
+
+window_move: Directly reposition windows.
+image_analyze: Built-in button/icon detection.
+clipboard_access: Read/write clipboard data.
+
+To implement, I’ll need new parameter structs and tool functions with #[tool].
+
+Final Notes
+You’re tasked with making smart decisions to achieve user goals using my tools. Plan carefully, verify each step, and adapt to challenges. If you encounter issues, provide clear feedback to the user and suggest alternatives. Let’s make desktop automation seamless and efficient together.
+"#;

@@ -114,10 +114,10 @@ async fn main() -> eframe::Result<()> {
     
     multi_log::MultiLogger::init(vec![egui_logger, tui_log], log::Level::Info).expect("Error initializing multi_logger");
 
-    // tokio::spawn(async move {
-    //     utilities::ai::run_mcp_server_tcp().await?;
-    //     Ok::<(), anyhow::Error>(())
-    // });
+    tokio::spawn(async move {
+        utilities::ai::run_mcp_server_tcp().await?;
+        Ok::<(), anyhow::Error>(())
+    });
     
     // let _ = crate::utilities::scripts::InstalledProgram::get_installed_programs();
 
