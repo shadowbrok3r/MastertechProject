@@ -1,6 +1,6 @@
-use crate::{SortDirection, Sortable};
-use chrono::{DateTime, Timelike, Utc};
 use database::schema::{ConnectedClient, Priority, TaskPayload};
+use chrono::{DateTime, Timelike, Utc};
+use crate::{SortDirection, Sortable};
 
 impl Sortable<TaskPayload> for Vec<TaskPayload> {
     fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<TaskPayload> {

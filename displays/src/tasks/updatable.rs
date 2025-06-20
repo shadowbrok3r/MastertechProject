@@ -1,4 +1,4 @@
-use database::{schema::{Priority, Record, Status, TaskPayload}, DATABASE};
+use database::{schema::{LiveTaskPayload, Priority, Record, Status}, DATABASE};
 use async_trait::async_trait;
 use surrealdb::RecordId;
 use crate::Updatable;
@@ -6,7 +6,7 @@ use log::info;
 
 
 #[async_trait]
-impl Updatable for TaskPayload {
+impl Updatable for LiveTaskPayload {
     async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET service_number=$service_number")

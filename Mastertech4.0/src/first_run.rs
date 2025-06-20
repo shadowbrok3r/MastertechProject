@@ -8,8 +8,11 @@ use surrealdb::RecordId;
 use tokio::spawn;
 
 impl MasterTechApp {
-    pub fn first_run(&mut self, frame: &mut Frame) {
+    pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
         self.context.shared_ctx.first_run = false;
+        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+        ctx.set_style((*custom_style).clone());
+
         if let Some(storage) = frame.storage() {
             self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
             self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
@@ -70,7 +73,7 @@ impl MasterTechApp {
     }
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
-        if self.context.shared_ctx.first_run { self.first_run(frame); }
+        if self.context.shared_ctx.first_run { self.first_run(ctx, frame); }
         self.context.shared_ctx.receive_shared(frame, ctx);
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
@@ -103,8 +106,7 @@ impl MasterTechApp {
             }
         }
         
-        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        ctx.set_style((*custom_style).clone());
+
 
         // Get User settings from local storage
         if let Some(user) = &self.context.shared_ctx.current_user {

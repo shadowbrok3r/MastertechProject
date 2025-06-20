@@ -1,6 +1,6 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
-use database::schema::{ComputerData, CustomerData, TaskPayload, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
+use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
 use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ pub struct DatabaseRowViewer {
 
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub enum DatabaseTable {
-    Task(TaskPayload),
+    Task(LiveTaskPayload),
     Service(TicketPayload),
     Customer(CustomerData),
     Computer(ComputerData),
@@ -55,7 +55,7 @@ impl DatabaseTableSelection {
 
 impl Default for DatabaseTable {
     fn default() -> Self {
-        Self::Task(TaskPayload::default())
+        Self::Task(LiveTaskPayload::default())
     }
 }
 

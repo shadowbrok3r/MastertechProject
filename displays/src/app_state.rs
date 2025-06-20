@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -49,7 +49,7 @@ pub struct SharedContext {
     /// {Task layouts for different tabs}
     pub task_layouts: HashMap<String, TaskLayout>,
     /// {All task data}
-    pub tasks: Vec<TaskPayload>,
+    pub tasks: Vec<LiveTaskPayload>,
 
     pub query_editor: QueryEditor,
 
@@ -73,13 +73,13 @@ pub struct SharedContext {
     pub live_clients_rx: Receiver<(Action, ConnectedClient)>,
     /// {Task transmission channel over crossbeam}
     #[serde(skip)]
-    pub tasks_tx: Sender<(Action, TaskPayload)>,
+    pub tasks_tx: Sender<(Action, LiveTaskPayload)>,
     #[serde(skip)]
-    pub tasks_rx: Receiver<(Action, TaskPayload)>,
+    pub tasks_rx: Receiver<(Action, LiveTaskPayload)>,
     #[serde(skip)]
-    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
+    pub initial_tasks_tx: Sender<Vec<LiveTaskPayload>>,
     #[serde(skip)]
-    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
+    pub initial_tasks_rx: Receiver<Vec<LiveTaskPayload>>,
     #[serde(skip)]
     pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
     #[serde(skip)]
@@ -212,8 +212,8 @@ pub struct SharedContext {
     pub scene_editor: SceneEditor,
     pub user_chat: UserChat,
     pub pending_store: Option<Store>,
-    pub task_index: HashMap<String, TaskPayload>, // Index by task ID
-    pub search_results: Option<Vec<TaskPayload>>, // Store global search results
+    pub task_index: HashMap<String, LiveTaskPayload>, // Index by task ID
+    pub search_results: Option<Vec<LiveTaskPayload>>, // Store global search results
     pub account_mod: UserPreferences,
     #[serde(skip)]
     login: Login,
@@ -240,9 +240,9 @@ impl SharedContext {
 
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
-        let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
+        let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<LiveTaskPayload>>(2);
         let (store_users_tx, store_users_rx) = channel::unbounded::<Vec<User>>();
-        let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
+        let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (associated_notes_tx, associated_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();

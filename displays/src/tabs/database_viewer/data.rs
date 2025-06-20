@@ -1,4 +1,4 @@
-use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TaskPayload, TicketPayload, User};
+use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TicketPayload, User};
 use itertools::Itertools;
 
 use crate::{get_database_users, PlatformSpawner, Spawner};
@@ -20,7 +20,7 @@ impl DatabaseEditor {
                         let tasks = LiveTaskPayload::get_tasks(start_idx).await.unwrap_or_default();
                         log::info!("{}", tasks.len());
                         for task in tasks.iter() {
-                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Task(TaskPayload::from(task.clone())));
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::Task(task.clone()));
                         }
                     },
                     super::row_viewer::DatabaseTableSelection::User => {

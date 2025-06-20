@@ -1,7 +1,7 @@
 use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
-use eframe::{Frame, egui::{Color32, Margin, Stroke, Vec2, Window}};
+use eframe::{egui::{Color32, Context, Margin, Stroke, Vec2, Window}, Frame};
 use wasm_bindgen_futures::spawn_local;
 use std::collections::HashMap;
 use database::DATABASE;
@@ -13,8 +13,10 @@ use {
 };
 
 impl MtechServer {
-    pub fn first_run(&mut self, frame: &mut Frame) {
+    pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
         self.context.shared_ctx.first_run = false;
+        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+        ctx.set_style((*custom_style).clone());
         let current_version = env!("CARGO_PKG_VERSION");
 
         if let Some(storage) = frame.storage_mut() {
@@ -210,7 +212,7 @@ impl MtechServer {
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         // do some initial setting up
-        if self.context.shared_ctx.first_run { self.first_run(frame); }
+        if self.context.shared_ctx.first_run { self.first_run(ctx, frame); }
         self.receive_database(frame, ctx);
         self.context.shared_ctx.receive_shared(frame, ctx);
 
