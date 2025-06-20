@@ -1,7 +1,7 @@
 use crate::{FilterClients, FilterTasks};
-use chrono::{DateTime, Utc};
 use database::schema::{ConnectedClient, Priority, Status, Store, TaskPayload, User};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use chrono::{DateTime, Utc};
 use std::cmp::Reverse;
 
 impl FilterTasks for Vec<TaskPayload> {
@@ -54,7 +54,7 @@ impl FilterTasks for Vec<TaskPayload> {
         search: T,
         search_input: String,
     ) -> Vec<TaskPayload> {
-// Create a fuzzy matcher with default settings, ignoring case
+        // Create a fuzzy matcher with default settings, ignoring case
         let matcher = SkimMatcherV2::default().ignore_case();
 
         // If search input is empty, return no tasks

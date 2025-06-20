@@ -1,11 +1,11 @@
 use eframe::egui::{Button, Color32, FontId, Grid, Hyperlink, Margin, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
-use database::{schema::{CustomerData, Record, TaskPayload, TicketPayload, User}, DATABASE};
+use database::{schema::{CustomerData, LiveTaskPayload, Record, TicketPayload, User}, DATABASE};
 use crate::{tabs::task_audit::row_viewer::BASE_URL, Interaction, PlatformSpawner, Spawner};
 use chrono::{DateTime, Utc};
 
 use super::return_colors;
 
-pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2, store_users: &Vec<User>, current_user: User) {
+pub fn display_ticket_page(ui: &mut Ui, task: &mut LiveTaskPayload, avail_size: Vec2, store_users: &Vec<User>, current_user: User) {
     ui.vertical_centered_justified(|ui| {
         ui.colored_label(Color32::LIGHT_GREEN, format!("ID: {}", task.id.key().to_string()));
 

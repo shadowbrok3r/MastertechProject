@@ -1,13 +1,20 @@
 use eframe::egui::{Button, CollapsingHeader, Widget, Vec2, Color32, Frame, Margin, RichText, Ui};
-use database::schema::{TaskPayload, User};
+use database::schema::{LiveTaskPayload, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
 use log::info;
 
 use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions, Updatable};
 
-impl Displayable for TaskPayload {
-    fn display_cards(&mut self, user: &User, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>) {
+impl Displayable for LiveTaskPayload {
+    fn display_cards(
+        &mut self, 
+        ui: &mut Ui, 
+        user: &User, 
+        store_users: &Vec<User>, 
+        notes: Vec<TaskNotePayload>, 
+        tx: Sender<TaskUiActions>
+    ) {
         let style = ui.style().clone();
         
         let mut frame = Frame::default()
@@ -34,8 +41,8 @@ impl Displayable for TaskPayload {
                 ui.style_mut().spacing.button_padding.y = 4.0;
 
                 let mut count = 0;
-                if !self.task_note.is_empty() {
-                    count = self.task_note.len();
+                if !notes.is_empty() {
+                    count = notes.len();
                 }
 
                 let txt = if count > 0 {
@@ -53,7 +60,7 @@ impl Displayable for TaskPayload {
                     let _ = tx.try_send(
                         TaskUiActions::OpenChatModal((
                             self.id.clone(),
-                            self.task_note.clone(),
+                            notes.clone(),
                             self.service_number.clone()
                         )),
                     );

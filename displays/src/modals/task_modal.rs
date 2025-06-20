@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Id, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::{schema::{utilities::{delete_task, PhoneNumberFormatter}, Store, TaskPayload, User}};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, LiveTaskPayload, Store, TaskPayload, User};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
@@ -26,7 +26,7 @@ use tokio::sync::Mutex;
 pub struct TaskModal {
     pub title: String,
     pub current_page_state: ModalAction,
-    pub task: TaskPayload,
+    pub task: LiveTaskPayload,
     #[serde(skip)]
     pub chat_view: ChatView,
     pub min_width: Option<f32>,
@@ -53,7 +53,7 @@ pub enum ModalAction {
 }
 
 impl TaskModal {
-    pub fn new(chat_view: ChatView, mut task: TaskPayload) -> Self {
+    pub fn new(chat_view: ChatView, mut task: LiveTaskPayload) -> Self {
 
         if let Some(ticket) = task.service_ticket.as_mut() {
             if let Some(customer) = ticket.customer.as_mut() {
