@@ -1,7 +1,7 @@
-use database::schema::{Status, Store, TaskPayload};
-use surrealdb::Action;
-use crate::{app_state::SharedContext, FilterTasks}; 
+use database::schema::{FilterLiveTasks, LiveTaskPayload, Status, Store};
 use std::collections::{BTreeMap, HashSet};
+use crate::app_state::SharedContext; 
+use surrealdb::Action;
 use log::info;
 
 impl SharedContext {
@@ -110,19 +110,18 @@ impl SharedContext {
                 if users_changed || statuses_changed || self.pending_store.is_some() {
                     let mut new_task_map = BTreeMap::new();
                     let tasks_to_filter = self.search_results.clone().unwrap_or_else(|| {
-                        self.task_index.values().cloned().collect::<Vec<TaskPayload>>()
+                        self.task_index.values().cloned().collect::<Vec<LiveTaskPayload>>()
                     });
-
+                    
                     if page == "MyTasks" {
                         for status_str in &config.valid_keys {
                             let status = Status::from_str(status_str);
                             let filtered = tasks_to_filter
-                                .clone()
                                 .filter_by_status(&status)
                                 .filter_by_assignee(&current_user)
                                 .into_iter()
                                 .filter(|task| !task.completed)
-                                .collect::<Vec<TaskPayload>>();
+                                .collect::<Vec<LiveTaskPayload>>();
                             log::warn!("receive_store_users: MyTasks status={}, tasks_found={}", status_str, filtered.len());
                             if !filtered.is_empty() {
                                 new_task_map.entry(status_str.clone()).or_insert(filtered);

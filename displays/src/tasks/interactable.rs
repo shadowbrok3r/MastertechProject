@@ -1,6 +1,6 @@
 
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use database::schema::{Priority, Status, TaskPayload, User};
+use database::schema::{LiveTaskPayload, Priority, Status, User};
 use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
@@ -8,7 +8,7 @@ use log::info;
 
 use super::task_cards::date_colors;
 
-impl Interaction for TaskPayload {
+impl Interaction for LiveTaskPayload {
     fn interact_service_number(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
