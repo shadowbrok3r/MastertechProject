@@ -1,4 +1,4 @@
-use database::{schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO, STORE_USERS};
+use database::{schema::{ConnectedClient, LiveTaskPayload, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO, STORE_USERS};
 use eframe::egui::{Modifiers, Response, Ui};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
@@ -129,16 +129,23 @@ pub fn get_database_users()  -> Vec<User>{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskUiActions {
-    OpenTaskModal(TaskPayload),
+    OpenTaskModal(LiveTaskPayload),
     CreateTaskModal,
     OpenChatModal((RecordId, Vec<TaskNotePayload>, Option<String>)),
-    OpenViewport(TaskPayload),
+    OpenViewport(LiveTaskPayload),
     None,
 }
 
 
 pub trait Displayable {
-    fn display_cards(&mut self, user: &User, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>);
+    fn display_cards(
+        &mut self, 
+        ui: &mut Ui, 
+        user: &User, 
+        store_users: &Vec<User>, 
+        notes: Vec<TaskNotePayload>,
+        tx: Sender<TaskUiActions>
+    );
 }
 
 
@@ -192,18 +199,13 @@ pub trait FilterTasks {
         search_input: String,
     ) -> Vec<TaskPayload>;
 }
+
 pub trait FilterClients {
     fn filter_by_client<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
         &self,
         name: T,
         search_input: String,
     ) -> Vec<ConnectedClient>;
-}
-
-pub trait Sortable <T> {
-    fn default_sort(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
-    fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
-    fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
 }
 
 pub trait LiveUpdate {
@@ -249,13 +251,6 @@ pub trait Task {
 pub trait DisplayModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction>;
     // fn set_state(self, action: ModalAction);
-}
-
-#[derive(Default, PartialEq, Clone, serde::Serialize, Debug, Deserialize)]
-pub enum SortDirection{
-    #[default]
-    Asc,
-    Desc
 }
 
 

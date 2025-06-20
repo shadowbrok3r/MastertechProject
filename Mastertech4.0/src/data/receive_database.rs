@@ -49,7 +49,7 @@ impl MasterTechApp {
                         self.context.shared_ctx.load_data(ctx, &user);
                     } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run(frame);
+                        self.first_run(ctx, frame);
                         log::error!("2");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
@@ -73,7 +73,7 @@ impl MasterTechApp {
                             toast.add(auth_toast);
                         } else {
                             self.context.shared_ctx.first_run = true;
-                            self.first_run(frame);
+                            self.first_run(ctx, frame);
                             log::error!("2");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }

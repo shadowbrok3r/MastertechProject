@@ -1,4 +1,4 @@
-use displays::{app_state::{AppState, MainPages}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use displays::{app_state::{AppState, MainPages}, ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use crate::app_state::MtechServer;
 use eframe::{egui::Context, Frame};
 
@@ -31,7 +31,7 @@ impl MtechServer {
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run(frame);
+                        self.first_run(ctx,frame);
                         log::error!("1");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
@@ -51,6 +51,7 @@ impl MtechServer {
                         log::info!("7");
                         let usr = self.context.shared_ctx.current_user.clone();
                         if let Some(user) = usr {
+                            ctx.set_style(decode_style(&user.get_color_scheme()).unwrap_or_default());
                             self.context.shared_ctx.load_data(ctx, &user);
                             let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                             let toast = &mut self.context.shared_ctx.toasts;
@@ -64,7 +65,7 @@ impl MtechServer {
                             toast.add(auth_toast);
                         } else {
                             self.context.shared_ctx.first_run = true;
-                            self.first_run(frame);
+                            self.first_run(ctx, frame);
                             log::error!("1");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }

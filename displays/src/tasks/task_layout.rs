@@ -1,6 +1,6 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
-use database::schema::{LiveTaskPayload, Record, Store, TaskPayload, User};
-use crate::{Displayable, SortDirection, Sortable, TaskUiActions};
+use database::schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, User};
+use crate::{Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap}, f32};
 use crate::get_current_user_from_auth;
 use crossbeam::channel::Sender;
@@ -15,7 +15,7 @@ use crate::{PlatformSpawner, Spawner};
 #[derive(Serialize, Deserialize)]
 pub struct TaskLayout{
     pub search_inputs: HashMap<String, String>,
-    pub task_map: BTreeMap<String, Vec<TaskPayload>>,
+    pub task_map: BTreeMap<String, Vec<LiveTaskPayload>>,
     pub assignees: Vec<User>,
     pub open_menu: bool,
     pub action: TaskUiActions,
@@ -25,7 +25,7 @@ pub struct TaskLayout{
     pub loading: bool,
     new_status: String,
     user: User,
-    search_results: Option<Vec<TaskPayload>>, // Add search results
+    search_results: Option<Vec<LiveTaskPayload>>, // Add search results
     pub column_order: Vec<String>,
 }
 
@@ -58,12 +58,12 @@ impl TaskLayout {
     const SPACER_W: f32 = 6.0;
 
     pub fn new(
-        task_map: BTreeMap<String, Vec<TaskPayload>>, 
+        task_map: BTreeMap<String, Vec<LiveTaskPayload>>, 
         column_order: Vec<String>,
         assignees: Vec<User>,
-        search_results: Option<Vec<TaskPayload>>,
+        search_results: Option<Vec<LiveTaskPayload>>,
     ) -> Self {
-        Self {  
+        Self {
             task_map, 
             column_order,
             assignees, 
@@ -454,7 +454,13 @@ impl TaskLayout {
                                         }
                                         if let Some(&task_index) = filtered_indices.get(row) {
                                             if let Some(task) = tasks.get_mut(task_index) {
-                                                task.display_cards(&self.user, ui, &self.assignees, ui_actions_tx.clone());
+                                                task.display_cards(
+                                                    ui, 
+                                                    &self.user, 
+                                                    &self.assignees, 
+                                                    
+                                                    ui_actions_tx.clone()
+                                                );
                                             }
                                         }
                                     }
