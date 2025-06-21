@@ -1,11 +1,10 @@
-use database::{schema::{ConnectedClient, LiveTaskPayload, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO, STORE_USERS};
+use database::{schema::{LiveTaskPayload, Node, Priority, Status, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO, STORE_USERS};
 use eframe::egui::{Modifiers, Response, Ui};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::{Receiver, Sender};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use surrealdb::RecordId;
 use egui_extras::Strip;
 use std::fmt::Debug;
