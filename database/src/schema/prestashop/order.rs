@@ -310,19 +310,19 @@ impl Order {
 
         log::info!("prestashop_schema -> response text: {response_text:?}");
         // Parse the XML response to extract values
-        let id = response_text
+        let _id = response_text
             .split("<id><![CDATA[")
             .nth(1)
             .and_then(|s| s.split("]]></id>").next())
             .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
 
-        let date_add = response_text
+        let _date_add = response_text
             .split("<date_add><![CDATA[")
             .nth(1)
             .and_then(|s| s.split("]]></date_add>").next())
             .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
 
-        let date_upd = response_text
+        let _date_upd = response_text
             .split("<date_upd><![CDATA[")
             .nth(1)
             .and_then(|s| s.split("]]></date_upd>").next())

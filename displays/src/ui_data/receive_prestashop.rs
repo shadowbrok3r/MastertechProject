@@ -53,7 +53,7 @@ impl SharedContext {
             ticket.salesman = email_split_rep;
             ticket.sales_rep = email.clone();
             ticket.tech = email.clone();
-            ticket.customer = Some(customer.clone());
+            ticket.customer = customer.id.clone();
             ticket.checkin_rep = email;
             ticket.terms = data.order.payment.clone();
             ticket.ticket_total = data.order.total_products_wt.clone();
@@ -73,7 +73,7 @@ impl SharedContext {
                 }
             }
 
-            task.service_ticket = Some(ticket.clone());
+            task.service_ticket = Some(ticket.id.clone());
 
             for (title, modal) in self.opened_modals.iter_mut() {
                 if let ModalType::CreateTaskModal(create_task_modal) = modal {

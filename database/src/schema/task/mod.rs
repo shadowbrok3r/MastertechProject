@@ -261,24 +261,6 @@ impl LiveTaskPayload {
     
         Ok(())
     }
-
-    pub fn from_task_payload(task: &mut TaskPayload) -> &mut LiveTaskPayload {
-        let task = &mut LiveTaskPayload {
-            id: task.id,
-            task_name: task.task_name,
-            service_ticket: Some(task.service_ticket.unwrap_or_default().id),
-            task_description: task.task_description,
-            assignee: task.assignee,
-            service_number: task.service_number,
-            due_date: task.due_date,
-            priority: task.priority,
-            completed: task.completed,
-            status: task.status,
-            created_at: task.created_at
-        };
-
-        task
-    }
 }
 
 impl From<LiveTaskPayload> for TaskPayload {
@@ -315,21 +297,3 @@ impl From<TaskPayload> for LiveTaskPayload {
         }
     }
 }
-
-// impl From<&mut TaskPayload> for &mut LiveTaskPayload {
-//     fn from(task: &mut TaskPayload) -> &mut Self {
-//         &mut Self {
-//             id: task.id,
-//             task_name: task.task_name,
-//             service_ticket: Some(task.service_ticket.unwrap_or_default().id),
-//             task_description: task.task_description,
-//             assignee: task.assignee,
-//             service_number: task.service_number,
-//             due_date: task.due_date,
-//             priority: task.priority,
-//             completed: task.completed,
-//             status: task.status,
-//             created_at: task.created_at
-//         }
-//     }
-// }
