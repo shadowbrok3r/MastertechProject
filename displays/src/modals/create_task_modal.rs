@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TicketData, User},DATABASE};
 use crate::{get_current_user_from_auth, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
@@ -393,8 +393,8 @@ impl Tur {
             if ui.add_enabled(check, button).clicked() {
                 let service_num = self.ticket_data.service_number.clone();
                 Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
-                self.ticket_data = TicketPayload::default();
-                self.task_data = TaskPayload::default();
+                self.ticket_data = TicketData::default();
+                self.task_data = LiveTaskPayload::default();
                 self.customer_data = CustomerData::default();
                 // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
                 self.ticket_data.service_number = service_num;
