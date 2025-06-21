@@ -218,7 +218,7 @@ impl crate::app_state::SharedContext {
         self.receive_ui_action();
         self.receive_users();
         self.receive_task();
-        self.receive_ticket();
+        // self.receive_ticket();
         self.receive_notes();
         self.receive_notification();
         self.receive_inventory();

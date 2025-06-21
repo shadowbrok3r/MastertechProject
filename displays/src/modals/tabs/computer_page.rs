@@ -1,17 +1,23 @@
 use eframe::egui::{Color32, Grid, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::schema::{ComputerData, TaskPayload, COMPUTER_TABLE};
+use database::schema::{ComputerData, TicketData, COMPUTER_TABLE};
 use surrealdb::RecordId;
 
 use super::return_colors;
 
 
-pub fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
-    let Some(ticket) = task.service_ticket.as_mut() else { return; };
-    let computer = if let Some(computer) = ticket.computer.as_mut() { 
+pub fn display_computer_page(
+    ui: &mut Ui, 
+    service_ticket: Option<&mut TicketData>, 
+    computer: Option<&mut ComputerData>,
+    avail_size: Vec2
+) {
+    let ticket = if let Some(ticket) = service_ticket {
+        ticket
+    } else { &mut TicketData::default() };
+
+    let computer = if let Some(computer) = computer { 
         computer 
-    } else { 
-        &mut ComputerData{ id: RecordId::from((COMPUTER_TABLE, "")), ..Default::default() } 
-    };
+    } else { &mut ComputerData{ id: RecordId::from((COMPUTER_TABLE, "")), ..Default::default() } };
 
 
     ScrollArea::vertical()

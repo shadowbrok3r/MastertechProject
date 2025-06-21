@@ -23,7 +23,6 @@ pub mod ui_data;
 pub mod modals;
 pub mod pages;
 pub mod views;
-pub mod tasks;
 pub mod chats;
 pub mod tabs;
 pub mod ai;
@@ -179,34 +178,9 @@ pub trait Interaction {
     fn interact_assignee(&mut self, ui: &mut Ui, store_users: &Vec<User>, current_user: &User) -> Response; // , task: Rc<RefCell<TaskPayload>>
 }
 
-pub trait FilterTasks {
-    fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
-    fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
-    fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
-    fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
-    fn filter_by_date(&self, date: DateTime<Utc>) -> Vec<TaskPayload>;
-    fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload>;
-    /// Filters a list of tasks by their name based on a fuzzy search input.
-    /// # Parameters
-    /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.
-    /// - `search_input`: A string representing the search input to filter tasks by.
-    ///
-    /// # Returns
-    /// A vector of `TaskPayload` containing the filtered tasks.
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
-        &self,
-        name: T,
-        search_input: String,
-    ) -> Vec<TaskPayload>;
-}
 
-pub trait FilterClients {
-    fn filter_by_client<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
-        &self,
-        name: T,
-        search_input: String,
-    ) -> Vec<ConnectedClient>;
-}
+
+
 
 pub trait LiveUpdate {
     fn handle_live_create(
