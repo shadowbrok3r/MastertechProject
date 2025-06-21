@@ -11,15 +11,15 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
-                        let task_modal = TaskModal::new(
-                            ChatView::new(
-                                task.task_note.clone(),
-                                self.store_users.clone(),
-                                task.id.clone(),
-                                task.service_number.clone()
-                            ),
-                            task.clone()
-                        );
+                    let task_modal = TaskModal::new(
+                        ChatView::new(
+                            task.task_note.clone(),
+                            self.store_users.clone(),
+                            task.id.clone(),
+                            task.service_number.clone()
+                        ),
+                        task.clone()
+                    );
                     
                     let title = &task_modal.title;
 
