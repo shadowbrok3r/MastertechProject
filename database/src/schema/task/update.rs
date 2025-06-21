@@ -1,13 +1,8 @@
-use database::{schema::{LiveTaskPayload, Priority, Record, Status}, DATABASE};
-use async_trait::async_trait;
+use crate::{schema::{LiveTaskPayload, Priority, Record, Status}, DATABASE};
 use surrealdb::RecordId;
-use crate::Updatable;
-use log::info;
 
-
-#[async_trait]
-impl Updatable for LiveTaskPayload {
-    async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error> {
+impl LiveTaskPayload {
+    pub async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET service_number=$service_number")
             .bind(("id", self.id.clone()))
@@ -18,7 +13,7 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET completed=$completed, status=$status")
             .bind(("id", self.id.clone()))
@@ -30,7 +25,7 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_due_date(&self) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn update_due_date(&self) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
                 .query("UPDATE $id SET due_date=$date")
                 .bind(("id", self.id.clone()))
@@ -40,8 +35,8 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_assignee(&self, assignee: RecordId) -> anyhow::Result<(), anyhow::Error> {
-        info!("assignee: {assignee:?}");
+    pub async fn update_assignee(&self, assignee: RecordId) -> anyhow::Result<(), anyhow::Error> {
+        log::info!("assignee: {assignee:?}");
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET assignee=$assignee, status ='Todo'")
             .bind(("id", self.id.clone()))
@@ -52,7 +47,7 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_task_name(&self, name: String) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn update_task_name(&self, name: String) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET task_name=$name")
             .bind(("id", self.id.clone()))
@@ -63,7 +58,7 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error> {
         let mut _query = String::new();
         match status {
             Status::Todo => {
@@ -97,7 +92,7 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE.query("UPDATE $id SET priority=$priority")
             .bind(("id", self.id.clone()))
             .bind(("priority", priority.unwrap_or_default()))
@@ -106,7 +101,7 @@ impl Updatable for LiveTaskPayload {
         Ok(())
     }
 
-    async fn update_task_description(&self) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn update_task_description(&self) -> anyhow::Result<(), anyhow::Error> {
         let _update_task: Vec<Record> = DATABASE
             .query("UPDATE $id SET task_description=$description")
             .bind(("id", self.id.clone()))
@@ -116,4 +111,5 @@ impl Updatable for LiveTaskPayload {
         
         Ok(())
     }
+
 }

@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, Priority, Status, TaskNotePayload, TaskPayload, TicketPayload, User},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User},DATABASE};
 use crate::{get_current_user_from_auth, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
@@ -36,8 +36,8 @@ pub struct CreateTaskModal {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Tur {
     pub data: PrestashopPayload,
-    pub ticket_data: TicketPayload,
-    pub task_data: TaskPayload,
+    pub ticket_data: TicketData,
+    pub task_data: LiveTaskPayload,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
@@ -143,16 +143,26 @@ impl DisplayModal for CreateTaskModal {
                     }
                     ModalAction::ImportTask => {
                         let store_users = self.store_users.clone();
-
+                        let tur = &mut self.tur;
                         display_ticket_page(
                             ui,
-                            &mut self.tur.task_data,
+                            &mut tur.task_data,
+                            Some(&mut tur.ticket_data),
+                            Some(&mut tur.customer_data),
                             avail_size,
                             &store_users,
                             self.user.clone()
                         );
                     },
-                    ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.tur.task_data, avail_size),
+                    ModalAction::ComputerInfoPage => {
+                        let tur = &mut self.tur;
+                        display_computer_page(
+                            ui, 
+                            Some(&mut tur.ticket_data), 
+                            Some(&mut tur.computer_data), 
+                            avail_size
+                        )
+                    },
                     _ => {}
                 };
             });

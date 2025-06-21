@@ -1,13 +1,12 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, Color32, ComboBox, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, Spinner, Stroke, Style, TextEdit, TextFormat, Ui, Vec2, Widget, WidgetText};
-use crate::{FilterClients, SortDirection, Sortable, tasks::task_layout::SortField};
-use database::schema::ConnectedClient;
-use super::ClientUiAction;
+use database::schema::{ConnectedClient, SortDirection, FilterClients, Sortable};
+use crate::tabs::tasks::task_layout::SortField;
 use egui_extras::{Size, Strip, StripBuilder};
+use std::collections::{BTreeSet, HashMap};
 use crossbeam::channel::Sender;
-use std::collections::HashMap;
-use std::collections::BTreeSet;
 use chrono::{DateTime, Local};
 use std::borrow::BorrowMut;
+use super::ClientUiAction;
 use std::sync::Arc;
 use log::info;
 use core::f32;

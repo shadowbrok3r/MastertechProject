@@ -1,26 +1,25 @@
-use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNotePayload, TicketPayload, TaskPayload}};
+use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNotePayload, TaskPayload}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
-use std::fmt::Debug;
-use structdiff::StructDiff;
 use crossbeam::channel::Sender;
-use futures::StreamExt;
 use log::{debug, error, info};
-
+use structdiff::StructDiff;
+use futures::StreamExt;
+use std::fmt::Debug;
 use anyhow::Error;
 
-pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) 
+pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<LiveTaskPayload>) 
     -> anyhow::Result<(), anyhow::Error>
 {
     match action{
         Action::Create => {
-            data.handle_live_create(existing_tasks, new_ticket)?;
+            data.handle_live_create(existing_tasks)?;
         },
         Action::Update => {
-            data.handle_live_update(existing_tasks, new_ticket)?;
+            data.handle_live_update(existing_tasks)?;
         },
         Action::Delete => {
-            data.handle_live_delete(existing_tasks, new_ticket)?;
+            data.handle_live_delete(existing_tasks)?;
         },
         _ => {},
     }
@@ -79,19 +78,19 @@ pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug + Parti
 }
 
 impl LiveUpdate for LiveTaskPayload {
-    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_create(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Created: {:?}", self);
-        update_or_insert(existing_tasks, self, new_ticket)?;
+        update_or_insert(existing_tasks, self)?;
         Ok(())
     }
     
-    fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_update(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Updated: {:?}", self);
-        update_or_insert(existing_tasks, self, new_ticket)?;
+        update_or_insert(existing_tasks, self)?;
         Ok(())
     }
     
-    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, _new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_delete(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Deleted: {:?}", self);
         if !existing_tasks.is_empty(){
             let index = existing_tasks.iter().position(|x| x.id == self.id);
@@ -146,7 +145,7 @@ pub fn update_or_insert_anything<T: StructDiff + PartialEq + Debug>(current_data
     Ok(())
 }
 
-pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload, new_ticket: Option<TicketPayload>) 
+pub fn update_or_insert(tasks: &mut Vec<LiveTaskPayload>, new_task: LiveTaskPayload) 
     -> anyhow::Result<(), anyhow::Error>
 {
     let mut updated = false;
@@ -154,18 +153,11 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload,
     for existing_task in tasks.iter_mut() {
         if existing_task.id.clone() == new_task.id {
             info!("ID's match: {:?} // {:?}", &existing_task.id, &new_task.id);
-            let mut updated_task: TaskPayload = new_task.clone().into();
-
-            updated_task.service_ticket = if let Some(service) = new_ticket {
-                Some(service)
-            } else { existing_task.service_ticket.clone() };
-            updated_task.task_note = existing_task.task_note.clone();
-            
             // Calculate the diff and apply it to the existing task
-            let diffs = existing_task.diff(&updated_task);
+            let diffs = existing_task.diff(&new_task.clone());
             existing_task.apply_mut(diffs);
 
-            *existing_task = updated_task;
+            *existing_task = new_task.clone();
             updated = true;
             break;
         }
@@ -180,10 +172,9 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload,
 }
 
 pub fn update_or_insert_layout(
-    tasks: &mut Vec<TaskPayload>, 
+    tasks: &mut Vec<LiveTaskPayload>, 
     new_task: LiveTaskPayload,
-    new_ticket: Option<TicketPayload>,
-    task_to_replace: &mut TaskPayload
+    task_to_replace: &mut LiveTaskPayload
 ) 
     -> anyhow::Result<(), anyhow::Error> 
 {
@@ -193,15 +184,8 @@ pub fn update_or_insert_layout(
         let existing_id = &task.id;
         if existing_id == id {
             debug!("ID's match: {:?} // {:?}", existing_id, id);
-            let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
-
-            updated_task.service_ticket = if let Some(service) = new_ticket {
-                Some(service)
-            } else { task.service_ticket.clone() };
-            updated_task.task_note = task.task_note.clone();
-
             // Calculate the diff and apply it to the existing task
-            let diffs = task.diff(&updated_task);
+            let diffs = task.diff(&new_task);
             task.apply_mut(diffs);
 
             // Also update the task_to_replace with the updated task

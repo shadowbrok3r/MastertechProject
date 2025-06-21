@@ -1,7 +1,7 @@
 
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{LiveTaskPayload, Priority, Status, User};
-use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
+use crate::{Interaction, PlatformSpawner, Spawner};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use log::info;
