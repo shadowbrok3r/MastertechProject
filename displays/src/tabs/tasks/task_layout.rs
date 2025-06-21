@@ -1,9 +1,9 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
-use database::schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, User};
+use database::schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User};
 use crate::{Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap}, f32};
 use crate::get_current_user_from_auth;
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use database::{self, DATABASE};
 use std::collections::BTreeSet;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use serde::Serialize;
 use chrono::Utc;
 use crate::{PlatformSpawner, Spawner};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct TaskLayout{
     pub search_inputs: HashMap<String, String>,
     pub task_map: BTreeMap<String, Vec<LiveTaskPayload>>,
@@ -27,6 +27,11 @@ pub struct TaskLayout{
     user: User,
     search_results: Option<Vec<LiveTaskPayload>>, // Add search results
     pub column_order: Vec<String>,
+    #[serde(skip)]
+    notes_tx: Sender<Vec<TaskNotePayload>>,
+    #[serde(skip)]
+    notes_rx: Receiver<Vec<TaskNotePayload>>,
+    notes: Vec<TaskNotePayload>,
 }
 
 pub struct LayoutConfig {
@@ -63,7 +68,24 @@ impl TaskLayout {
         assignees: Vec<User>,
         search_results: Option<Vec<LiveTaskPayload>>,
     ) -> Self {
+        let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
+
+        let tx = notes_tx.clone();
+        let map = task_map.clone();
+        PlatformSpawner::spawn(async move {
+            for task in map.iter().flat_map(|t| t.1.iter()) {
+                let notes_res = task.get_associated_notes().await;
+                match notes_res {
+                    Ok(notes) => { let _ = tx.try_send(notes); },
+                    Err(e) => log::error!("Error getting notes: {e:?}"),
+                }
+            }
+        });
+
         Self {
+            notes: vec![],
+            notes_tx,
+            notes_rx,
             task_map, 
             column_order,
             assignees, 
@@ -77,6 +99,12 @@ impl TaskLayout {
             new_status: String::new(),
             user: get_current_user_from_auth().unwrap_or_default(),
             search_results,
+        }
+    }
+
+    pub fn receive(&mut self) {
+        if let Ok(mut notes) = self.notes_rx.try_recv() {
+            self.notes.append(&mut notes);
         }
     }
 
@@ -454,11 +482,23 @@ impl TaskLayout {
                                         }
                                         if let Some(&task_index) = filtered_indices.get(row) {
                                             if let Some(task) = tasks.get_mut(task_index) {
+                                                let notes = self.notes
+                                                    .iter()
+                                                    .filter(|n| 
+                                                        if let Some(id) = &n.task_id {
+                                                           *id == task.id
+                                                        } else {
+                                                            false
+                                                        }
+                                                    )
+                                                    .cloned()
+                                                    .collect::<Vec<TaskNotePayload>>();
+
                                                 task.display_cards(
                                                     ui, 
                                                     &self.user, 
                                                     &self.assignees, 
-                                                    
+                                                    notes,
                                                     ui_actions_tx.clone()
                                                 );
                                             }

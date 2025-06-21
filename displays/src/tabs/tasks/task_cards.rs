@@ -4,7 +4,7 @@ use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
 use log::info;
 
-use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions, Updatable};
+use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions};
 
 impl Displayable for LiveTaskPayload {
     fn display_cards(

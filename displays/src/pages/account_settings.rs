@@ -1,7 +1,6 @@
-use crate::{tasks::task_layout::{SortField, SortOptions}, SortDirection};
 use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use crate::app_state::{AppState, MainPages, SharedContext};
-use database::{schema::{Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, DATABASE};
+use database::{schema::{SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, DATABASE};
+use crate::{app_state::{AppState, MainPages, SharedContext}, tabs::tasks::task_layout::{SortField, SortOptions}};
 use egui_extras::{Size, StripBuilder};
 use crossbeam::channel::Sender;
 use serde::Serialize;

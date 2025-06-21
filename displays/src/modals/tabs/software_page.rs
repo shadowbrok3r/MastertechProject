@@ -1,12 +1,9 @@
 use eframe::egui::{Color32, Grid, ScrollArea, Separator, Ui, Vec2, Vec2b, Widget};
-use database::schema::{ComputerData, TaskPayload};
+use database::schema::ComputerData;
 
 use super::return_colors;
 
-pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) {
-    let Some(ticket) = task.service_ticket.as_ref() else { return; };
-    let computer = if let Some(computer) = ticket.computer.as_ref() { computer } else { &ComputerData::default() };
-
+pub fn display_software_page(ui: &mut Ui, computer: &mut ComputerData, avail_size: Vec2) {
     let seb_info = computer.seb_info.as_ref();
 
     ScrollArea::vertical()
@@ -27,7 +24,7 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
             });
 
             ui.group(|ui| {
-                if let Some(seb_info) = seb_info{
+                if let Some(seb_info) = seb_info {
 
                     // ui.colored_label(Color32::LIGHT_RED, "Order Details");
                     Grid::new("group3").spacing(Vec2::new(0.0, 6.0))
@@ -65,7 +62,7 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
                 }
             });
 
-            if let Some(seb_info) = seb_info{
+            if let Some(seb_info) = seb_info {
                 ui.add_space(10.0);
                 if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
                     ui.group(|ui| {
@@ -139,31 +136,33 @@ pub fn display_software_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Ve
                 ui.add_space(8.0);
             });
 
-            if let Some(antivirus) = ticket.current_antivirus.as_ref() {
-                ui.group(|ui: &mut Ui| {
-                    Grid::new("other_software_grid")
-                        .spacing(Vec2::new(0.0, 6.0))
-                        .spacing(Vec2::new(2., 4.))
-                        .max_col_width(avail_size.x / 2.14)
-                        .min_col_width(avail_size.x / 2.14)
-                        .with_row_color(|num, style| return_colors(num, style))
-                        .num_columns(2)
-                        .show(ui, |ui| 
-                    {
-                        ui.colored_label(Color32::LIGHT_RED, "Current Antivirus:");
-                        ui.label("");
-                        ui.end_row();
-                        for antivirus in antivirus.iter() {
-                            ui.label(antivirus);
-                            ui.end_row();
-                        }
 
-                        ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
+            ui.group(|ui: &mut Ui| {
+                Grid::new("other_software_grid")
+                    .spacing(Vec2::new(0.0, 6.0))
+                    .spacing(Vec2::new(2., 4.))
+                    .max_col_width(avail_size.x / 2.14)
+                    .min_col_width(avail_size.x / 2.14)
+                    .with_row_color(|num, style| return_colors(num, style))
+                    .num_columns(2)
+                    .show(ui, |ui| 
+                {
+                    ui.colored_label(Color32::LIGHT_RED, "Program Name");
+                    ui.label("");
+                    ui.end_row();
+
+                    for antivirus in computer.current_antivirus.iter() {
+                        ui.label(antivirus);
                         ui.label("");
                         ui.end_row();
-                    });
+
+                        // ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
+                        // ui.label("");
+                        // ui.end_row();
+                    }
                 });
-            }
+            });
+            
         });
     });
 }

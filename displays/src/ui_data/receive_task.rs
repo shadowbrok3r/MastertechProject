@@ -1,4 +1,4 @@
-use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, Status, Store, TaskNotePayload, TaskPayload}};
+use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, Status, Store, TaskNotePayload}};
 use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 
 impl SharedContext {
@@ -35,9 +35,8 @@ impl SharedContext {
                 let task_id = new_task.id.key().to_string();
                 if !self.task_index.contains_key(&task_id) {
                     // Add to global tasks and index
-                    let new_task_payload: TaskPayload = new_task.clone();
-                    self.tasks.push(new_task_payload.clone());
-                    self.task_index.insert(task_id.clone(), new_task_payload.clone());
+                    self.tasks.push(new_task.clone());
+                    self.task_index.insert(task_id.clone(), new_task.clone());
 
                     // Distribute to layouts if layout_configs is initialized
                     if let Some(layout_configs) = layout_configs {
@@ -76,7 +75,7 @@ impl SharedContext {
                                     .entry(key.clone())
                                     .or_insert_with(Vec::new);
                                 if !task_list.iter().any(|t| t.id.key().to_string() == task_id) {
-                                    task_list.push(new_task_payload.clone());
+                                    task_list.push(new_task.clone());
                                     // log::info!("Added initial task to layout: {}", layout_key);
                                 }
                             }
@@ -113,11 +112,7 @@ impl SharedContext {
                 }
             }
 
-            match handle_live_data(
-                new_task.to_owned(),
-                &mut self.tasks,
-                None
-            ) {
+            match handle_live_data(new_task.to_owned(),&mut self.tasks) {
                 Ok(_) => {
                     // Update task_index
                     let task_id = new_task.1.id.key().to_string();
