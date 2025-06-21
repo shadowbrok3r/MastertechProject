@@ -1,67 +1,20 @@
-use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData, TicketPayload};
-use crate::{
-    schema::{
-        prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Status, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_TABLE
-    }, PlatformSpawner, Spawner, DATABASE
-};
-use anyhow::{Error, Result};
-use async_trait::async_trait;
+use crate::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
-use crossbeam::channel::Sender;
-use log::{debug, info, warn};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
+use serde::{Deserialize, Serialize};
+use crossbeam::channel::Sender;
+use async_trait::async_trait;
+use log::{debug, info, warn};
+use anyhow::{Error, Result};
 use surrealdb::RecordId;
 use web_time::Instant;
-
-pub trait FilterTasks {
-    fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
-    fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
-    fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
-    fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
-    fn filter_by_date(&self, date: &String) -> Vec<TaskPayload>;
-    fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload>;
-    /// Filters a list of tasks by their name based on a fuzzy search input.
-    /// # Parameters
-    /// - `name`: An iterator over items of type `S` where `S` can be referenced as a string slice.
-    /// - `search_input`: A string representing the search input to filter tasks by.
-    ///
-    /// # Returns
-    /// A vector of `TaskPayload` containing the filtered tasks.
-    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
-        &self,
-        name: T,
-        search_input: String,
-    ) -> Vec<TaskPayload>;
-}
-
-pub trait Sortable {
-    fn sort_task_payloads(&mut self) -> &mut Vec<TaskPayload>;
-}
-
-// pub trait LiveUpdate{
-//     fn handle_live_create<T: StructDiff + PartialEq>(self, existing_tasks: &mut Vec<T>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-//     fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-//     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-// }
+use regex::Regex;
 
 pub trait LiveUpdate {
-    fn handle_live_create(
-        self,
-        existing_tasks: &mut Vec<TaskPayload>,
-        new_ticket: Option<TicketPayload>,
-    ) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-    fn handle_live_update(
-        self,
-        existing_tasks: &mut Vec<TaskPayload>,
-        new_ticket: Option<TicketPayload>,
-    ) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-    fn handle_live_delete(
-        self,
-        existing_tasks: &mut Vec<TaskPayload>,
-        new_ticket: Option<TicketPayload>,
-    ) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+    fn handle_live_create(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_update(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_delete(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
 
 #[async_trait]
@@ -147,11 +100,15 @@ pub async fn get_qcs() -> anyhow::Result<Vec<Qc>, anyhow::Error> {
 }
 
 
-pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
+pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_tasks");
 
     let query = r#"
-        SELECT *, (
+        SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS false PARALLEL
+    "#; // WITH INDEX idx_store_due_date
+
+    /*
+            SELECT *, (
             SELECT * FROM task_note 
                 WHERE task_id == $parent.id
         ) AS task_note 
@@ -162,11 +119,10 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
             service_ticket.computer, 
             service_ticket.customer
         PARALLEL
-    "#; // WITH INDEX idx_store_due_date
-
+     */
     let start_query = Instant::now(); // Start timing the query
 
-    let query_results: Vec<TaskPayload> = DATABASE
+    let query_results: Vec<LiveTaskPayload> = DATABASE
         .query(query)
         .bind(("store", store.clone()))
         .await?

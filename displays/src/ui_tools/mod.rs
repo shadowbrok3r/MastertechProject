@@ -1,8 +1,8 @@
-use anyhow::Context;
-use bincode::{config::standard, serde::{decode_from_slice, encode_to_vec}};
 use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, Style, TextFormat, Ui, Widget};
-use database::schema::TaskPayload;
+use bincode::{config::standard, serde::{decode_from_slice, encode_to_vec}};
+use database::schema::LiveTaskPayload;
 use std::collections::BTreeSet;
+use anyhow::Context;
 use regex::Regex;
 
 use crate::TaskUiActions;
@@ -67,7 +67,7 @@ pub fn show_notification(
     notification_description: &str,
     task_names: &BTreeSet<String>,
     ui_actions_tx: crossbeam::channel::Sender<TaskUiActions>,
-    tasks: &Vec<TaskPayload>,
+    tasks: &Vec<LiveTaskPayload>,
 ) {
     // Find task names in the notification description using regex
     let matches = find_task_in_description(notification_description, task_names);

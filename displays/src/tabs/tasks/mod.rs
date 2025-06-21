@@ -1,7 +1,12 @@
-use crate::{app_state::SharedContext, tasks::task_layout::TaskLayout, FilterTasks};
-use database::schema::{Status, Store, TaskPayload};
+use database::schema::{FilterLiveTasks, LiveTaskPayload, Status, Store};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
+use crate::app_state::SharedContext;
 use std::collections::BTreeMap;
+use task_layout::TaskLayout;
+
+pub mod task_cards;
+pub mod task_layout;
+pub mod interactable;
 
 impl SharedContext {
 pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
@@ -40,7 +45,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
 
         // Use search_results if present, otherwise use all tasks
         let tasks_to_filter = self.search_results.clone().unwrap_or_else(|| {
-            self.task_index.values().cloned().collect::<Vec<TaskPayload>>()
+            self.task_index.values().cloned().collect::<Vec<LiveTaskPayload>>()
         });
 
         if page == "My Tasks" {
@@ -54,7 +59,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                     .filter_by_assignee(&current_user)
                     .into_iter()
                     .filter(|task| !task.completed)
-                    .collect::<Vec<TaskPayload>>();
+                    .collect::<Vec<LiveTaskPayload>>();
 
                 if !filtered.is_empty() {
                     temp_entries.push((status_str.clone(), filtered));
@@ -111,7 +116,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                             .filter_by_assignee(&current_user)
                             .into_iter()
                             .filter(|task| !task.completed)
-                            .collect::<Vec<TaskPayload>>();
+                            .collect::<Vec<LiveTaskPayload>>();
                         if !filtered.is_empty() {
                             temp_entries.push((status_str.clone(), filtered));
                         }

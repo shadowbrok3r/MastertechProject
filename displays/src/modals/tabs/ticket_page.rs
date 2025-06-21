@@ -1,16 +1,25 @@
 use eframe::egui::{Button, Color32, FontId, Grid, Hyperlink, Margin, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
-use database::{schema::{CustomerData, LiveTaskPayload, Record, TicketPayload, User}, DATABASE};
+use database::{schema::{CustomerData, LiveTaskPayload, Record, TicketData, User}, DATABASE};
 use crate::{tabs::task_audit::row_viewer::BASE_URL, Interaction, PlatformSpawner, Spawner};
 use chrono::{DateTime, Utc};
 
 use super::return_colors;
 
-pub fn display_ticket_page(ui: &mut Ui, task: &mut LiveTaskPayload, avail_size: Vec2, store_users: &Vec<User>, current_user: User) {
+pub fn display_ticket_page(
+    ui: &mut Ui, 
+    task: &mut LiveTaskPayload, 
+    service_ticket: Option<&mut TicketData>,
+    customer: Option<&mut CustomerData>,
+    avail_size: Vec2, 
+    store_users: &Vec<User>, 
+    current_user: User,
+) {
     ui.vertical_centered_justified(|ui| {
         ui.colored_label(Color32::LIGHT_GREEN, format!("ID: {}", task.id.key().to_string()));
 
         ui.add_space(10.0);
 
+        let ticket = if let Some(ticket) = service_ticket { ticket }  else { &mut TicketData::default() };
         ui.group(|ui| {
             Grid::new("Task Modal - Task Info Page")
                 .spacing(Vec2::new(2., 4.))
@@ -58,8 +67,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut LiveTaskPayload, avail_size: 
                 
                 ui.end_row();
 
-                let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
-                let customer = if let Some(customer) = ticket.customer.as_mut(){ customer }  else { &mut CustomerData::default() };
+                let customer = if let Some(customer) = customer { customer }  else { &mut CustomerData::default() };
 
                 ui.colored_label(Color32::LIGHT_RED, "Technician");
                 ui.label(&ticket.tech);
@@ -135,7 +143,6 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut LiveTaskPayload, avail_size: 
                         );
 
                         ui.add_space(10.);
-                        let ticket = if let Some(ticket) = task.service_ticket.as_mut(){ ticket }  else { &mut TicketPayload::default() };
                         
                         TextEdit::multiline(&mut ticket.checkin_notes)
                         .margin(Margin::symmetric(10, 3))

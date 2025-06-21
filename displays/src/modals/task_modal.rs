@@ -1,6 +1,7 @@
+use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Id, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, LiveTaskPayload, Store, TaskPayload, User};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, Store, TicketData, User};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
@@ -24,9 +25,12 @@ use tokio::sync::Mutex;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TaskModal {
+    pub task: LiveTaskPayload,
+    pub service_ticket: Option<TicketData>,
+    pub customer: Option<CustomerData>,
+    pub computer: Option<ComputerData>,
     pub title: String,
     pub current_page_state: ModalAction,
-    pub task: LiveTaskPayload,
     #[serde(skip)]
     pub chat_view: ChatView,
     pub min_width: Option<f32>,
@@ -34,7 +38,19 @@ pub struct TaskModal {
     pub default_height: Option<f32>,
     pub spo: SpecialPartOrder,
     store_users: Vec<User>,
-    user: User
+    user: User,
+    #[serde(skip)]
+    pub service_ticket_tx: Sender<TicketData>,
+    #[serde(skip)]
+    pub service_ticket_rx: Receiver<TicketData>,
+    #[serde(skip)]
+    pub customer_tx: Sender<CustomerData>,
+    #[serde(skip)]
+    pub customer_rx: Receiver<CustomerData>,
+    #[serde(skip)]
+    pub computer_tx: Sender<ComputerData>,
+    #[serde(skip)]
+    pub computer_rx: Receiver<ComputerData>,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -53,20 +69,20 @@ pub enum ModalAction {
 }
 
 impl TaskModal {
-    pub fn new(chat_view: ChatView, mut task: LiveTaskPayload) -> Self {
-
-        if let Some(ticket) = task.service_ticket.as_mut() {
-            if let Some(customer) = ticket.customer.as_mut() {
-                let mut formatter = PhoneNumberFormatter::default();
-                let phone_num = customer.phone_number.to_string();
-                customer.phone_number = formatter.format_phone_number(&phone_num).unwrap_or(phone_num);
-            }
-        }
-
+    pub fn new(chat_view: ChatView, task: LiveTaskPayload) -> Self {
+        let (service_ticket_tx, service_ticket_rx) = crossbeam::channel::unbounded();
+        let (customer_tx, customer_rx) = crossbeam::channel::unbounded();
+        let (computer_tx, computer_rx) = crossbeam::channel::unbounded();
         Self {
             title: task.task_name.clone(),
             current_page_state: ModalAction::TicketInfoPage,
             task,
+            service_ticket: None,
+            customer: None,
+            computer: None,
+            service_ticket_tx, service_ticket_rx,
+            customer_tx, customer_rx,
+            computer_tx, computer_rx,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -80,10 +96,30 @@ impl TaskModal {
             }
         }
     }
+
+    fn receive(&mut self) {
+        if let Ok(service_ticket) = self.service_ticket_rx.try_recv() {
+            self.service_ticket = Some(service_ticket);
+        }
+        
+        if let Ok(mut customer) = self.customer_rx.try_recv() {
+            let mut formatter = PhoneNumberFormatter::default();
+            let phone_num = customer.phone_number.to_string();
+            customer.phone_number = formatter.format_phone_number(&phone_num).unwrap_or(phone_num);
+            self.customer = Some(customer);
+        }
+        
+        if let Ok(computer) = self.computer_rx.try_recv() {
+            self.computer = Some(computer);
+        }
+        
+    }
+
 }
 
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
+        self.receive();
         let avail_size = Vec2::new(700.0, 700.0);
         let max_space = Vec2::new(715.0, 700.0);
         ui.set_min_size(max_space);
@@ -116,32 +152,35 @@ impl DisplayModal for TaskModal {
                 ui[1].vertical_centered(|ui| {
                     ui.horizontal_top(|ui| {
                         ui.add_space(75.);
-                        macro_rules! icon {
-                            ($state:expr, $page:expr, $glyph:literal) => {
-                                if ui
-                                    .add_sized(
-                                        [22., 22.],
-                                        eframe::egui::SelectableLabel::new(
-                                            $state == $page,
-                                            RichText::new($glyph).heading(),
-                                        ),
-                                    )
-                                    .clicked()
-                                {
-                                    $state = $page;
-                                }
-                            };
+                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                            self.current_page_state == ModalAction::TicketInfoPage,
+                            RichText::new("🖹").heading()
+                        ))
+                        .clicked() {
+                            self.current_page_state = ModalAction::TicketInfoPage;
                         }
-                        icon!(self.current_page_state, ModalAction::TicketInfoPage,   "🖹");
-                        icon!(self.current_page_state, ModalAction::ComputerInfoPage, "🖥");
-                        icon!(self.current_page_state, ModalAction::SoftwareInfoPage, "💾");
-                        icon!(self.current_page_state, ModalAction::TaskNotePage,  "💬");
+                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                            self.current_page_state == ModalAction::ComputerInfoPage,
+                            RichText::new("🖥").heading()
+                        ))
+                        .clicked() {
+                            self.current_page_state = ModalAction::ComputerInfoPage;
+                        }
+                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                            self.current_page_state == ModalAction::SoftwareInfoPage,
+                            RichText::new("💾").heading()
+                        ))
+                        .clicked() {
+                            self.current_page_state = ModalAction::SoftwareInfoPage;
+                        }
+                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                            self.current_page_state == ModalAction::TaskNotePage,
+                            RichText::new("💬").heading()
+                        ))
+                        .clicked() {
+                            self.current_page_state = ModalAction::TaskNotePage;
+                        }
                     });
-                    // if self.task.service_ticket.is_some() {
-                    // } else {
-                        // icon!(self.current_page_state, ModalAction::TaskPage, "🖹");
-                    // }
-                    // icon!(self.current_page_state, ModalAction::JobBuilderPage, "📝");
                 });
 
                 ui[2].with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -179,9 +218,9 @@ impl DisplayModal for TaskModal {
 
             let store_users = self.store_users.clone();
             match self.current_page_state {
-                ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, avail_size, &store_users, self.user.clone()),
-                ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
-                ModalAction::SoftwareInfoPage => display_software_page(ui, &mut self.task, avail_size),
+                ModalAction::TicketInfoPage   => display_ticket_page(ui, &mut self.task, self.service_ticket.as_mut(), self.customer.as_mut(), avail_size, &store_users, self.user.clone()),
+                ModalAction::ComputerInfoPage => display_computer_page(ui, self.service_ticket.as_mut(), self.computer.as_mut(), avail_size),
+                ModalAction::SoftwareInfoPage => display_software_page(ui, self.computer.as_mut().unwrap_or(&mut ComputerData::default()), avail_size),
                 ModalAction::JobBuilderPage   => display_job_builder_page(ui),
                 ModalAction::TaskNotePage     => self.chat_view.ui(ui),
                 // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
