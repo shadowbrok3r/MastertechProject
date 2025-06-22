@@ -1,6 +1,6 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
 use displays::tabs::stock::{get_extra_stock_info, get_stock};
-use eframe::egui::{ComboBox, Response, Ui, WidgetText};
+use eframe::egui::{Color32, ComboBox, Response, Ui, WidgetText};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
@@ -39,8 +39,8 @@ impl TabViewer for MtechServerContext {
             "Bug Report" => self.shared_ctx.github(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
             "Logs" => egui_logger::logger_ui()
-                .warn_color(ui.style().visuals.warn_fg_color) 
-                .error_color(ui.style().visuals.error_fg_color) 
+                .warn_color(Color32::from_rgb(94, 215, 221)) 
+                .error_color(Color32::from_rgb(255, 55, 102)) 
                 .log_levels([true, true, true, false, false])
                 // there should be a way to set default false...
                 .enable_category("eframe".to_string(), false)

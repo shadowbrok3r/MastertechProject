@@ -1,7 +1,7 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseEvent}, layout::{Constraint, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::HandleWidget};
+use database::schema::LiveTaskPayload;
 use unicode_width::UnicodeWidthStr;
-use database::schema::TaskPayload;
 use std::cmp::max;
 use super::TasksTab;
 // Static default widths for columns (used when no tasks are available)
@@ -19,7 +19,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
             Cell::from(Text::from(Self::center_text_with_borders("Task".to_string(), DEFAULT_WIDTHS[2] as usize, 3))),
             Cell::from(Text::from(Self::center_text_with_borders("Assignee".to_string(), DEFAULT_WIDTHS[3] as usize, 3))),
             Cell::from(Text::from(Self::center_text_with_borders("Priority".to_string(), DEFAULT_WIDTHS[4] as usize, 3))),
-            Cell::from(Text::from(Self::center_text_with_borders("Check-In Notes".to_string(), DEFAULT_WIDTHS[5] as usize, 3))),
+            // Cell::from(Text::from(Self::center_text_with_borders("Check-In Notes".to_string(), DEFAULT_WIDTHS[5] as usize, 3))),
             Cell::from(Text::from(Self::center_text_with_borders("Description".to_string(), DEFAULT_WIDTHS[6] as usize, 3))),
         ])
         .style(Style::default().fg(CATPPUCCIN.sapphire).bg(Color::Rgb(12,12,16)).add_modifier(Modifier::BOLD))
@@ -28,10 +28,10 @@ impl<'a> HandleWidget <'a> for TasksTab {
 
         let rows: Vec<Row> = self.items.iter().enumerate().map(|(i, task)| {
             let widths = if self.widths.len() == 7 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
-            let checkin_notes = task.service_ticket.as_ref().map_or("".to_string(), |t| t.checkin_notes.clone());
-            let wrapped_notes = Self::wrap_text_with_borders(checkin_notes, self.widths[5] as usize);
+            // let checkin_notes = task.service_ticket.as_ref().map_or("".to_string(), |t| t.checkin_notes.clone());
+            // let wrapped_notes = Self::wrap_text_with_borders(checkin_notes, self.widths[5] as usize);
             let wrapped_desc = Self::wrap_text_with_borders(task.task_description.clone(), self.widths[6] as usize);
-            let height = max(wrapped_notes.len(), wrapped_desc.len()).max(3) as u16; // Min 3 for top/content/bottom
+            let height = wrapped_desc.len().max(3) as u16;// max(wrapped_notes.len(), wrapped_desc.len()).max(3) as u16; // Min 3 for top/content/bottom
             total_height += height;
             
             Row::new(vec![
@@ -40,7 +40,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
                 Cell::from(Text::from(Self::center_text_with_borders(task.task_name.clone(), widths[2] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.assignee.to_string().clone(), widths[3] as usize, height))),
                 Cell::from(Text::from(Self::center_text_with_borders(task.priority.as_str().to_string(), widths[4] as usize, height))),
-                Cell::from(Text::from(wrapped_notes)),
+                // Cell::from(Text::from(wrapped_notes)),
                 Cell::from(Text::from(wrapped_desc)),
             ])
             .style(Style::default()
@@ -157,7 +157,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
 
 
 impl TasksTab {
-    pub fn calculate_widths(tasks: &[TaskPayload]) -> Vec<u16> {
+    pub fn calculate_widths(tasks: &[LiveTaskPayload]) -> Vec<u16> {
         let headers = ["Due", "Status", "Task", "Assignee", "Priority", "Check-In Notes", "Description"];
         let mut widths = DEFAULT_WIDTHS.to_vec();
 

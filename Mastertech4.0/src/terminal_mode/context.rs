@@ -1,5 +1,5 @@
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{TaskPayload, User};
+use database::schema::{LiveTaskPayload, User};
 use crate::AppState;
 use super::{data::ServiceData, systems::communication_system::Message};
 
@@ -14,9 +14,9 @@ pub struct TerminalContext {
     pub _render_sender: Sender<Box<dyn Message>>,
     pub data_sender: Sender<Box<dyn Message>>,
     pub user: User,
-    pub tasks: Vec<TaskPayload>,
-    pub tasks_tx: Sender<Vec<TaskPayload>>,
-    pub tasks_rx: Receiver<Vec<TaskPayload>>,
+    pub tasks: Vec<LiveTaskPayload>,
+    pub tasks_tx: Sender<Vec<LiveTaskPayload>>,
+    pub tasks_rx: Receiver<Vec<LiveTaskPayload>>,
     pub new_tasks: bool
     
 }
@@ -24,7 +24,7 @@ pub struct TerminalContext {
 impl TerminalContext {
     pub fn new(_render_sender: Sender<Box<dyn Message>>, data_sender: Sender<Box<dyn Message>>) -> Self {
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
-        let (tasks_tx, tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
+        let (tasks_tx, tasks_rx) = crossbeam::channel::unbounded::<Vec<LiveTaskPayload>>();
         Self {
             app_state_tx,
             app_state_rx,

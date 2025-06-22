@@ -2,6 +2,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+pub mod inventory;
+
 const ODOO_API_KEY: &str = "a2e1e84cbf053303bb32360d4ef71b476008498b";
 
 pub async fn search_odoo_products(search_term: &str) -> anyhow::Result<JsonRpcResponse, anyhow::Error> {
