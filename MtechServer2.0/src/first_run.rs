@@ -1,4 +1,4 @@
-use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
+use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use eframe::{egui::{Color32, Context, Margin, Stroke, Vec2, Window}, Frame};
@@ -15,8 +15,6 @@ use {
 impl MtechServer {
     pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
         self.context.shared_ctx.first_run = false;
-        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        ctx.set_style((*custom_style).clone());
         let current_version = env!("CARGO_PKG_VERSION");
 
         if let Some(storage) = frame.storage_mut() {
@@ -49,6 +47,7 @@ impl MtechServer {
             // }
 
             if let Some(user) = self.context.shared_ctx.current_user.as_ref() {
+                ctx.set_style(decode_style(&user.get_color_scheme()).unwrap_or_default());
                 gloo_console::info!("2 We have a user");
                 let user_version = user.get_version();
                 gloo_console::info!(format!("2 current_version: {current_version}\nuser_version: {user_version}"));
@@ -77,7 +76,12 @@ impl MtechServer {
                         });
                     }
                 }
-            } else if let Some(version) = storage.get_string("version") {
+            } else {
+                let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+                ctx.set_style((*custom_style).clone());
+            }
+            
+            if let Some(version) = storage.get_string("version") {
                 if current_version != version {
                     gloo_console::info!("1 Mismatched Cargo Version. Doing update");
                     self.invalidate();

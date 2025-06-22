@@ -833,6 +833,12 @@ pub enum PrestashopOrderType {
     DoneShelf
 }
 
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct PrestashopId {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String
+}
+
 impl PrestashopOrderType {
     pub fn as_str(&self) -> &str {
         match self {

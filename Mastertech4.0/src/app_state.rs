@@ -238,7 +238,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let [_a, b] = tree.main_surface_mut().split_below(
         NodeIndex::root(),
         0.65,
-        vec!["Console".to_owned(), "Websockets".to_owned()],
+        vec!["Websockets".to_owned()],
     );
     let [_, _] = tree.main_surface_mut().split_left(
         b,

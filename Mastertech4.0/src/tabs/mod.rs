@@ -1,5 +1,6 @@
-use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, Store};
-use displays::{tabs::stock::{get_extra_stock_info, get_stock}, FilterTasks};
+use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, FilterLiveTasks, Store};
+use displays::tabs::stock::{get_extra_stock_info, get_stock};
+use egui::Color32;
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
@@ -106,8 +107,8 @@ impl TabViewer for MastertechContext {
             "Store Stock" => self.shared_ctx.stock_viewer(ui),
             "Logs" => egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
-                .warn_color(ui.style().visuals.warn_fg_color) 
-                .error_color(ui.style().visuals.error_fg_color) 
+                .warn_color(Color32::from_rgb(94, 215, 221)) 
+                .error_color(Color32::from_rgb(255, 55, 102))
                 .enable_category("eframe".to_string(), false)
                 .enable_category("eframe::native::glow_integration".to_string(), false)
                 .enable_category("egui_glow::shader_version".to_string(), false)
