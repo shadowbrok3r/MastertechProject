@@ -19,7 +19,7 @@ impl SharedContext {
             // Update tasks in task_layouts
             if let Some(task_id) = &note.task_id {
                 let layout_configs = self.layout_configs.as_ref();
-                let mut task_updated = false;
+                // let mut task_updated = false;
 
                 if let Some(layout_configs) = layout_configs {
                     for (layout_key, layout) in self.task_layouts.iter_mut() {
@@ -32,34 +32,34 @@ impl SharedContext {
                         for (_, task_list) in layout.task_map.iter_mut() {
                             if let Some(task) = task_list.iter_mut().find(|t| t.id == *task_id) {
                                 // Verify the task still belongs in this layout
-                                let live_task: LiveTaskPayload = task.clone().into();
-                                let should_include = (config.filter)(
-                                    &live_task,
-                                    &self.current_user,
-                                    &self.store_users,
-                                    &store_selection,
-                                );
+                                // let live_task: LiveTaskPayload = task.clone().into();
+                                // let should_include = (config.filter)(
+                                //     &live_task,
+                                //     &self.current_user,
+                                //     &self.store_users,
+                                //     &store_selection,
+                                // );
 
-                                log::info!("Should Include: {should_include:?}");
-                                if should_include {
-                                    if action == Action::Create {
-                                        info!(
-                                            "receive_notes -> Adding note to task {} in layout {}",
-                                            task.id.clone(),
-                                            layout_key
-                                        );
-                                        task.task_note.push(note.clone());
-                                        task_updated = true;
-                                    } else if action == Action::Delete {
-                                        info!(
-                                            "receive_notes -> Deleting note from task {} in layout {}",
-                                            task.id.clone(),
-                                            layout_key
-                                        );
-                                        task.task_note.retain(|n| n != &note);
-                                        task_updated = true;
-                                    }
-                                } // else {
+                                // log::info!("Should Include: {should_include:?}");
+                                // if should_include {
+                                //     if action == Action::Create {
+                                //         info!(
+                                //             "receive_notes -> Adding note to task {} in layout {}",
+                                //             task.id.clone(),
+                                //             layout_key
+                                //         );
+                                //         task.task_note.push(note.clone());
+                                //         task_updated = true;
+                                //     } else if action == Action::Delete {
+                                //         info!(
+                                //             "receive_notes -> Deleting note from task {} in layout {}",
+                                //             task.id.clone(),
+                                //             layout_key
+                                //         );
+                                //         task.task_note.retain(|n| n != &note);
+                                //         task_updated = true;
+                                //     }
+                                // } else {
                                 //     // Remove task from this layout if it no longer belongs
                                 //     task_list.retain(|t| t.id != *task_id);
                                 //     info!(
@@ -73,29 +73,29 @@ impl SharedContext {
                 }
 
                 // Update the task in self.tasks if not already updated
-                if !task_updated {
-                    if let Some(task) = self.tasks.iter_mut().find(|task| task.id == *task_id) {
-                        if action == Action::Create {
-                            info!("receive_notes -> Adding note to task {} in global tasks", task.id);
-                            task.task_note.push(note.clone());
-                        } else if action == Action::Delete {
-                            info!(
-                                "receive_notes -> Deleting note from task {} in global tasks",
-                                task.id
-                            );
-                            task.task_note.retain(|n| n != &note);
-                        }
-                    }
-                }
+                // if !task_updated {
+                //     if let Some(task) = self.tasks.iter_mut().find(|task| task.id == *task_id) {
+                //         if action == Action::Create {
+                //             info!("receive_notes -> Adding note to task {} in global tasks", task.id);
+                //             task.task_note.push(note.clone());
+                //         } else if action == Action::Delete {
+                //             info!(
+                //                 "receive_notes -> Deleting note from task {} in global tasks",
+                //                 task.id
+                //             );
+                //             task.task_note.retain(|n| n != &note);
+                //         }
+                //     }
+                // }
             }
 
             // Update modals
             for (_title, modal) in self.opened_modals.iter_mut() {
                 if let Some(note_task_id) = &note.task_id {
                     if let ModalType::TaskModal(task_modal) = modal {
-                        if let Err(e) = handle_live_notes(note_payload.clone(), &mut task_modal.task) {
-                            log::error!("receive_notes -> Error in handle_live_notes for TaskModal: {:?}", e);
-                        }
+                        // if let Err(e) = handle_live_notes(note_payload.clone(), &mut task_modal.task) {
+                        //     log::error!("receive_notes -> Error in handle_live_notes for TaskModal: {:?}", e);
+                        // }
                         if task_modal.task.id == *note_task_id {
                             if action == Action::Delete {
                                 task_modal.chat_view.delete_note(&note);
@@ -111,9 +111,9 @@ impl SharedContext {
 
                         if let Some(task) = task {
                             info!("receive_notes -> Inserting note into ChatView modal for task {}", task.id);
-                            if let Err(e) = handle_live_notes(note_payload.clone(), task) {
-                                log::error!("receive_notes -> Error in handle_live_notes for ChatView: {:?}", e);
-                            }
+                            // if let Err(e) = handle_live_notes(note_payload.clone(), task) {
+                            //     log::error!("receive_notes -> Error in handle_live_notes for ChatView: {:?}", e);
+                            // }
                             if task.id == *note_task_id {
                                 if action == Action::Delete {
                                     chat_view.delete_note(&note);
@@ -189,7 +189,7 @@ impl SharedContext {
                                             "receive_notes -> Adding associated note to task {} in layout {} should_include: {should_include}",
                                             task.id, layout_key
                                         );
-                                        task.task_note.push(note.clone());
+                                        // task.task_note.push(note.clone());
                                         task_updated = true;
                                     } else {
                                         // Remove task from this layout if it no longer belongs
@@ -205,15 +205,15 @@ impl SharedContext {
                     }
 
                     // Update the task in self.tasks if not already updated
-                    if !task_updated {
-                        if let Some(task) = self.tasks.iter_mut().find(|task| task.id == *task_id) {
-                            info!(
-                                "receive_notes -> Adding associated note to task {} in global tasks",
-                                task.id
-                            );
-                            task.task_note.push(note.clone());
-                        }
-                    }
+                    // if !task_updated {
+                    //     if let Some(task) = self.tasks.iter_mut().find(|task| task.id == *task_id) {
+                    //         info!(
+                    //             "receive_notes -> Adding associated note to task {} in global tasks",
+                    //             task.id
+                    //         );
+                    //         task.task_note.push(note.clone());
+                    //     }
+                    // }
                 }
             }
         }

@@ -84,6 +84,18 @@ impl TicketPayload {
     }
 }
 
+impl TicketData {
+    pub async fn get_associated_ticket(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
+        log::info!("task id: {id:?}");
+        let ticket: Option<Self> = DATABASE
+            .query("SELECT VALUE service_ticket.* FROM task WHERE id == $id")
+            .bind(("id", id))
+            .await?
+            .take(0)?;
+        Ok(ticket.unwrap_or_default())
+    }
+}
+
 impl Default for TicketData {
     fn default() -> Self {
         Self {
