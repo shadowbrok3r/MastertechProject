@@ -1,7 +1,7 @@
-use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, TaskPayload}, DATABASE};
+use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
 use eframe::egui::{menu, vec2, Align, Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TextEdit, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, MtechServer};
-use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, FilterTasks, PlatformSpawner, Spawner}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
+use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, PlatformSpawner, Spawner}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
 use displays::ui_tools::show_notification;
 use wasm_bindgen_futures::spawn_local;
 use std::collections::BTreeSet;
@@ -96,7 +96,7 @@ impl MtechServer {
                                 .task_index
                                 .values()
                                 .cloned()
-                                .collect::<Vec<TaskPayload>>()
+                                .collect::<Vec<LiveTaskPayload>>()
                                 .filter_by_task_name(inputs.clone(), search.clone());
                             
                             self.context.shared_ctx.search_results = Some(filtered_tasks);

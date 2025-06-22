@@ -1,8 +1,8 @@
-use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Id, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, Store, TicketData, User};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, Store, TaskNotePayload, TicketData, User};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
+use crossbeam::channel::{Receiver, Sender};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use serde_json::Value;
@@ -51,6 +51,10 @@ pub struct TaskModal {
     pub computer_tx: Sender<ComputerData>,
     #[serde(skip)]
     pub computer_rx: Receiver<ComputerData>,
+    #[serde(skip)]
+    pub initial_notes_tx: Sender<Vec<TaskNotePayload>>,
+    #[serde(skip)]
+    pub initial_notes_rx: Receiver<Vec<TaskNotePayload>>,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -73,6 +77,39 @@ impl TaskModal {
         let (service_ticket_tx, service_ticket_rx) = crossbeam::channel::unbounded();
         let (customer_tx, customer_rx) = crossbeam::channel::unbounded();
         let (computer_tx, computer_rx) = crossbeam::channel::unbounded();
+        let (initial_notes_tx, initial_notes_rx) = crossbeam::channel::unbounded();
+        let comp_tx = computer_tx.clone();
+        let cust_tx = customer_tx.clone();
+        let svc_tx = service_ticket_tx.clone();
+        let notes_tx = initial_notes_tx.clone();
+        let id = task.id.clone();
+        let service_number = task.service_number.clone();
+        PlatformSpawner::spawn(async move {
+            match TicketData::get_associated_ticket(id.clone()).await {
+                Ok(ticket) => { let _ = svc_tx.try_send(ticket); },
+                Err(e) => log::error!("Error getting ticket data: {e:?}"),
+            }
+            match ComputerData::get_associated_computer(id.clone()).await {
+                Ok(computer) => { let _ = comp_tx.try_send(computer); },
+                Err(e) => log::error!("Error getting ticket data: {e:?}"),
+            }
+            match CustomerData::get_associated_customer(id.clone()).await {
+                Ok(customer) => { let _ = cust_tx.try_send(customer); },
+                Err(e) => log::error!("Error getting ticket data: {e:?}"),
+            }
+            match TaskNotePayload::get_db_notes_from_task_id(id.clone()).await {
+                Ok(notes) => { let _ = notes_tx.try_send(notes); },
+                Err(e) => log::error!("Error getting notes from task ID: {e:?}"),
+            }
+
+            if let Some(service_number) = service_number {
+                match TaskNotePayload::get_prestashop_notes_from_service(&service_number, Some(id.clone())).await {
+                    Ok(notes) => { let _ = notes_tx.try_send(notes); },
+                    Err(e) => log::error!("Error getting notes from task ID: {e:?}"),
+                }
+            }
+        });
+
         Self {
             title: task.task_name.clone(),
             current_page_state: ModalAction::TicketInfoPage,
@@ -83,6 +120,7 @@ impl TaskModal {
             service_ticket_tx, service_ticket_rx,
             customer_tx, customer_rx,
             computer_tx, computer_rx,
+            initial_notes_tx, initial_notes_rx,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -99,10 +137,12 @@ impl TaskModal {
 
     fn receive(&mut self) {
         if let Ok(service_ticket) = self.service_ticket_rx.try_recv() {
+            log::info!("Received ticket");
             self.service_ticket = Some(service_ticket);
         }
         
         if let Ok(mut customer) = self.customer_rx.try_recv() {
+            log::info!("Received customer");
             let mut formatter = PhoneNumberFormatter::default();
             let phone_num = customer.phone_number.to_string();
             customer.phone_number = formatter.format_phone_number(&phone_num).unwrap_or(phone_num);
@@ -110,9 +150,14 @@ impl TaskModal {
         }
         
         if let Ok(computer) = self.computer_rx.try_recv() {
+            log::info!("Received computer");
             self.computer = Some(computer);
         }
-        
+
+        if let Ok(notes) = self.initial_notes_rx.try_recv() {
+            log::info!("Received notes: {}", notes.len());
+            self.chat_view.set_notes(notes);
+        } 
     }
 
 }

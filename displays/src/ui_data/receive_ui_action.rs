@@ -13,7 +13,7 @@ impl SharedContext {
                 TaskUiActions::OpenTaskModal(task) => {
                     let task_modal = TaskModal::new(
                         ChatView::new(
-                            task.task_note.clone(),
+                            // task.task_note.clone(),
                             self.store_users.clone(),
                             task.id.clone(),
                             task.service_number.clone()
@@ -58,7 +58,7 @@ impl SharedContext {
                     });
 
                     let chat_modal = ChatView::new(
-                        notes.to_owned(),
+                        // notes.to_owned(),
                         self.store_users.clone(),
                         task_id.clone(),
                         service_number
@@ -88,7 +88,7 @@ impl SharedContext {
                     info!("receive_ui_action -> TaskUiActions::OpenViewport");
                     let modal = TaskModal::new(
                         ChatView::new(
-                            task.task_note.clone(),
+                            // task.task_note.clone(),
                             self.store_users.clone(),
                             task.id.clone(),
                             task.service_number.clone()
