@@ -294,4 +294,13 @@ mod tests {
         assert_eq!(message.buffer, decoded_buffer.into()); // Verify the buffer contents
     }
     
+    use database::{PlatformSpawner, Spawner, schema::odoo::inventory::search_open_orders_for_product};
+
+    #[test]
+    fn test_inventory_calls() {
+        PlatformSpawner::spawn(async move {
+            let results = search_open_orders_for_product("GPU/RTX4060TI16", "7").await;
+            log::info!("Results: {results:?}");
+        });
+    }
 }

@@ -1,9 +1,8 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
-use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{decode_style, encode_style, theme_config::set_custom_style, toasts::{Toast, ToastKind, ToastOptions}}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, theme_config::set_custom_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use eframe::{egui::{Context, ViewportCommand}, Frame};
 use database::schema::GetKeysResponse;
-use std::sync::{atomic::Ordering, Arc};
 use surrealdb::RecordId;
 use tokio::spawn;
 
@@ -60,18 +59,6 @@ impl MasterTechApp {
         }
     }
 
-    pub fn load_data(&mut self, ctx: &Context) {
-        if let Some(usr) = self.context.shared_ctx.current_user.clone() {
-            match decode_style(&usr.get_color_scheme()) {
-                Ok(color_settings) => self.context.shared_ctx.theme = Arc::new(color_settings),
-                Err(e) => log::error!("Error setting theme config: {e:?}"),
-            }
-            ctx.request_repaint();
-            self.context.connect(ctx.clone());
-            self.context.show_ws_viewport.store(true, Ordering::Relaxed);
-        }
-    }
-
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
         if self.context.shared_ctx.first_run { self.first_run(ctx, frame); }
         self.context.shared_ctx.receive_shared(frame, ctx);
@@ -106,8 +93,6 @@ impl MasterTechApp {
             }
         }
         
-
-
         // Get User settings from local storage
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {

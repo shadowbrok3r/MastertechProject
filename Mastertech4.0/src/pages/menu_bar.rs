@@ -18,7 +18,6 @@ impl MasterTechApp {
                         // allow certain tabs to be toggled
                         for tab in &[
                             &"TUR Sheet".to_string(),
-                            &"Console".to_string(),
                             &"Scene Editor".to_string(),
                             &"Scripts".to_string(),
                             &"File Browser 📂".to_string(),
@@ -32,7 +31,7 @@ impl MasterTechApp {
                             &"Bug Tracker".to_string(),
                             &"Websockets".to_string(),
                             &"Admin Console".to_string(),
-                            &"My Tools".to_string(),
+                            // &"My Tools".to_string(),
                             &"Store Stock".to_string(),
                             &"Task Audit".to_string(),
                             &"Company Stock".to_string(),

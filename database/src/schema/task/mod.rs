@@ -322,13 +322,14 @@ impl Status {
             Status::CustomStatus(status) => &status
         }
     }
-    pub fn from_str(status: &str) -> Self {
-        match status {
-            "Todo" => Status::Todo,
-            "In Repair" => Status::InRepair,
-            "Complete" => Status::Complete,
-            "Sales" => Status::Sales,
-            "QC" => Status::Qc,
+pub fn from_str(status: &str) -> Self {
+        let normalized = status.trim().to_lowercase();
+        match normalized.as_str() {
+            "todo" => Status::Todo,
+            "in repair" | "inrepair" => Status::InRepair,
+            "complete" => Status::Complete,
+            "sales" => Status::Sales,
+            "qc" => Status::Qc,
             _ => Status::CustomStatus(status.to_string())
         }
     }
