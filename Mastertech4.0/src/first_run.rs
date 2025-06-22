@@ -84,7 +84,7 @@ impl MasterTechApp {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
                         user.set_color_scheme(encode_style(&r.1).unwrap_or_default());
                         if let Some(storage) = frame.storage_mut() {
-                            storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
+                            storage.set_string("user_settings", serde_json::to_string(&r.1).unwrap_or_default());
                         }
                     }
                     self.context.shared_ctx.theme = r.1;
