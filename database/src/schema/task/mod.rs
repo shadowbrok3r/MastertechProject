@@ -1,9 +1,10 @@
-use crate::{schema::{Priority, Record, User, TASK_TABLE}, DATABASE};
+use crate::{schema::{Record, User, TASK_TABLE}, DATABASE};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use structdiff::{Difference, StructDiff};
 use surrealdb::{sql::Datetime, RecordId};
 use chrono::Utc;
 
-use super::{ComputerData, CustomerData, Status, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
+use super::{ComputerData, CustomerData, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
 
 pub mod update;
 pub mod sort;
@@ -296,4 +297,137 @@ impl From<TaskPayload> for LiveTaskPayload {
             created_at: task.created_at
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
+pub enum Status {
+    #[default]
+    Todo,
+    InRepair,
+    Complete,
+    Sales,
+    Qc,
+    CustomStatus(String),
+}
+
+impl Status {
+    pub const VALUES: [Self; 6] = [Self::Todo, Self::InRepair, Self::Complete, Self::Sales, Self::Qc, Status::CustomStatus(String::new())];
+    pub fn as_str(&self) -> &str {
+        match self {
+            Status::Todo => "Todo",
+            Status::InRepair => "In Repair",
+            Status::Complete => "Complete",
+            Status::Sales => "Sales",
+            Status::Qc => "QC",
+            Status::CustomStatus(status) => &status
+        }
+    }
+    pub fn from_str(status: &str) -> Self {
+        match status {
+            "Todo" => Status::Todo,
+            "In Repair" => Status::InRepair,
+            "Complete" => Status::Complete,
+            "Sales" => Status::Sales,
+            "QC" => Status::Qc,
+            _ => Status::CustomStatus(status.to_string())
+        }
+    }
+}
+
+// Custom serialization
+impl Serialize for Status {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+// Custom deserialization
+impl<'de> Deserialize<'de> for Status {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Status::from_str(&s))
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default)]
+pub enum Priority {
+    Express,
+    Rfs,
+    Fire,
+    Qc,
+    #[default]
+    Normal,
+}
+
+impl Priority {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Priority::Normal => "Normal",
+            Priority::Rfs => "Rfs",
+            Priority::Qc => "Qc",
+            Priority::Express => "Express",
+            Priority::Fire => "Fire",
+        }
+    }
+    pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
+pub enum Store {
+    #[default]
+    RIV,
+    LTN,
+    MUR,
+    AF,
+    WJ,
+    ORE,
+    SAN,
+}
+
+impl Store {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Store::RIV => "RIV",
+            Store::LTN => "LTN",
+            Store::MUR => "MUR",
+            Store::AF => "AF",
+            Store::WJ => "WJ",
+            Store::ORE => "ORE",
+            Store::SAN => "SAN",
+        }
+    }
+    pub fn store_email(&self) -> &'static str {
+        match *self {
+            Store::RIV => "RIV",
+            Store::MUR => "pclmur@pclaptops.com",
+            Store::WJ => "pclwj@pclaptops.com",
+            Store::LTN => "pclltn@pclaptops.com",
+            Store::AF => "pclaf@pclaptops.com",
+            Store::SAN => "pclsan@pclaptops.com",
+            Store::ORE => "pclore@pclaptops.com",
+        }
+    }
+
+    pub fn from_presta_store_id(store_id: &str) -> Self {
+        match store_id {
+            "7" => Self::RIV,
+            "8" => Self::LTN,
+            "10" => Self::MUR,
+            "11" => Self::WJ,
+            "12" => Self::SAN,
+            "13" => Self::AF,
+            "14" => Self::ORE,
+            _ => Self::RIV,
+        }
+    }
+
+    pub const VALUES: [Self; 7] = [
+        Self::RIV,
+        Self::LTN,
+        Self::MUR,
+        Self::AF,
+        Self::WJ,
+        Self::ORE,
+        Self::SAN,
+    ];
 }

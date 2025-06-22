@@ -1,13 +1,11 @@
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
+use crate::{schema::prestashop::Order, DATABASE};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{cmp::Reverse, collections::HashMap};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use async_trait::async_trait;
 use surrealdb::RecordId;
-use serde_json::Value;
-use crate::{schema::prestashop::Order, DATABASE};
 use anyhow::Error;
 
 pub mod helper_traits;
@@ -22,6 +20,18 @@ pub mod ticket;
 pub mod prestashop;
 pub mod notification;
 pub mod odoo;
+pub mod computer;
+pub mod customer;
+pub mod client;
+
+pub use task::*;
+pub use task_note::*;
+pub use user::*;
+pub use ticket::*;
+pub use notification::*;
+pub use computer::*;
+pub use customer::*;
+pub use client::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -39,12 +49,6 @@ pub const CHAT_THREAD_TABLE: &str = "chat_thread";
 pub const USER_MESSAGE_TABLE: &str = "user_message";
 pub const QC_TABLE: &str = "qc";
 
-
-pub use task::*;
-pub use task_note::*;
-pub use user::*;
-pub use ticket::*;
-pub use notification::*;
 pub use prestashop as prestashop_schema;
 
 #[async_trait(?Send)]
@@ -84,94 +88,8 @@ pub struct Qc {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
-pub struct CustomerData {
-    pub id: RecordId,
-    pub cust_code: String,
-    pub part_order_links: Option<Vec<String>>,
-    pub name: String,
-    pub phone_number: String,
-    pub phone_number_2: String,
-    pub email: String,
-    pub li_doc: String,
-    pub li_amnt: String,
-    pub num_inv: String
-}
-
-impl Default for CustomerData {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            cust_code: Default::default(),
-            part_order_links: Default::default(),
-            name: Default::default(),
-            phone_number: Default::default(),
-            phone_number_2: Default::default(),
-            email: Default::default(),
-            li_doc: Default::default(),
-            li_amnt: Default::default(),
-            num_inv: Default::default(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ComputerData {
-    pub id: RecordId,
-    pub customer: Option<RecordId>,
-    pub seb_info: Option<LocalSebData>,
-    pub hostname: String,
-    pub operating_system: String,
-    pub cpu: String,
-    pub gpu: String,
-    pub ram: String,
-    pub drives: Vec<DriveData>,
-    pub device_name: Option<String>,
-    pub device_mfg: Option<String>,
-    pub device_model: Option<String>,
-    pub device_serial: Option<String>,
-    pub windows_active: Option<bool>,
-    pub current_antivirus: Vec<String>,
-    pub installed_programs: Option<Value>
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct Job {
     computer: RecordId
-}
-
-impl Default for ComputerData {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            customer: Default::default(),
-            seb_info: Default::default(),
-            hostname: Default::default(),
-            operating_system: Default::default(),
-            cpu: Default::default(),
-            gpu: Default::default(),
-            ram: Default::default(),
-            drives: Default::default(),
-            device_name: Default::default(),
-            device_mfg: Default::default(),
-            device_model: Default::default(),
-            device_serial: Default::default(),
-            installed_programs: Default::default(),
-            current_antivirus: Default::default(),
-            windows_active: Default::default(),
-        }
-    }
-}
-
-impl ComputerData {
-    pub fn new() -> Self {
-        ComputerData {
-            drives: Vec::new(),
-            ..Default::default()
-        }
-    }
-    pub fn add_disk(&mut self, disk: DriveData) {
-        self.drives.push(disk);
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -181,47 +99,6 @@ pub struct ChatThreads {
     pub messages: Vec<HashMap<String, String>>,
     pub user: RecordId,
     pub images: Option<Vec<bytes::Bytes>>
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
-#[allow(non_snake_case)]
-#[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
-#[serde(rename = "xml")]
-pub struct LocalSebData {
-    // pub id: RecordId,
-    pub InstalledDeviceId: String,
-    pub InstallInstanceId: String,
-    pub HasIssues: String,
-    pub InstallationStage: String,
-    pub ReasonCode: String,
-    pub ActivationCode: String,
-    pub InstallVersion: String,
-    pub MachineName: String,
-    pub ExtendedSeb: Option<ExtendedSeb>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
-pub struct ExtendedSeb {
-    pub email: String,
-    pub phone: String,
-    pub userid: String,
-    pub device_name: String,
-    pub device_id: String,
-    pub state: String,
-    pub usage_gb: String,
-    pub date_device_created: String,
-    pub activated: String,
-    pub activation_code: String,
-    pub last_complete_backup: String,
-    pub last_client_status_update: String,
-    pub id_recurly_account: String,
-    pub date_last_scan: String,
-    pub date_email_sent: String,
-    pub date_canceled_account: String,
-    pub date_deleted_account: String,
-    pub current_period_ends_at: String,
-    pub date_modified: String,
-    pub date_created: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
@@ -320,208 +197,12 @@ pub fn find_latest_carbonite_entry(entries: &[CarboniteResponse]) -> Option<&Car
         .map(|(entry, _)| entry)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct DriveData {
-    pub drive_letter: String,
-    pub drive_type: String,
-    pub total_size: String,
-    pub space_left: String,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct HardwareTests {
     pub hdd_test: String,
     pub ssd_test: String,
     pub ram_test: String,
 }
-
-
-
-#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Difference)]
-pub struct ConnectedClient {
-    pub id: RecordId,
-    pub assigned_user: Option<RecordId>,
-    pub client_hash: String,
-    pub connection_string: String,
-    pub command_history: Option<Vec<String>>,
-    pub connected: bool,
-    pub friendly_name: Option<String>,
-    pub customer: Option<RecordId>,
-    pub last_update: Option<String>,
-    pub created_at: Option<String>,
-    pub computer:  Option<RecordId>
-}
-
-impl Default for ConnectedClient {
-    fn default() -> Self {
-        Self {
-            id: RecordId::from((CONNECTED_CLIENT_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            assigned_user: Default::default(),
-            client_hash: Default::default(),
-            connection_string: Default::default(),
-            command_history: Default::default(),
-            connected: Default::default(),
-            friendly_name: Default::default(),
-            customer: Default::default(),
-            last_update: Default::default(),
-            created_at: Default::default(),
-            computer: Default::default(),
-        }
-    }
-}
-
-
-impl Sortable<ConnectedClient> for Vec<ConnectedClient> {
-    fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
-        self.sort_by_date(sort_direction)
-    }
-
-    fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
-        self.sort_by(|a: &ConnectedClient, b: &ConnectedClient| {
-            let date_a = &a.last_update.as_ref().cloned().unwrap_or_default();
-            let date_b = &b.last_update.as_ref().cloned().unwrap_or_default();
-            
-            let ordering = date_b.cmp(&date_a);
-            
-            match sort_direction {
-                SortDirection::Asc => ordering,               // Use default ordering for ascending
-                SortDirection::Desc => ordering.reverse(),    // Reverse ordering for descending
-            }
-        });
-    
-        self
-    }
-
-    fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
-        self.sort_by(|a, b| {
-            let name_a = &a.connection_string.to_lowercase();
-            let name_b = &b.connection_string.to_lowercase();
-            
-            let ordering = name_a.cmp(name_b);
-    
-            match sort_direction {
-                SortDirection::Asc => ordering,              // Default alphabetical ordering (A-Z)
-                SortDirection::Desc => ordering.reverse(),   // Reverse alphabetical ordering (Z-A)
-            }
-        });
-    
-        self
-    }
-}
-
-pub trait FilterClients {
-    fn filter_by_client<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
-        &self,
-        name: T,
-        search_input: String,
-    ) -> Vec<ConnectedClient>;
-}
-
-impl FilterClients for Vec<ConnectedClient> {
-    fn filter_by_client<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
-        &self,
-        name: T,
-        search_input: String,
-    ) -> Vec<ConnectedClient> {
-        // Create a fuzzy matcher with default settings, ignoring case.
-        let matcher = SkimMatcherV2::default().ignore_case();
-
-        // Initialize a vector to hold the match results.
-        let mut match_results = name
-            // Convert the input iterator into an iterator of the items.
-            .into_iter()
-            // Filter and map the items based on the fuzzy match score.
-            .filter_map(|s| {
-                // Calculate the fuzzy match score and the matched indices.
-                let score = matcher.fuzzy_indices(s.as_ref(), search_input.as_str());
-                // If a match is found, map it to a tuple of (item, score, indices).
-                score.map(|(score, indices)| (s, score, indices))
-            })
-            // Collect the filtered and mapped results into a vector.
-            .collect::<Vec<_>>();
-
-        // Sort the match results by score in descending order (higher scores first).
-        match_results.sort_by_key(|k| Reverse(k.1));
-
-        for (_i, (output, _, _match_indices)) in match_results.iter().take(6).enumerate() {
-            return self
-                .into_iter()
-                .filter(|client| {
-                    client.connection_string.contains(output.as_ref())
-                        || client
-                            .friendly_name
-                            .clone()
-                            .unwrap_or_default()
-                            .contains(output.as_ref())
-                })
-                .cloned()
-                .collect();
-        }
-        self.to_vec()
-    }
-}
-
-
-#[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
-pub enum Status {
-    #[default]
-    Todo,
-    InRepair,
-    Complete,
-    Sales,
-    Qc,
-    CustomStatus(String),
-}
-
-impl Status {
-    pub const VALUES: [Self; 6] = [Self::Todo, Self::InRepair, Self::Complete, Self::Sales, Self::Qc, Status::CustomStatus(String::new())];
-    pub fn as_str(&self) -> &str {
-        match self {
-            Status::Todo => "Todo",
-            Status::InRepair => "In Repair",
-            Status::Complete => "Complete",
-            Status::Sales => "Sales",
-            Status::Qc => "QC",
-            Status::CustomStatus(status) => &status
-        }
-    }
-    pub fn from_str(status: &str) -> Self {
-        match status {
-            "Todo" => Status::Todo,
-            "In Repair" => Status::InRepair,
-            "Complete" => Status::Complete,
-            "Sales" => Status::Sales,
-            "QC" => Status::Qc,
-            _ => Status::CustomStatus(status.to_string())
-        }
-    }
-}
-
-// Custom serialization
-impl Serialize for Status {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-// Custom deserialization
-impl<'de> Deserialize<'de> for Status {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Ok(Status::from_str(&s))
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub enum Priority {
-    Express,
-    Rfs,
-    Fire,
-    Qc,
-    #[default]
-    Normal,
-}
-
 
 #[derive(Deserialize)]
 struct CommandRequest {
@@ -535,139 +216,6 @@ pub struct GetKeysResponse {
     pub superanti_key: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default )]
-pub struct SystemInformation {
-    /// Live CPU usage as a percentaget
-    pub cpu_percentage: f32,
-    /// Live CPU clock speed
-    pub cpu_clock: f32,
-    /// Live system temps
-    pub component_temps: HashMap<String, f32>,
-    /// Live RAM usage in Mb
-    pub used_memory: f32,
-    /// Total RAM
-    pub total_memory: f32,
-    /// Disk usage
-    pub disks: String,
-    /// Name of machine
-    pub name: String,
-    /// Kernel version
-    pub kernel_version: String,
-    /// OS version
-    pub os_version: String,
-    /// Hostname based on DNS
-    pub hostname: String,
-    /// Number of Physical CPU's
-    pub number_of_cpus: String,
-    /// list of network interfaces and 
-    pub network_interfaces: Vec<NetworkInterface>,
-    /// List of active processes on host
-    pub processes: Vec<Process>,
-    pub gpu_info: Gpu
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct Gpu {
-    pub usage: Vec<GraphicsUsage>,
-    pub card: Vec<GraphicsCard>
-}
-
-/// Graphic card usage by process
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphicsProcessUtilization {
-    /// Process identificator
-    pub pid: u32,
-    /// Gpu identificator
-    pub gpu: u32,
-    /// Memory usage
-    pub memory: u32,
-    /// Gpu encoder utilization as percentage
-    pub encoder: u32,
-    /// Gpu decoder utilization as percentage
-    pub decoder: u32    
-}
-
-/// Graphic card usage summary
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphicsUsage {
-    /// Graphic card id
-    pub id: String,
-    /// Memory utilization as percentage
-    pub memory_usage: u32,
-    /// Memroy usage as bytes
-    pub memory_used: u64,
-    /// Gpu encoder utilization as percentage
-    pub encoder: u32,
-    /// Gpu decoder utilization as percentage
-    pub decoder: u32,
-    /// Gpu utilization as percentage
-    pub gpu: u32,
-    /// Gpu temperature
-    pub temperature: u32,
-    /// Processes using this GPU
-    pub processes: Vec<GraphicsProcessUtilization>
-}
-
-/// Information about a graphic card
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphicsCard {
-    /// Device id
-    pub id: String,
-    /// Device id
-    pub name: String,
-    /// Device brand
-    pub brand: String,
-    /// Total memory
-    pub memory: u64,
-    /// Device temperature
-    pub temperature: u32,
-    pub nvidia_info: NvidiaInfo
-}
-
-
-/// Nvidia drivers configuration
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct NvidiaInfo {
-     /// Nvidia drivers
-     pub driver_version: String,
-     /// NVML version
-     pub nvml_version: String,
-     /// Cuda version
-     pub cuda_version: i32,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
-pub struct Process {
-    /// Process ID
-    pub id: u32,
-    pub name: String,
-    pub cmd: String,
-    pub user_id: Option<String>,
-    pub memory: f32,
-    pub cpu_usage: f32,
-    pub process_disk_usage: ProcessDiskUsage
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
-pub struct ProcessDiskUsage {
-    pub read_bytes: f32,
-    pub total_read_bytes: f32,
-    pub total_written_bytes: f32,
-    pub written_bytes: f32,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
-pub struct NetworkInterface {
-    /// Process ID
-    pub interface_name: String,
-    pub total_received: f32,
-    pub total_transmitted: f32,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Node {
     Folder(String, HashMap<String, Node>),
@@ -679,18 +227,6 @@ impl Default for Node {
         let node = Node::Folder(String::new(), HashMap::new());
         node
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
-pub enum Store {
-    #[default]
-    RIV,
-    LTN,
-    MUR,
-    AF,
-    WJ,
-    ORE,
-    SAN,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -766,65 +302,4 @@ impl Default for SpecialPartOrder {
             spo_status: SpoStatus::AwaitingQuote,
         }
     }
-}
-
-impl Store {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Store::RIV => "RIV",
-            Store::LTN => "LTN",
-            Store::MUR => "MUR",
-            Store::AF => "AF",
-            Store::WJ => "WJ",
-            Store::ORE => "ORE",
-            Store::SAN => "SAN",
-        }
-    }
-    pub fn store_email(&self) -> &'static str {
-        match *self {
-            Store::RIV => "RIV",
-            Store::MUR => "pclmur@pclaptops.com",
-            Store::WJ => "pclwj@pclaptops.com",
-            Store::LTN => "pclltn@pclaptops.com",
-            Store::AF => "pclaf@pclaptops.com",
-            Store::SAN => "pclsan@pclaptops.com",
-            Store::ORE => "pclore@pclaptops.com",
-        }
-    }
-
-    pub fn from_presta_store_id(store_id: &str) -> Self {
-        match store_id {
-            "7" => Self::RIV,
-            "8" => Self::LTN,
-            "10" => Self::MUR,
-            "11" => Self::WJ,
-            "12" => Self::SAN,
-            "13" => Self::AF,
-            "14" => Self::ORE,
-            _ => Self::RIV,
-        }
-    }
-
-    pub const VALUES: [Self; 7] = [
-        Self::RIV,
-        Self::LTN,
-        Self::MUR,
-        Self::AF,
-        Self::WJ,
-        Self::ORE,
-        Self::SAN,
-    ];
-}
-
-impl Priority {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Priority::Normal => "Normal",
-            Priority::Rfs => "Rfs",
-            Priority::Qc => "Qc",
-            Priority::Express => "Express",
-            Priority::Fire => "Fire",
-        }
-    }
-    pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
 }

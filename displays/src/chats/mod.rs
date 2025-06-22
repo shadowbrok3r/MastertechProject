@@ -75,7 +75,7 @@ pub enum ChatEvent {
 
 impl ChatView {
     pub fn new(
-        messages: Vec<TaskNotePayload>,
+        // messages: Vec<TaskNotePayload>,
         users: Vec<User>, 
         task_id: RecordId,
         service_number: Option<String>
@@ -83,14 +83,10 @@ impl ChatView {
         let (new_notes_tx, new_notes_rx) = crossbeam::channel::unbounded();
          let (ui_event_tx, ui_event_rx) = crossbeam::channel::unbounded();
         let mut users_set = BTreeSet::new();
-        let mut note_ids = HashMap::new();
+
         for user in users {
             let parsed_email = user.get_username();
             users_set.insert(format!("@{parsed_email}"));   
-        }
-
-        for message in messages.iter() {
-            note_ids.insert(message.id.to_string(), message.clone());
         }
 
         let service_number = if let Some(service_number) = service_number {
@@ -103,7 +99,6 @@ impl ChatView {
             None
         };
 
-        log::info!("Note ID's: {}", note_ids.len());
 
         Self {
             current_user: if let Some(user) = get_current_user_from_auth() {
@@ -111,12 +106,12 @@ impl ChatView {
             } else {
                 User::default()
             },
-            messages,
+            messages: vec![],
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::new(),
             delete: None,
             users: users_set,
-            edit_text: note_ids,
+            edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
             task_id,
             service_number,
@@ -126,7 +121,22 @@ impl ChatView {
     }
 
     pub fn set_notes(&mut self, notes: Vec<TaskNotePayload>) -> &mut Self {
-        self.messages = notes.clone();
+        // Collect existing IDs from self.messages to check for duplicates
+        let mut seen_ids: HashSet<String> = self.messages
+            .iter()
+            .map(|note| note.id.to_string())
+            .collect();
+
+        // Process new notes, adding only non-duplicates
+        for note in notes {
+            if seen_ids.insert(note.id.to_string()) {
+                // Add to edit_text (overwrites if ID exists, but seen_ids ensures it’s new)
+                self.edit_text.insert(note.id.to_string(), note.clone());
+                // Append to messages
+                self.messages.push(note);
+            }
+        }
+
         self
     }
 

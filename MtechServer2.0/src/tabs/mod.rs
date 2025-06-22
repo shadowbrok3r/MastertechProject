@@ -1,5 +1,5 @@
-use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
-use displays::{tabs::stock::{get_extra_stock_info, get_stock}, FilterTasks};
+use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
+use displays::tabs::stock::{get_extra_stock_info, get_stock};
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use super::app_state::MtechServerContext;

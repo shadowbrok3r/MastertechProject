@@ -136,33 +136,15 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
     Ok(())
 }
 
-impl CustomerData {
-    pub async fn get_customers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let customers: Vec<Self> = DATABASE
-            .query("SELECT * FROM customer START $start LIMIT 200")
-            .bind(("start", start))
-            .await?
-            .take(0)?;
 
-        Ok(customers)
-    }
-}
-
-impl ComputerData {
-    pub async fn get_computers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
-        let computers: Vec<Self> = DATABASE
-            .query("SELECT * FROM computer START $start LIMIT 200")
-            .bind(("start", start))
-            .await?
-            .take(0)?;
-
-        Ok(computers)
-    }
-}
-
-pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
+pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_completed_tasks");
     let query = r#"
+        SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS true PARALLEL
+    "#;
+    
+    /*
+     r#"
         SELECT *, (
             SELECT * FROM task_note 
                 WHERE task_id == $parent.id
@@ -174,11 +156,11 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
             service_ticket.computer, 
             service_ticket.customer
         PARALLEL
-    "#; // PARALLEL
+    "#; */ // PARALLEL
     
     let start_query = Instant::now(); // Start timing the query
 
-    let query_results: Vec<TaskPayload> = DATABASE
+    let query_results: Vec<LiveTaskPayload> = DATABASE
         .query(query)
         .bind(("store", store.clone()))
         .await?
@@ -555,49 +537,6 @@ impl Customer {
 
         Ok(customers.clone())
     }
-}
-
-impl CustomerData {
-    pub async fn find_customer_by_id(id_customer: &str) -> anyhow::Result<Self, anyhow::Error> {
-        let api_call = Prestashop::default();
-        let mut query = HashMap::new();
-        let mut tmp_address = Address::default();
-        query.insert("filter[id_customer]", id_customer);
-        query.insert("output_format", "JSON");
-
-        let addresses: Vec<Address> = api_call
-            .request_resources_wasm("addresses", query.clone())
-            .await?;
-
-        if let Some(address) = addresses.get(0) {
-            tmp_address = address.clone();
-        }
-
-        let cust: Customer = api_call
-            .request_subresources_by_id_wasm("customers", "customer", id_customer)
-            .await?;
-
-        Ok(CustomerData { 
-            id: RecordId::from((
-                CUSTOMER_TABLE.to_string(),
-                id_customer,
-            )),
-            cust_code: id_customer.to_string(),
-            name: format!("{} {}", &cust.firstname, &cust.lastname),
-            phone_number: tmp_address.phone.clone().to_string(),
-            email: cust.email,
-            phone_number_2: tmp_address.phone_mobile.clone().to_string(),
-            ..Default::default()
-        })
-    }
-}
-
-impl TaskPayload {
-
-}
-
-impl LiveTaskPayload {
-
 }
 
 pub fn format_us_phone_number(phone: &str) -> Vec<String> {
