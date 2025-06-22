@@ -1,5 +1,5 @@
 use displays::{app_state::{AppState, MainPages}, pages::login_page::HASH, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
-use crate::{app_state::MasterTechApp, filesystem::system_info::ComputerInfo, utilities::save_encrypted_user_data};
+use crate::{app_state::MasterTechApp, utilities::save_encrypted_user_data};
 use eframe::egui::Context;
 
 impl MasterTechApp {
@@ -21,6 +21,7 @@ impl MasterTechApp {
 
                             #[cfg(target_os = "windows")]
                             {
+                                use crate::filesystem::system_info::ComputerInfo;
                                 if self.context.computer_data.cpu.is_empty() {
                                     let specs_tx = self.context.computer_data_tx.clone();
                                     let current_antivirus_tx = self.context.current_antivirus_tx.clone();

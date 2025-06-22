@@ -1,6 +1,6 @@
 use crate::terminal_mode::context::TerminalContext;
 use std::{cell::RefCell, sync::{Arc, Mutex}};
-use database::schema::{TaskPayload, User};
+use database::schema::{LiveTaskPayload, User};
 use tui_scrollview::ScrollViewState;
 use ratatui::widgets::TableState;
 use reqwest::Client;
@@ -9,7 +9,7 @@ pub mod action_handler;
 pub mod render;
 pub struct TasksTab {
     state: RefCell<TableState>,
-    items: Vec<TaskPayload>,
+    items: Vec<LiveTaskPayload>,
     widths: Vec<u16>, // Column widths
     scroll_state: RefCell<ScrollViewState>,
     pub _client: Client,
