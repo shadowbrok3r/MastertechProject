@@ -17,6 +17,6 @@ async-trait = { workspace = true }
 simplelog = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }
-# surrealdb = { workspace = true }
+surrealdb = { workspace = true }
 log = { workspace = true }
 regex = { workspace=true }
