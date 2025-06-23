@@ -1,16 +1,13 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
-use database::schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User};
-use crate::{Displayable, TaskUiActions};
+use database::{self, DATABASE, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
+use crate::{PlatformSpawner, Spawner, get_current_user_from_auth, Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap}, f32};
-use crate::get_current_user_from_auth;
 use crossbeam::channel::{Receiver, Sender};
-use database::{self, DATABASE};
 use std::collections::BTreeSet;
-use serde::Deserialize;
 use surrealdb::RecordId;
+use serde::Deserialize;
 use serde::Serialize;
 use chrono::Utc;
-use crate::{PlatformSpawner, Spawner};
 
 #[derive(Serialize)]
 pub struct TaskLayout{
@@ -28,7 +25,7 @@ pub struct TaskLayout{
     search_results: Option<Vec<LiveTaskPayload>>, // Add search results
     pub column_order: Vec<String>,
     #[serde(skip)]
-    notes_tx: Sender<Vec<TaskNotePayload>>,
+    _notes_tx: Sender<Vec<TaskNotePayload>>,
     #[serde(skip)]
     notes_rx: Receiver<Vec<TaskNotePayload>>,
     notes: Vec<TaskNotePayload>,
@@ -68,9 +65,9 @@ impl TaskLayout {
         assignees: Vec<User>,
         search_results: Option<Vec<LiveTaskPayload>>,
     ) -> Self {
-        let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
+        let (_notes_tx, notes_rx) = crossbeam::channel::unbounded();
 
-        let tx = notes_tx.clone();
+        let tx = _notes_tx.clone();
         let map = task_map.clone();
         PlatformSpawner::spawn(async move {
             for task in map.iter().flat_map(|t| t.1.iter()) {
@@ -84,7 +81,7 @@ impl TaskLayout {
 
         Self {
             notes: vec![],
-            notes_tx,
+            _notes_tx,
             notes_rx,
             task_map, 
             column_order,

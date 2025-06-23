@@ -86,17 +86,10 @@ impl Displayable for LiveTaskPayload {
                 {
                     info!("Marked Task Complete / Incomplete ");
                     let task = self.clone();
-                    if task.completed {
-                        PlatformSpawner::spawn(async move {
-                            let update = task.update_completed(false).await;
-                            info!("update_completed: {update:?}");
-                        });
-                    } else {
-                        PlatformSpawner::spawn(async move {
-                            let update = task.update_completed(true).await;
-                            info!("update_completed: {update:?}");
-                        });
-                    }
+                    PlatformSpawner::spawn(async move {
+                        let update = task.update_completed(!task.completed).await;
+                        info!("update_completed: {update:?}");
+                    });
                 }
             });
 
@@ -107,19 +100,19 @@ impl Displayable for LiveTaskPayload {
                     let _ = self.interact_assignee(ui, store_users, user);
                 });
 
-                ui.add_space(35.);
+                ui.add_space(22.);
                 
                 ui.push_id(format!("Priority {}", self.id.key().to_string().clone()), |ui| {
                     let _ = self.interact_priority(ui);
                 });
 
-                ui.add_space(35.);
+                ui.add_space(22.);
 
                 ui.push_id(format!("Status {}", self.id.key().to_string().clone()), |ui| {
                     let _ = self.interact_status(user, ui);
                 });
 
-                ui.add_space(35.);
+                ui.add_space(22.);
 
                 let _ = self.interact_due_date(ui);
             });
