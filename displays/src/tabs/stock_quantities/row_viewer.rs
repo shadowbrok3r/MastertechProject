@@ -2,7 +2,7 @@ use crate::egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, TrivialConfig, UiActionContext},
     RowViewer, UiAction,
 };
-use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, Ui};
+use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui};
 
 use egui_extras::Column as TableColumnConfig;
 use log::info;
@@ -151,11 +151,52 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
 
     fn show_cell_editor(
         &mut self,
-        _ui: &mut Ui,
-        _row: &mut StockQuantityData,
-        _column: usize,
+        ui: &mut Ui,
+        row: &mut StockQuantityData,
+        column: usize,
     ) -> Option<Response> {
-       None
+        ui.vertical_centered_justified(|ui| {
+            match column {
+                0 => {
+                    TextEdit::multiline(&mut format!("{}", row.0))
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                1 => {
+                    TextEdit::multiline(&mut format!("{}", row.1))
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                2 => {
+                    TextEdit::multiline(&mut format!("{}", row.2))
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                3 => {
+                    TextEdit::multiline(&mut format!("{}", row.3))
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                4 => {
+                    TextEdit::multiline(&mut format!("{}", row.4))
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                _ => unreachable!(),
+            }
+            .into() // To make focusing work correctly, valid response must be returned.
+        })
+        .inner
     }
 
     fn set_cell_value(
