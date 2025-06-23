@@ -1,4 +1,4 @@
-use crate::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, TaskPayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
 use std::{collections::HashMap, fmt::Debug};
@@ -68,27 +68,6 @@ where
     Ok(record)
 }
 
-pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
-    debug!("get_tasks");
-    let query = r#"
-        SELECT *, (
-            SELECT * FROM task_note 
-                WHERE task_id == $parent.id
-        ) AS task_note 
-        FROM task
-        
-        WHERE $this.assignee.store == $auth.store 
-        
-        FETCH 
-            service_ticket, 
-            service_ticket.computer, 
-            service_ticket.customer
-        PARALLEL
-    "#; // ORDER BY due_date ASC WITH INDEX idx_store_due_date
-    let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
-    tx.try_send(query_results)?;
-    Ok(())
-}
 
 pub async fn get_qcs() -> anyhow::Result<Vec<Qc>, anyhow::Error> {
     let qcs: Vec<Qc> = DATABASE
