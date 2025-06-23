@@ -77,8 +77,8 @@ humansize = "2"
 multi_log = "0.1"
 env_logger = "*"
 
-surrealdb-alpha ={ workspace = true }
-# surrealdb = { workspace=true }
+# surrealdb-alpha ={ workspace = true }
+surrealdb = { workspace=true }
 egui-data-table = { workspace = true }
 egui_logger = {workspace = true }
 ratatui = { workspace = true }

@@ -50,7 +50,15 @@ impl TabViewer for MtechServerContext {
                 .show(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
             "Database Editor" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
-            "Query Editor" => self.shared_ctx.query_editor.ui(ui),
+            "Query Editor" => if let Some(usr) = &self.shared_ctx.current_user {
+                if usr.is_admin() {
+                    self.shared_ctx.query_editor.ui(ui)
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            },
             "KOTH" => self.shared_ctx.koth.ui(ui),
             "Create Prestashop Order" => self.shared_ctx.prestashop_order_form.ui(ui),
             // "Ai" => self.shared_ctx.ai_playground(ui),

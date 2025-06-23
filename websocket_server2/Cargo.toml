@@ -19,4 +19,4 @@ uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
 
 database = { workspace = true }
-# surrealdb = { workspace = true }
+surrealdb = { workspace = true }
