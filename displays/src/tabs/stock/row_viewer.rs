@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
-use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
+use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, TextEdit, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -180,6 +180,16 @@ impl RowViewer<SerialsData> for SerialsViewer {
         column: usize,
     ) -> Option<Response> {
         match column {
+            0 => Some(TextEdit::multiline(&mut format!("{}", row.0))
+                .desired_rows(1)
+                .code_editor()
+                .show(ui)
+                .response),
+            1 => Some(TextEdit::multiline(&mut format!("{}", row.1))
+                .desired_rows(1)
+                .code_editor()
+                .show(ui)
+                .response),
             2 => {
                 if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫"{
                     None
@@ -195,7 +205,12 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     )
                 }
             },
-            _ => None,
+            3 => Some(TextEdit::multiline(&mut format!("{}", row.3))
+                .desired_rows(1)
+                .code_editor()
+                .show(ui)
+                .response),
+            _ => None
         }
     }
     fn on_cell_view_response(

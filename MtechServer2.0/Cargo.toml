@@ -1,6 +1,6 @@
 [package]
 name = "mtechserver"
-version = "2.3.3"
+version = "2.4.0"
 edition = "2024"
 
 # [[bin]]
@@ -27,8 +27,8 @@ ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.
 reqwest = { version = "0.12", features = ["stream", "json"] }
 displays = { path="../displays", features = ["wasm"]}
 
-surrealdb-alpha ={ workspace = true }
-# surrealdb = { workspace=true }
+# surrealdb-alpha ={ workspace = true }
+surrealdb = { workspace=true }
 wasm-cookies = { workspace = true }
 egui_logger = {workspace = true }
 egui_plot = { workspace = true }
