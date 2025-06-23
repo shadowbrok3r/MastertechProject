@@ -1,4 +1,4 @@
-use database::{schema::{LiveTaskPayload, Node, Priority, Status, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User}, CURRENT_USER_INFO, STORE_USERS};
+use database::{schema::{LiveTaskPayload, Node, Priority, Status, SystemInformation, TaskNotePayload, User}, CURRENT_USER_INFO, STORE_USERS};
 use eframe::egui::{Modifiers, Response, Ui};
 use bincode::{config::standard, serde::*};
 use modals::task_modal::ModalAction;
@@ -168,62 +168,34 @@ pub trait Updatable {
 
 pub trait Interaction {
     fn interact_service_number(&mut self, ui: &mut Ui) -> Response;
-    fn interact_task_name(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_task_description(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_due_date(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_completed(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_priority(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_assignee(&mut self, ui: &mut Ui, store_users: &Vec<User>, current_user: &User) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_task_name(&mut self, ui: &mut Ui) -> Response; 
+    fn interact_task_description(&mut self, ui: &mut Ui) -> Response; 
+    fn interact_due_date(&mut self, ui: &mut Ui) -> Response; 
+    fn interact_completed(&mut self, ui: &mut Ui) -> Response; 
+    fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response; 
+    fn interact_priority(&mut self, ui: &mut Ui) -> Response; 
+    fn interact_assignee(&mut self, ui: &mut Ui, store_users: &Vec<User>, current_user: &User) -> Response; 
 }
 
-
-
-
-
-pub trait LiveUpdate {
-    fn handle_live_create(
-        self,
-        existing_tasks: &mut Vec<TaskPayload>,
-        new_ticket: Option<TicketPayload>,
-    ) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-    fn handle_live_update(
-        self,
-        existing_tasks: &mut Vec<TaskPayload>,
-        new_ticket: Option<TicketPayload>,
-    ) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-    fn handle_live_delete(
-        self,
-        existing_tasks: &mut Vec<TaskPayload>,
-        new_ticket: Option<TicketPayload>,
-    ) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-}
 
 #[async_trait]
 pub trait Task {
-    // <T: Serialize + for<'a> Deserialize<'a> + Debug>
     async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
     async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
-    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
     async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
     async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
-    // fn create_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    // fn get_data(&mut self, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    // fn modify_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    // fn delete_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
 }
 
 pub trait DisplayModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction>;
-    // fn set_state(self, action: ModalAction);
 }
 
 
