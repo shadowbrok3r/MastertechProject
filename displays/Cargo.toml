@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "2.4.0"
+version = "2.4.1"
 edition = "2024"
 
 [features]
@@ -13,7 +13,7 @@ egui_json_tree = { version = "0.11.0", features = ["serde_json"] }
 reqwest = { version = "0.12", features = ["stream", "json"] }
 structdiff = {version = "0.7.1", features = ["rustc_hash"]}
 rpc-router = "0.1"
-schemars = "0.9.0"
+schemars = "1"
 derivative = "2"
 parking_lot = "0.12"
 zstd = "0.13"
