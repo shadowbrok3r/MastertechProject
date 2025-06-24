@@ -78,7 +78,7 @@ impl Interaction for LiveTaskPayload {
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response {
-        let frame_color = date_colors(self.due_date.clone().into(), self.completed);
+        let frame_color = date_colors(ui, self.due_date.clone().into(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
         let mut due_date = self.due_date.date_naive();
 
