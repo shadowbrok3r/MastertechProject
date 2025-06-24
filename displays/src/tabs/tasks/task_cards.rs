@@ -141,31 +141,23 @@ impl Displayable for LiveTaskPayload {
     }
 }
 
-pub fn date_colors(due_date: DateTime<Utc>, _complete: bool) -> Color32 {
+pub fn date_colors(ui: &mut Ui, due_date: DateTime<Utc>, _complete: bool) -> Color32 {
     let current_date = Utc::now().date_naive();
-    let mut overdue: Option<DateTime<Utc>> = None;
-    let mut due_today: Option<DateTime<Utc>> = None;
-    let mut due_tomorrow: Option<DateTime<Utc>> = None;
-    if due_date.date_naive() == current_date.pred_opt().unwrap() {
-        overdue = Some(due_date.clone());
-    } else if due_date.date_naive() == current_date {
-        due_today = Some(due_date.clone());
-    } else if due_date.date_naive() == current_date.succ_opt().unwrap() {
-        due_tomorrow = Some(due_date.clone());
+    let due_date_naive = due_date.date_naive();
+    // 3 days in seconds
+    let three_days_secs = 3 * 24 * 60 * 60;
+    
+    let current_secs = current_date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    let due_secs = due_date_naive.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+
+    if due_secs < current_secs {
+        // Overdue - red
+        ui.style().visuals.error_fg_color
+    } else if due_secs <= current_secs + three_days_secs {
+        // Today to 3 days from now - warning color (orange/yellow)
+        Color32::from_rgb(217, 255, 0)
+    } else {
+        // Beyond 3 days - green
+        Color32::from_rgb(11,244,192)
     }
-    if let Some(_) = overdue {
-        Color32::from_rgb(199, 30, 60)
-    }
-    // Pink
-    else if let Some(_) = due_today {
-        Color32::from_rgb(240, 200, 108)
-    }
-    // Orange
-    else if let Some(_) = due_tomorrow {
-        Color32::from_rgb(79, 232, 125)
-    }
-    // Green
-    else {
-        Color32::from_rgb(199, 48, 103)
-    } // Pink
 }
