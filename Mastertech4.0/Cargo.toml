@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.4.7"
+version = "4.4.8"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -8,18 +8,13 @@ build = "build.rs"
 [package.metadata.winres]
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
-LegalCopyright = "Copyright © 2024"
-ProductVersion = "4.4.7"
+LegalCopyright = "Copyright © 2025"
+ProductVersion = "4.4.8"
 FileDescription = "Mastertech"
 
 [features]
-default = [ "inline" ] # "term", "gui"
-# gui = [ "dep:eframe" ]
-# term = ["dep:tui-input", "dep:tui-textarea", "dep:ratatui"]
+default = [ "inline" ]
 inline = []
-# default=["winit"]   # , "cpu_fix", "compat_mode"
-# winit = ["dep:egui-winit"]
-# compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"] cpu_fix = []
 
 [dependencies]
 eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false}
@@ -67,7 +62,7 @@ arboard = "3"
 tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 # nvme = "0.2.2"
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = ["server", "transport-sse-server", "transport-io"]}
+rmcp = { version = "0.1.5", features = ["server", "transport-sse-server", "transport-io"]}
 xcap = "0.6.0"
 display-info = "0.5.4"
 enigo = { version = "0.5.0", features = ["serde"] }
@@ -155,11 +150,11 @@ windows-core = "0.61"
 windows_x86_64_msvc = "0.53"
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 memmap2 = "0.9"
-breakpad-symbols = { version = "0.25.0" }
-minidump = { version = "0.25.0" }
-minidump-common = { version = "0.25.0" }
-minidump-processor = { version = "0.25.0", features = ["http"] }
-minidump-unwind = "0.25.0"
+breakpad-symbols = { version = "0.26.0" }
+minidump = { version = "0.26.0" }
+minidump-common = { version = "0.26.0" }
+minidump-processor = { version = "0.26.0", features = ["http"] }
+minidump-unwind = "0.26.0"
 wmi = "0.17.0"
 evtx = "0.8"
 
@@ -170,7 +165,7 @@ openssl-sys = "0.9"
 
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["async_tokio"]}
+criterion = { version = "0.6", features = ["async_tokio"]}
 
 [[bench]]
 name = "file_copy_benchmark"
