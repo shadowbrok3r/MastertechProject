@@ -134,9 +134,9 @@ impl MtechServer {
 
         #[cfg(target_arch="wasm32")]
         match check_authentication(self.context.shared_ctx.db_tx.clone()) {
-            Ok(d) => {
+            Ok(state) => {
                 log::info!("1");
-                if let AppState::NoAuth(reason) = &d.0 {
+                if let AppState::NoAuth(reason) = &state {
                     let toast = &mut self.context.shared_ctx.toasts;
     
                     let error_toast = Toast {
@@ -148,19 +148,14 @@ impl MtechServer {
                     };
                     toast.add(error_toast);
                 }else {
-                    if let Some(ref usr) = d.1 {
-                        self.context.shared_ctx.current_user = Some(usr.clone());
-                        self.context.shared_ctx.filesystem.set_user(usr.clone());
-                        self.context.shared_ctx.web_console_layout.filesystem.set_user(usr.clone());
-                        spawn_local(async move {
-                            match DATABASE.health().await {
-                                Ok(_) => log::info!("Healthy connection"),
-                                Err(e) => log::error!("Database connection health: {e:?}"),
-                            }
-                        });
-                    }
+                    spawn_local(async move {
+                        match DATABASE.health().await {
+                            Ok(_) => log::info!("Healthy connection"),
+                            Err(e) => log::error!("Database connection health: {e:?}"),
+                        }
+                    });
                 }
-                self.context.shared_ctx.state = d.0;
+                self.context.shared_ctx.app_state_tx.try_send(state);
             }
             Err(e) => {
                 log::info!("2");
