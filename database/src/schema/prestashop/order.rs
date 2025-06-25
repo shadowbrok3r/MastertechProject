@@ -80,6 +80,7 @@ pub enum OrderState {
     ReadyToBuild,
     QcAndBurnin,
     ShipToStore,
+    OdooPendingReview,
     Returned 
 }
 
@@ -95,6 +96,7 @@ impl OrderState {
             Self::ReadyToBuild => "Ready To Build",
             Self::QcAndBurnin => "Qc & Burnin",
             Self::ShipToStore => "Ship To Store",
+            Self::OdooPendingReview => "Odoo Pending Review",
             Self::Returned => "Returned",
         }
     }
@@ -113,6 +115,7 @@ impl OrderState {
             "84" => "Returned",
             "30" => "In Repair",
             "29" => "Check-in Shelf",
+            "242" => "Odoo Pending Review",
             _ => "Accepted By Odoo"
         }
     }
@@ -129,6 +132,7 @@ impl OrderState {
             "71" => Self::QcAndBurnin,
             "236" => Self::ShipToStore,
             "84" => Self::Returned,
+            "242" => Self::OdooPendingReview,
             _ => Self::AcceptedByOdoo
         }
     }
@@ -145,11 +149,12 @@ impl OrderState {
             Self::ReadyToBuild => 224,
             Self::QcAndBurnin => 71,
             Self::ShipToStore => 236,
+            Self::OdooPendingReview => 242,
             Self::Returned => 84,
         }
     }
 
-    pub const VALUES: [Self; 10] = [
+    pub const VALUES: [Self; 11] = [
         Self::AcceptedByOdoo,
         Self::Shipped,
         Self::DeliveredToStore,
@@ -159,6 +164,7 @@ impl OrderState {
         Self::ReadyToBuild,
         Self::QcAndBurnin,
         Self::ShipToStore,
+        Self::OdooPendingReview,
         Self::Returned,
     ];
 }

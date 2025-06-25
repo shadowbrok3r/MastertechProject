@@ -12,6 +12,7 @@ impl MtechServer {
             match db {
                 Ok(db) => {
                     log::info!("3");
+                    
                     if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
                         let login_mut = self.context.shared_ctx.login_mut();
                         if login_mut.is_some() {

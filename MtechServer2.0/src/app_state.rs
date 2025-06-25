@@ -172,28 +172,9 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
 }
 
 #[cfg(target_arch="wasm32")]
-pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, anyhow::Error>>) -> Result<(displays::app_state::AppState, Option<database::schema::User>), anyhow::Error> {
-
-    let cookie = wasm_cookies::get("jwt");
-    let user_cookie: Option<Result<String, wasm_cookies::FromUrlEncodingError>> = wasm_cookies::get("user");
+pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, anyhow::Error>>) -> Result<displays::app_state::AppState, anyhow::Error> {
     let mut state = displays::app_state::AppState::default();
-    let mut current_user: Option<database::schema::User> = None;
-    if let (Some(cookie), Some(Ok(usr))) = (cookie, user_cookie) {
-        use base64::{engine::general_purpose, Engine as _};
-        fn decompress_string(input: &[u8]) -> String {
-            let mut decompressed = Vec::new();
-            let mut decompressor = brotli::Decompressor::new(input, 4096);
-            std::io::copy(&mut decompressor, &mut decompressed).unwrap();
-            String::from_utf8(decompressed).unwrap()
-        }
-        
-        let decoded = general_purpose::STANDARD.decode(&usr)?;
-        let decompressed = decompress_string(&decoded);
-        
-        current_user = Some(serde_json::from_str(&decompressed)?);
-        log::info!("Deompressed data: {}\nDecoded: {}\nOriginal: {}", decompressed.len(), decoded.len(), usr.len());
-        
-        let _user = current_user.clone();
+    if let Some(cookie) = wasm_cookies::get("jwt") {
         let db_tx = db_tx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let database = database::Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
@@ -242,5 +223,5 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, any
         state = displays::app_state::AppState::Authenticated(displays::app_state::MainPages::Tasks);
     }
     // log::info!("State // user   {:?} // {:?}", state, current_user);
-    Ok((state, current_user))
+    Ok(state)
 }
