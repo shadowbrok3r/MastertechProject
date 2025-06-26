@@ -168,7 +168,7 @@ impl <'a>TerminalApp<'a> {
         // let manual_start = &mut false;
 
         // render splash screen
-        let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
+        // let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
 
         let notifications: Arc<Mutex<Vec<Notification>>> = self.render_system.notifications.clone();
         let ui_messages: Arc<Mutex<Vec<Box<dyn Message>>>> = self.render_system.ui_messages.clone();
@@ -243,9 +243,9 @@ impl <'a>TerminalApp<'a> {
             }
 
             terminal.draw(|f| {
-                if !splash_screen.is_rendered() {
-                    Self::render_splash_screen(f, &mut splash_screen);
-                } else {
+                // if !splash_screen.is_rendered() {
+                    // Self::render_splash_screen(f, &mut splash_screen);
+                // } else {
                     // Process events from egui via WebSocket
                     while let Ok(event) = event_rx.try_recv() {
                         if let Ok(mouse) = TryFrom::try_from(event.clone()) {
@@ -306,7 +306,7 @@ impl <'a>TerminalApp<'a> {
                     let _ = self.menu_bar::<B>(f, tab_layout, outer_chunks);
                     self.render_systems::<B>(f, notifications.clone(), ui_messages.clone());
                     Self::send_buffer(f, last_sent, send_interval, can_start, buffer_tx.clone());
-                }
+                // }
             })?;
         }
         Ok(())
