@@ -1,9 +1,7 @@
 use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TicketPayload, User};
-use itertools::Itertools;
-
 use crate::{get_database_users, PlatformSpawner, Spawner};
-
-use super::{row_viewer::DatabaseRowViewer, DatabaseEditor};
+use itertools::Itertools;
+use super::DatabaseEditor;
 
 impl DatabaseEditor {
     pub fn receive(&mut self) {
@@ -65,8 +63,4 @@ impl DatabaseEditor {
             }
         }
     }
-}
-
-impl DatabaseRowViewer {
-
 }

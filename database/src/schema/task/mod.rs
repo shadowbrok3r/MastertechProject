@@ -422,6 +422,18 @@ impl Store {
         }
     }
 
+    pub fn into_store_id(&self) -> i32 {
+        match self {
+            Self::RIV => 7,
+            Self::LTN => 8,
+            Self::MUR => 10,
+            Self::WJ => 11,
+            Self::SAN => 12,
+            Self::AF => 13,
+            Self::ORE => 14,
+        }
+    }
+
     pub const VALUES: [Self; 7] = [
         Self::RIV,
         Self::LTN,

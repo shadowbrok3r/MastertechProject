@@ -46,7 +46,9 @@ pub trait EmployeeHelper {
     /// Get Employee from ID
     async fn get_employee_from_id(&mut self, id_employee: &str) -> Result<Employee, Error>;
     /// Convert an order into a PrestashopPayload
-    async fn to_prestashop_payload(service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> ;
+    async fn to_prestashop_payload(service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error>;
+    /// get employees in store
+    async fn get_employees_in_store(id_store: &str) -> Result<Vec<Employee>, Error>;
 }
 
 
@@ -439,6 +441,29 @@ impl EmployeeHelper for Employee {
                 address
             }
         )
+    }
+
+    async fn get_employees_in_store(id_store: &str) -> Result<Vec<Employee>, Error> {
+        let api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+        query.insert("filter[id_store]", id_store);
+        query.insert("filter[active]", "1");
+
+        let employees: Vec<PrestashopId> = api_call
+            .request_resources_wasm("employees", query.clone())
+            .await?;
+
+        let mut employees_vec = Vec::new();
+
+        for employee in employees.iter() {
+            let employee: prestashop_schema::Employee = api_call
+                .request_subresources_by_id_wasm("employees", "employee", &employee.id)
+                .await?;
+            
+            employees_vec.push(employee);
+        }
+
+        Ok(employees_vec)
     }
 }
 

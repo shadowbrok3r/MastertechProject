@@ -389,7 +389,7 @@ impl ChatView {
             ScrollArea::vertical()
                 .max_height(f32::INFINITY)// dont ask me to explain why 
                 .max_width(ui.available_width()) // this works over f32::infinity
-                .auto_shrink(false)
+                // .auto_shrink(false)
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height()/1.1);

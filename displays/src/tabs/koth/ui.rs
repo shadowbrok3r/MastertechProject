@@ -1,76 +1,104 @@
-use eframe::egui::{Button, CentralPanel, Color32, ComboBox, FontId, Grid, Hyperlink, Id, RichText, ScrollArea, TopBottomPanel, Ui, Vec2, Widget};
-use database::schema::{helper_traits::EmployeeHelper, prestashop::{generate_orders_report, get_order_payments, Employee, Order, OrderPayment, OrderState, PayPeriod}, Store, User};
-use crate::{get_current_user_from_auth, modals::tabs::return_colors, PlatformSpawner, Spawner};
-use crate::tabs::task_audit::row_viewer::BASE_URL;
-use crossbeam::channel::{Receiver, Sender};
-use chrono::NaiveDateTime;
-use itertools::Itertools;
-use std::f32;
+use database::schema::User;
+use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget};
+use egui_data_table::Renderer;
+use super::{row_viewer::DatabaseTableSelection, DatabaseEditor};
 
-pub struct Koth {
-    response_tx: Sender<Vec<Order>>,
-    response_rx: Receiver<Vec<Order>>,
-    employee_tx: Sender<Vec<Employee>>,
-    employee_rx: Receiver<Vec<Employee>>,
-    order_payment_tx: Sender<OrderPayment>,
-    order_payment_rx: Receiver<OrderPayment>,
-    orders: Vec<Order>,
-    employees: Vec<Employee>,
-    order_state: OrderState,
-    koth_selection: KothSelection,
-    pay_period: PayPeriod,
-    user: User,
-    total: f64,
-    total_w_tax: f64,
-    payments: Vec<OrderPayment>,
-    pulling_all_orders: bool,
-}
+impl DatabaseEditor {
+    pub fn ui(&mut self, ui: &mut Ui, _current_user: Option<User>) {
+        self.receive();
+        TopBottomPanel::top("Database Editor Top Panel")
+            .exact_height(30.)
+            .show_inside(ui, |ui| 
+        {
+            ui.horizontal_top(|ui| {
+                TextEdit::singleline(&mut self.database_viewer.filter)
+                    .desired_width(150.)
+                    .hint_text(" Search")
+                    .ui(ui);
+                
+                let selected_text = self.database_viewer.selected_table.as_str().to_string();
+                let selected = &mut self.database_viewer.selected_table;
+                let current_selection = selected.clone();
 
-#[derive(Default, PartialEq)]
-enum KothSelection {
-    #[default]
-    Me,
-    AllEmployees
-}
+                ui.add_space(5.);
 
-impl KothSelection {
-    fn as_str(&self) -> &str {
-        match self {
-            KothSelection::Me => "Me",
-            KothSelection::AllEmployees => "All Employees",
-        }
+                ComboBox::new("table selection", "")
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            selected, 
+                            DatabaseTableSelection::Task, 
+                            "Tasks"
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::Service,
+                            "Services",
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::Customer,
+                            "Customers",
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::Computer,
+                            "Computers",
+                        );
+                        ui.selectable_value(
+                            selected, 
+                            DatabaseTableSelection::User, 
+                            "Users"
+                        );
+                        // ui.selectable_value(
+                        //     &mut selected,
+                        //     DatabaseTable::TaskNote,
+                        //     "Task Notes",
+                        // );
+                        // ui.selectable_value(
+                        //     &mut selected,
+                        //     DatabaseTable::ConnectedClient,
+                        //     "Connected Clients",
+                        // );
+                    });
+
+                if current_selection != *selected {
+                    let _ = self.data_selection_tx.try_send(selected.clone());
+                }
+
+                ui.add_space(5.);
+
+                if ui.button("Get Data").clicked() {
+                    self.start_idx = 0;
+                    let _ = self.data_selection_tx.try_send(self.database_viewer.selected_table.clone());
+                }
+
+                ui.add_space(5.);
+
+                if ui.button("Load +200").clicked() {
+                    self.start_idx += 200;
+                    let _ = self.data_selection_tx.try_send(self.database_viewer.selected_table.clone());
+                }
+
+            });
+        });
+
+        CentralPanel::default()
+            .show_inside(ui, |ui| 
+        {
+            if let Some(table) = self.table_map.get_mut(&self.database_viewer.selected_table.as_str().to_string()) {
+                Renderer::new(table, &mut self.database_viewer)
+                    // .with_table_row_height(80.)
+                    .with_style_modify(|s| {
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                        
+                    })
+                    .ui(ui);
+            }
+        });  
     }
-}
 
-impl Default for Koth {
-    fn default() -> Self {
-        let (response_tx, response_rx) = crossbeam::channel::unbounded();
-        let (employee_tx, employee_rx) = crossbeam::channel::unbounded();
-        let (order_payment_tx, order_payment_rx) = crossbeam::channel::unbounded();
-        
-        Self {
-            response_tx, response_rx,
-            employee_tx, employee_rx,
-            order_payment_tx, order_payment_rx,
-            payments: Vec::new(),
-            employees: Vec::new(),
-            orders: Default::default(),
-            order_state: Default::default(),
-            pay_period: Default::default(),
-            koth_selection: KothSelection::default(),
-            user: if let Some(usr) = get_current_user_from_auth() {
-                usr.clone()
-            } else {
-                User::default()
-            },
-            total: 0.0,
-            total_w_tax: 0.0,
-            pulling_all_orders: false,
-        }
-    }
-}
-
-impl Koth {
     pub fn ui(&mut self, ui: &mut Ui) {
         TopBottomPanel::top("KothTopPanel")
         .show_inside(ui, |ui| {
@@ -148,22 +176,6 @@ impl Koth {
                         );
                     });
 
-                ComboBox::new("Koth PayPeriod", "")
-                    .selected_text(self.koth_selection.as_str())
-                    .show_ui(ui, |ui| {
-                        let selected = &mut self.koth_selection;
-                        ui.selectable_value(
-                            selected, 
-                            KothSelection::Me,
-                            KothSelection::Me.as_str()
-                        );
-                        ui.selectable_value(
-                            selected, 
-                            KothSelection::AllEmployees,
-                            KothSelection::AllEmployees.as_str()
-                        );
-                    });
-
                 if Button::new("Pull KOTH").ui(ui).clicked() {
                     self.pulling_all_orders = false;
                     self.total = 0.0;
@@ -201,54 +213,36 @@ impl Koth {
                     self.total = 0.0;
                     self.total_w_tax = 0.0;
                     self.orders = vec![];
-                    
-                    match self.koth_selection {
-                        KothSelection::Me => {
-                            let pay_period = self.pay_period.clone();
-                            let id = if let Some(id) = self.user.get_employee_id() {
-                                id
-                            } else { 
-                                self.user = if let Some(usr) = get_current_user_from_auth() {
-                                    usr.clone()
-                                } else {
-                                    User::default()
-                                };
-                                self.user.get_employee_id().unwrap_or(0)
-                            };
+                    let pay_period = self.pay_period.clone();
+                    let id = if let Some(id) = self.user.get_employee_id() {
+                        id
+                    } else { 
+                        self.user = if let Some(usr) = get_current_user_from_auth() {
+                            usr.clone()
+                        } else {
+                            User::default()
+                        };
+                        self.user.get_employee_id().unwrap_or(0)
+                    };
 
-                            let id_employee = id.to_string().clone();
-                            let tx = self.response_tx.clone();
-                            PlatformSpawner::spawn(async move {
-                                if id != 0 {
-                                    for state in OrderState::VALUES.iter() {
-                                        let period = pay_period.clone();
-                                        if *state != OrderState::Returned {
-                                            let state_id = state.id().to_string();
-                                            let res = generate_orders_report(period, &state_id, &id_employee).await;
-                                            log::info!("Result: {res:?}");
-                                            match res {
-                                                Ok(orders) => {let _ = tx.try_send(orders);},
-                                                Err(e) => log::error!("Error getting orders for koth: {e:?}"),
-                                            }
-                                        }
+                    let id_employee = id.to_string().clone();
+                    let tx = self.response_tx.clone();
+                    PlatformSpawner::spawn(async move {
+                        if id != 0 {
+                            for state in OrderState::VALUES.iter() {
+                                let period = pay_period.clone();
+                                if *state != OrderState::Returned {
+                                    let state_id = state.id().to_string();
+                                    let res = generate_orders_report(period, &state_id, &id_employee).await;
+                                    log::info!("Result: {res:?}");
+                                    match res {
+                                        Ok(orders) => {let _ = tx.try_send(orders);},
+                                        Err(e) => log::error!("Error getting orders for koth: {e:?}"),
                                     }
                                 }
-                            });
-                        },
-                        KothSelection::AllEmployees => {
-                            let pay_period = self.pay_period.clone();
-                            let tx = self.response_tx.clone();
-                            let emp_tx = self.employee_tx.clone();
-                            PlatformSpawner::spawn(async move {
-                                for store in Store::VALUES {
-                                    match Employee::get_employees_in_store(&store.into_store_id().to_string()).await {
-                                        Ok(employees) => { let _ = emp_tx.try_send(employees); },
-                                        Err(e) => log::error!("Error getting employee id's: {e:?}"),
-                                    }
-                                }
-                            });
-                        },
-                    }
+                            }
+                        }
+                    });
                 }
             });
         });
@@ -454,236 +448,4 @@ impl Koth {
             });
         });
     }
-
-    pub fn receive(&mut self) {
-        if let Ok(orders) = self.response_rx.try_recv() {
-            match self.koth_selection {
-                KothSelection::Me => {
-                    let sort = |a: &Order, b: &Order| {
-                        let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                        let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                        b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
-                    };
-
-                    let mut new_orders: Vec<Order> = orders
-                        .clone()
-                        .iter()
-                        .filter(|o| !o.id.is_empty())
-                        .sorted_by(|a, b| sort(a, b))
-                        .cloned()
-                        .collect();
-
-                    // Process each order
-                    for order in new_orders.iter() {
-                        let total_paid_tax_excl: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                        let total_paid_tax: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
-
-                        if total_paid_tax_excl > 0.0 {
-                            self.total += total_paid_tax_excl;
-                        }
-                        if total_paid_tax > 0.0 {
-                            self.total_w_tax += total_paid_tax;
-                        }
-
-                        let tx = self.order_payment_tx.clone();
-                        let order = order.clone();
-                        PlatformSpawner::spawn(async move {
-                            match get_order_payments(&order.id).await {
-                                Ok(payment) => { let _ = tx.try_send(payment); },
-                                Err(e) => log::error!("Error getting payment detials: {e:?}"),
-                            }
-                        });
-                    }
-
-                    if self.pulling_all_orders {
-                        self.orders.append(&mut new_orders);
-                        self.orders.sort_by(sort);
-                    } else {
-                        self.orders = new_orders;
-                    }
-                },
-                KothSelection::AllEmployees => {
-                                let sort = |a: &Order, b: &Order| {
-                let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
-            };
-
-            let mut new_orders: Vec<Order> = orders
-                .clone()
-                .iter()
-                .filter(|o| !o.id.is_empty())
-                .sorted_by(|a, b| sort(a, b))
-                .cloned()
-                .collect();
-
-            // Process each order
-            for order in new_orders.iter() {
-                let total_paid_tax_excl: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                let total_paid_tax: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
-
-                if total_paid_tax_excl > 0.0 {
-                    self.total += total_paid_tax_excl;
-                }
-                if total_paid_tax > 0.0 {
-                    self.total_w_tax += total_paid_tax;
-                }
-
-                let tx = self.order_payment_tx.clone();
-                let order = order.clone();
-                PlatformSpawner::spawn(async move {
-                    match get_order_payments(&order.id).await {
-                        Ok(payment) => { let _ = tx.try_send(payment); },
-                        Err(e) => log::error!("Error getting payment detials: {e:?}"),
-                    }
-                });
-            }
-
-            if self.pulling_all_orders {
-                self.orders.append(&mut new_orders);
-                self.orders.sort_by(sort);
-            } else {
-                self.orders = new_orders;
-            }
-                },
-            }
-        }
-
-        if let Ok(payment) = self.order_payment_rx.try_recv() {
-            self.payments.push(payment);
-        }
-    
-        if let Ok(employees) = self.employee_rx.try_recv() {
-            for employee in employees.iter() {
-                let id_employee = &employee.id;
-                if id_employee != "0" {
-                    for state in OrderState::VALUES.iter() {
-                        let period = pay_period.clone();
-                        if *state != OrderState::Returned {
-                            let state_id = state.id().to_string();
-                            let res = generate_orders_report(period, &state_id, &id_employee).await;
-                            log::info!("Result: {res:?}");
-                            match res {
-                                Ok(orders) => {let _ = tx.try_send(orders);},
-                                Err(e) => log::error!("Error getting orders for koth: {e:?}"),
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
-
-
-
-/*
-use crate::{get_current_user_from_auth, tabs::koth::{data::KothTableData, row_viewer::KothRowViewer}, PlatformSpawner, Spawner};
-use database::schema::{prestashop::{get_order_payments, Order, OrderPayment, OrderState, PayPeriod}, User};
-use crossbeam::channel::{Receiver, Sender};
-use egui_data_table::DataTable;
-use itertools::Itertools;
-
-pub mod row_viewer;
-pub mod ui;
-pub mod data;
-pub mod codec;
-
-pub struct Koth {
-    koth_viewer: KothRowViewer,
-    koth_table: DataTable<KothTableData>,
-    order_state: OrderState,
-    pay_period: PayPeriod,
-    payments: Vec<OrderPayment>,
-    pub response_tx: Sender<Vec<Order>>,
-    pub response_rx: Receiver<Vec<Order>>,
-    pub order_payment_tx: Sender<OrderPayment>,
-    pub order_payment_rx: Receiver<OrderPayment>,
-    pub orders: Vec<Order>,
-    pub user: User,
-    pub total: f64,
-    pub total_w_tax: f64,
-    pulling_all_orders: bool,
-}
-
-impl Default for Koth {
-    fn default() -> Self {
-        let (response_tx, response_rx) = crossbeam::channel::unbounded();
-        let (order_payment_tx, order_payment_rx) = crossbeam::channel::unbounded();
-
-        Self {
-            koth_viewer: KothRowViewer::default(),
-            koth_table: DataTable::new(),
-            payments: Vec::new(),
-            order_state: Default::default(),
-            pay_period: Default::default(),
-            pulling_all_orders: false,
-            response_tx, response_rx,
-            order_payment_tx, order_payment_rx,
-            orders: Default::default(),
-            user: if let Some(usr) = get_current_user_from_auth() {
-                usr.clone()
-            } else {
-                User::default()
-            },
-            total: 0.0,
-            total_w_tax: 0.0,
-        }
-    }
-}
-
-impl Koth {
-    pub fn receive(&mut self) {
-        if let Ok(orders) = self.response_rx.try_recv() {
-
-            let sort = |a: &Order, b: &Order| {
-                let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
-            };
-
-            let mut new_orders: Vec<Order> = orders
-                .clone()
-                .iter()
-                .filter(|o| !o.id.is_empty())
-                .sorted_by(|a, b| sort(a, b))
-                .cloned()
-                .collect();
-
-            // Process each order
-            for order in new_orders.iter() {
-                let total_paid_tax_excl: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                let total_paid_tax: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
-
-                if total_paid_tax_excl > 0.0 {
-                    self.total += total_paid_tax_excl;
-                }
-                if total_paid_tax > 0.0 {
-                    self.total_w_tax += total_paid_tax;
-                }
-
-                let tx = self.order_payment_tx.clone();
-                let order = order.clone();
-                PlatformSpawner::spawn(async move {
-                    match get_order_payments(&order.id).await {
-                        Ok(payment) => { let _ = tx.try_send(payment); },
-                        Err(e) => log::error!("Error getting payment detials: {e:?}"),
-                    }
-                });
-            }
-
-            if self.pulling_all_orders {
-                self.orders.append(&mut new_orders);
-                self.orders.sort_by(sort);
-            } else {
-                self.orders = new_orders;
-            }
-        }
-
-        if let Ok(payment) = self.order_payment_rx.try_recv() {
-            self.payments.push(payment);
-        }
-    }
-}
-
-*/
