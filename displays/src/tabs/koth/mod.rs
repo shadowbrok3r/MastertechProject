@@ -5,7 +5,7 @@ use crate::tabs::task_audit::row_viewer::BASE_URL;
 use crossbeam::channel::{Receiver, Sender};
 use chrono::NaiveDateTime;
 use itertools::Itertools;
-use std::f32;
+use std::{collections::HashMap, f32};
 
 pub struct Koth {
     response_tx: Sender<Vec<Order>>,
@@ -14,7 +14,8 @@ pub struct Koth {
     employee_rx: Receiver<Vec<Employee>>,
     order_payment_tx: Sender<OrderPayment>,
     order_payment_rx: Receiver<OrderPayment>,
-    orders: Vec<Order>,
+    orders: HashMap<String, Vec<Order>>,
+    payments: HashMap<String, Vec<OrderPayment>>,
     employees: Vec<Employee>,
     order_state: OrderState,
     koth_selection: KothSelection,
@@ -22,7 +23,6 @@ pub struct Koth {
     user: User,
     total: f64,
     total_w_tax: f64,
-    payments: Vec<OrderPayment>,
     pulling_all_orders: bool,
 }
 
@@ -52,9 +52,9 @@ impl Default for Koth {
             response_tx, response_rx,
             employee_tx, employee_rx,
             order_payment_tx, order_payment_rx,
-            payments: Vec::new(),
             employees: Vec::new(),
             orders: Default::default(),
+            payments: Default::default(),
             order_state: Default::default(),
             pay_period: Default::default(),
             koth_selection: KothSelection::default(),
@@ -148,7 +148,7 @@ impl Koth {
                         );
                     });
 
-                ComboBox::new("Koth PayPeriod", "")
+                ComboBox::new("Koth Selection", "")
                     .selected_text(self.koth_selection.as_str())
                     .show_ui(ui, |ui| {
                         let selected = &mut self.koth_selection;
@@ -168,7 +168,7 @@ impl Koth {
                     self.pulling_all_orders = false;
                     self.total = 0.0;
                     self.total_w_tax = 0.0;
-                    self.orders = vec![];
+                    self.orders = HashMap::new();
                     let pay_period = self.pay_period.clone();
                     let state = self.order_state.clone();
                     let id = if let Some(id) = self.user.get_employee_id() {
@@ -200,7 +200,7 @@ impl Koth {
                     self.pulling_all_orders = true;
                     self.total = 0.0;
                     self.total_w_tax = 0.0;
-                    self.orders = vec![];
+                    self.orders = HashMap::new();
                     
                     match self.koth_selection {
                         KothSelection::Me => {
@@ -236,8 +236,7 @@ impl Koth {
                             });
                         },
                         KothSelection::AllEmployees => {
-                            let pay_period = self.pay_period.clone();
-                            let tx = self.response_tx.clone();
+                            self.employees.clear();
                             let emp_tx = self.employee_tx.clone();
                             PlatformSpawner::spawn(async move {
                                 for store in Store::VALUES {
@@ -265,193 +264,369 @@ impl Koth {
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.group(|ui| {
-                    Grid::new(Id::new("Orders Grid"))
-                    .spacing(Vec2::new(2., 4.))
-                    .max_col_width(ui.available_width() / 9.)
-                    .min_col_width(ui.available_width() / 9.)
-                    .with_row_color(|num, style| return_colors(num, style))
-                    .show(ui, |ui| {
+                    match self.koth_selection {
+                        KothSelection::Me => self.current_employee_grid(ui),
+                        KothSelection::AllEmployees => self.all_employees_grid(ui),
+                    }
+                });
+            });
+        });
+    }
 
-                        let date = match self.order_state {
-                            OrderState::AcceptedByOdoo if !self.pulling_all_orders => "Delivery Date",
-                            _ => "Date Updated"
-                        };
+    pub fn current_employee_grid(&mut self, ui: &mut Ui) {
+        Grid::new(Id::new("Orders Grid"))
+        .spacing(Vec2::new(2., 4.))
+        .max_col_width(ui.available_width() / 9.)
+        .min_col_width(ui.available_width() / 9.)
+        .with_row_color(|num, style| return_colors(num, style))
+        .show(ui, |ui| {
 
-                        ui.style_mut().override_font_id = Some(FontId::proportional(15.));
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("#").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("ID").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(date).underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Order State").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Product").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Payment Type").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Warranty").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Paid").underline());
-                        ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Without Tax").underline());
-                        ui.end_row();
+            let date = match self.order_state {
+                OrderState::AcceptedByOdoo if !self.pulling_all_orders => "Delivery Date",
+                _ => "Date Updated"
+            };
 
-                        let total_laptops = self
-                            .orders
-                            .iter()
-                            .filter(|o| o.id_order_type != "2")
-                            .flat_map(|o| o.associations.order_rows.iter())
-                            .filter(|a| a.product_reference.to_lowercase().starts_with("lap/"))
-                            .count();
+            ui.style_mut().override_font_id = Some(FontId::proportional(15.));
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("#").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("ID").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(date).underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Order State").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Product").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Payment Type").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Warranty").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Paid").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Without Tax").underline());
+            ui.end_row();
 
+            let my_emp_id = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
+            let my_orders = self
+                .orders
+                .iter()
+                .flat_map(|(_, orders)| orders)
+                .filter(|order|
+                    order.id_employee_sales_rep == my_emp_id
+                    || order.id_employee_split_rep == my_emp_id
+                )
+                .collect::<Vec<&Order>>();
 
-                        // Ticket count, how many services tech's are completing
+            let my_payments = self
+                .payments
+                .iter()
+                .filter(|(id, _)| **id == my_emp_id)
+                .flat_map(|(_, payments)| payments)
+                .collect::<Vec<&OrderPayment>>();
 
-                        let total_desktops = self
-                            .orders
-                            .iter()
-                            .filter(|o| o.id_order_type != "2")
-                            .flat_map(|o| o.associations.order_rows.iter())
-                            .filter_map(|o| {
-                                if !o.product_reference.to_lowercase().starts_with("lap/") 
-                                    && (
-                                        o.product_reference.to_lowercase().starts_with("case/")
-                                        || o.product_reference.to_lowercase().starts_with("bsd/")
-                                        || o.product_reference.to_lowercase().starts_with("rci/")
-                                        || o.product_reference.to_lowercase().starts_with("r2r/")
-                                        || o.product_reference.to_lowercase().starts_with("rtr/")
-                                    )
-                                    && !o.product_reference.to_lowercase().starts_with("case/15")
-                                    && !o.product_reference.to_lowercase().starts_with("case/17")
-                                {
-                                    Some(o.product_reference.clone())
-                                } else { 
-                                    None 
-                                }
-                            })
-                            .count();
+            let total_laptops = my_orders
+                .iter()
+                .filter(|o| o.id_order_type != "2")
+                .flat_map(|o| o.associations.order_rows.iter())
+                .filter(|a| a.product_reference.to_lowercase().starts_with("lap/"))
+                .count();
 
-                        
-                        let total_financed = self
+            // Ticket count, how many services tech's are completing
+
+            let total_desktops = my_orders
+                .iter()
+                .filter(|o| o.id_order_type != "2")
+                .flat_map(|o| o.associations.order_rows.iter())
+                .filter_map(|o| {
+                    if !o.product_reference.to_lowercase().starts_with("lap/") 
+                        && (
+                            o.product_reference.to_lowercase().starts_with("case/")
+                            || o.product_reference.to_lowercase().starts_with("bsd/")
+                            || o.product_reference.to_lowercase().starts_with("rci/")
+                            || o.product_reference.to_lowercase().starts_with("r2r/")
+                            || o.product_reference.to_lowercase().starts_with("rtr/")
+                        )
+                        && !o.product_reference.to_lowercase().starts_with("case/15")
+                        && !o.product_reference.to_lowercase().starts_with("case/17")
+                    {
+                        Some(o.product_reference.clone())
+                    } else { 
+                        None 
+                    }
+                })
+                .count();
+
+            let total_financed = my_orders
+            .iter()
+            .filter(|o| {
+                my_payments
+                .iter()
+                .any(|p| p.payment_method == "Financing Payment" && p.id_order == o.id)
+            })
+            .map(|o| o.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0))
+            .sum::<f64>();
+        
+            let ar_financing_ratio = if total_financed > 0.0 && self.total > 0.0 { self.total / total_financed } else { 0.0 };
+            let total_sales = total_desktops + total_laptops;
+            let total_warranties = &mut 0;
+            let total_orders = self.orders.iter().count();
+
+            for (i, order) in my_orders.iter().enumerate() {
+                let order_id = order.id.clone();
+                let state = OrderState::state_from_id_str(&order.current_state);
+                let delivery_date = match state {
+                    OrderState::AcceptedByOdoo => order.delivery_date.clone(),
+                    _ => order.date_upd.clone()
+                };
+                let total_paid_num: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
+
+                let total_paid = if total_paid_num == 0.0 {
+                    "$ 0.0".to_string()
+                } else {
+                    format!("$ {:.2}", total_paid_num)
+                };
+                let total_paid_tax_excl_num: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+                let total_paid_tax_excl = if total_paid_tax_excl_num == 0.0 {
+                    "$ 0.0".to_string()
+                } else {
+                    format!("$ {:.2}", total_paid_tax_excl_num)
+                };
+
+                let computer: String = order.associations.order_rows
+                .iter()
+                .filter_map(|o| {
+                    if o.product_reference.to_lowercase().starts_with("lap") 
+                        || o.product_reference.to_lowercase().starts_with("case/")
+                        || o.product_reference.to_lowercase().starts_with("bsd/")
+                        || o.product_reference.to_lowercase().starts_with("rci/")
+                        || o.product_reference.to_lowercase().starts_with("r2r/")
+                        || o.product_reference.to_lowercase().starts_with("rtr/")
+                        && !o.product_reference.to_lowercase().starts_with("case/15")
+                        && ! o.product_reference.to_lowercase().starts_with("case/17")
+                    {
+                        Some(o.product_reference.clone())
+                    } else { 
+                        None 
+                    }
+                })
+                .next()
+                .unwrap_or_else(|| {
+                    // Fall back to the first product_reference if no matches
+                    order
+                        .associations
+                        .order_rows
+                        .first()
+                        .map(|o| o.product_reference.clone())
+                        .unwrap_or_default()
+                });
+
+                let warranty = order.associations.order_rows
+                .iter()
+                .filter_map(|o| {
+                    if o.product_reference.to_lowercase().starts_with("wty/")
+                    && !o.product_price.starts_with("0.0")
+                    {
+                        Some(o.product_reference.clone())
+                    } else { 
+                        None 
+                    }
+                })
+                .next()
+                .unwrap_or_else(|| "-".to_string());
+
+                if warranty.as_str() != "-" {
+                    *total_warranties += 1;
+                }
+
+                let payment = my_payments
+                .iter()
+                .find(|p| p.id_order == order.id)
+                .map(|p| p.payment_method.clone())
+                .unwrap_or("-".to_string());
+
+                ui.label(i.to_string());
+                Hyperlink::from_label_and_url(
+                    RichText::new(order_id.clone()).underline().strong().color(Color32::LIGHT_RED), 
+                    format!("{BASE_URL}{}", order_id)
+                )
+                .open_in_new_tab(true)
+                .ui(ui);
+                ui.label(
+                    NaiveDateTime::parse_from_str(&delivery_date, "%Y-%m-%d %H:%M:%S")
+                    .map(|dt| dt.format("%m / %d / %Y").to_string())
+                    .unwrap_or_else(|_| String::new())
+                );
+                ui.label(OrderState::from_id_str(&order.current_state).to_string());
+                ui.label(computer);
+                ui.label(payment);
+                ui.label(warranty);
+                ui.label(total_paid);
+                ui.label(total_paid_tax_excl);
+                ui.end_row();
+            }
+            
+            for _ in 1..9 { ui.label(""); }
+            ui.end_row();
+
+            ui.label(format!("Sales: {total_sales} / Orders: {total_orders}"));
+            ui.label("");
+            ui.label("");
+            ui.label("");
+            ui.label(format!("Laptops: {total_laptops} / Desktops: {total_desktops}"));
+            ui.colored_label(ui.style().visuals.error_fg_color, format!("Finance ratio: {ar_financing_ratio:.2}%"));
+            ui.colored_label(ui.style().visuals.error_fg_color, format!("WTY's: {total_warranties} out of {total_sales} sales"));
+            ui.colored_label(ui.style().visuals.warn_fg_color, format!("$ {:.2}", self.total_w_tax));
+            ui.colored_label(ui.style().visuals.warn_fg_color, format!("REVENUE: $ {:.2}", self.total));
+            ui.end_row();
+        });
+    }
+
+    pub fn all_employees_grid(&mut self, ui: &mut Ui) {
+        Grid::new(Id::new("All Employees Orders Grid"))
+        .spacing(Vec2::new(2., 4.))
+        .max_col_width(ui.available_width() / 6.)
+        .min_col_width(ui.available_width() / 6.)
+        .with_row_color(|num, style| return_colors(num, style))
+        .show(ui, |ui| {
+            ui.style_mut().override_font_id = Some(FontId::proportional(15.));
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Employee Name").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Total Sales / Total Orders").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Laptops / Desktops").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Finance ratio").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Warranty Ratio").underline());
+            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new("Revenue $").underline());
+            ui.end_row();
+
+            // Collect employee data with metrics
+            let mut employee_data: Vec<(&Employee, usize, usize, usize, f64, usize, f64)> = self
+                .employees
+                .iter()
+                .map(|employee| {
+                    let emp_id = &employee.id;
+
+                    let orders = self
                         .orders
                         .iter()
-                        .filter(|o| {
-                            self.payments
-                            .iter()
-                            .any(|p| p.payment_method == "Financing Payment" && p.id_order == o.id)
-                        })
-                        .map(|o| o.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0))
-                        .sum::<f64>();
-                    
-                        let ar_financing_ratio = if total_financed > 0.0 && self.total > 0.0 { self.total / total_financed } else { 0.0 };
-                        let total_sales = total_desktops + total_laptops;
-                        let total_warranties = &mut 0;
-                        let total_orders = self.orders.iter().count();
+                        .flat_map(|(_, orders)| orders)
+                        .filter(|order|
+                            order.id_employee_sales_rep == *emp_id
+                            || order.id_employee_split_rep == *emp_id
+                        )
+                        .collect::<Vec<&Order>>();
 
-                        for (i, order) in self.orders.iter().enumerate() {
-                            let order_id = order.id.clone();
-                            let state = OrderState::state_from_id_str(&order.current_state);
-                            let delivery_date = match state {
-                                OrderState::AcceptedByOdoo => order.delivery_date.clone(),
-                                _ => order.date_upd.clone()
-                            };
-                            let total_paid_num: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
+                    let emp_payments = self
+                        .payments
+                        .iter()
+                        .filter(|(id, _)| **id == *emp_id)
+                        .flat_map(|(_, payments)| payments)
+                        .cloned()
+                        .collect::<Vec<OrderPayment>>();
 
-                            let total_paid = if total_paid_num == 0.0 {
-                                "$ 0.0".to_string()
-                            } else {
-                                format!("$ {:.2}", total_paid_num)
-                            };
-                            let total_paid_tax_excl_num: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                            let total_paid_tax_excl = if total_paid_tax_excl_num == 0.0 {
-                                "$ 0.0".to_string()
-                            } else {
-                                format!("$ {:.2}", total_paid_tax_excl_num)
-                            };
+                    let total_laptops = orders
+                        .iter()
+                        .filter(|o| o.id_order_type != "2")
+                        .flat_map(|o| o.associations.order_rows.iter())
+                        .filter(|a| a.product_reference.to_lowercase().starts_with("lap/"))
+                        .count();
 
-                            let computer: String = order.associations.order_rows
-                            .iter()
-                            .filter_map(|o| {
-                                if o.product_reference.to_lowercase().starts_with("lap") 
-                                    || o.product_reference.to_lowercase().starts_with("case/")
+                    let total_desktops = orders
+                        .iter()
+                        .filter(|o| o.id_order_type != "2")
+                        .flat_map(|o| o.associations.order_rows.iter())
+                        .filter_map(|o| {
+                            if !o.product_reference.to_lowercase().starts_with("lap/")
+                                && (
+                                    o.product_reference.to_lowercase().starts_with("case/")
                                     || o.product_reference.to_lowercase().starts_with("bsd/")
                                     || o.product_reference.to_lowercase().starts_with("rci/")
                                     || o.product_reference.to_lowercase().starts_with("r2r/")
                                     || o.product_reference.to_lowercase().starts_with("rtr/")
-                                    && !o.product_reference.to_lowercase().starts_with("case/15")
-                                    && ! o.product_reference.to_lowercase().starts_with("case/17")
-                                {
-                                    Some(o.product_reference.clone())
-                                } else { 
-                                    None 
-                                }
-                            })
-                            .next()
-                            .unwrap_or_else(|| {
-                                // Fall back to the first product_reference if no matches
-                                order
-                                    .associations
-                                    .order_rows
-                                    .first()
-                                    .map(|o| o.product_reference.clone())
-                                    .unwrap_or_default()
-                            });
+                                )
+                                && !o.product_reference.to_lowercase().starts_with("case/15")
+                                && !o.product_reference.to_lowercase().starts_with("case/17")
+                            {
+                                Some(o.product_reference.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .count();
 
-                            let warranty = order.associations.order_rows
+                    let total_sales = total_desktops + total_laptops;
+
+                    let total_financed = orders
+                        .iter()
+                        .filter(|o| {
+                            emp_payments
+                                .iter()
+                                .any(|p| p.payment_method == "Financing Payment" && p.id_order == o.id)
+                        })
+                        .map(|o| o.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0))
+                        .sum::<f64>();
+
+                    let mut total = 0.0;
+                    let mut total_warranties = 0;
+                    // let total_orders = orders.iter().count();
+
+                    for order in orders {
+                        let total_paid_tax_excl = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+                        if total_paid_tax_excl > 0.0 {
+                            total += total_paid_tax_excl;
+                        }
+
+                        let warranty = order.associations.order_rows
                             .iter()
                             .filter_map(|o| {
                                 if o.product_reference.to_lowercase().starts_with("wty/")
-                                && !o.product_price.starts_with("0.0")
+                                    && !o.product_price.starts_with("0.0")
                                 {
                                     Some(o.product_reference.clone())
-                                } else { 
-                                    None 
+                                } else {
+                                    None
                                 }
                             })
                             .next()
                             .unwrap_or_else(|| "-".to_string());
 
-                            if warranty.as_str() != "-" {
-                                *total_warranties += 1;
-                            }
-
-                            let payment = self
-                            .payments
-                            .iter()
-                            .find(|p| p.id_order == order.id)
-                            .map(|p| p.payment_method.clone())
-                            .unwrap_or("-".to_string());
-
-                            ui.label(i.to_string());
-                            Hyperlink::from_label_and_url(
-                                RichText::new(order_id.clone()).underline().strong().color(Color32::LIGHT_RED), 
-                                format!("{BASE_URL}{}", order_id)
-                            )
-                            .open_in_new_tab(true)
-                            .ui(ui);
-                            ui.label(
-                                NaiveDateTime::parse_from_str(&delivery_date, "%Y-%m-%d %H:%M:%S")
-                                .map(|dt| dt.format("%m / %d / %Y").to_string())
-                                .unwrap_or_else(|_| String::new())
-                            );
-                            ui.label(OrderState::from_id_str(&order.current_state).to_string());
-                            ui.label(computer);
-                            ui.label(payment);
-                            ui.label(warranty);
-                            ui.label(total_paid);
-                            ui.label(total_paid_tax_excl);
-                            ui.end_row();
+                        if warranty.as_str() != "-" {
+                            total_warranties += 1;
                         }
-                        
-                        for _ in 1..9 { ui.label(""); }
-                        ui.end_row();
+                    }
 
-                        ui.label(format!("Sales: {total_sales} / Orders: {total_orders}"));
-                        ui.label("");
-                        ui.label("");
-                        ui.label("");
-                        ui.label(format!("Laptops: {total_laptops} / Desktops: {total_desktops}"));
-                        ui.colored_label(ui.style().visuals.error_fg_color, format!("Finance ratio: {ar_financing_ratio:.2}%"));
-                        ui.colored_label(ui.style().visuals.error_fg_color, format!("WTY's: {total_warranties} out of {total_sales} sales"));
-                        ui.colored_label(ui.style().visuals.warn_fg_color, format!("$ {:.2}", self.total_w_tax));
-                        ui.colored_label(ui.style().visuals.warn_fg_color, format!("REVENUE: $ {:.2}", self.total));
-                        ui.end_row();
-                    });
-                });
+                    let ar_financing_ratio = if total_financed > 0.0 && total > 0.0 {
+                        total / total_financed
+                    } else {
+                        0.0
+                    };
+
+                    (
+                        employee,
+                        total_sales,
+                        total_laptops,
+                        total_desktops,
+                        ar_financing_ratio,
+                        total_warranties,
+                        total,
+                    )
+                })
+                .filter(|(_, total_sales, _, _, _, _, _)| *total_sales > 0) // Filter out zero sales
+                .collect();
+
+            // Sort by revenue (total) in descending order
+            employee_data.sort_by(|a, b| {
+                b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal)
             });
+
+            // Render sorted employees
+            for (employee, total_sales, total_laptops, total_desktops, ar_financing_ratio, total_warranties, total) in employee_data {
+                ui.label(format!("{} {}", employee.firstname, employee.lastname));
+                ui.label(format!(
+                    "{total_sales} / {}", 
+                    self
+                    .orders
+                    .iter()
+                    .filter(|(id, _)| id == &&employee.id)
+                    .map(|(_, orders)| orders.len())
+                    .sum::<usize>()
+                ));
+                ui.label(format!("{} / {}", total_laptops.to_string(), total_desktops.to_string()));
+                ui.label(format!("{:.2}%", ar_financing_ratio));
+                ui.label(format!("{total_warranties} / {total_sales}"));
+                ui.label(format!("$ {:.2}", total));
+                ui.end_row();
+            }
         });
     }
 
@@ -465,7 +640,7 @@ impl Koth {
                         b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
                     };
 
-                    let mut new_orders: Vec<Order> = orders
+                    let new_orders: Vec<Order> = orders
                         .clone()
                         .iter()
                         .filter(|o| !o.id.is_empty())
@@ -489,88 +664,157 @@ impl Koth {
                         let order = order.clone();
                         PlatformSpawner::spawn(async move {
                             match get_order_payments(&order.id).await {
-                                Ok(payment) => { let _ = tx.try_send(payment); },
+                                Ok(payments) => { 
+                                    for payment in payments {
+                                        let _ = tx.try_send(payment);
+                                    }
+                                },
                                 Err(e) => log::error!("Error getting payment detials: {e:?}"),
                             }
                         });
                     }
 
+                    let uid = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
+                    
                     if self.pulling_all_orders {
-                        self.orders.append(&mut new_orders);
-                        self.orders.sort_by(sort);
+                        if let Some(orders) = self.orders.get_mut(&uid) {
+                            orders.append(&mut orders.clone());
+                            orders.sort_by(sort);
+                        } else {
+                            self.orders.insert(uid.clone(), orders);
+                        }
                     } else {
-                        self.orders = new_orders;
+                        if let Some(orders) = self.orders.get_mut(&uid) {
+                            *orders = new_orders;
+                        } else {
+                            self.orders.insert(uid, new_orders.clone());
+                        }
                     }
                 },
                 KothSelection::AllEmployees => {
-                                let sort = |a: &Order, b: &Order| {
-                let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
-            };
+                    self.total = 0.0;
+                    self.total_w_tax = 0.0;
+                    let sort = |a: &Order, b: &Order| {
+                        let a_total: f64 = a.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+                        let b_total: f64 = b.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+                        b_total.partial_cmp(&a_total).unwrap_or(std::cmp::Ordering::Equal)
+                    };
 
-            let mut new_orders: Vec<Order> = orders
-                .clone()
-                .iter()
-                .filter(|o| !o.id.is_empty())
-                .sorted_by(|a, b| sort(a, b))
-                .cloned()
-                .collect();
+                    let new_orders: Vec<Order> = orders
+                        .clone()
+                        .iter()
+                        .filter(|o| !o.id.is_empty())
+                        .sorted_by(|a, b| sort(a, b))
+                        .cloned()
+                        .collect();
 
-            // Process each order
-            for order in new_orders.iter() {
-                let total_paid_tax_excl: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
-                let total_paid_tax: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
-
-                if total_paid_tax_excl > 0.0 {
-                    self.total += total_paid_tax_excl;
-                }
-                if total_paid_tax > 0.0 {
-                    self.total_w_tax += total_paid_tax;
-                }
-
-                let tx = self.order_payment_tx.clone();
-                let order = order.clone();
-                PlatformSpawner::spawn(async move {
-                    match get_order_payments(&order.id).await {
-                        Ok(payment) => { let _ = tx.try_send(payment); },
-                        Err(e) => log::error!("Error getting payment detials: {e:?}"),
-                    }
-                });
-            }
-
-            if self.pulling_all_orders {
-                self.orders.append(&mut new_orders);
-                self.orders.sort_by(sort);
-            } else {
-                self.orders = new_orders;
-            }
-                },
-            }
-        }
-
-        if let Ok(payment) = self.order_payment_rx.try_recv() {
-            self.payments.push(payment);
-        }
-    
-        if let Ok(employees) = self.employee_rx.try_recv() {
-            for employee in employees.iter() {
-                let id_employee = &employee.id;
-                if id_employee != "0" {
-                    for state in OrderState::VALUES.iter() {
-                        let period = pay_period.clone();
-                        if *state != OrderState::Returned {
-                            let state_id = state.id().to_string();
-                            let res = generate_orders_report(period, &state_id, &id_employee).await;
-                            log::info!("Result: {res:?}");
-                            match res {
-                                Ok(orders) => {let _ = tx.try_send(orders);},
-                                Err(e) => log::error!("Error getting orders for koth: {e:?}"),
+                    // Process each order
+                    for order in new_orders.iter() {
+                        let tx = self.order_payment_tx.clone();
+                        let order = order.clone();
+                        PlatformSpawner::spawn(async move {
+                            match get_order_payments(&order.id).await {
+                                Ok(payments) => {
+                                    for payment in payments {
+                                        let _ = tx.try_send(payment);
+                                    }
+                                },
+                                Err(e) => log::error!("Error getting payment details: {e:?}"),
                             }
+                        });
+                    }
+
+                    // Store orders for each employee based on their involvement
+                    for emp in self.employees.iter() {
+                        let uid = emp.id.clone();
+                        let emp_orders: Vec<Order> = new_orders
+                            .iter()
+                            .filter(|o| o.id_employee_sales_rep == uid || o.id_employee_split_rep == uid)
+                            .cloned()
+                            .collect();
+
+                        if self.pulling_all_orders {
+                            if let Some(orders) = self.orders.get_mut(&uid) {
+                                orders.extend(emp_orders);
+                                orders.sort_by(sort);
+                            } else {
+                                self.orders.insert(uid.clone(), emp_orders);
+                            }
+                        } else {
+                            self.orders.insert(uid.clone(), emp_orders);
                         }
                     }
                 }
             }
+        }
+
+        if let Ok(payment) = self.order_payment_rx.try_recv() {
+            match self.koth_selection {
+                KothSelection::Me => {
+                    let uid = self
+                        .user
+                        .get_employee_id()
+                        .map(|id| id.to_string())
+                        .unwrap_or_default();
+
+                    self
+                        .payments
+                        .get_mut(&uid)
+                        .get_or_insert(&mut vec![])
+                        .push(payment.clone());
+                },
+                KothSelection::AllEmployees => {
+                    let order_id = payment.id_order.clone();
+                    // Find employees associated with this order
+                    let relevant_employees: Vec<String> = self
+                        .orders
+                        .iter()
+                        .filter(|(_, orders)| orders.iter().any(|o| o.id == order_id))
+                        .filter_map(|(emp_id, orders)| {
+                            orders
+                                .iter()
+                                .find(|o| {
+                                    o.id == order_id && (o.id_employee_sales_rep == *emp_id || o.id_employee_split_rep == *emp_id)
+                                })
+                                .map(|_| emp_id.clone())
+                        })
+                        .collect();
+
+                    for emp_id in relevant_employees {
+                        self.payments
+                            .entry(emp_id)
+                            .or_insert_with(Vec::new)
+                            .push(payment.clone());
+                    }
+                }
+            }
+        }
+    
+        if let Ok(mut employees) = self.employee_rx.try_recv() {
+            let pay_period = self.pay_period.clone();
+            let tx = self.response_tx.clone();
+            let emps = employees.clone();
+            PlatformSpawner::spawn(async move {
+                for employee in emps.iter() {
+                    let id_employee = &employee.id;
+                    if id_employee != "0" {
+                        for state in OrderState::VALUES.iter() {
+                            let period = pay_period.clone();
+                            if *state != OrderState::Returned {
+                                let state_id = state.id().to_string();
+                                let res = generate_orders_report(period, &state_id, &id_employee).await;
+                                log::info!("Result: {res:?}");
+                                match res {
+                                    Ok(orders) => { let _ = tx.try_send(orders); },
+                                    Err(e) => log::error!("Error getting orders for koth: {e:?}"),
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            self.employees.append(&mut employees);
         }
     }
 }

@@ -142,7 +142,7 @@ impl MastertechContext {
         {
             let service_number_check = self.ticket_data.service_number.is_empty();
             let name_check = self.customer_data.name.is_empty();
-            let phone_number_check = self.customer_data.phone_number.is_empty();
+            let phone_number_check = self.customer_data.phone_number.is_empty() || self.customer_data.phone_number == "801-334-6262".to_string();
             let salesman_check = self.ticket_data.salesman.is_empty();
             let tech_check = self.ticket_data.tech.is_empty();
             
@@ -431,6 +431,7 @@ impl MastertechContext {
                 && !self.customer_data.phone_number.is_empty()
                 && !self.ticket_data.salesman.is_empty()
                 && !self.ticket_data.tech.is_empty()
+                && self.customer_data.phone_number != "801-334-6262".to_string()
                 && is_windows; // HIGHLIGHT ALL THE REQUIRED FIELDS IN RED
 
             if ui.add_enabled(

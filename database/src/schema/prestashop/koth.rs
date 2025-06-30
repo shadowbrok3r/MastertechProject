@@ -71,6 +71,8 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
         }
     };
 
+    log::error!("Start Date: {start_date:?} End Date: {end_date:?}");
+
     let mut filtered_orders = vec![];
     match state {
         "239" => {
@@ -108,6 +110,7 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 url_params.insert("limit", &limit_str);
                 
                 let orders = prestashop.request_resources_wasm::<Order>("orders", url_params).await?;
+                
                 if orders.is_empty() {
                     break; // No more orders to fetch
                 }
@@ -132,6 +135,8 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                         }
                     };
 
+                    log::error!("Order Date: {order_date:?}");
+                    
                     // Check if order_date is within range
                     if order_date >= start_date && order_date <= end_date {
                         filtered_orders.push(order);
@@ -171,13 +176,13 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
     Ok(filtered_orders)
 }
 
-pub async fn get_order_payments(id_order: &str) -> anyhow::Result<OrderPayment, anyhow::Error> {
-    let prestashop = Prestashop::default();
+pub async fn get_order_payments(id_order: &str) -> anyhow::Result<Vec<OrderPayment>, anyhow::Error> {
+    let api = Prestashop::default();
     let mut url_params = HashMap::new();
     url_params.insert("output_format", "JSON");
     url_params.insert("filter[id_order]", id_order);
 
-    let payment: OrderPayment = prestashop.find_resource_wasm("order_payments", url_params).await?;
+    let payments: Vec<OrderPayment> = api.request_resources_wasm("order_payments", url_params).await?;
     
-    Ok(payment)
+    Ok(payments)
 }
