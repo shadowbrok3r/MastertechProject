@@ -447,6 +447,7 @@ impl EmployeeHelper for Employee {
         let api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
         query.insert("filter[id_store]", id_store);
+        query.insert("output_format", "JSON");
         query.insert("filter[active]", "1");
 
         let employees: Vec<PrestashopId> = api_call

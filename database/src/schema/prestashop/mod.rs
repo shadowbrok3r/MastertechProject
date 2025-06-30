@@ -548,7 +548,7 @@ pub struct OrderPayment {
     pub date_add: String,
     pub payment_period: String,
     pub check_finance_num: String,
-    pub chargeafter_response: String,
+    // pub chargeafter_response: String,
     pub capture_number: String,
     pub id_order: String,
     pub id_module: String,
