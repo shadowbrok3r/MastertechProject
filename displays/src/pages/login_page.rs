@@ -217,10 +217,7 @@ impl SharedContext {
 
                                                 // ui.add_enabled(enabled, button);
 
-                                                if button.clicked() 
-                                                    && !login.password.is_empty()
-                                                    && !login.username.is_empty()
-                                                {
+                                                if button.clicked() {
                                                     Spinner::new()
                                                         .size(30.0)
                                                         .color(Color32::from_rgb(100, 10, 80))
@@ -243,6 +240,8 @@ impl SharedContext {
                                                     .min_size(Vec2::new(140.0, 40.0))
                                                     .ui(ui)
                                                     .clicked()
+                                                    && !login.password.is_empty()
+                                                    && !login.username.is_empty()
                                                 {
                                                     refresh = true;
                                                     let user = login.username.clone();
