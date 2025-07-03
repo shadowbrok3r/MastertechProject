@@ -124,7 +124,7 @@ struct FindWindowParams {
 pub struct DesktopToolProvider;
 
 // *** Contains the tool definitions ***
-#[tool(tool_box)]
+// #[tool(tool_box)]
 impl DesktopToolProvider {
     #[tool(name = "get_screen_details", description = "Gets the primary screen resolution (width and height).")]
     async fn get_screen_details(

@@ -242,7 +242,7 @@ impl DisplayModal for TaskModal {
         ui.add_space(10.);
         ui.scope_builder(
         UiBuilder::new()
-        .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Min)), 
+        .layout(Layout::from_main_dir_and_cross_align(Direction::LeftToRight, Align::Max)), 
         |ui| {
             let is_sizing_pass = ui.is_sizing_pass();
             let available_width = 715.;

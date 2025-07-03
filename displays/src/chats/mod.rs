@@ -1,5 +1,5 @@
 use chrono::Utc;
-use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, Style, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
@@ -18,21 +18,23 @@ pub struct ChatView{
     pub messages: Vec<TaskNotePayload>,
     pub current_user: User,
     #[serde(skip)]
-    pub markdown_editor: EasyMarkEditor,
-    pub delete: Option<TaskNotePayload>,
-    pub users: BTreeSet<String>,
-    pub edit_text: HashMap<String, TaskNotePayload>,
-    pub allow_edit: HashSet<String>,
+    markdown_editor: EasyMarkEditor,
+    delete: Option<TaskNotePayload>,
+    users: BTreeSet<String>,
+    edit_text: HashMap<String, TaskNotePayload>,
+    allow_edit: HashSet<String>,
     pub task_id: RecordId,
-    pub service_number: Option<String>,
+    service_number: Option<String>,
+    hovered: HashSet<RecordId>,
+    remove_hovered: Option<RecordId>,
     #[serde(skip)]
-    pub new_notes_tx: Sender<Vec<TaskNotePayload>>, 
+    new_notes_tx: Sender<Vec<TaskNotePayload>>, 
     #[serde(skip)]
-    pub new_notes_rx: Receiver<Vec<TaskNotePayload>>,
+    new_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
-    pub ui_event_tx: Sender<ChatEvent>, 
+    ui_event_tx: Sender<ChatEvent>, 
     #[serde(skip)]
-    pub ui_event_rx: Receiver<ChatEvent>,
+    ui_event_rx: Receiver<ChatEvent>,
 }
 
 impl Default for ChatView {
@@ -58,6 +60,8 @@ impl Default for ChatView {
             // THIS IS ON PURPOSE SO WE CANT ACCIDENTALLY TRY AND LEAVE A NOTE WITHOUT A TASK
             task_id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
             service_number: None,
+            hovered: HashSet::new(),
+            remove_hovered: None,
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
         }
@@ -71,7 +75,6 @@ pub enum ChatEvent {
     CancelEdit(RecordId),
     DeleteNote(TaskNotePayload),
 }
-
 
 impl ChatView {
     pub fn new(
@@ -115,6 +118,8 @@ impl ChatView {
             allow_edit: HashSet::new(),
             task_id,
             service_number,
+            hovered: HashSet::new(),
+            remove_hovered: None,
             new_notes_tx, new_notes_rx,
             ui_event_tx, ui_event_rx,
         }
@@ -387,23 +392,21 @@ impl ChatView {
         {
             
             ScrollArea::vertical()
-                .max_height(f32::INFINITY)// dont ask me to explain why 
-                .max_width(ui.available_width()) // this works over f32::infinity
-                // .auto_shrink(false)
+                .max_height(f32::INFINITY)
+                .max_width(f32::INFINITY)
+                .auto_shrink(false)
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height()/1.1);
-                    // 
                     self.chat(ui) 
             });
-            
             ui.set_max_height(750.);
         });
     }
 
     fn chat(&mut self, ui: &mut Ui) {
         let max_msg_width = 376.;
-        
+
         self.messages.sort_by_key(|message| message.created_at.clone() );
 
         for item in self.messages.iter_mut(){
@@ -440,26 +443,31 @@ impl ChatView {
 
                 let style = ui.style().clone();
 
-                let outer_f = &mut Frame::new()
+                let (fill, stroke, shadow) = if self.hovered.contains(&item.id) {
+                    (
+                        style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 4),
+                        style.visuals.widgets.hovered.fg_stroke,
+                        style.visuals.window_shadow
+                    )
+                } else {
+                    (
+                        msg_color,
+                        style.visuals.widgets.open.bg_stroke,
+                        Shadow::default()
+                    )
+                };
+
+                if Frame::new()
                 .corner_radius(rnding)
                 .inner_margin(inner_margin)
                 .outer_margin(outer_margin)
-                .fill(msg_color)
+                .fill(fill)
+                .shadow(shadow)
+                .stroke(stroke)
                 .show(ui, |ui| { // NOTE FRAME SCOPED UI
-                    let mut frame = Frame::NONE
-                        .corner_radius(rnding)
-                        .inner_margin(inner_margin)
-                        .outer_margin(Margin { left: 0, right: 0, top: 4, bottom: 1 })
-                        .fill(msg_color)
-                        .begin(ui);
-
-                    frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
-
-                    let ui = &mut frame.content_ui;
-                    // ui.set_min_height(fixed_height);  // Set the fixed height for the message box
                     ui.set_width(max_msg_width);
                     // Use a vertical layout to stack the name and message content
-                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                    ui.vertical_centered(|ui| {
                         if is_message_from_myself {
                             ui.horizontal(|ui| {
                                 let btn_txt_color = ui.style().visuals.error_fg_color;
@@ -621,22 +629,21 @@ impl ChatView {
                                     viewer::easy_mark(ui, &item.note);
                                 }
                             });
-                        });
+                        }).response;
                     });
 
-                    frame
-                }).inner;
-
-                
-                let response = outer_f.allocate_space(ui); //.allocate_space(ui);
-                // log::info!("Message left edge: {:?}", response.rect.left());
-                if response.hovered() {
-                    // style.visuals.widgets.inactive.bg_fill
-                    outer_f.frame.fill =  style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 4);
-                    outer_f.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
-                    outer_f.frame.shadow = style.visuals.window_shadow;
+                    let rm = &mut self.remove_hovered;
+                    if rm.is_some() {
+                        *rm = None;
+                        self.hovered.remove(&item.id);
+                    }
+                })
+                .response
+                .hovered() {
+                    self.hovered.insert(item.id.clone());
+                } else {
+                    self.remove_hovered = Some(item.id.clone());
                 }
-                outer_f.paint(ui);
             });
         };
     }

@@ -50,7 +50,7 @@ impl ModalWindow for ModalType {
             modal_action = Some(action); // Capture the action
         };
 
-        let window = Window::new(title_color)
+        Window::new(title_color)
             .frame(
                 Frame::default()
                 .inner_margin(Margin::symmetric(4, 4))
@@ -63,12 +63,12 @@ impl ModalWindow for ModalType {
             .pivot(Align2::CENTER_CENTER)
             .max_height(750.)
             .default_height(715.)
-            .default_width(722.0)
+            .max_width(723.0)
+            .min_width(723.0)
             .open(&mut open)
-            .title_bar(true);
-
-        
-        window.show(ctx, |ui| {
+            .title_bar(true)
+            .show(ctx, |ui| 
+        {
             match self {
                 ModalType::CreateTaskModal(create_task_modal) => create_task_modal.display(ui, &mut handle_action),
                 ModalType::TaskModal(task_modal) => task_modal.display(ui, &mut handle_action),
