@@ -798,18 +798,21 @@ impl Koth {
                 for employee in emps.iter() {
                     let id_employee = &employee.id;
                     if id_employee != "0" {
-                        for state in OrderState::VALUES.iter() {
-                            let period = pay_period.clone();
-                            if *state != OrderState::Returned {
-                                let state_id = state.id().to_string();
-                                let res = generate_orders_report(period, &state_id, &id_employee).await;
-                                log::info!("Result: {res:?}");
-                                match res {
-                                    Ok(orders) => { let _ = tx.try_send(orders); },
-                                    Err(e) => log::error!("Error getting orders for koth: {e:?}"),
-                                }
-                            }
-                        }
+                        // for state in OrderState::VALUES.iter() { }
+                        let period = pay_period.clone();
+                        // if *state != OrderState::Returned { }
+                        // let state_id = state.id().to_string();
+                        let res = generate_orders_report(
+                            period, 
+                            &OrderState::AcceptedByOdoo.id().to_string(), 
+                            &id_employee
+                        ).await;
+                        
+                        log::info!("Result: {res:?}");
+                        match res {
+                            Ok(orders) => { let _ = tx.try_send(orders); },
+                            Err(e) => log::error!("Error getting orders for koth: {e:?}"),
+                        }      
                     }
                 }
             });
