@@ -12,7 +12,7 @@ pub async fn run_mcp_server_tcp() -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!("MCP Server listening on TCP {}", addr);
 
-    let tool_provider = DesktopToolProvider; // Create the tool provider instance
+    let tool_provider = DesktopToolProvider::new(); // Create the tool provider instance
 
     loop {
         let (stream, client_addr) = listener.accept().await?;
@@ -47,7 +47,7 @@ pub async fn run_mcp_server_tcp() -> anyhow::Result<()> {
 // Renamed from run_mcp_server_tcp
 pub async fn run_mcp_server_stdio() -> anyhow::Result<()> {
     info!("MCP Server starting in STDIO mode.");
-    let tool_provider = DesktopToolProvider; // Create the tool provider instance
+    let tool_provider = DesktopToolProvider::new(); // Create the tool provider instance
     info!("Using stdio transport. Waiting for commands on stdin...");
     // Serve the server using the stdio transport.
     // This function will run until the stdio stream is closed (e.g., the parent process closes the pipes)
@@ -56,22 +56,7 @@ pub async fn run_mcp_server_stdio() -> anyhow::Result<()> {
         Ok(server_handle) => {
             // server_handle.waiting() waits for the server loop to exit.
             if let Err(e) = server_handle.waiting().await {
-                // Log errors unless they are expected closure types
-                // (These string checks might need adjustment based on exact errors seen)
-                let err_str = e.to_string();
-                if !err_str.contains("EOF") // Standard end-of-file
-                    && !err_str.contains("Broken pipe") // Pipe closed by the other end
-                    && !err_str.contains("Connection reset by peer") // Another common pipe closure error
-                    && !err_str.contains("os error 109") // Windows specific pipe error
-                    && !err_str.contains("The pipe is being closed") // Another Windows pipe error
-                    && !err_str.contains("Input/output error") // Can happen on pipe close
-                {
-                    log::error!("Server exited with unexpected error: {:?}", e);
-                    // Consider propagating the error if the calling context needs it
-                    // return Err(e.into());
-                } else {
-                    info!("Stdio stream closed (EOF or broken pipe). Server shutting down gracefully.");
-                }
+                log::error!("Server exited with unexpected error: {e}");
             } else {
                  info!("Server finished gracefully.");
             }
