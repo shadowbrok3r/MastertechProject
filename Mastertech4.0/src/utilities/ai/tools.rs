@@ -1,7 +1,7 @@
-use rmcp::model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo};
+use rmcp::{handler::server::{tool::{Parameters, ToolRouter}, ServerHandler}, model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo}, schemars, tool, tool_handler, tool_router};
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
-use anyhow::{anyhow, Context}; use base64::Engine;
-use rmcp::handler::server::ServerHandler;
+use anyhow::{anyhow, Context}; 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
 use display_info::DisplayInfo;
@@ -9,8 +9,6 @@ use std::process::Command;
 use log::{info, warn};
 use serde_json::json;
 use std::io::Cursor;
-use rmcp::schemars;
-use rmcp::tool;
 
 // --- Tool Parameter Struct Definitions ---
 
@@ -103,13 +101,13 @@ struct OpenAIKeyPressParams {
 
 #[derive(Deserialize, Debug, Serialize, schemars::JsonSchema)]
 struct OpenAITypeParams {
-     #[schemars(description = "The text string to type.")]
+    #[schemars(description = "The text string to type.")]
     text: String,
 }
 
 #[derive(Deserialize, Debug, Serialize, schemars::JsonSchema)]
 struct OpenAIWaitParams {
-     #[schemars(description = "Optional duration in milliseconds to wait. Defaults to 2000ms if not provided.", default)]
+    #[schemars(description = "Optional duration in milliseconds to wait. Defaults to 2000ms if not provided.", default)]
     duration_ms: Option<u64>,
 }
 
@@ -121,15 +119,23 @@ struct FindWindowParams {
 
 // --- Tool Provider Implementation ---
 #[derive(Clone)]
-pub struct DesktopToolProvider;
+pub struct DesktopToolProvider{
+    tool_router: ToolRouter<Self>,
+}
 
 // *** Contains the tool definitions ***
-// #[tool(tool_box)]
-impl DesktopToolProvider {
+#[tool_router]
+impl DesktopToolProvider { 
+    pub fn new() -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+        }
+    }
+
     #[tool(name = "get_screen_details", description = "Gets the primary screen resolution (width and height).")]
     async fn get_screen_details(
         &self,
-        #[tool(aggr)] _params: GetScreenDetailsParams
+        Parameters(GetScreenDetailsParams { _dummy }): Parameters<GetScreenDetailsParams>
     ) -> Result<CallToolResult, ErrorData> {
         info!("Received request to get screen details.");
         let display_infos = DisplayInfo::all()
@@ -164,15 +170,15 @@ impl DesktopToolProvider {
     #[tool(name = "find_window", description = "Finds the first non-minimized window whose title contains the given query string (case-insensitive) and returns its details.")]
     async fn find_window(
         &self,
-        #[tool(aggr)] params: FindWindowParams
+        Parameters(FindWindowParams { title_query }): Parameters<FindWindowParams>
     ) -> Result<CallToolResult, ErrorData> {
-        info!("Executing find window with query: '{}'", params.title_query);
+        info!("Executing find window with query: '{}'", title_query);
 
         let windows = xcap::Window::all()
             .context("Failed to get window list")
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-        let query_lower = params.title_query.to_lowercase();
+        let query_lower = title_query.to_lowercase();
 
         for window in windows {
             let is_minimized = window.is_minimized()
@@ -217,11 +223,11 @@ impl DesktopToolProvider {
         }
 
         // If no window was found after checking all
-        info!("No matching window found for query: '{}'", params.title_query);
+        info!("No matching window found for query: '{}'", title_query);
         Ok(CallToolResult::success(vec![Content::json(json!({
             "status": "success", // Still a successful tool execution, just no result found
             "found": false,
-            "message": format!("No non-minimized window found matching title query '{}'", params.title_query)
+            "message": format!("No non-minimized window found matching title query '{}'", title_query)
         }))
             .map_err(|e| anyhow!(e).context("Failed to serialize find_window 'not found' result"))
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
@@ -231,20 +237,20 @@ impl DesktopToolProvider {
     #[tool(name = "move_mouse", description = "Moves the mouse cursor")]
     async fn move_mouse(
         &self,
-        #[tool(aggr)] params: MoveMouseParams
+        Parameters(MoveMouseParams { x, y, coordinate }): Parameters<MoveMouseParams>
     ) -> Result<CallToolResult, ErrorData> {
-        info!("Executing move mouse to: {:?}", params);
+        info!("Executing move mouse to: X: {:?}, Y: {:?}, Coordinate: {:?}", x, y, coordinate);
         let mut enigo = Enigo::new(&Settings::default())
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-        let coordinate = match params.coordinate.to_lowercase().as_str() {
+        let coordinate = match coordinate.to_lowercase().as_str() {
             "absolute" | "abs" => Coordinate::Abs,
             "relative" | "rel" | _ => Coordinate::Rel,
         };
-        if coordinate == Coordinate::Rel { info!("Moving mouse relatively by ({}, {})", params.x, params.y); }
-        else { info!("Moving mouse absolutely to ({}, {})", params.x, params.y); }
+        if coordinate == Coordinate::Rel { info!("Moving mouse relatively by ({}, {})", x, y); }
+        else { info!("Moving mouse absolutely to ({}, {})", x, y); }
 
-        enigo.move_mouse(params.x, params.y, coordinate)
+        enigo.move_mouse(x, y, coordinate)
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, format!("Couldnt move mouse: {e:?}"), None))?;
 
         let (x, y) = enigo.location().map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
@@ -258,7 +264,7 @@ impl DesktopToolProvider {
     #[tool(name = "get_mouse_position", description = "Gets the current absolute screen coordinates (X, Y) of the mouse cursor")]
     async fn get_mouse_position(
         &self,
-        #[tool(aggr)] _params: GetMousePositionParams, // Use aggr with dummy struct
+        Parameters(GetMousePositionParams { _dummy }): Parameters<GetMousePositionParams>
     ) -> Result<CallToolResult, ErrorData> {
         info!("Executing get mouse position.");
         let enigo = Enigo::new(&Settings::default())
@@ -276,14 +282,14 @@ impl DesktopToolProvider {
     #[tool(name = "mouse_action", description = "Performs a mouse action (click, press, release) or scrolls the mouse wheel")]
     async fn mouse_action(
         &self,
-        #[tool(aggr)] params: MouseClickParams
+        Parameters(MouseClickParams { button, click_type }): Parameters<MouseClickParams>
     ) -> Result<CallToolResult, ErrorData> {
-        info!("Executing mouse action: {:?}", params);
+        info!("Executing mouse action: button: {:?}, click_type: {:?}", button, click_type);
         let mut enigo = Enigo::new(&Settings::default())
             .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-        let button_str = params.button.to_lowercase();
-        let action_str = params.click_type.as_deref().unwrap_or("click").to_lowercase();
+        let button_str = button.to_lowercase();
+        let action_str = click_type.as_deref().unwrap_or("click").to_lowercase();
 
         let direction = match action_str.as_str() {
             "click" => Direction::Click, "press" => Direction::Press, "release" => Direction::Release,
@@ -298,7 +304,7 @@ impl DesktopToolProvider {
             "scrolldown" | "scroll_down" => Button::ScrollDown,
             "scrollleft" | "scroll_left" => Button::ScrollLeft,
             "scrollright" | "scroll_right" => Button::ScrollRight,
-            _ => return Err(ErrorData::invalid_params( format!("Invalid mouse button/action specified: '{}'.", params.button), None)),
+            _ => return Err(ErrorData::invalid_params( format!("Invalid mouse button/action specified: '{}'.", button), None)),
         };
 
         enigo.button(button_enum, direction).map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
@@ -312,14 +318,14 @@ impl DesktopToolProvider {
     #[tool(name = "keyboard_action", description = "Types text or performs a key event (click, press, release)")]
     async fn keyboard_action(
         &self,
-        #[tool(aggr)] params: KeyboardActionParams
+        Parameters(KeyboardActionParams { text, key, key_action }): Parameters<KeyboardActionParams>
     ) -> Result<CallToolResult, ErrorData> {
-        info!("Executing keyboard action: {:?}", params);
+        info!("Executing keyboard action: text: {:?}, key: {:?}, key_action: {:?}", text, key, key_action);
         let mut enigo = Enigo::new(&Settings::default())
              .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
 
-        if let Some(key_str) = &params.key {
-            let action_str = params.key_action.as_deref().unwrap_or("click").to_lowercase();
+        if let Some(key_str) = &key {
+            let action_str = key_action.as_deref().unwrap_or("click").to_lowercase();
             info!("Performing key action: key='{}', action='{}'", key_str, action_str);
             let direction = match action_str.as_str() {
                 "click" => Direction::Click, "press" => Direction::Press, "release" => Direction::Release,
@@ -345,7 +351,7 @@ impl DesktopToolProvider {
                 .map_err(|e| anyhow!(e).context("Failed to serialize keyboard key action result"))
                 .map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?
             ]))
-        } else if let Some(text_to_type) = &params.text {
+        } else if let Some(text_to_type) = &text {
             info!("Typing text: '{}'", text_to_type);
             enigo.text(text_to_type).map_err(|e| ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None))?;
             info!("Text typing successful.");
@@ -361,7 +367,7 @@ impl DesktopToolProvider {
     #[tool(name = "capture_screen", description = "Captures the screen (or a region) and returns image data as base64.")]
     async fn capture_screen(
         &self,
-        #[tool(aggr)] params: CaptureScreenParams
+        Parameters(params): Parameters<CaptureScreenParams>
     ) -> Result<CallToolResult, ErrorData> {
         info!("Executing screen capture with params: {:?}", params);
         let screens =  xcap::Monitor::all()
@@ -393,7 +399,7 @@ impl DesktopToolProvider {
     #[tool(name = "run_shell_command", description = "Runs a command in the default system shell.")]
      async fn run_shell_command(
         &self,
-        #[tool(aggr)] params: RunShellParams
+        Parameters(params): Parameters<RunShellParams>
     ) -> Result<CallToolResult, ErrorData> {
         info!("Received request to run command: {:?}", params);
         let _ = Command::new(&params.command)
@@ -561,7 +567,7 @@ impl DesktopToolProvider {
      #[tool(name = "execute_openai_wait", description = "Executes a wait/sleep action requested by the OpenAI Computer Use model.")]
     async fn execute_openai_wait(
         &self,
-        #[tool(aggr)] params: OpenAIWaitParams
+        Parameters(params): Parameters<OpenAIWaitParams>
     ) -> Result<CallToolResult, ErrorData> {
         let duration_ms = params.duration_ms.unwrap_or(2000); // Default to 2000ms if not specified
         info!("Executing OpenAI action: wait for {} ms", duration_ms);
@@ -577,7 +583,7 @@ impl DesktopToolProvider {
 
 }
 
-#[tool(tool_box)] // Added missing attribute
+#[tool_handler] // Added missing attribute
 impl ServerHandler for DesktopToolProvider {
     // Provide basic server information
     fn get_info(&self) -> ServerInfo {
