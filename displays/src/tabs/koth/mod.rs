@@ -763,7 +763,7 @@ impl Koth {
                         .get_or_insert(&mut vec![])
                         .push(payment.clone());
                 },
-                KothSelection::AllEmployees => {
+                KothSelection::AllEmployees => { // PROBLEM - LOOK INTO MULTIPLE PAYMENTS ON SAME ORDER. Am i accounting for this?
                     let order_id = payment.id_order.clone();
                     // Find employees associated with this order
                     let relevant_employees: Vec<String> = self
