@@ -17,11 +17,11 @@ default = [ "inline" ]
 inline = []
 
 [dependencies]
-eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false}
+eframe = { version="0.32.0", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 tui-textarea = { version = "0.7"}
-sysinfo = {version = "0.35", features = ["serde", "multithread"]}
+sysinfo = {version = "0.36.0", features = ["serde", "multithread"]}
 console-subscriber = "0.4"
 futures-util = "0.3"
 walkdir = "2.5"
@@ -106,12 +106,12 @@ egui_plot = { workspace = true }
 
 
 [dependencies.egui]
-version = "0.31"
+version = "0.32.0"
 default-features = false
 features = ["rayon", "bytemuck", "log"]
 
 [dependencies.crossterm]
-version = "0.28.1"
+version = "0.29.0"
 features = ["event-stream"]
 
 # gfx-hal = { version = "0.9.0", features = ["serde"] }
