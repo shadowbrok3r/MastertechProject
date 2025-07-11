@@ -83,11 +83,11 @@ impl eframe::App for app_state::MasterTechApp {
 async fn main() -> eframe::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        use winapi::um::processthreadsapi::GetCurrentProcess;
-        use winapi::um::processthreadsapi::SetPriorityClass;
-        use winapi::um::winbase::ABOVE_NORMAL_PRIORITY_CLASS;
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        use windows::Win32::System::Threading::SetPriorityClass;
+        use windows::Win32::System::Threading::ABOVE_NORMAL_PRIORITY_CLASS;
         unsafe {
-            SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+            let _ = SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
         }
     }
 
