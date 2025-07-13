@@ -1,5 +1,6 @@
 use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use database::{schema::{utilities::{compress_data, query_id}, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
+use egui::TextBuffer;
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::Path, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
@@ -592,9 +593,9 @@ impl WebConsoleFrontend {
                                         Align::Center,
                                     ), |ui| {
                                         ui.set_width(ui.available_width());
-                                        let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+                                        let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, wrap_width: f32| {
                                             let mut layout_job: eframe::egui::text::LayoutJob =
-                                                highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), string, "bash".into()); // || "zsh".into()
+                                                highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), buf.as_str(), "bash".into()); // || "zsh".into()
                                             layout_job.wrap.max_width = wrap_width;
                                             ui.fonts(|f| f.layout_job(layout_job))
                                         };
@@ -648,9 +649,9 @@ impl WebConsoleFrontend {
             //     });
             // });
             
-            let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+            let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, wrap_width: f32| {
                 let mut layout_job =
-                    highlight(ui.ctx(), ui.style(), &theme, string, "bash".into()); // || "zsh".into()
+                    highlight(ui.ctx(), ui.style(), &theme, buf.as_str(), "bash".into()); // || "zsh".into()
                 layout_job.wrap.max_width = wrap_width;
                 ui.fonts(|f| f.layout_job(layout_job))
             };

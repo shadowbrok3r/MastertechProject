@@ -312,6 +312,7 @@ impl TryFrom<LocalTermEvent> for KeyEvent {
                 Key::F33 => KeyCode::F(33),
                 Key::F34 => KeyCode::F(34),
                 Key::F35 => KeyCode::F(35),
+                Key::BrowserBack => KeyCode::Backspace
             };
 
             Ok(

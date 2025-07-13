@@ -1,6 +1,6 @@
 use database::schema::User;
-use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget};
-use egui_data_table::Renderer;
+use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui};
+use egui_data_table::{egui::Widget, Renderer};
 use super::{row_viewer::DatabaseTableSelection, DatabaseEditor};
 
 impl DatabaseEditor {
@@ -11,10 +11,9 @@ impl DatabaseEditor {
             .show_inside(ui, |ui| 
         {
             ui.horizontal_top(|ui| {
-                TextEdit::singleline(&mut self.database_viewer.filter)
+                ui.add(TextEdit::singleline(&mut self.database_viewer.filter)
                     .desired_width(150.)
-                    .hint_text(" Search")
-                    .ui(ui);
+                    .hint_text(" Search"));
                 
                 let selected_text = self.database_viewer.selected_table.as_str().to_string();
                 let selected = &mut self.database_viewer.selected_table;

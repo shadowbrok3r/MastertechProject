@@ -1,7 +1,7 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, FilterLiveTasks, Store};
 use displays::tabs::stock::{get_extra_stock_info, get_stock};
 use egui::Color32;
-use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
 use github::get_github_releases;
@@ -159,9 +159,9 @@ impl TabViewer for MastertechContext {
         tab.as_str().into()
     }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
         self.open_tabs.remove(tab);
-        true
+        OnCloseResponse::Close
     }
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {

@@ -175,9 +175,9 @@ impl FileViewer {
         #[allow(clippy::cast_precision_loss)]
         let width = max_indent as f32 * self.fontsize * 0.5;
 
-        let mut layouter = |ui: &eframe::egui::Ui, string: &str, _wrap_width: f32| {
+        let mut layouter = |ui: &eframe::egui::Ui, buf: &dyn eframe::egui::TextBuffer, _wrap_width: f32| {
             let layout_job = eframe::egui::text::LayoutJob::single_section(
-                string.to_string(),
+                buf.as_str().to_string(),
                 eframe::egui::TextFormat::simple(
                     eframe::egui::FontId::monospace(self.fontsize),
                     self.theme.type_color(TokenType::Comment(true)),
@@ -211,8 +211,8 @@ impl FileViewer {
                 eframe::egui::ScrollArea::horizontal()
                     .id_salt(format!("{}_inner_scroll", self.id))
                     .show(h, |ui| {
-                        let mut layouter = |ui: &eframe::egui::Ui, string: &str, _wrap_width: f32| {
-                            let layout_job = highlight(ui.ctx(), self, string);
+                        let mut layouter = |ui: &eframe::egui::Ui, buf: &dyn eframe::egui::TextBuffer, _wrap_width: f32| {
+                            let layout_job = highlight(ui.ctx(), self, buf.as_str());
                             ui.fonts(|f| f.layout_job(layout_job))
                         };
                         let output = eframe::egui::TextEdit::multiline(text)
@@ -228,7 +228,7 @@ impl FileViewer {
             });
         };
         if self.vscroll {
-            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 15.0);
             eframe::egui::ScrollArea::vertical()
                 .id_salt(format!("{}_outer_scroll", self.id))
                 .stick_to_bottom(self.stick_to_bottom)

@@ -1,7 +1,7 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
 use displays::tabs::stock::{get_extra_stock_info, get_stock};
-use eframe::egui::{Color32, ComboBox, Response, Ui, WidgetText};
-use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use eframe::egui::{Color32, ComboBox, Response, Ui, UiKind, WidgetText};
+use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
 use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
@@ -86,9 +86,9 @@ impl TabViewer for MtechServerContext {
         tab.as_str().into()
     }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
         self.open_tabs.remove(tab);
-        true
+        OnCloseResponse::Close
     }
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
@@ -202,24 +202,24 @@ impl TabViewer for MtechServerContext {
 impl MtechServerContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
         if ui.button("Open...").clicked() {
-            ui.close_menu();
+            ui.close_kind(UiKind::Menu);
         }
         ui.menu_button("SubMenu", |ui| {
             ui.menu_button("SubMenu", |ui| {
                 if ui.button("Open...").clicked() {
-                    ui.close_menu();
+                    ui.close_kind(UiKind::Menu);
                 }
                 let _ = ui.button("Item");
             });
             ui.menu_button("SubMenu", |ui| {
                 if ui.button("Open...").clicked() {
-                    ui.close_menu();
+                    ui.close_kind(UiKind::Menu);
                 }
                 let _ = ui.button("Item");
             });
             let _ = ui.button("Item");
             if ui.button("Open...").clicked() {
-                ui.close_menu();
+                ui.close_kind(UiKind::Menu);
             }
         });
         ui.menu_button("SubMenu", |ui| {
@@ -228,7 +228,7 @@ impl MtechServerContext {
             let _ = ui.button("Item3");
             let _ = ui.button("Item4");
             if ui.button("Open...").clicked() {
-                ui.close_menu();
+                ui.close_kind(UiKind::Menu);
             }
         });
         let _ = ui.button("Very long text for this item");

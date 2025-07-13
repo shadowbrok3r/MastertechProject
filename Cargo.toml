@@ -11,14 +11,14 @@ wasm-cookies = { version= "0.2" }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
 # surrealdb-alpha = { version = "3.0.6", features = ["protocol-ws"] }
 surrealdb = { version = "2.3.7", features = ["protocol-ws"] } 
-egui_logger = { version = "0.7" }
+egui_logger = { git = "https://github.com/RegenJacob/egui_logger", branch = "improv" }
 egui_dock = { version = "0.17.0", features = ["serde"]} # 
 structdiff = {version = "0.7.3", features = ["rustc_hash"]}
 bincode = { version="2", features = ["serde", "derive"] }
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1.17.0", features = ["v4"] } 
 egui_plot = "0.33.0"
-egui-data-table = { git = "https://github.com/kang-sw/egui-data-table", rev = "0fef356", features = ["persistency"]}
+egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", rev = "c2a2960", features = ["persistency"]}
 lazy_static = "1"
 egui_json_tree = "0.12.0"
 log="0.4"
