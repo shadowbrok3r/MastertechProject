@@ -459,11 +459,11 @@ impl FileBrowser {
                                 text_formatting.italics = true;
                                 job.halign = Align::RIGHT;
                                 job.justify = true;
-
                                 let text = formatted_size.to_string();
                                 job.append(&text, 30.0, text_formatting);
-
-                                let x = WidgetText::LayoutJob(job)
+                                
+                                let l = Arc::new(job);
+                                let x = WidgetText::LayoutJob(l)
                                     .small()
                                     .background_color(Color32::RED);
                                 ui.add_space(ui.available_size_before_wrap().x - 100.0);
@@ -537,7 +537,7 @@ impl FileBrowser {
                     let text = format!("{}", formatted_size.as_str());
                     job.append(&text, 30.0, text_formatting);
 
-                    let x = WidgetText::LayoutJob(job)
+                    let x = WidgetText::LayoutJob(Arc::new(job))
                         .small()
                         .background_color(Color32::RED);
                     ui.add_space(ui.available_size_before_wrap().x - 100.0);

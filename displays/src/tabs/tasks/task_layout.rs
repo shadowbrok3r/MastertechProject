@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, PopupCloseBehavior, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::{self, DATABASE, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, get_current_user_from_auth, Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap}, f32};
@@ -250,16 +250,13 @@ impl TaskLayout {
                                             .min_size(Vec2::new(60.0, 15.0))
                                             .ui(ui);
 
-                                        if response.clicked(){
-                                            ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
-                                        }
+                                        let btn_id = format!("sub_menu-{:?}",name).into();
                                         
-                                        let res = popup_below_widget(
-                                            ui, 
-                                            format!("sub_menu-{:?}",name).into(), 
-                                            &response, 
-                                            PopupCloseBehavior::CloseOnClickOutside, 
-                                            |ui| 
+                                        let res = Popup::menu(&response)
+                                        .id(btn_id)
+                                        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                                        .align(RectAlign::BOTTOM)
+                                        .show(|ui| 
                                         {
                                             let action = &mut TaskActions::None;
                                             ui.vertical_centered_justified(|ui| {
@@ -290,30 +287,30 @@ impl TaskLayout {
                                                 action.clone()
                                             }).inner
                                         });
-
-                                        if let Some(TaskActions::MoveLeft) = res {
-                                            // self.action_tx.try_send(msg);
-                                            // if i > 0 {
-                                            //     let prev_name = &self.column_names[i - 1];
-                                            //     if let Some(prev_tasks) = self.task_map.get_mut(prev_name) {
-                                            //         // Move tasks to the left
-                                            //         prev_tasks.append(&mut tasks.clone());
-                                            //         self.task_map.remove(name);
-                                            //     }
-                                            // }
-                                        } else if let Some(TaskActions::MoveRight) = res {
-                                            // if i + 1 < self.column_names.len() {
-                                            //     let next_name = &self.column_names[i + 1];
-                                            //     if let Some(next_tasks) = self.task_map.get_mut(next_name) {
-                                            //         // Move tasks to the right
-                                            //         next_tasks.append(&mut tasks.clone());
-                                            //         self.task_map.remove(name);
-                                            //     }
-                                            // }
-                                        } else {
-                                            PlatformSpawner::spawn(async move {
-                                                if let Some(action) = res {
-                                                    match action{
+                                        if let Some(response) = res {
+                                            if let TaskActions::MoveLeft = response.inner {
+                                                // self.action_tx.try_send(msg);
+                                                // if i > 0 {
+                                                //     let prev_name = &self.column_names[i - 1];
+                                                //     if let Some(prev_tasks) = self.task_map.get_mut(prev_name) {
+                                                //         // Move tasks to the left
+                                                //         prev_tasks.append(&mut tasks.clone());
+                                                //         self.task_map.remove(name);
+                                                //     }
+                                                // }
+                                            } else if let TaskActions::MoveRight = response.inner {
+                                                // if i + 1 < self.column_names.len() {
+                                                //     let next_name = &self.column_names[i + 1];
+                                                //     if let Some(next_tasks) = self.task_map.get_mut(next_name) {
+                                                //         // Move tasks to the right
+                                                //         next_tasks.append(&mut tasks.clone());
+                                                //         self.task_map.remove(name);
+                                                //     }
+                                                // }
+                                            } else {
+                                                PlatformSpawner::spawn(async move {
+                                                    let action = response.inner; 
+                                                    match action {
                                                         TaskActions::MarkComplete => {
                                                             let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
                                                                 .bind(("record", ids.clone()))
@@ -332,8 +329,8 @@ impl TaskLayout {
                                                         }, 
                                                         _ => {}
                                                     }
-                                                }
-                                            });
+                                                });
+                                            }
                                         }
                                     });
                                     
@@ -440,7 +437,7 @@ impl TaskLayout {
 
                                 let row_height = 110.;
                                 let total_rows = tasks.len(); 
-                                ui.ctx().options_mut(|o| o.line_scroll_speed = 80.0);
+                                ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 80.0);
                                 
                                 ScrollArea::vertical()
                                     .max_width(Self::COL_W - 20.0)

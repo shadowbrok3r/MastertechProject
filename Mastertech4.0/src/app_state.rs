@@ -253,8 +253,8 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
 
     let mut open_tabs = HashSet::new();
     for node in tree[SurfaceIndex::main()].iter() {
-        if let Node::Leaf { tabs, .. } = node {
-            for tab in tabs {
+        if let Node::Leaf(leafs)= node {
+            for tab in leafs.tabs.iter() {
                 open_tabs.insert(tab.clone());
             }
         }

@@ -161,8 +161,8 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
     for node in tree[SurfaceIndex::main()].iter() {
-        if let Node::Leaf { tabs, .. } = node {
-            for tab in tabs {
+        if let Node::Leaf(tabs) = node {
+            for tab in &tabs.tabs {
                 open_tabs.insert(tab.clone());
             }
         }

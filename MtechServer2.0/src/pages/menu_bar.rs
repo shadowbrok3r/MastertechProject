@@ -1,7 +1,7 @@
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
-use eframe::egui::{menu, vec2, Align, Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TextEdit, TopBottomPanel, Widget};
-use crate::app_state::{default_tree, MtechServer};
+use eframe::egui::{containers::menu::MenuConfig, vec2, Align, Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, Margin, MenuBar, PopupCloseBehavior, ProgressBar, RichText, ScrollArea, Separator, Stroke, TextEdit, TopBottomPanel, UiKind, Widget};
 use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, PlatformSpawner, Spawner}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
+use crate::app_state::{default_tree, MtechServer};
 use displays::ui_tools::show_notification;
 use wasm_bindgen_futures::spawn_local;
 use std::collections::BTreeSet;
@@ -12,7 +12,11 @@ impl MtechServer {
     pub fn menu_bar(&mut self, ctx: &Context) {
         let mut inputs = BTreeSet::new();
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
-            menu::bar(ui, |ui| {
+            MenuBar::new()
+            .config(
+                MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
+            )
+            .ui(ui, |ui| {
                 if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
@@ -47,7 +51,7 @@ impl MtechServer {
                                         self.context.open_tabs.insert(tab.to_string());
                                         self.tree.push_to_focused_leaf(tab.to_string());
                                     }
-                                    ui.close_menu();
+                                    ui.close_kind(UiKind::Menu);
                                 }
                             }
                         });
@@ -276,7 +280,7 @@ impl MtechServer {
 
                                 if ui.add(Button::new("Modify Theme")).clicked() {
                                     self.context.shared_ctx.modify_theme = true;
-                                    ui.close_menu();
+                                    ui.close_kind(UiKind::Menu)
                                 }
                                 
                                 ui.separator();
@@ -386,7 +390,7 @@ impl MtechServer {
                             let row_height = 100.;
                             let total_rows = self.context.shared_ctx.notifications.len();
                             let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+                            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 15.0);
 
                             ui.scope(|ui| {
                                 ui.style_mut().visuals.extreme_bg_color + Color32::from_rgb(30,30,30);

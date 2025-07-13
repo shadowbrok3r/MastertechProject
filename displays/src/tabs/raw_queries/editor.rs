@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use eframe::egui::{text::{CCursor, CCursorRange}, vec2, Color32, CursorIcon, FontId, Margin, TextEdit, Ui};
+use eframe::egui::{text::{CCursor, CCursorRange}, vec2, Color32, CursorIcon, FontId, Margin, TextEdit, Ui, UiKind};
 use egui_json_tree::{
     delimiters::ExpandableDelimiter,
     pointer::JsonPointerSegment,
@@ -152,14 +152,14 @@ impl Editor {
                     self.edit_events.push(EditEvent::AddToObject {
                         pointer: context.pointer.to_json_pointer_string(),
                     });
-                    ui.close_menu();
+                    ui.close_kind(UiKind::Menu);
                 }
 
                 if context.value.is_array() && ui.button("Add to array").clicked() {
                     self.edit_events.push(EditEvent::AddToArray {
                         pointer: context.pointer.to_json_pointer_string(),
                     });
-                    ui.close_menu();
+                    ui.close_kind(UiKind::Menu);
                 }
 
                 if let Some(parent) = context.pointer.parent() {
@@ -172,7 +172,7 @@ impl Editor {
                                 request_focus: true,
                                 is_new_key: false,
                             }));
-                            ui.close_menu()
+                            ui.close_kind(UiKind::Menu);
                         }
                     }
 
@@ -188,7 +188,7 @@ impl Editor {
                             },
                         };
                         self.edit_events.push(event);
-                        ui.close_menu();
+                        ui.close_kind(UiKind::Menu);
                     }
                 }
             });
@@ -209,7 +209,7 @@ impl Editor {
                         new_value_input: context.value.to_string(),
                         request_focus: true,
                     }));
-                    ui.close_menu();
+                    ui.close_kind(UiKind::Menu);
                 }
 
                 match (context.pointer.parent(), context.pointer.last()) {
@@ -219,7 +219,7 @@ impl Editor {
                                 object_pointer: parent.to_json_pointer_string(),
                                 key: key.to_string(),
                             });
-                            ui.close_menu();
+                            ui.close_kind(UiKind::Menu);
                         }
                     }
                     (Some(parent), Some(JsonPointerSegment::Index(idx))) => {
@@ -228,7 +228,7 @@ impl Editor {
                                 array_pointer: parent.to_json_pointer_string(),
                                 idx: *idx,
                             });
-                            ui.close_menu();
+                            ui.close_kind(UiKind::Menu);
                         }
                     }
                     _ => {}
@@ -251,7 +251,7 @@ impl Editor {
                             self.edit_events.push(EditEvent::AddToArray {
                                 pointer: context.pointer.to_json_pointer_string(),
                             });
-                            ui.close_menu();
+                            ui.close_kind(UiKind::Menu);
                         }
                     });
             }
@@ -264,7 +264,7 @@ impl Editor {
                             self.edit_events.push(EditEvent::AddToObject {
                                 pointer: context.pointer.to_json_pointer_string(),
                             });
-                            ui.close_menu();
+                            ui.close_kind(UiKind::Menu);
                         }
                     });
             }

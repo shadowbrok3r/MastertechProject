@@ -4,7 +4,7 @@ use ratatui::{backend::{Backend, ClearType, WindowSize}, buffer::{Buffer, Cell},
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use web_time::Instant;
-use std::io;
+use std::io::{self, Error};
 // crossterm::event::{KeyCode, KeyModifiers}
 use super::{terminal_line::TerminalLine, SerializableBuffer};
 
@@ -406,6 +406,8 @@ impl RataguiBackend {
 }
 
 impl Backend for RataguiBackend {
+    // type Error = Error;
+
     fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,

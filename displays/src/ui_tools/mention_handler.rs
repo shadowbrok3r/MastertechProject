@@ -1,4 +1,4 @@
-use eframe::egui::{popup, Context, Id, Key, Modifiers, PopupCloseBehavior, TextBuffer, TextEdit, TextStyle, Ui, Widget};
+use eframe::egui::{Context, Id, Key, Modifiers, Popup, PopupCloseBehavior, TextBuffer, TextEdit, TextStyle, Ui, Widget};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use serde::{Deserialize, Serialize};
 use std::{cmp::{min, Reverse}, collections::BTreeSet};
@@ -37,8 +37,8 @@ impl Default for MentionHandler {
 impl Widget for MentionHandler {
     fn ui(mut self, ui: &mut Ui) -> eframe::egui::Response {
 
-        let mut layouter = |ui: &Ui, easymark: &str, wrap_width: f32| {
-            let mut layout_job = self.highlighter.highlight(ui.style(), easymark);
+        let mut layouter = |ui: &Ui, easymark: &dyn eframe::egui::TextBuffer, wrap_width: f32| {
+            let mut layout_job = self.highlighter.highlight(ui.style(), easymark.as_str());
             layout_job.wrap.max_width = wrap_width;
             ui.fonts(|f| f.layout_job(layout_job))
         };
@@ -103,13 +103,16 @@ impl Widget for MentionHandler {
                 if let (Some(index), true) = (
                     self.selected_index,
                     // If accepted by keyboard, close the popup. If the popup is closed with a selected index, take that text
-                    accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(popup_id)),
+                    accepted_by_keyboard || !Popup::is_id_open(ui.ctx(), popup_id),
                 ) {
                     self.input_text.replace_with(match_results[index].0.as_ref());
                     self.selected_index = None;
                 }
                 // Display the suggestions popup
-                popup::popup_below_widget(ui, popup_id, &text_response, PopupCloseBehavior::IgnoreClicks, |ui| {
+                Popup::from_response(&text_response)
+                .id(popup_id)
+                .close_behavior(PopupCloseBehavior::IgnoreClicks)
+                .show(|ui| {
                     for (i, (output, _, match_indices)) in
                         match_results.iter().take(10).enumerate()
                     {
@@ -147,13 +150,11 @@ impl Widget for MentionHandler {
     
                 // Open the popup if necessary
                 if !self.input_text.is_empty() && text_response.has_focus() {
-                    ui.memory_mut(|mem| mem.open_popup(popup_id));
+                    Popup::open_id(ui.ctx(), popup_id);
                 } else {
-                    ui.memory_mut(|mem| {
-                        if mem.is_popup_open(popup_id) {
-                            mem.close_popup()
-                        }
-                    });
+                    if Popup::is_id_open(ui.ctx(), popup_id) {
+                        Popup::close_id(ui.ctx(), popup_id)
+                    }
                 }
             }
         }

@@ -1,6 +1,7 @@
 
 use database::{schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
 use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
+use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{app_state::{default_tree}, tabs::github::{get_github_releases, self_updater::run}};
 use crate::app_state::MasterTechApp;
 use displays::{app_state::{AppState, MainPages}, ui_tools::show_notification};
@@ -12,7 +13,11 @@ impl MasterTechApp {
     pub fn menu_bar(&mut self, ctx: &Context) {
         let inputs = BTreeSet::new();
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
-            eframe::egui::menu::bar(ui, |ui| {
+            eframe::egui::MenuBar::new()
+            .config(
+                MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),
+            )
+            .ui(ui, |ui| {
                 if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
                     ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
                         // allow certain tabs to be toggled
@@ -51,7 +56,7 @@ impl MasterTechApp {
                                     self.context.open_tabs.insert(tab.to_string());
                                     self.tree.push_to_focused_leaf(tab.to_string());
                                 }
-                                ui.close_menu();
+                                ui.close_kind(UiKind::Menu);
                             }
                         }
                     });
@@ -60,7 +65,7 @@ impl MasterTechApp {
                         ui.add_space(8.0);
                         let txt = RichText::new(usr.get_username()).color(Color32::from_rgb(191, 33, 101));
 
-                        ui.menu_button(txt, |ui| {
+                        MenuButton::new(txt).config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
                             ui.vertical_centered_justified(|ui| {
@@ -120,6 +125,7 @@ impl MasterTechApp {
                                     Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
                                         ComboBox::new("Store_Selection", "")                    
                                         .width(60.)
+                                        .close_behavior(PopupCloseBehavior::IgnoreClicks)
                                         .selected_text(selected_text)
                                         .show_ui(ui, |ui| {
                                             ui.selectable_value(selected, 76, "RIV");
@@ -183,7 +189,7 @@ impl MasterTechApp {
                     
                                 if ui.add(Button::new("Modify Theme")).clicked() {
                                     self.context.shared_ctx.modify_theme = true;
-                                    ui.close_menu();
+                                    ui.close_kind(UiKind::Menu);
                                 }
                     
                                 if ui.add(Button::new("Refresh Data")).clicked() {
@@ -257,7 +263,7 @@ impl MasterTechApp {
                             let row_height = 100.;
                             let total_rows = self.context.shared_ctx.notifications.len();
                             let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                            ui.ctx().options_mut(|o| o.line_scroll_speed = 80.0);
+                            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 80.0);
 
                             scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
                                 for row in row_range {

@@ -34,12 +34,12 @@ impl WebSocketClient {
             style.visuals.widgets.active.corner_radius = default_rounding;
             style.visuals.widgets.hovered.corner_radius = default_rounding;
             
-            let mut layouter = |ui: &Ui, string: &str, _: f32| {
+            let mut layouter = |ui: &Ui, buf: &dyn eframe::egui::TextBuffer, _: f32| {
                 let mut layout_job: eframe::egui::text::LayoutJob = highlight(
                     ui.ctx(), 
                     &ui.style(), 
                     &CodeTheme::dark(12.), 
-                    string, 
+                    buf.as_str(), 
                     "bash".into()
                 );
                 layout_job.wrap.max_width = ui.available_width()/1.1;

@@ -1,7 +1,7 @@
 use eframe::egui::text::{CCursor, CCursorRange};
-use eframe::egui::{Margin, TextBuffer};
+use eframe::egui::{LayerId, Margin, Order, PopupAnchor, RectAlign, TextBuffer};
 use eframe::egui::{
-    popup,
+    Popup,
     text::LayoutJob,
     Color32,
     Context,
@@ -41,7 +41,7 @@ pub struct AutoCompleteTextEdit<'a, T> {
     /// Used to set properties on the internal TextEdit
     set_properties: Option<Box<SetTextEditProperties>>,
     filter: Option<Box<dyn Fn(&str) -> bool>>,
-    layouter: Option<&'a mut dyn FnMut(&Ui, &str, f32) -> Arc<eframe::egui::Galley>>,
+    layouter: Option<&'a mut dyn FnMut(&Ui, &dyn eframe::egui::TextBuffer, f32) -> Arc<eframe::egui::Galley>>,
 }
 
 impl<'a, T, S> AutoCompleteTextEdit<'a, T>
@@ -116,7 +116,7 @@ where
     /// Sets the layouter function for custom text layout.
     pub fn layouter(
         mut self,
-        layouter: &'a mut dyn FnMut(&Ui, &str, f32) -> Arc<eframe::egui::Galley>,
+        layouter: &'a mut dyn FnMut(&Ui, &dyn eframe::egui::TextBuffer, f32) -> Arc<eframe::egui::Galley>,
     ) -> Self {
         self.layouter = Some(layouter);
         self
@@ -249,9 +249,12 @@ where
         //     text_response.request_focus()
         // }
 
+        let ctx = ui.ctx();
+
+        let open = &mut false;
         if let (Some(index), true) = (
             state.selected_index,
-            accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(id)),
+            accepted_by_keyboard || !Popup::is_id_open(&ctx, id),
         ) {
             if let Some(at_char_index) = trigger_char_position {
                 let selected_text = match_results[index].0.as_ref();
@@ -282,7 +285,7 @@ where
                 text_edit_state.cursor = new_cursor_state;
 
                 // Store the updated TextEditState
-                text_edit_state.store(ui.ctx(), text_edit_id);
+                text_edit_state.store(&ctx, text_edit_id);
             } else {
                 if match_results.len() > 0 {
                     text_field.replace_with(match_results[index].0.as_ref());
@@ -292,63 +295,65 @@ where
         }
 
         if !match_results.is_empty() && text_response.has_focus() {
-            ui.memory_mut(|mem| mem.open_popup(id));
+            *open = true;
         } else {
-            ui.memory_mut(|mem| {
-                if mem.is_popup_open(id) {
-                    mem.close_popup()
-                }
-            });
+            if Popup::is_id_open(&ctx, id) {
+                *open = false;
+            }
         }
-        popup::popup_below_widget(
-            ui,
-            id,
-            &text_response,
-            PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                for (i, (output, _, match_indices)) in
-                    match_results.iter().take(max_suggestions).enumerate()
-                {
-                    let mut selected = if let Some(x) = state.selected_index {
-                        x == i
-                    } else {
-                        false
-                    };
-
-                    let text = if highlight {
-                        highlight_matches(
-                            output.as_ref(),
-                            match_indices,
-                            Color32::from_rgb(191, 33, 101),
-                        )
-                    } else {
-                        let mut job = LayoutJob::default();
-                        job.append(output.as_ref(), 0.0, TextFormat::default());
-                        job
-                    };
-                    //  Update selected index based on hover
-                    if ui.toggle_value(&mut selected, text).hovered() {
-                        state.selected_index = Some(i);
-                        // text_field.replace_with(match_results[index].0.as_ref());
-                    }
-                    // if ui.toggle_value(&mut selected, text).clicked() {
-                    //     text_field.replace_with(output.as_ref());
-                    // }
-                }
-            },
-        );
+        
         if !text_field.as_str().is_empty() && text_response.has_focus() && !match_results.is_empty()
         {
-            ui.memory_mut(|mem| mem.open_popup(id));
+            *open = true;
         } else {
-            ui.memory_mut(|mem| {
-                if mem.is_popup_open(id) {
-                    mem.close_popup()
-                }
-            });
+            if Popup::is_id_open(&ctx, id) {
+                *open = false;
+            }
         }
 
-        state.store(ui.ctx(), id);
+        Popup::new(
+            id, 
+            ctx.clone(), 
+            PopupAnchor::from(&text_response), 
+            LayerId::new(Order::Foreground, id)
+        )
+        .width(text_response.rect.width().max(250.0))
+        .align(RectAlign::BOTTOM)
+        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+        .open_bool(open)
+        .show(|ui| {
+            for (i, (output, _, match_indices)) in
+                match_results.iter().take(max_suggestions).enumerate()
+            {
+                let mut selected = if let Some(x) = state.selected_index {
+                    x == i
+                } else {
+                    false
+                };
+
+                let text = if highlight {
+                    highlight_matches(
+                        output.as_ref(),
+                        match_indices,
+                        Color32::from_rgb(191, 33, 101),
+                    )
+                } else {
+                    let mut job = LayoutJob::default();
+                    job.append(output.as_ref(), 0.0, TextFormat::default());
+                    job
+                };
+                //  Update selected index based on hover
+                if ui.toggle_value(&mut selected, text).hovered() {
+                    state.selected_index = Some(i);
+                    // text_field.replace_with(match_results[index].0.as_ref());
+                }
+                // if ui.toggle_value(&mut selected, text).clicked() {
+                //     text_field.replace_with(output.as_ref());
+                // }
+            }
+        });
+
+        state.store(&ctx, id);
 
         text_response
     }

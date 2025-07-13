@@ -9,7 +9,7 @@ tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
-egui_json_tree = { version = "0.11.0", features = ["serde_json"] }
+egui_json_tree = { version = "0.12.0", features = ["serde_json"] }
 reqwest = { version = "0.12", features = ["stream", "json"] }
 structdiff = {version = "0.7.1", features = ["rustc_hash"]}
 rpc-router = "0.1"
@@ -65,5 +65,5 @@ wasm-bindgen-futures = { workspace=true, optional = true }
 wasm-cookies = { workspace = true}
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]} # "tls"
 
-[dependencies.zvariant_derive]
-version = "=5.5.1" 
+# [dependencies.zvariant_derive]
+# version = "=5.5.1" 

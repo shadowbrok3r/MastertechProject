@@ -168,9 +168,9 @@ impl Interaction for LiveTaskPayload {
         
         let is_web = cfg!(target_arch = "wasm32");
         if is_web {
-            ui.ctx().options_mut(|o| o.line_scroll_speed = 20.0);
+            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 20.0);
         } else {
-            ui.ctx().options_mut(|o| o.line_scroll_speed = 50.0);
+            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 50.0);
         };
         
         ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")

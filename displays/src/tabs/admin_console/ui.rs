@@ -299,7 +299,7 @@ impl AdminConsole {
                         let row_height = 35.;
                         let total_rows = clients.len(); 
                         let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                        ui.ctx().options_mut(|o| o.line_scroll_speed = 30.0);
+                        ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 30.0);
                         scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
                             // Retrieve search input for the current context, or default to an empty string.
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
