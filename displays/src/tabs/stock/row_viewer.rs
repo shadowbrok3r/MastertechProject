@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
-use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, TextEdit, Ui, Widget};
+use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -181,16 +181,8 @@ impl RowViewer<SerialsData> for SerialsViewer {
         column: usize,
     ) -> Option<Response> {
         match column {
-            0 => Some(TextEdit::multiline(&mut format!("{}", row.0))
-                .desired_rows(1)
-                .code_editor()
-                .show(ui)
-                .response),
-            1 => Some(TextEdit::multiline(&mut format!("{}", row.1))
-                .desired_rows(1)
-                .code_editor()
-                .show(ui)
-                .response),
+            0 => Some(ui.label(format!("{}", row.0))),
+            1 => Some(ui.label(format!("{}", row.1))),
             2 => {
                 if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫"{
                     None
@@ -206,11 +198,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     )
                 }
             },
-            3 => Some(TextEdit::multiline(&mut format!("{}", row.3))
-                .desired_rows(1)
-                .code_editor()
-                .show(ui)
-                .response),
+            3 => Some(ui.label(format!("{}", row.3))),
             _ => None
         }
     }
@@ -318,6 +306,7 @@ impl RowCodec<SerialsData> for Codec {
                 if let Some(caps) = re.captures(&src_row.0) {
                     let inner_text = &caps[1];
                     log::info!("Text inside brackets: {}", inner_text);
+                    dst.push_str(&inner_text);
                 } else {
                     log::info!("No brackets found");
                     dst.push_str(&src_row.0);
@@ -340,7 +329,7 @@ impl RowCodec<SerialsData> for Codec {
         match column {
             0 => {
                 let re = Regex::new(r"\[([^\]]+)\]").unwrap();
-                if let Some(caps) = re.captures(&dst_row.0) {
+                if let Some(caps) = re.captures(src_data) {
                     dst_row.0 = caps[1].to_string();
                 }
             },
