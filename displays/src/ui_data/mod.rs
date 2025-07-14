@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use eframe::egui::Style;
 use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use crate::{PlatformSpawner, Spawner};
 
@@ -95,7 +98,16 @@ impl crate::app_state::SharedContext {
                 ctx.set_style(color_settings);
                 ctx.request_repaint();
             },
-            Err(e) => log::error!("Error setting theme config: {e:?}"),
+            Err(e) => {
+                log::error!("Error setting theme config: {e:?}");
+                match serde_json::from_str::<Style>(crate::STYLE) {
+                    Ok(theme) => {
+                        let style = Arc::new(theme);
+                        ctx.set_style(style);
+                    }
+                    Err(e) => log::error!("Error setting theme: {e:?}")
+                };
+            },
         }
 
         let stock_tx = self.extra_stock_channel.0.clone();
