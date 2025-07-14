@@ -22,6 +22,7 @@ pub mod scripts;
 pub mod system_information;
 pub mod tur_sheet;
 pub mod websockets;
+pub mod egui_file_dialog;
 
 // pub const TABS: [&str; 16] = [
 //     "Lil menu",
