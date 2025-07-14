@@ -66,6 +66,7 @@ impl MasterTechApp {
         self.receive_database(ctx, frame);
         self.receive_github();
         self.viewport_loader(ctx);
+        // self.context.file_browser.try_lock()
         // ctx.request_repaint_after_secs(0.5);
 
         // most important part of the whole app.. setting up our styling
