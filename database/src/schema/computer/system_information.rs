@@ -1,5 +1,14 @@
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default )]
 pub struct SystemInformation {
+    pub cpu: String,
+    pub motherboard_name: String,
+    pub motherboard_serial: String,
+    pub motherboard_asset_tag: String,
+    pub motherboard_vendor: String,
+    pub product_name: String,
+    pub product_sku: String,
+    pub product_serial: String,
+    pub product_vendor: String,
     /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,
     /// Live CPU clock speed
@@ -11,7 +20,7 @@ pub struct SystemInformation {
     /// Total RAM
     pub total_memory: f32,
     /// Disk usage
-    pub disks: String,
+    pub disks: Vec<Disk>,
     /// Name of machine
     pub name: String,
     /// Kernel version
@@ -27,6 +36,15 @@ pub struct SystemInformation {
     /// List of active processes on host
     pub processes: Vec<Process>,
     pub gpu_info: Gpu
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default )]
+pub struct Disk {
+    pub device_name: String,
+    pub file_system: String,
+    pub mount_point: String,
+    pub total_space: u64,
+    pub available_space: u64,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]

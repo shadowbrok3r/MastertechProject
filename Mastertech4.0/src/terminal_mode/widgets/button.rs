@@ -193,7 +193,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 area.y,
                 top_str,
-                Style::default().fg(highlight).bg(Color::Reset), // No background spill
+                Style::default().fg(highlight).bg(Color::Black), // No background spill
             );
         }
 
@@ -208,7 +208,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 y,
                 SHORTCUT_SET.vertical_left,
-                Style::default().fg(highlight).bg(Color::Reset),
+                Style::default().fg(highlight).bg(Color::Black),
             );
 
             // Background fill (inside the borders)
@@ -218,14 +218,14 @@ impl <'a> WidgetRef for Button<'a> {
                 width: area.width.saturating_sub(2),
                 height: 1,  // Exactly 1 row per iteration
             };
-            buf.set_style(inner_rect, Style::default().fg(text)); // .bg(background)
+            buf.set_style(inner_rect, Style::default().fg(text).bg(Color::Black)); // .bg(background)
 
             // Right border
             buf.set_string(
                 area.x + area.width - 1,
                 y,
                 SHORTCUT_SET.vertical_right,
-                Style::default().fg(highlight).bg(Color::Reset),
+                Style::default().fg(highlight).bg(Color::Black),
             );
         }
 
@@ -240,7 +240,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 area.y + area.height - 1,
                 bot_str,
-                Style::default().fg(shadow).bg(Color::Reset),
+                Style::default().fg(shadow).bg(Color::Black),
             );
         }
 

@@ -114,6 +114,7 @@ impl SysinfoTab {
             value: gpu_percent,
         });
 
+        log::info!("system.component_temps: {:?}", system.component_temps);
         // Component temperatures: update history for each component.
         for (comp, &temp) in system.component_temps.iter() {
             self.component_temp_history

@@ -233,15 +233,17 @@ impl SysinfoTab {
                 .collect::<Vec<_>>(),
         )
         .height(1);
+        
         let rows = self.processes.iter().map(|proc| {
             let cells = vec![
                 Cell::from(proc.id.to_string()),
                 Cell::from(proc.name.clone()),
-                Cell::from(format!("{}", proc.cpu_usage)),
+                Cell::from(format!("{:.1}", proc.cpu_usage)),
                 Cell::from(format!("{:.1} MB", proc.memory)),
             ];
             Row::new(cells).height(1)
         });
+        
         let table = Table::new(rows, vec![
             Constraint::Length(6),
             Constraint::Percentage(50),
@@ -265,15 +267,29 @@ impl SysinfoTab {
     fn draw_sysinfo_summary(&mut self) -> impl WidgetRef {
         // let disks: Vec<Disk> = serde_json::from_str(&self.system.disks).unwrap_or_default();
 
-        let details_text = format!(
-            "OS Name: {}\nKernel: {}\nOS Version: {}\nHostname: {}\n{}\nDisks: {}",
+        let mut details_text = format!(
+            "Operating System: {} {}\nHostname: {}\nCPU: {}\nMotherboard: {} Vendor: {} S/N: {}\nProduct Name: {} Vendor: {}\n",
             self.system.name,
-            self.system.kernel_version,
             self.system.os_version,
             self.system.hostname,
-            self.system.number_of_cpus,
-            self.system.disks
+            self.system.cpu,
+            self.system.motherboard_name,
+            self.system.motherboard_vendor,
+            self.system.motherboard_serial,
+            self.system.product_name,
+            self.system.product_vendor
         );
+
+        for disk in self.system.disks.iter() {
+            details_text.push_str(&format!(
+                "{}: {} - Total: {:.2}Gb / Avail: {:.2}Gb ",
+                disk.mount_point,
+                disk.device_name,
+                disk.total_space as f32 / 1e9,
+                disk.available_space as f32 / 1e9,
+            ));
+        }
+
         let details_paragraph = Paragraph::new(details_text)
             .style(Style::default().fg(CATPPUCCIN.subtext0));
 

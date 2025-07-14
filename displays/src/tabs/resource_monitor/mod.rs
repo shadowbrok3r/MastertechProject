@@ -125,11 +125,12 @@ impl ResourceMonitor {
                 }
 
                 // Update disk usage
-                for disk_info in sysinfo.disks.split("Disk").skip(1) {
-                    if let Some((disk_name, used, _total)) = parse_disk_info(disk_info) {
-                        let used_gb = used as f32 / 1e9;
-                        self.disk_usage_plot.update_line(&disk_name, continuous_time, used_gb);
-                    }
+                for disk_info in sysinfo.disks {
+                    let used = disk_info.total_space / disk_info.available_space;
+                    
+                    // let used_gb = used as f32 / 1e9;
+                    self.disk_usage_plot.update_line(&disk_info.device_name, continuous_time, used as f32);
+                    
                 }
 
                 // Update network interfaces
@@ -334,15 +335,4 @@ impl ResourceMonitor {
 
 fn normalize(value: f32, min: f32, max: f32) -> f32 {
     (value - min) / (max - min)
-}
-
-fn parse_disk_info(disk_info: &str) -> Option<(String, u64, u64)> {
-    let parts: Vec<&str> = disk_info.split_whitespace().collect();
-    if parts.len() >= 4 {
-        let name = parts[0].to_string();
-        let used = parts[2].parse::<u64>().ok()?;
-        let total = parts[3].parse::<u64>().ok()?;
-        return Some((name, used, total));
-    }
-    None
 }

@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, widgets::{Block, Borders, WidgetRef}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, Widget, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
 use tui_scrollview::ScrollView;
 use super::ServiceFormTab;
@@ -10,6 +10,13 @@ pub const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 46;
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        Block::new()
+        .style(Style::new().bg(Color::Black))
+        .border_type(ratatui::widgets::BorderType::Double)
+        .border_style(
+            Style::new().fg(Color::Cyan)
+        ).render(area, f.buffer_mut());
+
         let total_offset = area.y;
         self.total_offset.replace(total_offset);
         self.service_form_area.replace(Some(area));
@@ -58,6 +65,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                 Constraint::Percentage(25),
             ])
             .split(rows[1]);
+
         self.order_number.render_ref(row2[0], scroll_view.buf_mut());
         if self.other_fields.len() > 1 {
             self.other_fields[1].render_ref(row2[1], scroll_view.buf_mut());
@@ -75,6 +83,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                 Constraint::Percentage(25),
             ])
             .split(rows[2]);
+        
         if !self.other_fields.is_empty() {
             self.other_fields[0].render_ref(row3[0], scroll_view.buf_mut());
         }
