@@ -1,7 +1,7 @@
 use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
-use sysinfo::{Components, Disks, Networks, System};
+use sysinfo::{Components, Disks, Motherboard, Networks, Product, System};
 use num_format::{Locale, ToFormattedString};
 use crossbeam::channel::Sender;
 use async_trait::async_trait;
@@ -375,9 +375,23 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let sys = &mut machine.sysinfo.lock().await;
     // info!("GPU: {gpu_info:?}");
     sys.refresh_all();
+    let cpu_name = &mut String::new();
     let mut cpu_percentage = f32::default();
     let mut cpu_clock = f32::default();
-    let mut disks = String::new();
+    let mut disks = Vec::new();
+    let motherboard = Motherboard::new();
+    let motherboard_name = &mut String::new();
+    let motherboard_serial = &mut String::new();
+    let motherboard_asset_tag = &mut String::new();
+    let motherboard_vendor = &mut String::new();
+
+    if let Some(mobo) = motherboard {
+        *motherboard_name = mobo.name().unwrap_or_default();
+        *motherboard_serial = mobo.serial_number().unwrap_or_default();
+        *motherboard_asset_tag = mobo.asset_tag().unwrap_or_default();
+        *motherboard_vendor = mobo.vendor_name().unwrap_or_default();
+    }
+
     let disk_list = Disks::new_with_refreshed_list();
     let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
     let mut component_temps: HashMap<String, f32> = HashMap::new();
@@ -398,7 +412,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     // Number of CPUs:
     let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
-    
+
     // Display processes ID, name na disk usage:
     // for (pid, process) in sys.processes() {log::info!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
     for (pid, process) in sys.processes().iter() {
@@ -432,7 +446,13 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     }
 
     for disk in &disk_list {
-        disks += format!("{disk:?}").as_str();
+        disks.push(database::schema::system_information::Disk {
+            device_name: disk.name().to_string_lossy().to_string(),
+            file_system: disk.file_system().to_string_lossy().to_string(),
+            mount_point: disk.mount_point().to_string_lossy().to_string(),
+            total_space: disk.total_space(),
+            available_space: disk.available_space(),
+        });
     }
 
     for (interface_name, data) in &networks {
@@ -461,6 +481,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     for cpu in sys.cpus() {
         cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
+        *cpu_name = cpu.brand().to_string();
     }
 
     Ok(SystemInformation {
@@ -478,6 +499,15 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         number_of_cpus,
         network_interfaces,
         processes,
+        cpu: cpu_name.clone(),
+        motherboard_name: motherboard_name.clone(),
+        motherboard_serial: motherboard_serial.clone(),
+        motherboard_asset_tag: motherboard_asset_tag.clone(),
+        motherboard_vendor: motherboard_vendor.clone(),
+        product_name: Product::name().unwrap_or_default(),
+        product_sku: Product::stock_keeping_unit().unwrap_or_default(),
+        product_serial: Product::serial_number().unwrap_or_default(),
+        product_vendor: Product::vendor_name().unwrap_or_default(),
     })
 }
 
@@ -508,13 +538,27 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     let sys = &mut SYSINFO.lock().await;
     // info!("GPU: {gpu_info:?}");
     sys.refresh_all();
+    let cpu_name = &mut String::new();
     let mut cpu_percentage = f32::default();
     let mut cpu_clock = f32::default();
-    let mut disks = String::new();
+    let mut disks = Vec::new();
     let disk_list = Disks::new_with_refreshed_list();
     let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
     let mut component_temps: HashMap<String, f32> = HashMap::new();
     let mut processes: Vec<SysProcess> = Vec::new();
+    let motherboard = Motherboard::new();
+    let motherboard_name = &mut String::new();
+    let motherboard_serial = &mut String::new();
+    let motherboard_asset_tag = &mut String::new();
+    let motherboard_vendor = &mut String::new();
+
+    if let Some(mobo) = motherboard {
+        *motherboard_name = mobo.name().unwrap_or_default();
+        *motherboard_serial = mobo.serial_number().unwrap_or_default();
+        *motherboard_asset_tag = mobo.asset_tag().unwrap_or_default();
+        *motherboard_vendor = mobo.vendor_name().unwrap_or_default();
+    }
+
     // Components temperature:
     let components = Components::new_with_refreshed_list();
     // Network interfaces name, total data received and total data transmitted:
@@ -528,9 +572,6 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
     let os_version = System::os_version().context("Could not retrieve os_version")?;
     let hostname = System::host_name().context("Could not retrieve hostname")?;
-
-    // Number of CPUs:
-    let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
     
     // Display processes ID, name na disk usage:
     // for (pid, process) in sys.processes() {log::info!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
@@ -565,7 +606,13 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     }
 
     for disk in &disk_list {
-        disks += format!("{disk:?}").as_str();
+        disks.push(database::schema::system_information::Disk {
+            device_name: disk.name().to_string_lossy().to_string(),
+            file_system: disk.file_system().to_string_lossy().to_string(),
+            mount_point: disk.mount_point().to_string_lossy().to_string(),
+            total_space: disk.total_space(),
+            available_space: disk.available_space(),
+        });
     }
 
     for (interface_name, data) in &networks {
@@ -586,14 +633,15 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         // comps += format!("{component:#?} \n", component.).as_str();
     }
 
-    // let mut s = System::new_with_specifics(RefreshKind::everything());
+    log::info!("components.list(): {component_temps:?}\n {:#?}", components.list());
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // s.refresh_cpu_all(); // Refreshing CPU information.
+    // Refreshing CPU information.
     for cpu in sys.cpus() {
         cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
+        *cpu_name = cpu.brand().to_string();
     }
 
     Ok(SystemInformation {
@@ -608,8 +656,17 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         cpu_clock,
         component_temps,
         used_memory,
-        number_of_cpus,
         network_interfaces,
         processes,
+        cpu: cpu_name.clone(),
+        number_of_cpus: format!("NB CPUs: {} \n", sys.cpus().len()),
+        motherboard_name: motherboard_name.clone(),
+        motherboard_serial: motherboard_serial.clone(),
+        motherboard_asset_tag: motherboard_asset_tag.clone(),
+        motherboard_vendor: motherboard_vendor.clone(),
+        product_name: Product::name().unwrap_or_default(),
+        product_sku: Product::stock_keeping_unit().unwrap_or_default(),
+        product_serial: Product::serial_number().unwrap_or_default(),
+        product_vendor: Product::vendor_name().unwrap_or_default(),
     })
 }

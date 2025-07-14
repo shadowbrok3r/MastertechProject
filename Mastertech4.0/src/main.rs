@@ -96,31 +96,6 @@ async fn main() -> eframe::Result<()> {
         Err(e) => log::error!("check_old_exe Err: {e:?}"),
     }
 
-    // Create an EguiLogger; multi_log will take care of initialization.
-    let egui_logger = Box::new(egui_logger::builder().build());
-
-    // And add another one.
-    // let tui_logger = Box::new(tui_logger::init_logger(log::LevelFilter::Info));
-    // Early initialization of the logger
-    let drain = tui_logger::Drain::new();
-    // instead of tui_logger::init_logger, we use `env_logger`
-    let tui_log = Box::new(
-        env_logger::Builder::default()
-        .format(move |_buf, record|
-            // patch the env-logger entry through our drain to the tui-logger
-            Ok(drain.log(record))
-        ).build()
-    );
-    
-    multi_log::MultiLogger::init(vec![egui_logger, tui_log], log::Level::Info).expect("Error initializing multi_logger");
-
-    tokio::spawn(async move {
-        utilities::ai::run_mcp_server_tcp().await?;
-        Ok::<(), anyhow::Error>(())
-    });
-    
-    // let _ = crate::utilities::scripts::InstalledProgram::get_installed_programs();
-
     // console_subscriber::init(); // for tokio console
     let matches = clap::Command::new("Mastertech")
         .version(env!("CARGO_PKG_VERSION"))
@@ -150,7 +125,7 @@ async fn main() -> eframe::Result<()> {
         .get_matches();
 
     if matches.get_flag("term") {
-        // let init = tui_logger::init_logger(log::LevelFilter::Info);
+        let _init = tui_logger::init_logger(log::LevelFilter::Info);
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}"); // \n{init:?}
     } else if matches.get_flag("log") {
@@ -160,6 +135,25 @@ async fn main() -> eframe::Result<()> {
             std::fs::File::create("output.log").unwrap()
         ).unwrap();
     } else {
+        // Create an EguiLogger; multi_log will take care of initialization.
+        let egui_logger = Box::new(egui_logger::builder().build());
+        // Early initialization of the logger
+        let drain = tui_logger::Drain::new();
+        // instead of tui_logger::init_logger, we use `env_logger`
+        let tui_log = Box::new(
+            env_logger::Builder::default()
+            .format(move |_buf, record|
+                // patch the env-logger entry through our drain to the tui-logger
+                Ok(drain.log(record))
+            ).build()
+        );
+        
+        multi_log::MultiLogger::init(vec![egui_logger, tui_log], log::Level::Info).expect("Error initializing multi_logger");
+
+        tokio::spawn(async move {
+            utilities::ai::run_mcp_server_tcp().await?;
+            Ok::<(), anyhow::Error>(())
+        });        
         // let init = displays::tabs::logger::logging::builder().init();
         // log::info!("Init logger: {init:?}");
         // simplelog::WriteLogger::init(

@@ -1,4 +1,4 @@
-use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
+use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}, widgets::Block};
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
 use websockets::TerminalWebsocketClient;
@@ -243,6 +243,13 @@ impl <'a>TerminalApp<'a> {
             }
 
             terminal.draw(|f| {
+                let area = f.area();
+                Block::new()
+                .style(Style::new().bg(Color::Black))
+                .border_type(ratatui::widgets::BorderType::Double)
+                .border_style(
+                    Style::new().fg(Color::Cyan)
+                ).render(area, f.buffer_mut());
                 // if !splash_screen.is_rendered() {
                     // Self::render_splash_screen(f, &mut splash_screen);
                 // } else {
@@ -284,20 +291,15 @@ impl <'a>TerminalApp<'a> {
                     }
 
                     self.tasks_tab.borrow_mut().check_tasks();
-            
-                    let area = f.area();
-
-                    f.buffer_mut().set_style(area, Style::default().bg(Color::Rgb(8, 8, 12)));
-            
                     let layout = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Length(4), // for tabs
                             Constraint::Percentage(92),// rest of content
                         ]);
-            
-                    let outer_chunks = layout.split(f.area());
-            
+
+                    let outer_chunks = layout.split(area);
+
                     let tab_layout = Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([Constraint::Percentage(100)])
@@ -336,11 +338,17 @@ impl <'a>TerminalApp<'a> {
                     self.logger.draw::<B>(f, main_content_area);
                 },
             }
+            Block::new()
+            .style(Style::new().bg(Color::Black))
+            .border_type(ratatui::widgets::BorderType::Double)
+            .border_style(
+                Style::new().fg(Color::Yellow)
+            ).render(f.area(), f.buffer_mut());
         }
         Ok(())
     }
 
-    fn render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen) {
+    fn _render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen) {
         let layout_cols = Layout::default()
         .direction(Direction::Horizontal)
         .margin(1)
