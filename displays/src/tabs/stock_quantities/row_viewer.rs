@@ -266,6 +266,7 @@ impl RowCodec<StockQuantityData> for Codec {
                 if let Some(caps) = re.captures(&src_row.0) {
                     let inner_text = &caps[1];
                     log::info!("Text inside brackets: {}", inner_text);
+                    dst.push_str(&inner_text);
                 } else {
                     log::info!("No brackets found");
                     dst.push_str(&src_row.0);
