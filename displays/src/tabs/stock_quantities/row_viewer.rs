@@ -2,10 +2,11 @@ use crate::egui_data_table::{
     viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, TrivialConfig, UiActionContext},
     RowViewer, UiAction,
 };
-use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui};
+use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, Ui};
 
 use egui_extras::Column as TableColumnConfig;
 use log::info;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::tabs::stock::ProductID;
@@ -157,41 +158,11 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     ) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
             match column {
-                0 => {
-                    TextEdit::multiline(&mut format!("{}", row.0))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                1 => {
-                    TextEdit::multiline(&mut format!("{}", row.1))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                2 => {
-                    TextEdit::multiline(&mut format!("{}", row.2))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                3 => {
-                    TextEdit::multiline(&mut format!("{}", row.3))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
-                4 => {
-                    TextEdit::multiline(&mut format!("{}", row.4))
-                        .desired_rows(1)
-                        .code_editor()
-                        .show(ui)
-                        .response
-                }
+                0 => ui.label(format!("{}", row.0)),
+                1 => ui.label(format!("{}", row.1)),
+                2 => ui.label(format!("{}", row.2)),
+                3 => ui.label(format!("{}", row.3)),
+                4 => ui.label(format!("{}", row.4)),
                 _ => unreachable!(),
             }
             .into() // To make focusing work correctly, valid response must be returned.
@@ -215,6 +186,15 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
             _ => unreachable!(),
         }
     }
+
+    // fn on_cell_view_response(
+    //     &mut self,
+    //     row: &StockQuantityData,
+    //     column: usize,
+    //     resp: &eframe::egui::Response,
+    // ) -> Option<Box<StockQuantityData>> {
+        
+    // }
 
     fn compare_cell(
         &self,
@@ -280,7 +260,17 @@ impl RowCodec<StockQuantityData> for Codec {
 
     fn encode_column(&mut self, src_row: &StockQuantityData, column: usize, dst: &mut String) {
         match column {
-            0 => dst.push_str(&src_row.0),
+            0 => {
+                let re = Regex::new(r"\[([^\]]+)\]").unwrap();
+
+                if let Some(caps) = re.captures(&src_row.0) {
+                    let inner_text = &caps[1];
+                    log::info!("Text inside brackets: {}", inner_text);
+                } else {
+                    log::info!("No brackets found");
+                    dst.push_str(&src_row.0);
+                }
+            },
             1 => dst.push_str(&format!("{}", src_row.1)),
             2 => dst.push_str(&format!("{}", src_row.2)),
             3 => dst.push_str(&format!("{}", src_row.3)),
@@ -296,7 +286,12 @@ impl RowCodec<StockQuantityData> for Codec {
         dst_row: &mut StockQuantityData,
     ) -> Result<(), DecodeErrorBehavior> {
         match column {
-            0 => dst_row.0.replace_range(.., src_data),
+            0 => {
+                let re = Regex::new(r"\[([^\]]+)\]").unwrap();
+                if let Some(caps) = re.captures(&dst_row.0) {
+                    dst_row.0 = caps[1].to_string();
+                }
+            },
             1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,

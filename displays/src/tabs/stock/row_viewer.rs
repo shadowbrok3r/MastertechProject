@@ -1,6 +1,7 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
 use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, TextEdit, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use log::info;
@@ -311,7 +312,17 @@ impl RowCodec<SerialsData> for Codec {
 
     fn encode_column(&mut self, src_row: &SerialsData, column: usize, dst: &mut String) {
         match column {
-            0 => dst.push_str(&src_row.0),
+            0 => {
+                let re = Regex::new(r"\[([^\]]+)\]").unwrap();
+
+                if let Some(caps) = re.captures(&src_row.0) {
+                    let inner_text = &caps[1];
+                    log::info!("Text inside brackets: {}", inner_text);
+                } else {
+                    log::info!("No brackets found");
+                    dst.push_str(&src_row.0);
+                }
+            },
             1 => dst.push_str(&src_row.1),
             2 => dst.push_str(&src_row.2),
             3 => dst.push_str(&src_row.3),
@@ -327,7 +338,12 @@ impl RowCodec<SerialsData> for Codec {
         dst_row: &mut SerialsData,
     ) -> Result<(), DecodeErrorBehavior> {
         match column {
-            0 => dst_row.0.replace_range(.., src_data),
+            0 => {
+                let re = Regex::new(r"\[([^\]]+)\]").unwrap();
+                if let Some(caps) = re.captures(&dst_row.0) {
+                    dst_row.0 = caps[1].to_string();
+                }
+            },
             1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
