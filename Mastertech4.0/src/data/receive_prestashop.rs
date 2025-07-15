@@ -1,6 +1,6 @@
-use database::schema::{ComputerData, helper_traits::parse_email_user, prestashop_schema::ServiceOrder, CarboniteResponse, HardwareTests, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
-use eframe::Frame;
+use database::schema::{helper_traits::parse_email_user, prestashop_schema::ServiceOrder, CarboniteResponse, ComputerData, HardwareTests, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
 use crate::app_state::MasterTechApp;
+use eframe::Frame;
 
 // #[cfg(target_os="windows")]
 // use crate::filesystem::system_info::ComputerInfo;

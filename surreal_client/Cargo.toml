@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio-cron-scheduler = "0.13.0"
 sha2 = { version = "0.10", features = ["std"] }
 hex = "0.4.3"
 sysinfo = "0.33"
@@ -14,9 +13,6 @@ anyhow = { workspace = true }
 database = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
-simplelog = { workspace = true }
-uuid = { workspace = true }
-futures = { workspace = true }
 surrealdb = { workspace = true }
 log = { workspace = true }
 regex = { workspace=true }

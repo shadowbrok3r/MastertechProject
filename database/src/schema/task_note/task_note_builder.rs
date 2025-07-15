@@ -4,7 +4,7 @@ use crate::{
     },
     DATABASE,
 };
-use surrealdb::{sql::Datetime, RecordId};
+use surrealdb::{sql::Datetime, RecordId, Uuid};
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -263,7 +263,7 @@ impl TaskNoteBuilder {
             (
                 None,
                 self.created_at.clone(),
-                RecordId::from((TASK_NOTE_TABLE, uuid::Uuid::new_v4().to_string())),
+                RecordId::from((TASK_NOTE_TABLE, Uuid::new_v4().to_string())),
             )
         };
 
@@ -453,7 +453,7 @@ mod tests {
     use mockall::{mock, predicate::*};
     use surrealdb::RecordId;
     use std::collections::HashMap;
-    use uuid::Uuid;
+    use Uuid;
 
     // Mock Prestashop API
     mock! {

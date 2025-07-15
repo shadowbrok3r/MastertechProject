@@ -16,10 +16,10 @@ pub mod presta_api;
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
-        ScrollArea::new([true, true])
+        ScrollArea::both()
             .auto_shrink(false)
-            .max_width(1250.)
-            .min_scrolled_width(1100.)
+            // .max_width(1250.)
+            // .min_scrolled_width(1100.)
             .show(ui, |ui| 
         {
             ui.vertical_centered(|ui| {
@@ -85,18 +85,7 @@ impl MastertechContext {
 
                     ui.add_space(10.);
 
-                    ui.vertical_centered(|ui| {
-                        ui.group(|ui| self.computer_info_grid(ui));
-
-                        ui.add_space(10.);
-
-                        ui.horizontal(|ui| {
-                            ui.add_space(178.);
-                            ui.label(RichText::new("Device Info").strong().underline().font(FontId::proportional(13.)).heading());
-                        });
-
-                        ui.group(|ui| self.device_info_grid(ui) );
-                    });
+                    ui.vertical_centered(|ui| ui.group(|ui| self.computer_info_grid(ui)));
                 });
 
                 // ui.add_space(10.);
@@ -108,6 +97,15 @@ impl MastertechContext {
                     ui.add_space(10.);
 
                     ui.vertical_centered(|ui| {
+                        // ui.add_space(10.);
+
+                        ui.horizontal(|ui| {
+                            ui.add_space(178.);
+                            ui.label(RichText::new("Device Info").strong().underline().font(FontId::proportional(13.)).heading());
+                        });
+
+                        ui.group(|ui| self.device_info_grid(ui) );
+
                         ui.add_space(10.);
 
                         ui.horizontal(|ui| {
@@ -587,7 +585,70 @@ impl MastertechContext {
             
             ui.end_row();
 
-                                /*     ROW 3     */
+            TextEdit::singleline(&mut computer_data.motherboard_name)
+                .hint_text(" Motherboard Name")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            TextEdit::singleline(&mut computer_data.motherboard_serial)
+                .hint_text(" Motherboard S/N")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            ui.end_row();
+
+            TextEdit::singleline(&mut computer_data.motherboard_asset_tag)
+                .hint_text(" Motherboard Asset Tag")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            TextEdit::singleline(&mut computer_data.motherboard_vendor)
+                .hint_text(" Motherboard Vendor")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            ui.end_row();
+
+            TextEdit::singleline(&mut computer_data.product_name)
+                .hint_text(" Product Name")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            TextEdit::singleline(&mut computer_data.product_sku)
+                .hint_text(" Product SKU")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            ui.end_row();
+
+            TextEdit::singleline(&mut computer_data.product_serial)
+                .hint_text(" Product S/N")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            TextEdit::singleline(&mut computer_data.product_vendor)
+                .hint_text(" Product Vendor")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
+
+            ui.end_row();
+
             TextEdit::singleline(&mut computer_data.hostname)
                 .hint_text(" Hostname")
                 .vertical_align(Align::Center)
