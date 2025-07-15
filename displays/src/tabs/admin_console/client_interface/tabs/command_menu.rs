@@ -3,7 +3,7 @@ use eframe::egui::{Button, Ui, Widget};
 
 impl WebSocketClient {
     pub fn command_shell_menu(&mut self, ui: &mut Ui) {
-        if Button::new("Tuneup").ui(ui).clicked(){
+        if Button::new("Tuneup / QC").ui(ui).clicked(){
             log::info!("web_console -> websockets.rs -> Tuneup clicked");
             let _ = self.send_cmd_tx.try_send(Cmd::Tuneup);
             // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));

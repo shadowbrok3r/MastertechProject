@@ -15,7 +15,6 @@ structdiff = {version = "0.7.1", features = ["rustc_hash"]}
 rpc-router = "0.1"
 schemars = "1"
 derivative = "2"
-parking_lot = "0.12"
 zstd = "0.13"
 tap = "1"
 compact_str = { version = "0.9.0", features = ["serde"] }

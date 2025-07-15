@@ -11,10 +11,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
     fn managed_widget_ids(&self) -> Vec<WidgetId> {
         let mut widgets = vec![
             WidgetId("Run".to_string()),
-            WidgetId("Tuneup".to_string()),
-            WidgetId("Qc".to_string()),
-            WidgetId("WindowsUpdates".to_string()),
-            WidgetId("RunPrechecks".to_string()),
+            WidgetId("Tuneup / QC".to_string()),
             WidgetId("Informational".to_string()),
             WidgetId("UserScripts".to_string()),
             WidgetId("ServiceNumberScriptsPage".to_string()),
@@ -35,10 +32,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 log::info!("Button: {button:?}\nwidget: {widget_id:?}");
                 // Show popup to the right of the clicked button
                 let widget_button = match widget_id.0.as_str() {
-                    "Tuneup" => Some(&self.tuneup_btn),
-                    "Qc" => Some(&self.qc_btn),
-                    "WindowsUpdates" => Some(&self.updates_btn),
-                    "RunPrechecks" => Some(&self.prechecks_btn),
+                    "Tuneup / QC" => Some(&self.tuneup_btn),
                     "Informational" => Some(&self.informational_btn),
                     "UserScripts" => {
                         self.check_for_scripts = true;
@@ -111,10 +105,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         #[cfg(target_os="windows")]
                         self.run_selected_scripts(false);
                     },
-                    "Tuneup" => {}
-                    "Qc" => {}
-                    "WindowsUpdates" => {}
-                    "RunPrechecks" => {}
+                    "Tuneup / QC" => {}
                     "Informational" => {}
                     "UserScripts" => {}
                     "Continue" => {}

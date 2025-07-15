@@ -12,8 +12,6 @@ pub struct Report {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Reporter {
     Tuneup,
-    Qc,
-    WindowsUpdates,
     RunPrechecks,
     Informational,
     JunkwareRemoval,
@@ -628,14 +626,9 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         // Render main buttons
         f.render_widget(&self.tuneup_btn, button_grid[0].shrink(4, 1));
-        f.render_widget(&self.qc_btn, button_grid[1].shrink(4, 1));
-        f.render_widget(&self.updates_btn, button_grid[2].shrink(4, 1));
-        f.render_widget(&self.prechecks_btn, button_grid[3].shrink(4, 1));
-        f.render_widget(&self.informational_btn, button_grid[4].shrink(4, 1));
-
-        f.render_widget(&self.user_scripts_btn, button_grid[5].shrink(4, 1));
-
-        self.service_number_field.render_ref(button_grid[6].shrink(4, 1), f.buffer_mut());
+        f.render_widget(&self.informational_btn, button_grid[1].shrink(4, 1));
+        f.render_widget(&self.user_scripts_btn, button_grid[2].shrink(4, 1));
+        self.service_number_field.render_ref(button_grid[3].shrink(4, 1), f.buffer_mut());
 
         let current_script = self.current_script.borrow().clone();
         let script_name = &mut String::new();
@@ -651,7 +644,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .style(Style::default().fg(CATPPUCCIN.sky))
             );
             
-        f.render_widget(script_textarea, button_grid[7].shrink(4, 1));
+        f.render_widget(script_textarea, button_grid[4].shrink(4, 1));
 
         let mut progress_mut = self.progress.borrow_mut();
         let mut update_progress_mut = self.update_progress.borrow_mut();
@@ -661,7 +654,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(progress.0 as f64 / progress.1 as f64);
 
-            f.render_widget(&gauge, button_grid[7].shrink(2, 1));
+            f.render_widget(&gauge, button_grid[5].shrink(2, 1));
 
             if progress.0 == progress.1 {
                 *progress_mut = None;
@@ -679,7 +672,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(update_progress as f64 / 100.0);
 
-            f.render_widget(&gauge, button_grid[8].shrink(2, 1));
+            f.render_widget(&gauge, button_grid[6].shrink(2, 1));
 
             if update_progress == 100 {
                 *update_progress_mut = None;
@@ -705,7 +698,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
         }
         
-        f.render_widget(&self.run_btn, button_grid[9].shrink(4, 1));
+        f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);
@@ -919,9 +912,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         
                             let buttons = [
                                 &self.tuneup_btn,
-                                &self.qc_btn,
-                                &self.updates_btn,
-                                &self.prechecks_btn,
                                 &self.informational_btn,
                             ];
             
@@ -992,10 +982,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             let buttons = [
-                                ("Tuneup", &self.tuneup_btn),
-                                ("Qc", &self.qc_btn),
-                                ("WindowsUpdates", &self.updates_btn),
-                                ("RunPrechecks", &self.prechecks_btn),
+                                ("Tuneup / QC", &self.tuneup_btn),
                                 ("Informational", &self.informational_btn),
                             ];
         
@@ -1064,9 +1051,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     }
                     
                     self.tuneup_btn.handle_mouse_event(&mouse_event);
-                    self.qc_btn.handle_mouse_event(&mouse_event);
-                    self.prechecks_btn.handle_mouse_event(&mouse_event);
-                    self.updates_btn.handle_mouse_event(&mouse_event);
                     self.informational_btn.handle_mouse_event(&mouse_event);
                     self.run_btn.handle_mouse_event(&mouse_event);
                     self.user_scripts_btn.handle_mouse_event(&mouse_event);

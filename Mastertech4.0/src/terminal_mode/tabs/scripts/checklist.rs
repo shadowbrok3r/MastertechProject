@@ -122,23 +122,17 @@ pub enum Status {
 pub enum Category {
     #[default]
     Tuneup,
-    Qc,
     Informational,
     JunkwareRemoval, // For "Junkware Removal" checklist
-    WindowsUpdates,
-    RunPrechecks,
     UserScripts(String), // For flexibility
 }
 
 impl<'a> super::ScriptsTab<'a> {
     pub fn update_checklist(&mut self, category: Category, item: &str, status: bool) {
         let category_str = match category {
-            Category::Tuneup => "Tuneup",
-            Category::Qc => "QC",
+            Category::Tuneup => "Tuneup / QC",
             Category::Informational => "Informational",
             Category::JunkwareRemoval => "Junkware Removal",
-            Category::WindowsUpdates => "WindowsUpdates",
-            Category::RunPrechecks => "RunPrechecks",
             Category::UserScripts(ref name) => name,
         };
 

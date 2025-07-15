@@ -1,4 +1,4 @@
-use crate::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
 use std::{collections::HashMap, fmt::Debug};
@@ -227,7 +227,9 @@ pub async fn delete_task(id: RecordId) -> Result<(), Error> {
 pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_notifications");
     let notifications: Vec<Notification> = DATABASE
-        .query("SELECT * FROM notification WHERE user == $auth.id PARALLEL")
+        .query(
+            "SELECT * FROM notification ORDER BY created_at DESC WHERE user == $auth.id LIMIT 50 PARALLEL"
+        )
         .await?
         .take(0)?;
     // info!("schema/utilities.rs -> Notifications: {:?}", notifications.clone());
@@ -693,7 +695,7 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
 pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
     let api_call = Prestashop::default();
     let mut query = HashMap::new();
-
+    let customer_address = &mut Address::default();
     query.insert("filter[id_order]", order_number);
     query.insert("output_format", "JSON");
 
@@ -735,7 +737,14 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
 
     info!("schema/utilities.rs -> order: {order:#?}");
 
-    let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.eq("0") {
+    let user = &mut User::default();
+
+    // This is the checkin shelf 'employee'
+    // if order.id_employee_sales_rep.eq("1347") {
+    //     return Err(anyhow::anyhow!(""));
+    // }
+
+    let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.eq("0") && !order.id_employee_sales_rep.eq("1347") {
         let employee: Employee = api_call
             .request_subresources_by_id_wasm(
                 "employees",
@@ -769,12 +778,59 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
         .await?;
 
-    let address: Address = api_call
-        .request_subresources_by_id_wasm("addresses", "address", &order.id_address_invoice)
+    // let address: Address = api_call
+    //     .request_subresources_by_id_wasm("addresses", "address", &order.id_address_invoice)
+    //     .await?;
+
+    let mut query = HashMap::new();
+    query.insert("filter[id_customer]", order.id_customer.as_str());
+    query.insert("output_format", "JSON");
+
+    let addresses: Vec<Address> = api_call
+        .request_resources_wasm("addresses", query.clone())
         .await?;
 
+    for address in addresses.iter() {
+        *customer_address = address.clone();
+    }
 
-    info!("schema/utilities.rs -> address: {address:#?}");
+    if order.id_address_invoice == order.id_address_delivery {
+        log::error!(
+            "ADDRESS MISMATCH, order.id_address_invoice: {} == data.order.id_address_delivery: {}\nUpdating {} to {}", 
+            order.id_address_invoice,
+            order.id_address_delivery,
+            order.id_address_invoice,
+            customer_address.id
+        );
+
+        let order_id = order.id.clone();
+        let id_addr = customer_address.id.clone();
+
+        let api = Prestashop::default();
+        match api.request_raw_resource_by_id("orders", &order_id).await {
+            Ok(xml) => {
+                match modify_xml(&xml, "id_address_invoice", &id_addr) {
+                    Ok(new_xml) => {
+                        log::debug!("NEW XML: {new_xml:#?}");
+                        match remove_xml_tag(&new_xml, "tax_exempt") {
+                            Ok(final_xml) => {
+                                log::debug!("Final XML: {final_xml:#?}");
+                                match api.modify_prestashop_order(&final_xml).await {
+                                    Ok(prestashop_response) => log::debug!("Prestashop Response XML: {prestashop_response:#?}"),
+                                    Err(e) => log::error!("Error modifying prestashop order: {e:?}"),
+                                }
+                            },
+                            Err(e) => log::error!("Error removing tax_exempt tag from XML: {e:?}"),
+                        }
+                    }
+                    Err(e) => log::error!("Error modifying XML: {e:?}")
+                }
+            },
+            Err(e) => log::error!("Error getting XML order: {e:?}"),
+        }
+    }
+
+    info!("schema/utilities.rs -> address: {customer_address:#?}");
 
     let customer = CustomerData {
         id: RecordId::from((
@@ -783,12 +839,13 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         )),
         cust_code: order.id_customer.clone(),
         name: format!("{} {}", &cust.firstname, &cust.lastname),
-        phone_number: address.phone.clone().to_string(),
+        phone_number: customer_address.phone.clone().to_string(),
         email: cust.email,
-        phone_number_2: address.phone_mobile.clone().to_string(),
+        phone_number_2: customer_address.phone_mobile.clone().to_string(),
         ..Default::default()
     };
 
+    let address = customer_address.clone();
     Ok( 
         PrestashopPayload {
             customer,

@@ -11,7 +11,6 @@ use {
 };
 
 pub mod informational;
-pub mod qc;
 pub mod tuneup;
 pub mod junkware;
 pub mod prechecks;
@@ -61,34 +60,26 @@ impl <'a> ScriptsTab <'a> {
             self.current_script.replace(Some((category.clone(), item.text.clone())));
             log::info!("Set current script: {:?}", *self.current_script.borrow());
 
-            
             match category {
                 Category::Tuneup => self.handle_tuneup(item.text.as_str(), &category),
-                Category::Qc => self.handle_qc(item.text.as_str(), &category),
-                Category::WindowsUpdates => self.handle_windows_updates(item.text.as_str(), &category),
-                Category::RunPrechecks => self.handle_run_prechecks(item.text.as_str(), &category),
                 Category::Informational => self.handle_informational(item.text.as_str(), &category),
                 Category::JunkwareRemoval => self.handle_junkware_removal(item.text.as_str(), &category),
                 Category::UserScripts(ref script) => self.handle_custom(&script, item.text.as_str(), &category),
             }
 
             self.current_reporter.replace(match category {
-                Category::Tuneup => Reporter::Tuneup,
-                Category::Qc => {
+                Category::Tuneup => {
                     if item.text.as_str() == "Data Transfer" {
                         Reporter::Robocopy
                     } else {
-                        Reporter::Qc
+                        Reporter::Tuneup
                     }
                 },
-                Category::WindowsUpdates => Reporter::WindowsUpdates,
-                Category::RunPrechecks => Reporter::RunPrechecks,
                 Category::Informational => Reporter::Informational,
                 Category::JunkwareRemoval => Reporter::JunkwareRemoval,
                 Category::UserScripts(_) => Reporter::UserScript,
             });
-
-            
+      
             log::info!("Cleared current script");
         }
         self.log_message("All selected scripts completed.");
@@ -96,19 +87,6 @@ impl <'a> ScriptsTab <'a> {
             self.clear_selected_scripts();
         }
         self.current_script.replace(None);
-    }
-
-
-    pub fn handle_windows_updates(&mut self, item_text: &str, category: &Category){
-        self.current_reporter.replace(Reporter::WindowsUpdates);
-        self.log_message(&format!("Running Windows Updates script: {}", item_text));
-        match item_text {
-            "Check Updates" => self.check_updates(item_text, category),
-            "Install Windows Updates" => self.install_windows_updates(item_text, category),
-            _ => {
-                self.log_message(&format!("Unknown Windows Updates script: {}", item_text));
-            }
-        }
     }
 
 

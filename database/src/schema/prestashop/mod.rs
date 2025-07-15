@@ -12,6 +12,7 @@ pub mod customer_messages;
 pub mod customer_threads;
 pub mod order;
 pub mod koth;
+pub mod xml;
 
 pub use customer_messages::*;
 pub use customer_threads::*;
@@ -145,6 +146,23 @@ impl<'a> Prestashop<'a> {
         };
 
         format!("{}{}", base_url, query_string)
+    }
+
+    pub async fn request_raw_resource_by_id(
+        &self,
+        resource: &str,
+        id: &str,
+    ) -> anyhow::Result<String, anyhow::Error> {
+        let url = format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}");
+        let response: String = self
+            .client
+            .get(url.clone())
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        Ok(response)
     }
 
     pub async fn request_subresources_by_id<T>(
@@ -490,6 +508,23 @@ impl<'a> Prestashop<'a> {
             id: id.to_string(),
             date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
         })
+    }
+
+    pub async fn modify_prestashop_order(
+        &self,
+        xml_payload: &str,
+    ) -> anyhow::Result<String, anyhow::Error> {
+        // Send HTTP POST request with the XML payload
+        let response_text = self.client
+            .put(format!("{PRESTASHOP_API_URL_WASM}/orders"))
+            .header("Content-type", "application/xml")
+            .body(xml_payload.to_string())
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        Ok(response_text)
     }
 }
 

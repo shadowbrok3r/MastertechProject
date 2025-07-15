@@ -31,9 +31,6 @@ pub struct ScriptsTab<'a> {
     custom_destination_field: InputField<'a>,
     tuneup_btn: Button<'a>,
     user_scripts_btn: Button<'a>,
-    qc_btn: Button<'a>,
-    updates_btn: Button<'a>,
-    prechecks_btn: Button<'a>,
     informational_btn: Button<'a>,
     run_btn: Button<'a>,
     data_path_buttons: Vec<Button<'a>>,
@@ -121,38 +118,29 @@ impl<'a> ScriptsTab<'a> {
         
         // Define checklists with categories
         checklists.insert(
-            "Tuneup".to_string(),
+            "Tuneup / QC".to_string(),
             TodoList {
-                name: "Tuneup".to_string(),
+                name: "Tuneup / QC".to_string(),
                 state: ListState::default(),
                 items: vec![
-                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup),
-                    TodoItem::new("Install Windows Updates", Category::WindowsUpdates),
-                    TodoItem::new("Activate CPS", Category::Tuneup),
-                    TodoItem::new("Activate SEB", Category::Tuneup),
-                    TodoItem::new("Run Tron", Category::Tuneup),
+                    TodoItem::new("Data Transfer", Category::Tuneup),
+                    TodoItem::new("Install Windows Updates", Category::Tuneup),
+                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup), // Works
+                    TodoItem::new("Install Windows Updates", Category::Tuneup), // Works
+                    TodoItem::new("Activate CPS", Category::Tuneup), // Works
+                    TodoItem::new("Activate SEB", Category::Tuneup), // Works
+                    TodoItem::new("Run Tron", Category::Tuneup), 
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
                     TodoItem::new("Run Webroot Scan", Category::Tuneup),
                     TodoItem::new("Run Junkware Category", Category::JunkwareRemoval),
-                ],
-            },
-        );
 
-        checklists.insert(
-            "QC".to_string(),
-            TodoList {
-                name: "QC".to_string(),
-                state: ListState::default(),
-                items: vec![
-                    TodoItem::new("Data Transfer", Category::Qc),
-                    TodoItem::new("Install LibreOffice", Category::Qc),
-                    TodoItem::new("Disable Sleep / Hibernation", Category::Qc),
-                    TodoItem::new("Disable proxy settings", Category::Qc),
-                    TodoItem::new("Disable Notifications", Category::Qc),
-                    TodoItem::new("Change SuperAntiSpyware settings", Category::Qc),
-                    TodoItem::new("Disable Startup Apps", Category::Qc),
-                    TodoItem::new("Unpin Copilot", Category::Qc),
-                    TodoItem::new("Align Taskbar to left", Category::Qc),
+                    TodoItem::new("Install LibreOffice", Category::Tuneup),
+                    TodoItem::new("Disable proxy settings", Category::Tuneup), // Works
+                    TodoItem::new("Disable Notifications", Category::Tuneup),
+                    TodoItem::new("Change SuperAntiSpyware settings", Category::Tuneup),
+                    TodoItem::new("Disable Startup Apps", Category::Tuneup),
+                    TodoItem::new("Unpin Copilot", Category::Tuneup),
+                    TodoItem::new("Align Taskbar to left", Category::Tuneup), // Works
                 ],
             },
         );
@@ -206,31 +194,16 @@ impl<'a> ScriptsTab<'a> {
                         .set_pass_criteria("Windows 11")
                         .set_warning_criteria("Windows 10")
                         .set_error_criteria("Script Failed To Run"),
+                    TodoItem::new("Check Updates", Category::Tuneup),
+                    TodoItem::new("Run Prechecks", Category::Informational)
                 ],
             },
         );
         // Sync popup_items with checklists
         let mut popup_items = HashMap::new();
         popup_items.insert(
-            "Tuneup".to_string(),
-            checklists.get("Tuneup").unwrap().items.clone(),
-        );
-        popup_items.insert(
-            "Qc".to_string(),
-            checklists.get("QC").unwrap().items.clone(),
-        );
-        popup_items.insert(
-            "WindowsUpdates".to_string(),
-            vec![
-                TodoItem::new("Check Updates", Category::WindowsUpdates),
-                TodoItem::new("Install Windows Updates", Category::WindowsUpdates),
-            ],
-        );
-        popup_items.insert(
-            "RunPrechecks".to_string(),
-            vec![
-                TodoItem::new("Run Prechecks", Category::RunPrechecks),
-            ],
+            "Tuneup / QC".to_string(),
+            checklists.get("Tuneup / QC").unwrap().items.clone(),
         );
         popup_items.insert(
             "Informational".to_string(),
@@ -241,11 +214,8 @@ impl<'a> ScriptsTab<'a> {
             service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
             custom_source_field: InputField::new("Source Path", WidgetId("CustomSourceTransferPath".to_string())),
             custom_destination_field: InputField::new("Destination Path", WidgetId("CustomDestinationTransferPath".to_string())),
-            tuneup_btn: Button::new("Tuneup =>", WidgetId("Tuneup".to_owned())).theme(CATPPUCCINTHEME),
+            tuneup_btn: Button::new("Tuneup / QC =>", WidgetId("Tuneup / QC".to_owned())).theme(CATPPUCCINTHEME),
             user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
-            qc_btn: Button::new("Quality Check =>", WidgetId("Qc".to_owned())).theme(CATPPUCCINTHEME),
-            updates_btn: Button::new("Windows Updates =>", WidgetId("WindowsUpdates".to_owned())).theme(CATPPUCCINTHEME),
-            prechecks_btn: Button::new("Run Prechecks =>", WidgetId("RunPrechecks".to_owned())).theme(CATPPUCCINTHEME),
             informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
             run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(DEEPPINK),
             #[cfg(target_os="windows")]

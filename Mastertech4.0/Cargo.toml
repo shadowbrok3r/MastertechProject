@@ -22,7 +22,6 @@ displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 tui-textarea = { version = "0.7"}
 sysinfo = {version = "0.36.0", features = ["serde", "multithread"]}
-console-subscriber = "0.4"
 futures-util = "0.3"
 walkdir = "2.5"
 pollster = "0.4"
@@ -37,14 +36,11 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = "0.3"
 rust-embed="8.4"
 clap = { version = "4.5", features = ["derive"] }
-dotenv = "0.15"
-shell-words = "1"
 sha2 = { version = "0.10", features = ["std"] }
 linked-hash-map = "0.5"
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]} # , 
 hex = "0.4.3"
 ring = "0.17.14"
-rust-s3 = "0.35"
 semver = "1.0.23"
 nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5.0"
@@ -56,7 +52,6 @@ powershell_script = "1.1.0"
 color-eyre = "0.6.3"
 itertools = "0.14.0"
 unicode-width = "=0.2.0"
-bit-set = "0.8.0"
 tui-logger = "0.17"
 arboard = "3"
 tempfile = "3.19"
@@ -74,7 +69,6 @@ env_logger = "*"
 
 # surrealdb-alpha ={ workspace = true }
 surrealdb = { workspace=true }
-egui-data-table = { workspace = true }
 egui_logger = {workspace = true }
 ratatui = { workspace = true }
 database = { workspace=true }
@@ -82,14 +76,11 @@ tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }
 log  = { workspace=true }
-bytes = { workspace=true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 anyhow = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
-structdiff = { workspace=true }
-fuzzy-matcher = { workspace=true }
 uuid = { workspace=true }
 bincode = { workspace=true }
 rfd = { workspace=true }
@@ -98,15 +89,11 @@ chrono = { workspace=true }
 simplelog = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
-egui_json_tree = { workspace = true }
-brotli = { workspace=true }
 base64 = { workspace=true }
-egui_plot = { workspace = true }
 dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
 indexmap = { version = "2.10.0", features = ["serde"] }
-
 
 
 [dependencies.egui]

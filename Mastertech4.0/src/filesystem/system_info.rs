@@ -38,6 +38,28 @@ impl ComputerInfo for ComputerData {
         // info!("GPU: {gpu_info:?}");
         sys.refresh_all();
         
+        let motherboard = Motherboard::new();
+        let motherboard_name = &mut String::new();
+        let motherboard_serial = &mut String::new();
+        let motherboard_asset_tag = &mut String::new();
+        let motherboard_vendor = &mut String::new();
+
+        if let Some(mobo) = motherboard {
+            *motherboard_name = mobo.name().unwrap_or_default();
+            *motherboard_serial = mobo.serial_number().unwrap_or_default();
+            *motherboard_asset_tag = mobo.asset_tag().unwrap_or_default();
+            *motherboard_vendor = mobo.vendor_name().unwrap_or_default();
+        }
+
+        self.motherboard_name = motherboard_name.clone();
+        self.motherboard_serial = motherboard_serial.clone();
+        self.motherboard_asset_tag = motherboard_asset_tag.clone();
+        self.motherboard_vendor = motherboard_vendor.clone();
+        self.product_name = Product::name().unwrap_or_default();
+        self.product_sku = Product::stock_keeping_unit().unwrap_or_default();
+        self.product_serial = Product::serial_number().unwrap_or_default();
+        self.product_vendor = Product::vendor_name().unwrap_or_default();
+
         info!("Filesystem -> get_computer_data -> Pulling Drive information");
         let mut disks = Disks::new_with_refreshed_list();
         let client = Client::new();
@@ -120,10 +142,13 @@ impl ComputerInfo for ComputerData {
         info!("Filesystem -> get_computer_data -> Pulling CPU");
         self.cpu = sys.cpus()[0].brand().trim().to_string();
         info!("Filesystem -> get_computer_data -> Pulling RAM");
-        self.ram = (sys.total_memory() / (1024 * 1024 * 1024) + 1)
-            .to_formatted_string(&Locale::en)
-            .trim()
-            .to_string();
+        self.ram = format!(
+            "{} Gb", 
+            (sys.total_memory() / (1024 * 1024 * 1024) + 1)
+                .to_formatted_string(&Locale::en)
+                .trim()
+        );
+        
         info!("Filesystem -> get_computer_data -> Pulling OS");
         self.operating_system = System::long_os_version().unwrap_or_default();
         info!("Filesystem -> get_computer_data -> Pulling Hostname");
@@ -629,11 +654,10 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     }
 
     for component in components.list() {
+        log::error!("component: {component:#?}");
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
         // comps += format!("{component:#?} \n", component.).as_str();
     }
-
-    log::info!("components.list(): {component_temps:?}\n {:#?}", components.list());
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 

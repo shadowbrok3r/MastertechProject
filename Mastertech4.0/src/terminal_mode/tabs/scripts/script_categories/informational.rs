@@ -21,6 +21,7 @@ impl <'a> ScriptsTab <'a> {
             "Any Recent Blue Screens?" => self.recent_blue_screens(item_text, category),
             "When Was The Last Service Date?" => self.last_service_date(item_text, category),
             "Windows Version" => self.windows_version(item_text, category),
+            "Run Prechecks" => self.handle_run_prechecks(item_text, &category),
             _ =>self.log_message(&format!("Unknown Informational script: {}", item_text)),
         }
     }
