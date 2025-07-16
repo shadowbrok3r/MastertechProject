@@ -119,26 +119,10 @@ jobs:
           echo ${{ secrets.USERPWD }} | sudo -S apt-get update
           echo ${{ secrets.USERPWD }} | sudo -S apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Build Native Binary
-        run: cargo build --release --target=${{ matrix.target }} -p MasterTech
-
-      - name: Rename Linux binary
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: mv target/${{ matrix.target }}/release/MasterTech MasterTech-linux
-
-      - name: Rename Windows binary
-        if: matrix.target == 'x86_64-pc-windows-msvc'
-        run: mv target/${{ matrix.target }}/release/MasterTech.exe MasterTech.exe
-
       - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
         with:
-          bin: ${{ matrix.artifact }}
+          bin: MasterTech
           target: ${{ matrix.target }}
           tar: none
           zip: none
