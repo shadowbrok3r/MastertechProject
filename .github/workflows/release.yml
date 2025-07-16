@@ -24,9 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Patch Cargo.toml (remove MtechServer2.0)
+      - name: Patch workspace for Trunk build
         run: |
-          sed -i -E 's/"MtechServer2\.0",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
+          cat Cargo.toml
+          # Ensure MtechServer2.0 is in the workspace
+          sed -i '/members =/ s/\]/, "MtechServer2.0"\]/' Cargo.toml
+          # Remove MasterTech from the workspace
+          sed -i -E 's/"MasterTech",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
+          cat Cargo.toml
         shell: bash
 
       - name: Install Rust Toolchain
@@ -40,10 +45,14 @@ jobs:
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 
-      - name: Patch Cargo.toml (remove Mastertech4.0)
+      - name: Patch workspace for MasterTech build
         run: |
-          sed -i -E 's/"Mastertech4\.0",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
-
+          cat Cargo.toml
+          # Ensure MasterTech is in the workspace
+          sed -i '/members =/ s/\]/, "MasterTech"\]/' Cargo.toml
+          # Remove MtechServer2.0 from the workspace
+          sed -i -E 's/"MtechServer2\.0",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
+          cat Cargo.toml
       - name: Build with Trunk
         working-directory: ./MtechServer2.0
         run: ../trunk build --release --config Trunk.toml
