@@ -132,17 +132,11 @@ jobs:
 
       - name: Rename Linux binary
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          ls target/x86_64-unknown-linux-gnu/release -las
-          ls -las target/release
-          tree -L 2 target/
-          mv target/${{ matrix.target }}/release/Mastertech Mastertech-linux
+        run: mv target/${{ matrix.target }}/release/MasterTech MasterTech-linux
 
       - name: Rename Windows binary
         if: matrix.target == 'x86_64-pc-windows-msvc'
-        run: |
-          ls target -las
-          mv target/${{ matrix.target }}/release/Mastertech.exe Mastertech.exe
+        run: mv target/${{ matrix.target }}/release/MasterTech.exe MasterTech.exe
 
       - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
