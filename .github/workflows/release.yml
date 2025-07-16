@@ -127,6 +127,7 @@ jobs:
           tar: none
           zip: none
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: refs/tags/test
 
   create-release:
     name: Create GitHub Release
