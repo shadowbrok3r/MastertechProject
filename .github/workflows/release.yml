@@ -102,10 +102,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: Mastertech-linux
+            bin: MasterTech         # ← crate binary name
+            artifact: Mastertech-linux  # ← renamed file for upload
             runs_on: self-hosted
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            bin: MasterTech
             artifact: Mastertech.exe
             runs_on: windows-latest
 
@@ -138,7 +140,7 @@ jobs:
       - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
         with:
-          bin: ${{ matrix.artifact }}
+          bin: ${{ matrix.bin }}
           target: ${{ matrix.target }}
           tar: none
           zip: none
