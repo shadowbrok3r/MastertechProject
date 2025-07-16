@@ -94,7 +94,6 @@ jobs:
   #       with:
   #         args: rollout restart deployment mtechserver-beta -n rust
 
-
   native-build:
     name: Build and Upload Native Binaries
     needs: trunk
