@@ -1,238 +1,133 @@
 name: Release
 
+permissions:
+  contents: write
+
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   push:
-    branches: [main]
+    tags:
+      - v[0-9]+.*
+    branches:
+      - main
+  pull_request:
   workflow_dispatch:
 
 env:
-  CARGO_TERM_COLOR: always
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  release:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - app: mtechserver
-            package: MtechServer2.0
-            target: wasm32-unknown-unknown
-            extension: .wasm
-            runner: [self-hosted, ubuntu, docker]
-            build_tool: trunk
-          - app: mastertech
-            package: Mastertech4.0
-            target: x86_64-pc-windows-msvc
-            extension: .exe
-            runner: windows-latest
-            build_tool: cargo
-          - app: mastertech
-            package: Mastertech4.0
-            target: x86_64-unknown-linux-gnu
-            extension: ""
-            runner: [self-hosted, ubuntu, docker]
-            build_tool: cargo
-
+  trunk:
+    name: Build WASM frontend (Trunk)
+    runs-on: self-hosted
+    env:
+      RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=getrandom_backend="wasm_js"
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Extract version and app from PR title
-        id: extract_version
-        run: |
-          version=""
-          app=""
-          target="${{ matrix.target }}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            pr_title="${{ github.event.pull_request.title }}"
-            if [[ $pr_title =~ release[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]+(mtechserver|mastertech)[[:space:]]*(windows|linux)? ]]; then
-              version="${BASH_REMATCH[1]}"
-              app="${BASH_REMATCH[2]}"
-              platform="${BASH_REMATCH[3]:-}"
-              if [ "$app" = "mastertech" ] && [ -n "$platform" ]; then
-                if [ "$platform" = "windows" ]; then
-                  target="x86_64-pc-windows-msvc"
-                elif [ "$platform" = "linux" ]; then
-                  target="x86_64-unknown-linux-gnu"
-                fi
-              fi
-            fi
-          fi
-          if [ -z "$version" ] && [ "${{ matrix.app }}" = "mastertech" ]; then
-            version=$(awk -F'"' '/version[[:space:]]*=/ {print $2}' Mastertech4.0/Cargo.toml)
-          fi
-          if [ -z "$version" ]; then
-            echo "Error: Version not found in PR title or Cargo.toml" >&2
-            exit 1
-          fi
-          echo "version=$version" >> $GITHUB_ENV
-          echo "app=$app" >> $GITHUB_ENV
-          echo "target=$target" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Filter by app and target
-        if: env.app == '' || (env.app == matrix.app && env.target == matrix.target)
-        run: echo "Proceeding with build for ${{ matrix.app }} on ${{ matrix.target }}"
-
-      - name: Install Rust
-        if: env.app == '' || (env.app == matrix.app && env.target == matrix.target)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
         with:
-          targets: ${{ matrix.target }}
+          profile: minimal
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          override: true
 
-      - name: Install dependencies (Linux)
-        if: matrix.runner == 'self-hosted' && (env.app == '' || env.app == matrix.app)
+      - name: Download and Install Trunk
+        run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
+
+      - name: Patch Cargo.toml (remove Mastertech4.0)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang mold
-        shell: bash
+          sed -i -E 's/"Mastertech4\.0",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
 
-      - name: Configure for Mtechserver (WASM)
-        if: matrix.app == 'mtechserver' && (env.app == '' || env.app == 'mtechserver')
-        run: |
-          # Disable strip in release profile
-          sed -i '/\[profile.release\]/,/^\[/ s/strip = true/strip = false/' Cargo.toml
-          # Remove Mastertech4.0 from workspace.members
-          sed -i '/members =/ s/, "Mastertech4.0"//' Cargo.toml
-          # Create .cargo/config.toml for WASM
-          mkdir -p .cargo
-          cat > .cargo/config.toml << EOF
-          [build]
-          target = ["wasm32-unknown-unknown"]
-
-          [target.wasm32-unknown-unknown]
-          rustflags = ["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals", "--cfg", "getrandom_backend=\"wasm_js\""]
-          EOF
-        shell: bash
-
-      - name: Configure for Mastertech (Windows)
-        if: matrix.app == 'mastertech' && matrix.target == 'x86_64-pc-windows-msvc' && (env.app == '' || env.app == 'mastertech')
-        run: |
-          # Ensure release profile is enabled
-          sed -i '/\[profile.release\]/,/^\[/ s/strip = false/strip = true/' Cargo.toml
-          # Ensure Mastertech4.0 is in workspace.members
-          if ! grep -q '"Mastertech4.0"' Cargo.toml; then
-            sed -i '/members =/ s/\]/, "Mastertech4.0"\]/' Cargo.toml
-          fi
-          # Create .cargo/config.toml for Windows
-          mkdir -p Mastertech4.0/.cargo
-          echo [build] > Mastertech4.0/.cargo/config.toml
-          echo target = [\"x86_64-pc-windows-msvc\"] >> Mastertech4.0/.cargo/config.toml
-          echo. >> Mastertech4.0/.cargo/config.toml
-          echo [target.x86_64-pc-windows-msvc] >> Mastertech4.0/.cargo/config.toml
-          echo linker = \"lld-link.exe\" >> Mastertech4.0/.cargo/config.toml
-          echo rustflags = [\"-C\", \"target-feature=+crt-static\"] >> Mastertech4.0/.cargo/config.toml
-        shell: pwsh
-
-      - name: Configure for Mastertech (Linux)
-        if: matrix.app == 'mastertech' && matrix.target == 'x86_64-unknown-linux-gnu' && (env.app == '' || env.app == 'mastertech')
-        run: |
-          # Ensure release profile is enabled
-          sed -i '/\[profile.release\]/,/^\[/ s/strip = false/strip = true/' Cargo.toml
-          # Ensure Mastertech4.0 is in workspace.members
-          if ! grep -q '"Mastertech4.0"' Cargo.toml; then
-            sed -i '/members =/ s/\]/, "Mastertech4.0"\]/' Cargo.toml
-          fi
-          # Create .cargo/config.toml for Linux
-          mkdir -p Mastertech4.0/.cargo
-          cat > Mastertech4.0/.cargo/config.toml << EOF
-          [build]
-          target = ["x86_64-unknown-linux-gnu"]
-
-          [target.x86_64-unknown-linux-gnu]
-          linker = "clang"
-          rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold", "-Awarnings"]
-          EOF
-        shell: bash
-
-      - name: Install Trunk (Mtechserver)
-        if: matrix.app == 'mtechserver' && (env.app == '' || env.app == 'mtechserver')
-        run: |
-          wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf -
-        shell: bash
-
-      - name: Build Mtechserver (WASM)
-        if: matrix.app == 'mtechserver' && (env.app == '' || env.app == 'mtechserver')
+      - name: Build with Trunk
         working-directory: ./MtechServer2.0
         run: ../trunk build --release --config Trunk.toml
 
-      - name: Build Mastertech
-        if: matrix.app == 'mastertech' && (env.app == '' || env.app == 'mastertech')
-        run: cargo build --release --target=${{ matrix.target }} -p ${{ matrix.package }}
-
-      - name: Rename artifact
-        if: env.app == '' || (env.app == matrix.app && env.target == matrix.target)
-        run: |
-          if [ "${{ matrix.app }}" = "mtechserver" ]; then
-            cp MtechServer2.0/dist/mtechserver.wasm Mtechserver-${{ env.version }}${{ matrix.extension }}
-          else
-            cp target/${{ matrix.target }}/release/Mastertech${{ matrix.extension }} Mastertech-${{ matrix.target }}-${{ env.version }}${{ matrix.extension }}
-          fi
-        shell: bash
-
-      - name: Upload artifact
-        if: env.app == '' || (env.app == matrix.app && env.target == matrix.target)
-        uses: actions/upload-artifact@v4
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.app }}-${{ matrix.target }}-${{ env.version }}
-          path: |
-            Mtechserver-${{ env.version }}${{ matrix.extension }}
-            Mastertech-${{ matrix.target }}-${{ env.version }}${{ matrix.extension }}
+          name: mtechserver-wasm
+          path: ./MtechServer2.0/dist/mtechserver.wasm
 
-      - name: Log in to Docker Hub (Mtechserver)
-        if: matrix.app == 'mtechserver' && (env.app == '' || env.app == 'mtechserver')
+  docker:
+    name: Build and Push Docker Image
+    needs: trunk
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx (Mtechserver)
-        if: matrix.app == 'mtechserver' && (env.app == '' || env.app == 'mtechserver')
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           version: "v0.11.2"
           driver: docker
 
-      - name: Build and Push Docker Image (Mtechserver)
-        if: matrix.app == 'mtechserver' && (env.app == '' || env.app == 'mtechserver')
+      - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: shadowbrok3r/mtechserver:${{ env.version }}
+          push: true
+          tags: shadowbrok3r/mtechserver:beta
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
 
-      - name: Create tag
-        if: github.event_name == 'push' && (env.app == '' || env.app == matrix.app)
-        run: |
-          git tag v${{ env.version }}-${{ matrix.app }}-${{ matrix.target }}
-          git push origin v${{ env.version }}-${{ matrix.app }}-${{ matrix.target }}
-        shell: bash
+  # Uncomment to enable Kubernetes deployment step
+  # deploy:
+  #   name: Deploy to Kubernetes
+  #   needs: docker
+  #   runs-on: self-hosted
+  #   steps:
+  #     - uses: ghostzero/kubectl@v1
+  #       env:
+  #         KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
+  #       with:
+  #         args: rollout restart deployment mtechserver-beta -n rust
 
-      - name: Create release
-        if: github.event_name == 'push' && (env.app == '' || env.app == matrix.app)
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ env.version }}-${{ matrix.app }}-${{ matrix.target }}
-          release_name: ${{ matrix.app }} ${{ env.version }} (${{ matrix.target }})
-          body: |
-            Release ${{ matrix.app }} ${{ env.version }} for ${{ matrix.target }}
-          draft: false
-          prerelease: false
+  native-build:
+    name: Build and Upload Native Binaries
+    needs: trunk
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            package: Mastertech4.0
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            package: Mastertech4.0
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Upload release asset
-        if: github.event_name == 'push' && (env.app == '' || env.app == matrix.app)
-        uses: actions/upload-release-action@v2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: |
-            Mtechserver-${{ env.version }}${{ matrix.extension }}
-            Mastertech-${{ matrix.target }}-${{ env.version }}${{ matrix.extension }}
-          asset_name: ${{ matrix.app }}-${{ matrix.target }}-${{ env.version }}${{ matrix.extension }}
-          tag: v${{ env.version }}-${{ matrix.app }}-${{ matrix.target }}
-          overwrite: true
+          targets: ${{ matrix.target }}
+
+      - name: Build Native Binary
+        run: cargo build --release --target=${{ matrix.target }} -p ${{ matrix.package }}
+
+      - name: Upload Native Binary to Release
+        uses: taiki-e/upload-rust-binary-action@v1.27.0
+        with:
+          bin: Mastertech
+          target: ${{ matrix.target }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tar: none
+          zip: none
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [trunk, native-build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1.9.1
+        with:
+          changelog: CHANGELOG.md
+          token: ${{ secrets.GITHUB_TOKEN }}
