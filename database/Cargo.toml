@@ -22,7 +22,6 @@ chrono = {workspace=true}
 serde = { workspace=true }
 bytes = {workspace = true}
 brotli = { workspace=true }
-uuid = { workspace=true }
 rfd = { workspace = true }
 log = { workspace=true }
 fuzzy-matcher = { workspace=true }

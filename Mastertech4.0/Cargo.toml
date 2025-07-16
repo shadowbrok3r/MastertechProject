@@ -81,7 +81,6 @@ egui_dock = { workspace=true }
 anyhow = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
-uuid = { workspace=true }
 bincode = { workspace=true }
 rfd = { workspace=true }
 regex = { workspace=true }
