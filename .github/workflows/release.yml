@@ -24,6 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Patch Cargo.toml (remove MtechServer2.0)
+        run: |
+          sed -i -E 's/"MtechServer2\.0",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
+        shell: bash
+
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -76,7 +81,6 @@ jobs:
           tags: shadowbrok3r/mtechserver:beta
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
 
-  # Uncomment to enable Kubernetes deployment step
   # deploy:
   #   name: Deploy to Kubernetes
   #   needs: docker
@@ -96,10 +100,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            package: Mastertech4.0
+            package: MasterTech
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            package: Mastertech4.0
+            package: MasterTech
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
