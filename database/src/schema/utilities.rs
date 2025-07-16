@@ -306,7 +306,7 @@ pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
 pub async fn create_full_task_payload(
     ticket_data: TicketData,
     customer_data: CustomerData,
-    computer_data: ComputerData,
+    mut computer_data: ComputerData,
     mut task_data: LiveTaskPayload,
     mut task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
@@ -337,12 +337,23 @@ pub async fn create_full_task_payload(
 
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
     let update_customer: Result<Option<Record>, surrealdb::Error> = DATABASE
-        .upsert(customer_id)
+        .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
     
     match update_customer {
-        Ok(record) => log::info!("Updated Customer {record:?}"),
+        Ok(record) => {
+            log::info!("Updated Customer {record:?}");
+            if let Some(record_id) = record {
+                if computer_data.customer.is_none() {
+                    computer_data.customer = Some(record_id.id);
+                }
+            } else {
+                if computer_data.customer.is_none() {
+                    computer_data.customer = Some(customer_id);
+                } 
+            }
+        },
         Err(e) => {
             log::warn!("Error updating Customer {e:?}");
             // if i have a customer from everest, i will need to delete
@@ -737,7 +748,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
 
     info!("schema/utilities.rs -> order: {order:#?}");
 
-    let user = &mut User::default();
+    // let user = &mut User::default();
 
     // This is the checkin shelf 'employee'
     // if order.id_employee_sales_rep.eq("1347") {
