@@ -116,11 +116,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install PipeWire deps (Linux only)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
+      # - name: Install PipeWire deps (Linux only)
+      #   if: matrix.target == 'x86_64-unknown-linux-gnu'
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
