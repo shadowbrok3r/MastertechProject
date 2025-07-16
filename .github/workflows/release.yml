@@ -58,12 +58,6 @@ jobs:
         working-directory: ./MtechServer2.0
         run: ../trunk build --release --config Trunk.toml
 
-      - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mtechserver-wasm
-          path: ./MtechServer2.0/dist/mtechserver.wasm
-
   docker:
     name: Build and Push Docker Image
     needs: trunk
@@ -102,6 +96,7 @@ jobs:
   #       with:
   #         args: rollout restart deployment mtechserver-beta -n rust
 
+
   native-build:
     name: Build and Upload Native Binaries
     needs: trunk
@@ -110,13 +105,20 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            package: MasterTech
+            artifact: Mastertech-linux
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            package: MasterTech
+            artifact: Mastertech.exe
+
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install PipeWire deps (Linux only)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -124,16 +126,24 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build Native Binary
-        run: cargo build --release --target=${{ matrix.target }} -p ${{ matrix.package }}
+        run: cargo build --release --target=${{ matrix.target }} -p MasterTech
 
-      - name: Upload Native Binary to Release
+      - name: Rename Linux binary
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: mv target/${{ matrix.target }}/release/Mastertech Mastertech-linux
+
+      - name: Rename Windows binary
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: mv target/${{ matrix.target }}/release/Mastertech.exe Mastertech.exe
+
+      - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
         with:
-          bin: Mastertech
+          bin: ${{ matrix.artifact }}
           target: ${{ matrix.target }}
-          token: ${{ secrets.GITHUB_TOKEN }}
           tar: none
           zip: none
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   create-release:
     name: Create GitHub Release
