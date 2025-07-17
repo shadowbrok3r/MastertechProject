@@ -14,8 +14,20 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1.9.1
+        with:
+          title: MasterTech $tag
+          allow-missing-changelog: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   native-build:
     name: Build and Upload Native Binaries
+    needs: create-release
     strategy:
       matrix:
         include:
@@ -49,18 +61,6 @@ jobs:
           zip: none
           token: ${{ secrets.GITHUB_TOKEN }}
           asset: target/${{ matrix.target }}/release/${{ matrix.bin }}
-          ref: refs/tags/test
-
-  create-release:
-    name: Create GitHub Release
-    runs-on: self-hosted
-    needs: native-build
-    steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/create-gh-release-action@v1.9.1
-        with:
-          title: MasterTech $tag
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   trunk:
     name: Build WASM frontend (Trunk)
