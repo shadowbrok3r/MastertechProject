@@ -51,6 +51,14 @@ jobs:
         run: |
           echo ${{ secrets.USERPWD }} | sudo -S apt-get update
           echo ${{ secrets.USERPWD }} | sudo -S apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
+      
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
 
       - name: Upload Binary to GitHub Release
         uses: taiki-e/upload-rust-binary-action@v1.27.0
@@ -61,6 +69,11 @@ jobs:
           zip: none
           token: ${{ secrets.GITHUB_TOKEN }}
           asset: target/${{ matrix.target }}/release/${{ matrix.bin }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-mastertech"
+          shared-key: "native-${{ matrix.target }}"
 
   trunk:
     name: Build WASM frontend (Trunk)
@@ -86,6 +99,11 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
           override: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-mastertech"
+          shared-key: "wasm"
 
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
