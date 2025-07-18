@@ -105,7 +105,8 @@ pub struct ScriptsTab<'a> {
 
 impl<'a> ScriptsTab<'a> {
     pub const ROBOCOPY_DISPLAY_LINES: usize = 15; // Adjust as needed
-
+    pub const CHECKLIST_ORDERED: [&'static str;3] = ["Tuneup / QC", "Informational", "Junkware Removal"];
+    
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         #[cfg(target_os="windows")]
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
@@ -124,16 +125,15 @@ impl<'a> ScriptsTab<'a> {
                 state: ListState::default(),
                 items: vec![
                     TodoItem::new("Data Transfer", Category::Tuneup),
-                    TodoItem::new("Install Windows Updates", Category::Tuneup),
-                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup), // Works
-                    TodoItem::new("Install Windows Updates", Category::Tuneup), // Works
                     TodoItem::new("Activate CPS", Category::Tuneup), // Works
                     TodoItem::new("Activate SEB", Category::Tuneup), // Works
-                    TodoItem::new("Run Tron", Category::Tuneup), 
+                    TodoItem::new("Install Windows Updates", Category::Tuneup),
+                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup), // Works
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
                     TodoItem::new("Run Webroot Scan", Category::Tuneup),
                     TodoItem::new("Run Junkware Category", Category::JunkwareRemoval),
-
+                    TodoItem::new("Run Tron", Category::Tuneup), 
+                    // TodoItem::new("--------------------------------", Category::Tuneup), 
                     TodoItem::new("Install LibreOffice", Category::Tuneup),
                     TodoItem::new("Disable proxy settings", Category::Tuneup), // Works
                     TodoItem::new("Disable Notifications", Category::Tuneup),

@@ -1,13 +1,10 @@
-use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}, widgets::Block};
-use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
+use ratatui::{crossterm::{ event::{DisableMouseCapture, EnableMouseCapture}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},}, layout::{Constraint, Direction, Layout}};
 use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::ServiceFormTab, tasks::TasksTab, webconsole::WebconsoleTab, MenuBar, NcduTab, ScriptsTab, SysinfoTab};
-use websockets::TerminalWebsocketClient;
-// use websockets::TerminalWebsocketClient; // ncdu::NcduTab
+use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
 use ratatui_splash_screen::{SplashConfig, SplashScreen};
-use crate::filesystem::system_info::get_sysinfo_no_gpu;
-// use fx::{effect::UniqueEffectId, EffectStage};
+use websockets::TerminalWebsocketClient;
 use crossbeam::channel::unbounded;
 use context::TerminalContext;
 use widgets::HandleWidget;
@@ -28,7 +25,7 @@ pub mod websockets;
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
     image_data: include_bytes!("../assets/masterlogoV3.png"),
     sha256sum: None,
-    render_steps: 30,
+    render_steps: 8,
     use_colors: true,
 };
 
@@ -57,17 +54,17 @@ pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     enable_raw_mode()?;
     log::info!("Hooking StdOut");
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout, 
+        EnterAlternateScreen, 
+        EnableMouseCapture
+    )?;
     log::info!("Creating Crossterm backend");
     let backend = CrosstermBackend::new(stdout);
     log::info!("Creating Terminal");
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = TerminalApp::default();
-    log::info!("Retrieving sysinfo");
-    if let Ok(sysinfo) = get_sysinfo_no_gpu().await {
-        app.sysinfo_tab.set_sysinfo(sysinfo);
-    }
 
     log::info!("Running app");
 
@@ -168,7 +165,7 @@ impl <'a>TerminalApp<'a> {
         // let manual_start = &mut false;
 
         // render splash screen
-        // let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
+        let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
 
         let notifications: Arc<Mutex<Vec<Notification>>> = self.render_system.notifications.clone();
         let ui_messages: Arc<Mutex<Vec<Box<dyn Message>>>> = self.render_system.ui_messages.clone();
@@ -244,15 +241,11 @@ impl <'a>TerminalApp<'a> {
 
             terminal.draw(|f| {
                 let area = f.area();
-                Block::new()
-                .style(Style::new().bg(Color::Black))
-                .border_type(ratatui::widgets::BorderType::Double)
-                .border_style(
-                    Style::new().fg(Color::Cyan)
-                ).render(area, f.buffer_mut());
-                // if !splash_screen.is_rendered() {
-                    // Self::render_splash_screen(f, &mut splash_screen);
-                // } else {
+                // f.render_widget_ref(Block::new().border_type(ratatui::widgets::BorderType::Double).style(Style::new().bg(CATPPUCCIN.base)), area);
+                f.buffer_mut().set_style(area, Style::new().bg(Color::Black));
+                if !splash_screen.is_rendered() {
+                    Self::render_splash_screen(f, &mut splash_screen);
+                } else {
                     // Process events from egui via WebSocket
                     while let Ok(event) = event_rx.try_recv() {
                         if let Ok(mouse) = TryFrom::try_from(event.clone()) {
@@ -308,7 +301,7 @@ impl <'a>TerminalApp<'a> {
                     let _ = self.menu_bar::<B>(f, tab_layout, outer_chunks);
                     self.render_systems::<B>(f, notifications.clone(), ui_messages.clone());
                     Self::send_buffer(f, last_sent, send_interval, can_start, buffer_tx.clone());
-                // }
+                }
             })?;
         }
         Ok(())
@@ -323,7 +316,7 @@ impl <'a>TerminalApp<'a> {
             menu_bar.draw::<B>(f, tab_area);
                 
             let buf = &mut Buffer::empty(Rect::ZERO);
-
+            
             // (2) Render Main content area depends on which tab is selected
             match *menu_bar.current_tab.borrow() {
                 Tab::TurSheet => self.service_tab.borrow_mut().draw::<B>(f, main_content_area),
@@ -338,17 +331,12 @@ impl <'a>TerminalApp<'a> {
                     self.logger.draw::<B>(f, main_content_area);
                 },
             }
-            Block::new()
-            .style(Style::new().bg(Color::Black))
-            .border_type(ratatui::widgets::BorderType::Double)
-            .border_style(
-                Style::new().fg(Color::Yellow)
-            ).render(f.area(), f.buffer_mut());
+            // Block::new().style(Style::new().bg(Color::Black)).render(f.area(), f.buffer_mut());
         }
         Ok(())
     }
 
-    fn _render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen) {
+    fn render_splash_screen(f: &mut Frame, splash_screen: &mut SplashScreen) {
         let layout_cols = Layout::default()
         .direction(Direction::Horizontal)
         .margin(1)

@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, Widget, WidgetRef}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
 use tui_scrollview::ScrollView;
 use super::ServiceFormTab;
@@ -10,12 +10,6 @@ pub const SERVICE_FORM_VIRTUAL_HEIGHT: u16 = 46;
 /// This allows the composite widget to draw itself and handle events.
 impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
-        Block::new()
-        .style(Style::new().bg(Color::Black))
-        .border_type(ratatui::widgets::BorderType::Double)
-        .border_style(
-            Style::new().fg(Color::Cyan)
-        ).render(area, f.buffer_mut());
 
         let total_offset = area.y;
         self.total_offset.replace(total_offset);
@@ -27,7 +21,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
         };
 
         let mut scroll_view = ScrollView::new(virtual_size);
-
+        scroll_view.buf_mut().set_style(area, Style::new().bg(Color::Black));
         // Updated constraints: Larger row 8, product/price starts at row 9
         let constraints = vec![
             Constraint::Length(3),  // Row 1: Get Ticket | Submit
@@ -113,8 +107,25 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
             .split(rows[4]);
-        self.salesman_name.render_ref(row5[0], scroll_view.buf_mut());
-        self.technician_name.render_ref(row5[1], scroll_view.buf_mut());
+
+        let salesman = &self.salesman_name;
+        let tech = &self.technician_name;
+        if let (Ok(mut suggestions), Ok(mut tech_suggestions)) = (salesman.suggestions.try_borrow_mut(), tech.suggestions.try_borrow_mut()) {
+            if suggestions.is_empty() {
+                if let Ok(ctx) = self.ctx.try_lock() {
+                    // let my_usr = ;
+                    if !ctx.store_users.is_empty() {
+                        let users = ctx.store_users.iter().filter(|u| u.get_store() == ctx.user.get_store()).map(|u| u.get_username().to_string()).collect::<Vec<String>>();
+                        *tech_suggestions = users.clone();
+                        *suggestions = users;
+                    }
+                }
+            }
+        }
+
+        salesman.render_ref(row5[0], scroll_view.buf_mut());
+
+        tech.render_ref(row5[1], scroll_view.buf_mut());
         if self.seb_fields.len() > 0 {
             self.seb_fields[0].render_ref(row5[2], scroll_view.buf_mut()); // Carbonite Device Name
         }
@@ -175,6 +186,12 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
 
         scroll_view.render(area, f.buffer_mut(), &mut self.scroll_state.borrow_mut());
 
+        let s_state = if let Ok(s_state) = self.scroll_state.try_borrow() {
+            s_state.offset()
+        } else {
+            Position::default()
+        };
+
         // Set cursor position for the active field
         if let Some(ref active) = *self.active_field.borrow() {
             let cursor_pos = match active.0.as_str() {
@@ -188,7 +205,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                 _ => None,
             };
             if let Some(pos) = cursor_pos {
-                let scroll_y = self.scroll_state.borrow().offset().y;
+                let scroll_y = s_state.y;
                 let total_offset = *self.total_offset.borrow();
                 // Adjust y with total_offset and scroll_y
                 let adjusted_y = pos.y + total_offset - scroll_y;
@@ -199,6 +216,8 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             // Hide terminal cursor after rendering to avoid flying around
             // f.set_cursor_position(Position::new(0, 0)); // Off-screen position
         }
+        salesman.render_popup(f.buffer_mut(), row5[0], s_state);
+        tech.render_popup(f.buffer_mut(), row5[1], s_state);
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
@@ -274,6 +293,44 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                 }
                 true
             } else {
+                if let Some(ref active) = *self.active_field.borrow() {
+                    match active.0.as_str() {
+                        "CustomerName" => self.customer_name.handle_key_event(&key_event),
+                        "CustomerPhone" => self.customer_phone.handle_key_event(&key_event),
+                        "SalesmanName" => self.salesman_name.handle_key_event(&key_event),
+                        "TechnicianName" => self.technician_name.handle_key_event(&key_event),
+                        "CheckInNotes" => self.checkin_notes.handle_key_event(&key_event),
+                        "Recommendations" => self.recommendations.handle_key_event(&key_event),
+                        "ServiceNumber" => {
+                            let order_num_field = &mut self.order_number;
+                            let mut text_area_input = order_num_field.input.borrow_mut();
+                            let input = text_area_input.input_without_shortcuts(key_event);
+                            if input {
+                                if let Err(err) = text_area_input.lines()[0].parse::<i32>() {
+                                    order_num_field.set_block(
+                                        Block::default()
+                                            .borders(Borders::ALL)
+                                            .border_style(CATPPUCCIN.maroon)
+                                            .border_set(SHORTCUT_SET)
+                                            .title(format!("ERROR: {}", err)),
+                                    );
+                                    
+                                } else {
+                                    order_num_field.set_block(
+                                        Block::default()
+                                            .border_style(CATPPUCCIN.green)
+                                            .borders(Borders::ALL)
+                                            .border_set(SHORTCUT_SET)
+                                            .title("Service #"),
+                                    );
+                                    
+                                }
+                            }
+                            false
+                        },
+                        _ => {false}
+                    };
+                }
                 false
             }
         } else {
