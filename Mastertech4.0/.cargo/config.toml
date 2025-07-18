@@ -5,7 +5,7 @@
 # rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold", "-Awarnings"]
 
 [target.x86_64-pc-windows-msvc]
-linker = "lld-link.exe"
+# linker = "lld-link.exe"
 rustflags = ["-C", "target-feature=+crt-static"] # ,target-cpu=native "--cfg", "tokio_unstable" , "-Awarnings"
 
 

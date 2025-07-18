@@ -15,8 +15,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
             WidgetId("Informational".to_string()),
             WidgetId("UserScripts".to_string()),
             WidgetId("ServiceNumberScriptsPage".to_string()),
-            WidgetId("CustomSourceTransferPath".to_string()),
-            WidgetId("CustomDestinationTransferPath".to_string()),
+            WidgetId("CustomPath".to_string()),
         ];
 
         for btn in self.data_path_buttons.iter() {
@@ -109,11 +108,11 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "Informational" => {}
                     "UserScripts" => {}
                     "Continue" => {}
+                    "CustomPath" => { }
                     _ => {
                         if WidgetButton::Right == *button {
                             // Collect the ID to remove (assuming single match for simplicity)
-                            let matching_id = self.data_path_buttons.iter()
-                            .find_map(|btn| {
+                            let matching_id = self.data_path_buttons.iter().find_map(|btn| {
                                 let btn_widget_id = btn.get_widget_id().clone();
                                 let btn_id = btn_widget_id.0.as_str();
                                 if btn_id.eq(widget_id.0.as_str()) {
@@ -155,29 +154,6 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                                     let data_transfer_progress_tx = self.data_transfer_progress_tx.clone();
                                     let source_clone = self.source_directories.clone();
                                     let destination_clone = destination.clone();
-
-                                    // let custom_source = self.custom_source_field.get_text()[0].clone();
-                                    // let custom_destination = self.custom_destination_field.get_text()[0].clone();
-                                    // if !custom_source.is_empty() && !custom_destination.is_empty() {
-                                    //     tokio::spawn(async move {
-                                    //         log::info!("Source: {:?}\nDestination: {:?}", custom_source, custom_destination);
-                                    //         if custom_source != custom_destination {
-                                    //             let result = run_robocopy(
-                                    //                 &PathBuf::from(custom_source),
-                                    //                 &PathBuf::from(custom_destination),
-                                    //                 data_transfer_progress_tx.clone()
-                                    //             ).await;
-                                    //             log::info!("Robocopy Run Result: {result:?}");
-                                    //         }
-                                    //     });
-                                    //     break;
-                                    // }
-                                    /*
-                                    * If source and destination is filled out, use the buttons like normal,
-                                    * If Source is filled out and not the destination, the source should be the folder you left click on,
-                                    * Destination NEEDS to be filled out if source is filled out
-                                    * 
-                                    */
 
                                     tokio::spawn(async move {
                                         for (src, _size) in  source_clone.iter() {

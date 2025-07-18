@@ -1,7 +1,9 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use walkdir::WalkDir;
+use crate::{tabs::file_browser::read_folder, terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::{checklist::TodoItem, script_categories::{format_size, get_directory_size}}, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
+use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -357,8 +359,8 @@ impl<'a> ScriptsTab<'a> {
             f.render_widget(button, col_chunks[col].shrink(1, 0));
         }
 
-        self.custom_source_field.render_ref(content_chunks[3].shrink(1, 0), f.buffer_mut());
-        self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
+        self.custom_path_field.render_ref(content_chunks[3].shrink(1, 0), f.buffer_mut());
+        // self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
 
     }
 
@@ -1058,8 +1060,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     self.run_btn.handle_mouse_event(&mouse_event);
                     self.user_scripts_btn.handle_mouse_event(&mouse_event);
                 } else {
-                    self.custom_source_field.handle_mouse_event(&mouse_event);
-                    self.custom_destination_field.handle_mouse_event(&mouse_event);
+                    self.custom_path_field.handle_mouse_event(&mouse_event);
                     for btn in self.data_path_buttons.iter() {
                         btn.handle_mouse_event(&mouse_event);
                     }
@@ -1135,17 +1136,66 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             }
             KeyCode::Enter => {
-                // let popup_open = *self.is_popup_open.borrow();
-                // if !popup_open {
-                    let list_state = self.list_state.borrow();
-                    if let Some(selected) = list_state.selected() {
-                        let (full_list, item_to_flat_index) = self.build_full_list();
+                let popup_open_res = self.is_popup_open.try_borrow();
+                if let Ok(popup_open) = popup_open_res {
+                    if !*popup_open {
+                        self.log_message("POPUP NOT OPEN");
+                        let list_state = self.list_state.borrow();
+                        if let Some(selected) = list_state.selected() {
+                            let (full_list, item_to_flat_index) = self.build_full_list();
 
-                        let flat_selected = item_to_flat_index.iter().position(|&i| i == selected).unwrap();
-                        let (current_category, current_item) = full_list[flat_selected].clone();
-                        log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
+                            let flat_selected = item_to_flat_index.iter().position(|&i| i == selected).unwrap();
+                            let (current_category, current_item) = full_list[flat_selected].clone();
+                            log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
+                        }
+                    } else {
+                        self.log_message("POPUP OPEN");
+                        let custom_path = self.custom_path_field.get_text()[0].clone();
+                        if !custom_path.is_empty() {
+                            self.log_message(format!("CUSTOM PATH: {:?}", custom_path));
+                            let tx = self.path_size_tx.clone();
+                            std::thread::spawn(move || {
+                                let mut paths_with_sizes = Vec::new();
+                                let mut results: Vec<PathBuf> = WalkDir::new(PathBuf::from(custom_path))
+                                    .into_iter()
+                                    .filter_map(|e| e.ok())
+                                    .filter(|entry| entry.path().is_dir())
+                                    .map(|entry| entry.path().to_path_buf())
+                                    .filter(|path| {
+                                        let is_users_path = path.starts_with(&path);
+
+                                        let exclude = path.file_name()
+                                            .map(|name| {
+                                                let name_str = name.to_string_lossy();
+                                                name_str.contains("Default") || name_str == "All Users"
+                                            })
+                                            .unwrap_or(false);
+
+                                        is_users_path && !exclude
+                                    })
+                                    .collect();
+
+                                results.sort_by(|a, b| {
+                                    let da = a.is_dir();
+                                    let db = b.is_dir();
+                                    match da == db {
+                                        true => a.file_name().cmp(&b.file_name()),
+                                        false => db.cmp(&da),
+                                    }
+                                });
+                                if !results.is_empty() {
+                                    for path in results {
+                                        let dir_size = get_directory_size(path.as_path());
+                                        let formatted_size = format_size(dir_size);
+                                        log::error!("Directory: {:>10} | Size: {}", path.display(), formatted_size);
+                                        paths_with_sizes.push((path.to_string_lossy().to_string(), formatted_size));
+                                    }
+                                }
+                                let _ = tx.try_send(paths_with_sizes);
+                            });
+                        }
                     }
-                // }
+                }
                 true
             }
             KeyCode::PageUp => {
@@ -1159,7 +1209,14 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             }
             _ => {
-                self.service_number_field.input.borrow_mut().input_without_shortcuts(key_event);
+                let popup_open_res = self.is_popup_open.try_borrow();
+                if let Ok(popup_open) = popup_open_res {
+                    if !*popup_open {
+                        self.service_number_field.handle_key_event(&key_event);
+                    } else {
+                        self.custom_path_field.handle_key_event(&key_event);
+                    }
+                }
                 false
             }
         }

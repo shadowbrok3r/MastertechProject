@@ -29,11 +29,12 @@ impl AdminConsole {
                     "{WS_MASTER_URL}&room_id={}",
                     client.connection_string.clone()
                 );
+
                 client.connected = false;
                 client.disconnect_client();
-                if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string)
-                {
+                if let Some(mut ws_client) = self.ws_clients.remove(&client.connection_string) {
                     ws_client.ws_sender.close();
+                    drop(ws_client);
                 }
                 self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
             },
@@ -47,12 +48,14 @@ impl AdminConsole {
                     Ok((ws_sender, ws_receiver)) => {
                         client.connected = true;
 
-                        let ws_client = WebSocketClient::new(
+                        let mut ws_client = WebSocketClient::new(
                             ws_sender,
                             ws_receiver,
                             client.clone(),
                             self.filesystem.clone(),
                         );
+
+                        ws_client.start_receiving_buffers();
                         
                         self.ws_clients
                             .entry(client.connection_string.clone())
@@ -73,20 +76,16 @@ impl AdminConsole {
                 }
             },
         }
-    
     }
 }
 
 pub trait ClientHandler { 
-    fn connect(&mut self);
     fn export_logs(&mut self, history: Vec<History>);
     fn delete_client(&mut self);
     fn disconnect_client(&mut self);
 }
 
 impl ClientHandler for ConnectedClient {
-    fn connect(&mut self) { }
-
     fn export_logs(&mut self, history: Vec<History>) {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
