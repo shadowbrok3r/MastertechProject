@@ -18,24 +18,6 @@ impl MasterTechApp {
                                 Err(e) => log::error!("Failed to save user data: {e:?}"),
                             }
                             self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
-
-                            #[cfg(target_os = "windows")]
-                            {
-                                use crate::filesystem::system_info::ComputerInfo;
-                                if self.context.computer_data.cpu.is_empty() {
-                                    let specs_tx = self.context.computer_data_tx.clone();
-                                    let current_antivirus_tx = self.context.current_antivirus_tx.clone();
-                                    tokio::spawn(async move {
-                                        match database::schema::ComputerData::default().get_computer_data().await {
-                                            Ok(data) => { let _ = specs_tx.try_send(data); }
-                                            Err(e) => log::error!("Error getting specs: {e:?}"),
-                                        }
-                                        let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
-                                        log::error!("installed_antivirus: {installed_antivirus:?}");
-                                        let _ = current_antivirus_tx.try_send(installed_antivirus);
-                                    });
-                                }
-                            }
                         } else {
                             log::error!("No login mut");
                         }

@@ -237,8 +237,10 @@ impl <'a> ButtonType <'a> for InputField <'a> {
             KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
                 let mut clipboard = arboard::Clipboard::new().unwrap();
                 let get_clipboard_contents = clipboard.get().text();
-                if let (Ok(contents), Some(area)) = (get_clipboard_contents, self.get_area()) {
-                    self.insert_wrapped_text(contents, area.width.saturating_sub(2) as usize);
+                log::error!("CLIP CONTENTS: {get_clipboard_contents:?}");
+                if let Ok(contents) = get_clipboard_contents {
+                    input.insert_str(contents);
+                    // self.insert_wrapped_text(contents, area.width.saturating_sub(2) as usize);
                 }
                 true
             }

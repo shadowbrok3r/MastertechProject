@@ -160,16 +160,6 @@ impl TerminalWebsocketClient {
 
     async fn handle_command(&mut self, cmd: Cmd, sender: &mut ewebsock::WsSender) {
         match cmd{
-            Cmd::Cps => {
-                let tx = self.bin_tx.clone();
-                log::info!("websockets -> Cmd: {cmd:?}");
-                handle_command_payload("SELECT * FROM Win32_OperatingSystem".to_string(), tx.clone()).await.unwrap();
-            },
-            Cmd::Qc => {
-                let tx = self.bin_tx.clone();
-                log::info!("websockets -> Cmd: {cmd:?}");
-                handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
-            },
             Cmd::FileSystemAction(FileSystemAction::RequestNewContents(new_path)) => {
                 let path = if new_path == "current" {
                     let current_path = std::env::current_dir().unwrap_or_default();
