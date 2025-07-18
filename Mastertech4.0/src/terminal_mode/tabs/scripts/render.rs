@@ -194,39 +194,41 @@ impl<'a> ScriptsTab<'a> {
         let mut item_to_flat_index: Vec<usize> = Vec::new();
         let mut flat_index = 0;
 
-        for list in self.checklists.values() {
-            checklist_items.push(
-                ListItem::new(
-                Line::styled(
-                    format!("* {} *", list.name),
-                    Style::default().fg(CATPPUCCIN.sapphire).bold(),
+        for list in Self::CHECKLIST_ORDERED {
+            if let Some(list) = self.checklists.get(list) {
+                checklist_items.push(
+                    ListItem::new(
+                    Line::styled(
+                        format!("* {} *", list.name),
+                        Style::default().fg(CATPPUCCIN.sapphire).bold(),
+                        )
                     )
-                )
-            );
+                );
 
-            for item in &list.items {
-                let symbol = match item.status {
-                    Status::Completed => "[X]", // ☒
-                    Status::Todo => "[ ]",
-                };
+                for item in &list.items {
+                    let symbol = match item.status {
+                        Status::Completed => "[X]", // ☒
+                        Status::Todo => "[ ]",
+                    };
 
-                let mut style = match item.status {
-                    Status::Completed => Style::default().fg(CATPPUCCIN.teal),
-                    Status::Todo => Style::default().fg(CATPPUCCIN.pink),
-                };
-                
-                if let Some((current_cat, current_text)) = &*self.current_script.borrow() {
-                    if *current_cat == item.category() && *current_text == item.text {
-                        style = Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.sky);
+                    let mut style = match item.status {
+                        Status::Completed => Style::default().fg(CATPPUCCIN.teal),
+                        Status::Todo => Style::default().fg(CATPPUCCIN.pink),
+                    };
+                    
+                    if let Some((current_cat, current_text)) = &*self.current_script.borrow() {
+                        if *current_cat == item.category() && *current_text == item.text {
+                            style = Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.sky);
+                        }
                     }
-                }
 
-                checklist_items.push(ListItem::new(Line::styled(
-                    format!("{} {}", symbol, item.text),
-                    style,
-                )));
-                item_to_flat_index.push(flat_index);
-                flat_index += 1;
+                    checklist_items.push(ListItem::new(Line::styled(
+                        format!("{} {}", symbol, item.text),
+                        style,
+                    )));
+                    item_to_flat_index.push(flat_index);
+                    flat_index += 1;
+                }
             }
         }
 
@@ -579,6 +581,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
             *init = false;
         }
+        
         let mut frame_area = self.frame_area.borrow_mut();
         if frame_area.is_none() {
             *frame_area = Some(f.area());
