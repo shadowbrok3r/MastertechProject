@@ -1,9 +1,9 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
-use walkdir::WalkDir;
-use crate::{tabs::file_browser::read_folder, terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::{checklist::TodoItem, script_categories::{format_size, get_directory_size}}, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
+use unicode_width::UnicodeWidthStr;
+use crate::{terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::{checklist::TodoItem, script_categories::{format_size, get_directory_size}}, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -287,8 +287,13 @@ impl<'a> ScriptsTab<'a> {
         let button_count = self.data_path_buttons.len();
         let rows = (button_count + 1) / 2; // 2 columns
 
-        let popup_width: u16 = 80; // Fixed width, adjust as needed
-        
+        let max_width = self.data_path_buttons
+            .iter()
+            .map(|path| path.get_label().width() as u16)
+            .max()
+            .unwrap_or(popup_text.width() as u16);
+
+        let popup_width: u16 = (max_width * 2) + 10; 
         let inner_width = popup_width.saturating_sub(2); // Account for margins
         let text_lines = (popup_text.len() as u16 + inner_width - 1) / inner_width; // Ceiling division
         let text_height = text_lines.max(2); // Ensure at least 2 lines, adjust as needed
@@ -324,8 +329,8 @@ impl<'a> ScriptsTab<'a> {
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(text_height + 1), // Text area with padding
-                Constraint::Length(1), // Padding
+                Constraint::Length(text_height), // Text area with padding
+                Constraint::Length(10), // Padding
                 Constraint::Min(rows as u16 * 3), // Buttons
                 Constraint::Length(6), // Custom_path_field
                 Constraint::Length(6), // Custom_path_field
@@ -359,7 +364,7 @@ impl<'a> ScriptsTab<'a> {
             f.render_widget(button, col_chunks[col].shrink(1, 0));
         }
 
-        self.custom_path_field.render_ref(content_chunks[3].shrink(1, 0), f.buffer_mut());
+        self.custom_path_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
         // self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
 
     }
@@ -693,7 +698,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 } else {
                     0.0
                 };
-            
+
+
                 let gauge = Gauge::default()
                     .block(Block::bordered().title(format!("{script_name} Progress")))
                     .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
@@ -703,7 +709,14 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
         }
         
-        f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
+        if self.loading {
+            let throbber = throbber_widgets_tui::Throbber::default()
+                .label("Scanning Directories..")
+                .throbber_set(throbber_widgets_tui::VERTICAL_BLOCK);
+            f.render_widget(throbber, button_grid[8].shrink(0, 1));
+        }
+
+        f.render_widget(&self.run_btn, button_grid[9].shrink(4, 1));
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);
@@ -1155,44 +1168,14 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             self.log_message(format!("CUSTOM PATH: {:?}", custom_path));
                             let tx = self.path_size_tx.clone();
                             std::thread::spawn(move || {
-                                let mut paths_with_sizes = Vec::new();
-                                let mut results: Vec<PathBuf> = WalkDir::new(PathBuf::from(custom_path))
-                                    .into_iter()
-                                    .filter_map(|e| e.ok())
-                                    .filter(|entry| entry.path().is_dir())
-                                    .map(|entry| entry.path().to_path_buf())
-                                    .filter(|path| {
-                                        let is_users_path = path.starts_with(&path);
-
-                                        let exclude = path.file_name()
-                                            .map(|name| {
-                                                let name_str = name.to_string_lossy();
-                                                name_str.contains("Default") || name_str == "All Users"
-                                            })
-                                            .unwrap_or(false);
-
-                                        is_users_path && !exclude
-                                    })
-                                    .collect();
-
-                                results.sort_by(|a, b| {
-                                    let da = a.is_dir();
-                                    let db = b.is_dir();
-                                    match da == db {
-                                        true => a.file_name().cmp(&b.file_name()),
-                                        false => db.cmp(&da),
-                                    }
-                                });
-                                if !results.is_empty() {
-                                    for path in results {
-                                        let dir_size = get_directory_size(path.as_path());
-                                        let formatted_size = format_size(dir_size);
-                                        log::error!("Directory: {:>10} | Size: {}", path.display(), formatted_size);
-                                        paths_with_sizes.push((path.to_string_lossy().to_string(), formatted_size));
-                                    }
-                                }
-                                let _ = tx.try_send(paths_with_sizes);
+                                let dir_size = get_directory_size(Path::new(&custom_path));
+                                let _ = tx.try_send(vec![(custom_path, format_size(dir_size))]);
                             });
+                            
+                            if let Ok(mut input) = self.custom_path_field.input.try_borrow_mut() {
+                                input.select_all();
+                                input.cut();
+                            }
                         }
                     }
                 }

@@ -157,8 +157,9 @@ impl <'a> ScriptsTab <'a> {
     }
 
     pub fn data_transfer(&mut self, item_text: &str, category: &Category) {
+        self.loading = true;
         self.data_path_buttons.clear();
-        log::info!("Finding Data transfer candidates");
+        self.log_message("Finding Data transfer candidates");
         let tx = self.path_size_tx.clone();
         std::thread::spawn(move || {
             let paths = get_data_transfer_candidates();

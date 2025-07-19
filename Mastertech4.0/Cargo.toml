@@ -95,6 +95,7 @@ dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
 indexmap = { version = "2.10.0", features = ["serde"] }
+throbber-widgets-tui = "0.8.0"
 
 
 [dependencies.egui]
