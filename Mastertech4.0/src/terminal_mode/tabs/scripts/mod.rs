@@ -100,6 +100,7 @@ pub struct ScriptsTab<'a> {
     user_scripts_to_run: Vec<String>,
     scripts_waiting_for_data: Vec<TodoItem>,
     robocopy_reports: RefCell<Vec<Report>>, // Robocopy-specific logs
+    loading: bool,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -270,6 +271,7 @@ impl<'a> ScriptsTab<'a> {
             user_scripts_to_run: Vec::new(),
             scripts_waiting_for_data: Vec::new(),
             windows_installation: RefCell::new(false),
+            loading: false,
         }
     }
 
@@ -332,6 +334,7 @@ impl<'a> ScriptsTab<'a> {
             }
 
             self.is_popup_open.replace(true);
+            self.loading = false;
             let _ = get_update_sender().try_send(self.widget_id());
         }
 
