@@ -330,9 +330,9 @@ impl<'a> ScriptsTab<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(text_height), // Text area with padding
-                Constraint::Length(10), // Padding
+                Constraint::Length(8), // Padding
                 Constraint::Min(rows as u16 * 3), // Buttons
-                Constraint::Length(6), // Custom_path_field
+                Constraint::Length(3), // Custom_path_field
                 Constraint::Length(6), // Custom_path_field
             ])
             .split(inner_area);
@@ -1171,7 +1171,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                                 let dir_size = get_directory_size(Path::new(&custom_path));
                                 let _ = tx.try_send(vec![(custom_path, format_size(dir_size))]);
                             });
-                            
+
                             if let Ok(mut input) = self.custom_path_field.input.try_borrow_mut() {
                                 input.select_all();
                                 input.cut();
