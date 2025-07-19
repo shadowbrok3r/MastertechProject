@@ -2,7 +2,7 @@ use eframe::egui::{text::LayoutJob, Align, Button, Color32, FontFamily, FontId, 
 use database::schema::ConnectedClient;
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
 use log::info;
 
@@ -68,7 +68,7 @@ impl AdminConsole {
                     // Convert LayoutJob to WidgetText
                     let formatted_text = WidgetText::from(job);
                     let parsed_date = DateTime::parse_from_rfc3339(
-                        &client.last_update.as_ref().cloned().unwrap_or_default()
+                        &client.last_update.clone().unwrap_or(Utc::now().into()).to_string()
                     )
                     .unwrap_or_default()
                     .with_timezone(&Local);
