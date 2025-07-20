@@ -500,3 +500,8 @@ impl<'a> WidgetRef for AutoCompleteInput<'a> {
         self.render_popup(buf);
     }
 }
+
+// Include validation tests
+#[cfg(test)]
+#[path = "autocomplete_input_test.rs"]
+mod tests;
