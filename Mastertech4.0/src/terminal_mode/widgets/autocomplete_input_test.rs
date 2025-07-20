@@ -6,8 +6,9 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_traits::SaturatingSub;
     use ratatui::{crossterm::event::{MouseEvent, MouseEventKind, MouseButton}, layout::Rect};
-    use crate::terminal_mode::events::action_handler::WidgetId;
+    use crate::terminal_mode::{events::action_handler::WidgetId, widgets::{autocomplete_input::AutoCompleteInput, button::ButtonState, ButtonType}};
 
     #[test] 
     fn test_coordinate_adjustment_logic() {
@@ -44,7 +45,7 @@ mod tests {
         // Test Case 2: Adjusted coordinates (what the fix provides)
         // The ServiceFormTab's handle_mouse_event already adjusts coordinates:
         // adjusted_y = mouse_event.row.saturating_sub(total_offset)
-        let adjusted_mouse_row = raw_mouse_row.saturating_sub(total_offset); // 25 - 5 = 20
+        let adjusted_mouse_row = raw_mouse_row.saturating_sub(&total_offset); // 25 - 5 = 20
         let adjusted_mouse_col = raw_mouse_col;
         
         // Create mouse event with adjusted coordinates (simulating the fix)
