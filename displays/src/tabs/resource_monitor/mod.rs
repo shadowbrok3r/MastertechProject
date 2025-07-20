@@ -151,7 +151,7 @@ impl ResourceMonitor {
 
         ui.ctx().request_repaint(); // .request_repaint_after_secs(2.);
         TopBottomPanel::top("Resource Monitor Top Panel").exact_height(25.).show_inside(ui, |ui| {
-            eframe::egui::menu::bar(ui, |ui| {
+            eframe::egui::MenuBar::new().ui(ui, |ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
                     let button_stroke = ui.style().visuals.window_stroke;
                     let button_size = Vec2::new(100.0, 15.0);

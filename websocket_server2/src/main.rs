@@ -7,14 +7,12 @@ use axum::{
     routing::get,
     serve, Router,
 };
-use database::{schema::ConnectedClient, DATABASE, Database};
+use database::{init_database, schema::{ConnectedClient, User}, Database, DATABASE};
 use futures::{stream::SplitSink, SinkExt, StreamExt};
-use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
-use surrealdb::RecordId;
+use std::net::SocketAddr;
 use tokio::sync::Mutex;
 use tracing::info;
-use chrono::{Utc, Duration};
 use uuid::Uuid;
 
 type SessionID = String;
@@ -47,7 +45,7 @@ struct ChatServer {
     rooms: Arc<Mutex<HashMap<RoomID, Room>>>,
     session_map: Arc<Mutex<HashMap<SessionID, Arc<Mutex<SplitSink<WebSocket, Message>>>>>>,
     // Map session_id to username if authenticated
-    user_map: Arc<Mutex<HashMap<SessionID, RecordId>>>,
+    user_map: Arc<Mutex<HashMap<SessionID, User>>>,
 }
 
 impl ChatServer {
@@ -81,15 +79,28 @@ impl ChatServer {
             }
         }
 
+
         // Update ConnectedClient in SurrealDB for this connection
-        let now = Utc::now();
         let room_id_clone2 = room_id.clone();
+        let user_map_clone = Arc::clone(&self.user_map);
+        let sess = session_id.clone();
         tokio::spawn(async move {
-            let _ = DATABASE
-                .query("UPDATE connected_client SET last_update = $now, connected = true WHERE connection_string == $connection_string")
-                .bind(("now", now))
-                .bind(("connection_string", room_id_clone2.clone()))
-                .await;
+            // Query the ConnectedClient for assigned_user
+            if let Ok(client) = get_client(&room_id_clone2).await {
+                if let Some(user_id) = client.assigned_user {
+                    // Query the User by id
+                    if let Ok(Some(user)) = DATABASE
+                        .query("SELECT * FROM user WHERE id == $user_id")
+                        .bind(("user_id", user_id.clone()))
+                        .await
+                        .and_then(|mut r| r.take(0))
+                    {
+                        log::info!("SELECTED USER: {user:?}");
+                        let mut user_map = user_map_clone.lock().await;
+                        user_map.insert(sess, user);
+                    }
+                }
+            }
         });
 
         self.session_map
@@ -239,44 +250,45 @@ impl ChatServer {
             }
             ChatMessage::Command { from, ws_tx, command, args } => {
                 match command.as_str() {
-                    "my_connections" => {
-                        // Only allow if authenticated
+                    "users_online" => {
+                        // List all unique users currently connected
                         let user_map = self.user_map.lock().await;
-                        let user_id = user_map.get(&from);
-                        drop(user_map);
-                        if let Some(user_id) = user_id {
-                            // Remove old connections (older than 2 days)
-                            let two_days_ago = Utc::now() - Duration::days(2);
-                            let _ = DATABASE
-                                .query("UPDATE connected_client SET connected = false WHERE assigned_user == $auth.id && created_at <= $two_days_ago && connected == true")
-                                .bind(("two_days_ago", two_days_ago))
-                                .await;
-
-                            // List active connections for this user
-                            let query: Result<Vec<ConnectedClient>, _> = DATABASE
-                                .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ORDER BY last_update DESC LIMIT 10")
-                                .await
-                                .and_then(|r| r.take(0));
+                        if user_map.is_empty() {
                             let mut sender = ws_tx.lock().await;
-                            match query {
-                                Ok(clients) => {
-                                    if clients.is_empty() {
-                                        let _ = sender.send(Message::Text("No active connections found.".into())).await;
-                                    } else {
-                                        let mut msg = String::from("Your active connections (last 10):\n");
-                                        for c in clients {
-                                            msg.push_str(&format!("Room: {} | Last Update: {:?}\n", c.connection_string, c.last_update));
-                                        }
-                                        let _ = sender.send(Message::Text(msg.into())).await;
+                            let _ = sender.send(Message::Text("No users are currently authenticated/connected.".into())).await;
+                        } else {
+                            let mut users = Vec::new();
+                            for (_session, user) in user_map.iter() {
+                                users.push(format!("{}", user.get_username()));
+                            }
+                            users.sort();
+                            users.dedup();
+                            let mut sender = ws_tx.lock().await;
+                            let msg = if users.is_empty() {
+                                "No users are currently authenticated/connected.".to_string()
+                            } else {
+                                format!("Users currently online ({}):\n{}", users.len(), users.join(", "))
+                            };
+                            let _ = sender.send(Message::Text(msg.into())).await;
+                        }
+                    }
+                    "my_connections" => {
+                        let rooms = self.rooms.lock().await;
+                        for (room_id, room) in rooms.iter() {
+                            if let Ok(client) = get_client(room_id).await {
+                                let user_map = self.user_map.lock().await;
+                                if let (Some(record_user), Some(usr)) = (&client.assigned_user, user_map.get(&from)) {
+                                    if record_user == &usr.get_id() {
+                                        let mut summary = String::from("Active rooms and sessions:\n");
+                                            if room_id == &client.connection_string {
+                                                summary.push_str(&format!("Room: {}\n", room_id));
+                                                summary.push_str(&format!("  Master: {}\n", if room.master.is_some() { "connected" } else { "none" }));
+                                                summary.push_str(&format!("  Client: {}\n", if room.client.is_some() { "connected" } else { "none" }));
+                                                summary.push_str(&format!("Client: {:#?}\n", client));
+                                            }
                                     }
                                 }
-                                Err(e) => {
-                                    let _ = sender.send(Message::Text(format!("Failed to fetch connections: {e}").into())).await;
-                                }
                             }
-                        } else {
-                            let mut sender = ws_tx.lock().await;
-                            let _ = sender.send(Message::Text("You must authenticate first with /auth <username> <password>".into())).await;
                         }
                     }
                     "help" => {
@@ -311,7 +323,7 @@ impl ChatServer {
                             match Database::new(username.to_string(), password.to_string(), None).await {
                                 Ok(db) => {
                                     // Associate session with username
-                                    self.user_map.lock().await.insert(from.clone(), db.user.unwrap_or_default().get_id());
+                                    self.user_map.lock().await.insert(from.clone(), db.user.unwrap_or_default());
                                     let _ = sender.send(Message::Text(format!("Authenticated as {}", username).into())).await;
                                 }
                                 Err(e) => {
@@ -380,19 +392,22 @@ impl ChatServer {
         }
     }
 
+    
     async fn cleanup_session(&self, room_id: &RoomID, session_id: &SessionID, role: &str) -> anyhow::Result<(), anyhow::Error> {
         let mut rooms = self.rooms.lock().await;
         let mut session_map = self.session_map.lock().await;
-    
-        if session_map.remove(session_id).is_none() {
+        let mut user_map = self.user_map.lock().await;
+        let client: Option<ConnectedClient> = DATABASE
+            .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $connection_id")
+            .bind(("connection_id", room_id.clone()))
+            .await?
+            .take(0)?;
+
+        log::info!("Connected Client Updated: {client:?}");
+
+        if session_map.remove(session_id).is_none() && user_map.remove(session_id).is_none() {
             return Ok(()); // Already cleaned up
         }
-    
-        // let client: Option<ConnectedClient> = DATABASE
-        //     .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
-        //     .bind(("connection_id", room_id.clone()))
-        //     .await?
-        //     .take(0)?;
 
         log::info!("Client disconnected");
 
@@ -427,19 +442,10 @@ impl ChatServer {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    // let init = initialize_db().await;
-    // if init.is_ok() {    
-    //     let _ = DATABASE
-    //         .signin(Database {
-    //             namespace: NS,
-    //             database: DB,
-    //             username: "shadowbroker",
-    //             password: "toor10!9",
-    //         })
-    //         .await.unwrap();
-    // } else if let Err(e) = init {
-    //     println!("ERR {e:?}");
-    // }
+    match init_database().await {
+        Ok(_) => log::info!("Initialized Database"),
+        Err(e) => log::info!("Error Initializing Database: {e:?}"),
+    }
 
     let chat_server = ChatServer {
         rooms: Arc::new(Mutex::new(HashMap::new())),
@@ -451,8 +457,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/websocket", get(websocket_handler))
         .layer(Extension(Arc::new(chat_server)));
 
-    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 8081))).await?;
-    // info!("Listening on {}", address);
+    let addr = SocketAddr::from(([0, 0, 0, 0], 8081));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    info!("Listening on {}", addr);
     let _ = tokio::spawn(async move {
         serve(listener, app).await?;
         Ok::<(), anyhow::Error>(())
@@ -470,9 +477,19 @@ async fn websocket_handler(
     let role = params.get("role").cloned().unwrap_or_else(|| "client".to_string());
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
-    // let res = connect_client(room_id.clone()).await;
-    // println!("Res: {res:?}");
+    let res = connect_client(room_id.clone()).await;
+    println!("Res: {res:?}");
     ws.on_upgrade(move |socket| chat_server.handle_ws(socket, session_id, room_id, role))
+}
+
+async fn get_client(room_id: &String) -> anyhow::Result<ConnectedClient, anyhow::Error> {
+    let potential_client: Option<ConnectedClient> = DATABASE
+        .query("SELECT * FROM connected_client WHERE connection_string == $room_id")
+        .bind(("room_id", room_id.clone()))
+        .await?
+        .take(0)?;
+
+    Ok(potential_client.unwrap_or_default())
 }
 
 pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error> {
@@ -483,6 +500,7 @@ pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error
         .take(0)?;
 
     if let Some(client) = potential_client {
+        log::info!("Found client: {client:?}");
         if client.connected == false {
             let _: Option<ConnectedClient> = DATABASE
                 .query("UPDATE connected_client SET connected = true WHERE connection_string == $room_id")

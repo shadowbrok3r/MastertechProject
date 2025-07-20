@@ -1,12 +1,11 @@
-use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL};
-use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, tabs::admin_console::client_action::ClientHandler, Cmd, FileSystemAction};
-use crate::{filesystem::get_client_hash, tabs::file_browser::read_folder};
-use command::{handle_command_payload, handle_windows_cmd_interactive};
+use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
+use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, FileSystemAction};
+use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
-// use tokio::{self, process::ChildStdin, sync::Mutex};
+use command::handle_windows_cmd_interactive;
+use bincode::{config::standard, serde::*};
 use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
-use bincode::{config::standard, serde::*};
 
 use super::{data::LocalTermEvent, TerminalApp};
 
@@ -22,6 +21,10 @@ pub struct TerminalWebsocketClient {
     interactive_input_tx: tokio::sync::mpsc::UnboundedSender<String>, 
     interactive_input_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     client: ConnectedClient, // Store client info
+    live_stats_stop_tx: Option<tokio::sync::watch::Sender<bool>>,
+    sysinfo_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    sysinfo_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    join_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TerminalWebsocketClient {
@@ -30,18 +33,21 @@ impl TerminalWebsocketClient {
         let (bin_tx, bin_rx) = tokio::sync::mpsc::unbounded_channel();
         let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (interactive_input_tx, interactive_input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (sysinfo_tx, sysinfo_rx) = tokio::sync::mpsc::unbounded_channel();
         // let process = Arc::new(Mutex::new(None));
 
 
         Self {
-            bin_tx,
-            bin_rx,
+            bin_tx, bin_rx,
+            sysinfo_tx, sysinfo_rx,
             client: get_client_hash(),
             // process,
             command_tx,
             command_rx,
             interactive_input_tx,
             interactive_input_rx,
+            live_stats_stop_tx: None,
+            join_handle: None,
             // explorer: FileSystem::new()
         }
     }
@@ -57,7 +63,7 @@ impl TerminalWebsocketClient {
     ) 
         -> anyhow::Result<()> 
     {
-        let connection_url = format!("{WS_CLIENT_URL}&room_id={}", self.client.connection_string);
+        let connection_url = format!("{}&room_id={}", if cfg!(debug_assertions) {WS_CLIENT_URL_LOCAL} else {WS_CLIENT_URL}, self.client.connection_string);
         let connection = ewebsock::connect(connection_url, ewebsock::Options::default());
         
         match connection {
@@ -113,8 +119,7 @@ impl TerminalWebsocketClient {
                                                     log::warn!("Failed to forward TerminalEvent to rendering loop");
                                                 }
                                             } else {
-                                                let cmd: Cmd = deserialize_command(&bin.clone());
-                                                self.handle_command(cmd, &mut sender).await;
+                                                self.handle_command(deserialize_command(&bin.clone()), &mut sender).await;
                                             }
                                         }
                                     }
@@ -143,6 +148,9 @@ impl TerminalWebsocketClient {
                             Some(cmd_output) = self.command_rx.recv() => {
                                 sender.send(WsMessage::Binary(cmd_output));
                             }
+                            Some(sysinfo) = self.sysinfo_rx.recv() => {
+                                sender.send(WsMessage::Binary(sysinfo));
+                            }
                         }
                     }
 
@@ -159,7 +167,7 @@ impl TerminalWebsocketClient {
     }
 
     async fn handle_command(&mut self, cmd: Cmd, sender: &mut ewebsock::WsSender) {
-        match cmd{
+        match cmd {
             Cmd::FileSystemAction(FileSystemAction::RequestNewContents(new_path)) => {
                 let path = if new_path == "current" {
                     let current_path = std::env::current_dir().unwrap_or_default();
@@ -263,11 +271,59 @@ impl TerminalWebsocketClient {
             Cmd::QuitInteractive => {
                 let _ = self.interactive_input_tx.send("quit".to_string());
             },
-            // Cmd::Quit => { self.connected = false; }
-            _ => {},
-            // Cmd::Command => todo!(),
+            Cmd::LiveData => {
+                // If already running, do nothing
+                if self.join_handle.is_some() {
+                    return;
+                }
+                let tx = self.sysinfo_tx.clone();
+                let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+                self.live_stats_stop_tx = Some(stop_tx);
+                self.join_handle = Some(tokio::spawn(async move {
+                    let res = live_computer_stats(tx, stop_rx).await;
+                    log::info!("live_computer_stats: {res:?}");
+                }));
+            }
+            Cmd::TaskManager => todo!(),
+            // Cmd::UninstallProgram(_) => todo!(),
+            // Cmd::PullKeys(_) => todo!(),
+            // Cmd::PullTicket(_) => todo!(),
+            Cmd::Quit => {
+                // Signal the live stats task to stop and await it
+                if let Some(stop_tx) = self.live_stats_stop_tx.take() {
+                    let _ = stop_tx.send(true);
+                }
+                if let Some(handle) = self.join_handle.take() {
+                    let _ = handle.await;
+                }
+            }
+            Cmd::None => {},
+            _ => {}
         }
     }
+}
+
+pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, mut stop_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<(), anyhow::Error> {
+    loop {
+        tokio::select! {
+            _ = stop_rx.changed() => {
+                if *stop_rx.borrow() {
+                    log::info!("live_computer_stats: received stop signal");
+                    break;
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs_f32(0.4)) => {
+                match get_sysinfo_no_gpu().await {
+                    Ok(systeminfo) => {
+                        log::info!("websockets -> {systeminfo:?}");
+                        tx.send(serialize_system_info(&systeminfo))?
+                    }
+                    Err(e) => log::error!("Error with live data {e:?}"),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 impl<'a> TerminalApp<'a> {

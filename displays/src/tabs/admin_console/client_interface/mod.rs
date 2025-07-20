@@ -168,8 +168,6 @@ impl WebSocketClient {
     }
 }
 
-
-
 pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>> {
     if let Ok(data) = encode_to_vec(system_info, standard()) {
         Some(data)
