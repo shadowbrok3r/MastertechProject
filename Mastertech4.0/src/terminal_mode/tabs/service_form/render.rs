@@ -113,6 +113,11 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
             .split(rows[4]);
+        
+        // Set the total offset for autocomplete coordinate adjustment
+        self.salesman_name.set_total_offset(total_offset);
+        self.technician_name.set_total_offset(total_offset);
+        
         self.salesman_name.render_ref(row5[0], scroll_view.buf_mut());
         self.technician_name.render_ref(row5[1], scroll_view.buf_mut());
         if self.seb_fields.len() > 0 {

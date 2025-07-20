@@ -5,6 +5,7 @@ use button::ButtonState;
 pub mod json_viewer;
 pub mod button;
 pub mod input_field;
+pub mod autocomplete_input;
 // pub mod calendar;
 
 pub const SHORTCUT_SET: Set = Set {
