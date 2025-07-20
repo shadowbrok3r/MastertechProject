@@ -101,6 +101,10 @@ pub struct ScriptsTab<'a> {
     user_scripts_to_run: Vec<String>,
     scripts_waiting_for_data: Vec<TodoItem>,
     robocopy_reports: RefCell<Vec<Report>>, // Robocopy-specific logs
+    /// Track total offset for mouse coordinate adjustment
+    total_offset: RefCell<u16>,
+    /// Track the scripts tab area for coordinate adjustment
+    scripts_area: RefCell<Option<Rect>>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -272,6 +276,8 @@ impl<'a> ScriptsTab<'a> {
             user_scripts_to_run: Vec::new(),
             scripts_waiting_for_data: Vec::new(),
             windows_installation: RefCell::new(false),
+            total_offset: RefCell::new(0),
+            scripts_area: RefCell::new(None),
         }
     }
 

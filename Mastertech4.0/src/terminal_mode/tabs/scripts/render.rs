@@ -554,6 +554,11 @@ impl<'a> ScriptsTab<'a> {
 
 impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        // Track area and offset for mouse coordinate adjustment
+        let total_offset = area.y;
+        self.total_offset.replace(total_offset);
+        self.scripts_area.replace(Some(area));
+        
         self.receive();
         self.filesystem.receive();
         self.insert_user_scripts();
@@ -721,7 +726,29 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         // let start_total = Instant::now();
         let c = mouse_event.column;
         let r = mouse_event.row;
-        let mouse_position = Position::new(c, r);
+        
+        // Adjust mouse coordinates for scroll buffer offset (similar to service_form)
+        let scripts_area = self.scripts_area.borrow().unwrap_or(Rect::new(0, 0, 0, 0));
+        let total_offset = *self.total_offset.borrow();
+        
+        // Adjust mouse coordinates if inside the scripts area
+        let adjusted_mouse_event = if c >= scripts_area.x 
+            && c < scripts_area.x + scripts_area.width 
+            && r >= scripts_area.y 
+            && r < scripts_area.y + scripts_area.height {
+            
+            let adjusted_r = r.saturating_sub(total_offset);
+            MouseEvent {
+                kind: mouse_event.kind,
+                column: c,
+                row: adjusted_r,
+                modifiers: mouse_event.modifiers,
+            }
+        } else {
+            *mouse_event
+        };
+        
+        let mouse_position = Position::new(adjusted_mouse_event.column, adjusted_mouse_event.row);
 
         self.service_number_field.handle_mouse_event(&mouse_event);
 
@@ -812,8 +839,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     if let Some(scroll_area) = *self.scroll_area.borrow() {
                         let scroll_area_contains_mouse = scroll_area.contains(mouse_position);
                         if scroll_area_contains_mouse {
-                            if let MouseEventKind::Drag(MouseButton::Left) = mouse_event.kind {
-                                let click_row = (r - scroll_area.y) as usize;
+                            if let MouseEventKind::Drag(MouseButton::Left) = adjusted_mouse_event.kind {
+                                let click_row = (adjusted_mouse_event.row - scroll_area.y) as usize;
                                 let scroll_area_height = scroll_area.height as usize;
                                 let total_items = *self.total_items.borrow();
                                 let visible_height = *self.visible_height.borrow();
@@ -847,7 +874,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     //     }
                     // }
 
-                    match mouse_event.kind {
+                    match adjusted_mouse_event.kind {
                         MouseEventKind::Moved => {
                             // Popup hover handling - Check first and take priority
                             if let Some((widget_id, popup_area)) = &*self.active_popup.borrow() {
@@ -856,8 +883,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                                     let content_start_y = popup_area.y + 1; // Top border
                                     let mut popup_state = self.popup_list_state.borrow_mut();
                                     let mut list_state = self.list_state.borrow_mut();
-                                    if r >= content_start_y { // Prevent overflow
-                                        let relative_row = (r - content_start_y) as usize;
+                                    if adjusted_mouse_event.row >= content_start_y { // Prevent overflow
+                                        let relative_row = (adjusted_mouse_event.row - content_start_y) as usize;
                                         let span_count = self.popup_items.borrow().get(&widget_id.0).map_or(1, |items| items.len());
                                         if relative_row < span_count {
                                             popup_state.select(Some(relative_row));
@@ -885,8 +912,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         
                                 if popup_contains_mouse {
                                     let content_start_y = popup_area.y + 1; // Top border
-                                    if r >= content_start_y { // Prevent overflow
-                                        let relative_row = (r - content_start_y) as usize;
+                                    if adjusted_mouse_event.row >= content_start_y { // Prevent overflow
+                                        let relative_row = (adjusted_mouse_event.row - content_start_y) as usize;
                                         let mut popup_items = self.popup_items.borrow_mut();
                                         let span_count = popup_items.get(&widget_id.0).map_or(1, |items| items.len());
                                         if relative_row < span_count {
@@ -938,11 +965,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                                     let checklist_contains_mouse = checklist_area.contains(mouse_position);
                                     if checklist_contains_mouse {
                                         let content_start_y = checklist_area.y + 1; // Top border
-                                        if r >= content_start_y {
-                                            let relative_row = (r - content_start_y) as usize;
+                                        if adjusted_mouse_event.row >= content_start_y {
+                                            let relative_row = (adjusted_mouse_event.row - content_start_y) as usize;
                                             let total_items = *self.total_items.borrow();
                                             if relative_row < total_items {
-                                                log::info!("Clicked checklist item {} at row {}", relative_row, r);
+                                                log::info!("Clicked checklist item {} at row {}", relative_row, adjusted_mouse_event.row);
                                                 let mut list_state = self.list_state.borrow_mut();
                                                 let mut popup_state = self.popup_list_state.borrow_mut();
                                                 list_state.select(Some(relative_row));
@@ -961,8 +988,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                                         let content_start_y = checklist_area.y + 1; // Top border
                                         let mut list_state = self.list_state.borrow_mut();
                                         let mut popup_state = self.popup_list_state.borrow_mut();
-                                        if r >= content_start_y {
-                                            let relative_row = (r - content_start_y) as usize;
+                                        if adjusted_mouse_event.row >= content_start_y {
+                                            let relative_row = (adjusted_mouse_event.row - content_start_y) as usize;
                                             let total_items = *self.total_items.borrow();
                                             if relative_row < total_items {
                                                 list_state.select(Some(relative_row));
