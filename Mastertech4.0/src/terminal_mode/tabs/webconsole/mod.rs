@@ -1,6 +1,6 @@
 use crate::terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::CATPPUCCINTHEME, widgets::button::Button};
 use crossbeam::channel::{Receiver, Sender};
-use database::{WS_MASTER_URL, schema::ConnectedClient};
+use database::{schema::ConnectedClient, WS_MASTER_URL, WS_MASTER_URL_LOCAL};
 use displays::remote_viewer::{decode_buffer, ratagui::TerminalEvent};
 use ewebsock::{WsEvent, WsMessage};
 use std::{collections::HashMap, sync::{Arc, Mutex}};
@@ -85,7 +85,8 @@ impl <'a> WebconsoleTab <'a> {
         self.buffer_rx = Some(buffer_rx);
         // self.event_tx = Some(event_tx);
 
-        let connection_url = format!("{WS_MASTER_URL}&room_id={}", connection_string);
+        let connection_url = format!("{}&room_id={}", if cfg!(debug_assertions) {WS_MASTER_URL_LOCAL} else {WS_MASTER_URL}, connection_string);
+        log::warn!("Connection URL: {connection_url}");
         let (_shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
         let rx = self.event_rx.clone();
         tokio::spawn(async move {

@@ -19,10 +19,8 @@ pub mod ui;
 #[derive(Serialize, Default)]
 pub enum WebConsolePageState {
     #[default]
-    ConnectedClients,
-    DisconnectedClients,
+    AllClients,
     ScriptEditor,
-    AllClients
 }
 
 #[derive(Serialize)]
@@ -127,31 +125,13 @@ impl SharedContext {
 
                 ui.add_space(ui.available_width()/3.1);
                 let button_size = Vec2::new(50.0, 15.0);
-                if Button::new("All Clients")
+                if Button::new("Clients")
                     .min_size(button_size)
                     .ui(ui)
                     .clicked() 
                 {
                     self.refresh_client_list();
                     self.web_console_layout.state = WebConsolePageState::AllClients;
-                }
-                ui.add_space(5.);
-                if Button::new("Connected Clients")
-                    .min_size(button_size)
-                    .ui(ui)
-                    .clicked()
-                {
-                    self.refresh_client_list();
-                    self.web_console_layout.state = WebConsolePageState::ConnectedClients;
-                }
-                ui.add_space(5.);
-                if Button::new("Disconnected Clients")
-                    .min_size(button_size)
-                    .ui(ui)
-                    .clicked() 
-                {
-                    self.refresh_client_list();
-                    self.web_console_layout.state = WebConsolePageState::DisconnectedClients;
                 }
                 ui.add_space(5.);
                 if Button::new("Script Editor")
@@ -189,8 +169,6 @@ impl SharedContext {
                     SortField::Date => clients.sort_by_date(direction.clone()),
                     SortField::Name => clients.sort_by_name(direction.clone()),
                 };
-                // let text_style = eframe::egui::TextStyle::Body;
-                // let row_height = ui.text_style_height(&text_style);
                 let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
                 let total_rows = clients.len();
                 ScrollArea::vertical()

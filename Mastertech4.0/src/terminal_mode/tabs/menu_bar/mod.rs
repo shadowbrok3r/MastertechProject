@@ -34,14 +34,6 @@ pub struct MenuBar<'a> {
 
 impl<'a> MenuBar<'a> {
     pub fn new(ctx: Arc<Mutex<TerminalContext>>, manual_start_tx: tokio::sync::mpsc::UnboundedSender<bool>) -> Self {
-        // let mut tabs = HashMap::new();
-        // tabs.insert(Tab::TurSheet, Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME));
-        // tabs.insert(Tab::Scripts, Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN));
-        // tabs.insert(Tab::SystemInfo, Button::new("System", WidgetId("System".to_owned())).theme(CATPPUCCINTHEME));
-        // tabs.insert(Tab::Ncdu, Button::new("NCDU", WidgetId("Ncdu".to_owned())).theme(DEEPPINK));
-        // tabs.insert(Tab::Tasks, Button::new("Tasks", WidgetId("Tasks".to_owned())).theme(DARKORANGE));
-        // tabs.insert(Tab::Logs, Button::new("Logs", WidgetId("Logs".to_owned())).theme(CYAN));
-        // tabs.insert(Tab::Login, Button::new("Login", WidgetId("Login".to_owned())).theme(SPRINGGREEN));
 
         Self {
             ctx,

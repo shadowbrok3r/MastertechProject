@@ -71,11 +71,6 @@ impl WebSocketClient {
                     }
                 });
 
-                if let WsDisplayState::Shell = self.state {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| { 
-                        self.command_shell_menu(ui);
-                    });
-                }
             });
             ui.add_space(2.);
         });

@@ -27,8 +27,7 @@ pub mod script_categories;
 // #[derive(Debug)]
 pub struct ScriptsTab<'a> {
     service_number_field: InputField<'a>,
-    custom_source_field: InputField<'a>,
-    custom_destination_field: InputField<'a>,
+    custom_path_field: InputField<'a>,
     tuneup_btn: Button<'a>,
     user_scripts_btn: Button<'a>,
     informational_btn: Button<'a>,
@@ -105,11 +104,13 @@ pub struct ScriptsTab<'a> {
     total_offset: RefCell<u16>,
     /// Track the scripts tab area for coordinate adjustment
     scripts_area: RefCell<Option<Rect>>,
+    loading: bool,
 }
 
 impl<'a> ScriptsTab<'a> {
     pub const ROBOCOPY_DISPLAY_LINES: usize = 15; // Adjust as needed
-
+    pub const CHECKLIST_ORDERED: [&'static str;3] = ["Tuneup / QC", "Informational", "Junkware Removal"];
+    
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         #[cfg(target_os="windows")]
         let (update_log_tx, update_log_rx) = crossbeam::channel::unbounded();
@@ -128,16 +129,15 @@ impl<'a> ScriptsTab<'a> {
                 state: ListState::default(),
                 items: vec![
                     TodoItem::new("Data Transfer", Category::Tuneup),
-                    TodoItem::new("Install Windows Updates", Category::Tuneup),
-                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup), // Works
-                    TodoItem::new("Install Windows Updates", Category::Tuneup), // Works
                     TodoItem::new("Activate CPS", Category::Tuneup), // Works
                     TodoItem::new("Activate SEB", Category::Tuneup), // Works
-                    TodoItem::new("Run Tron", Category::Tuneup), 
+                    TodoItem::new("Install Windows Updates", Category::Tuneup),
+                    TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup), // Works
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),
                     TodoItem::new("Run Webroot Scan", Category::Tuneup),
                     TodoItem::new("Run Junkware Category", Category::JunkwareRemoval),
-
+                    TodoItem::new("Run Tron", Category::Tuneup), 
+                    // TodoItem::new("--------------------------------", Category::Tuneup), 
                     TodoItem::new("Install LibreOffice", Category::Tuneup),
                     TodoItem::new("Disable proxy settings", Category::Tuneup), // Works
                     TodoItem::new("Disable Notifications", Category::Tuneup),
@@ -216,8 +216,7 @@ impl<'a> ScriptsTab<'a> {
 
         Self {
             service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
-            custom_source_field: InputField::new("Source Path", WidgetId("CustomSourceTransferPath".to_string())),
-            custom_destination_field: InputField::new("Destination Path", WidgetId("CustomDestinationTransferPath".to_string())),
+            custom_path_field: InputField::new("Source Path", WidgetId("CustomPath".to_string())),
             tuneup_btn: Button::new("Tuneup / QC =>", WidgetId("Tuneup / QC".to_owned())).theme(CATPPUCCINTHEME),
             user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
             informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
@@ -278,6 +277,7 @@ impl<'a> ScriptsTab<'a> {
             windows_installation: RefCell::new(false),
             total_offset: RefCell::new(0),
             scripts_area: RefCell::new(None),
+            loading: false,
         }
     }
 
@@ -324,20 +324,26 @@ impl<'a> ScriptsTab<'a> {
         }
 
         if let Ok(path_info) = self.path_size_rx.try_recv() {
-            self.source_directories = path_info.clone();
-            self.data_path_buttons.clear();
             for (path, size) in path_info {
+                // Only add if path is not already present in source_directories
+                if !self.source_directories.iter().any(|(p, _)| p == &path) {
+                    self.source_directories.push((path.clone(), size.clone()));
+                }
+
                 self.log_message(&format!("Path {:<5} Size: {:>5}", path.clone(), size.clone()));
                 let btn = Button::new(
                     format!(" {} | {} ", path.clone(), size.clone()), 
-                    WidgetId(path)
+                    WidgetId(path.clone())
                 )
                 .theme(CYAN);
                 self.data_path_buttons.push(btn);
             }
+
             self.is_popup_open.replace(true);
+            self.loading = false;
             let _ = get_update_sender().try_send(self.widget_id());
         }
+
 
         if let Ok(data_transfer_progress) = self.data_transfer_progress_rx.try_recv() {
             let out = String::from_utf8(data_transfer_progress);

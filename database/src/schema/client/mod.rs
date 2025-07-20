@@ -1,7 +1,7 @@
 use crate::schema::{SortDirection, Sortable, CONNECTED_CLIENT_TABLE};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use structdiff::{Difference, StructDiff};
-use surrealdb::RecordId;
+use surrealdb::{Datetime, RecordId};
 use std::cmp::Reverse;
 
 #[derive(serde::Serialize, Debug, Clone, serde::Deserialize, PartialEq, Difference)]
@@ -14,8 +14,8 @@ pub struct ConnectedClient {
     pub connected: bool,
     pub friendly_name: Option<String>,
     pub customer: Option<RecordId>,
-    pub last_update: Option<String>,
-    pub created_at: Option<String>,
+    pub last_update: Option<Datetime>,
+    pub created_at: Option<Datetime>,
     pub computer:  Option<RecordId>
 }
 

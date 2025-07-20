@@ -126,6 +126,11 @@ async fn main() -> eframe::Result<()> {
 
     if matches.get_flag("term") {
         let _init = tui_logger::init_logger(log::LevelFilter::Info);
+        // simplelog::WriteLogger::init(
+        //     log::LevelFilter::Debug,
+        //     simplelog::Config::default(),
+        //     std::fs::File::create("output.log").unwrap()
+        // ).unwrap();
         let res = terminal_mode::run_terminal_mode().await;
         log::info!("TERM MODE: {res:?}"); // \n{init:?}
     } else if matches.get_flag("log") {

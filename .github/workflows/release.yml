@@ -6,7 +6,7 @@ permissions:
 on:
   push:
     tags:
-      - 'v4.*'
+      - '4.*'
   pull_request:
   workflow_dispatch:
 
@@ -14,6 +14,67 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1.9.1
+        with:
+          title: MasterTech $tag
+          allow-missing-changelog: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  native-build:
+    name: Build and Upload Native Binaries
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin: MasterTech         # ← crate binary name
+            artifact: Mastertech-linux  # ← renamed file for upload
+            runs_on: self-hosted
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bin: MasterTech
+            artifact: Mastertech.exe
+            runs_on: windows-latest
+
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PipeWire deps (Linux only)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          echo ${{ secrets.USERPWD }} | sudo -S apt-get update
+          echo ${{ secrets.USERPWD }} | sudo -S apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
+      
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Upload Binary to GitHub Release
+        uses: taiki-e/upload-rust-binary-action@v1.27.0
+        with:
+          bin: ${{ matrix.bin }}
+          target: ${{ matrix.target }}
+          tar: none
+          zip: none
+          token: ${{ secrets.GITHUB_TOKEN }}
+          asset: target/${{ matrix.target }}/release/${{ matrix.bin }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-mastertech"
+          shared-key: "native-${{ matrix.target }}"
+
   trunk:
     name: Build WASM frontend (Trunk)
     runs-on: self-hosted
@@ -38,6 +99,11 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
           override: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-mastertech"
+          shared-key: "wasm"
 
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
@@ -93,49 +159,3 @@ jobs:
   #         KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
   #       with:
   #         args: rollout restart deployment mtechserver-beta -n rust
-
-  native-build:
-    name: Build and Upload Native Binaries
-    needs: trunk
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: Mastertech-linux
-            runs_on: self-hosted
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact: Mastertech.exe
-            runs_on: windows-latest
-
-    runs-on: ${{ matrix.runs_on }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install PipeWire deps (Linux only)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          echo ${{ secrets.USERPWD }} | sudo -S apt-get update
-          echo ${{ secrets.USERPWD }} | sudo -S apt-get install -y libpipewire-0.3-dev pkg-config libegl1-mesa-dev libgbm-dev
-
-      - name: Upload Binary to GitHub Release
-        uses: taiki-e/upload-rust-binary-action@v1.27.0
-        with:
-          bin: MasterTech
-          target: ${{ matrix.target }}
-          tar: none
-          zip: none
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: refs/tags/test
-
-  create-release:
-    name: Create GitHub Release
-    runs-on: self-hosted
-    needs: native-build
-    steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/create-gh-release-action@v1.9.1
-        with:
-          title: MasterTech $tag
-          token: ${{ secrets.GITHUB_TOKEN }}

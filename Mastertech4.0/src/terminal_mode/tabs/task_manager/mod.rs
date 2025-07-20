@@ -58,11 +58,6 @@ impl SysinfoTab {
         }
     }
 
-    pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) -> &mut Self {
-        self.system = sysinfo;
-        self
-    }
-
     fn get_sysinfo(&mut self) {
         if !self.should_quit {
             let tx = self.tx.clone();
@@ -81,17 +76,19 @@ impl SysinfoTab {
         let now = Instant::now();
         let elapsed = now.duration_since(self.start_time).as_secs_f64();
 
-        self.processes = system.processes.clone();
+        self.system = system;
+
+        self.processes = self.system.processes.clone();
         
         // CPU history
         self.cpu_history.push(Sample {
             time: elapsed,
-            value: system.cpu_percentage as f64,
+            value: self.system.cpu_percentage as f64,
         });
 
         // Memory history
-        let mem_percent = if system.total_memory > 0.0 {
-            system.used_memory / system.total_memory * 100.0
+        let mem_percent = if self.system.total_memory > 0.0 {
+            self.system.used_memory / self.system.total_memory * 100.0
         } else {
             0.0
         };
@@ -102,7 +99,7 @@ impl SysinfoTab {
         });
 
         // GPU history
-        let gpu_percent = system
+        let gpu_percent = self.system
             .gpu_info
             .usage
             .get(0)
@@ -114,9 +111,9 @@ impl SysinfoTab {
             value: gpu_percent,
         });
 
-        log::info!("system.component_temps: {:?}", system.component_temps);
+        // log::info!("self.system.component_temps: {:?}", self.system.component_temps);
         // Component temperatures: update history for each component.
-        for (comp, &temp) in system.component_temps.iter() {
+        for (comp, &temp) in self.system.component_temps.iter() {
             self.component_temp_history
                 .entry(comp.clone())
                 .or_insert_with(Vec::new)

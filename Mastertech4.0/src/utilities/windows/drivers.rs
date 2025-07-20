@@ -8,10 +8,10 @@ use windows::core::{PWSTR, Result};
 
 #[derive(Debug)]
 pub struct DeviceProblem {
-    instance_id: String,
-    description: String,
-    problem_code: &'static str,
-    driver_desc: Option<String>,
+    _instance_id: String,
+    _description: String,
+    _problem_code: &'static str,
+    _driver_desc: Option<String>,
 }
 
 pub fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
@@ -95,10 +95,10 @@ pub fn enum_problem_devices() -> Result<Vec<DeviceProblem>> {
                     );
 
                     devices.push(DeviceProblem {
-                        instance_id: instance_id_str,
-                        description: desc_str,
-                        problem_code: problem_code_to_description(problem_code.0),
-                        driver_desc: driver_str,
+                        _instance_id: instance_id_str,
+                        _description: desc_str,
+                        _problem_code: problem_code_to_description(problem_code.0),
+                        _driver_desc: driver_str,
                     });
                 }
             }
