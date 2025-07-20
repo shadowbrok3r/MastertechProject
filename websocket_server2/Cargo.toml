@@ -13,7 +13,7 @@ futures = "0.3"
 anyhow = "1"
 log = "0.4"
 
-
+# serde = { workspace = true }
 surrealdb = { workspace = true }
 database = { workspace = true }
 chrono = { workspace = true }

@@ -11,6 +11,8 @@ impl MasterTechApp {
                 Ok(db) => {
                     log::info!("3");
                     if self.context.shared_ctx.current_user.is_none() && db.user.is_some() {
+                        self.context.shared_ctx.current_user = db.user;
+                        self.context.shared_ctx.state = AppState::NoAuth("Setting encrypted data".to_string());
                         let login_mut = self.context.shared_ctx.login_mut();
                         if let Some(login) = login_mut {
                             match save_encrypted_user_data(&login, HASH) {
@@ -19,10 +21,10 @@ impl MasterTechApp {
                             }
                             self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);
                         } else {
-                            log::error!("No login mut");
+                            log::error!("No login mut: {:?}", self.context.shared_ctx.state);
                         }
                         log::info!("10");
-                        self.context.shared_ctx.current_user = db.user;
+                        
                     } else {
                         log::info!("11");
                     }

@@ -18,8 +18,8 @@ pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
 pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
-// pub const WS_CLIENT_URL: &str = "ws://localhost:8081/websocket?role=client";
-// pub const WS_MASTER_URL: &str = "ws://localhost:8081/websocket?role=master";
+pub const WS_CLIENT_URL_LOCAL: &str = "ws://localhost:8081/websocket?role=client";
+pub const WS_MASTER_URL_LOCAL: &str = "ws://localhost:8081/websocket?role=master";
 pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
 pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
 
@@ -246,6 +246,37 @@ impl Database {
             },
         }
     }
+}
+
+pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
+    if cfg!(debug_assertions) {
+        let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
+        log::info!("Attempting to connect to local DB: {try_local:?}");
+    } else {
+        match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+            Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+            Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
+        }
+    }
+    DATABASE.use_ns(NS).use_db(DB).await?;
+
+    DATABASE.signin(SurrealRec {
+        namespace: NS,
+        database: DB,
+        access: "guest",
+        params: Credentials {
+            username: "guest",
+            password: "toor10!9"
+        }
+    }).await?;
+
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct Credentials<'a> {
+    username: &'a str,
+    password: &'a str,
 }
 
 pub async fn login(email: String, password: String) -> anyhow::Result<Session> {

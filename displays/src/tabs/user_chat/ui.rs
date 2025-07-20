@@ -1,5 +1,4 @@
-
-use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{ChatAction, ChatMessageType, ChatThread, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
@@ -329,10 +328,10 @@ impl UserChat {
                                     .ui(ui);
 
                                 if from_btn.clicked(){
-                                    ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}", item.id).into()));
+                                    Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into())
                                 }
 
-                                popup_widget(ui, from_btn, style.clone(), &item);
+                                popup_widget(from_btn, style.clone(), &item);
 
                                 ui.add_space(5.);
 
@@ -352,9 +351,9 @@ impl UserChat {
                             ui.add_space(2.);
                             let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
                             if from_btn.clicked(){
-                                ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}",item.id).into()));
+                                Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into())
                             }
-                            popup_widget(ui, from_btn, style.clone(), &item);
+                            popup_widget(from_btn, style.clone(), &item);
 
                             ui.add_space(5.);
                         
@@ -479,15 +478,9 @@ impl UserChat {
 }
 
 
-pub fn popup_widget(ui: &mut Ui, btn_response: Response, style: Arc<Style>, item: &UserMessage) {
-
-    popup_below_widget(
-        ui, 
-        format!("sub_menu-from-{:?}",item.id).into(), 
-        &btn_response, 
-        PopupCloseBehavior::CloseOnClickOutside, 
-        |ui| 
-    {
+pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &UserMessage) {
+    let popup = Popup::from_response(&btn_response);
+    popup.show(|ui| {
         ui.vertical_centered_justified(|ui| {
             ui.set_width(300.0);
             ui.horizontal(|ui| {

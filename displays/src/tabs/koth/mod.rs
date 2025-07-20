@@ -358,7 +358,7 @@ impl Koth {
             .map(|o| o.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0))
             .sum::<f64>();
         
-            let ar_financing_ratio = if total_financed > 0.0 && self.total > 0.0 { self.total / total_financed } else { 0.0 };
+            let ar_financing_ratio = if self.total > 0.0 { (total_financed / self.total) * 100.0 } else { 0.0 };
             let total_sales = total_desktops + total_laptops;
             let total_warranties = &mut 0;
             let total_orders = self.orders.iter().count();
@@ -585,11 +585,7 @@ impl Koth {
                         }
                     }
 
-                    let ar_financing_ratio = if total_financed > 0.0 && total > 0.0 {
-                        total / total_financed
-                    } else {
-                        0.0
-                    };
+                    let ar_financing_ratio = if total > 0.0 { (total / total_financed) * 100.0 } else { 0.0 };
 
                     (
                         employee,

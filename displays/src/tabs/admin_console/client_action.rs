@@ -1,5 +1,5 @@
 use super::{client_interface::tabs::command_shell::History, AdminConsole};
-use database::{schema::{Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{Record, CONNECTED_CLIENT_TABLE}, DATABASE, WS_MASTER_URL_LOCAL};
 use crate::tabs::admin_console::client_interface::WebSocketClient;
 use database::{WS_MASTER_URL, schema::ConnectedClient};
 use crate::{PlatformSpawner, Spawner};
@@ -24,13 +24,6 @@ impl AdminConsole {
                 }
             },
             ClientUiAction::DeleteClient(mut client) => {
-                // CONNECT
-                let _url = format!(
-                    "{WS_MASTER_URL}&room_id={}",
-                    client.connection_string.clone()
-                );
-
-                client.connected = false;
                 client.disconnect_client();
                 if let Some(mut ws_client) = self.ws_clients.remove(&client.connection_string) {
                     ws_client.ws_sender.close();
@@ -39,9 +32,11 @@ impl AdminConsole {
                 self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
             },
             ClientUiAction::ConnectClient(mut client) => {
+                self.undock_client.insert(client.connection_string.clone(), false);
                 log::info!("Received Connection Command");
                 let url = format!(
-                    "{WS_MASTER_URL}&room_id={}",
+                    "{}&room_id={}",
+                    if cfg!(debug_assertions) {WS_MASTER_URL_LOCAL} else {WS_MASTER_URL},
                     client.connection_string.clone()
                 );
                 match ewebsock::connect(&url, Default::default()) {

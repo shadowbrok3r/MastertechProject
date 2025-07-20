@@ -197,28 +197,28 @@ impl DisplayModal for TaskModal {
                 ui[1].vertical_centered(|ui| {
                     ui.horizontal_top(|ui| {
                         ui.add_space(75.);
-                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::TicketInfoPage,
                             RichText::new("🖹").heading()
                         ))
                         .clicked() {
                             self.current_page_state = ModalAction::TicketInfoPage;
                         }
-                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::ComputerInfoPage,
                             RichText::new("🖥").heading()
                         ))
                         .clicked() {
                             self.current_page_state = ModalAction::ComputerInfoPage;
                         }
-                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::SoftwareInfoPage,
                             RichText::new("💾").heading()
                         ))
                         .clicked() {
                             self.current_page_state = ModalAction::SoftwareInfoPage;
                         }
-                        if ui.add_sized([22., 22.], eframe::egui::SelectableLabel::new(
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::TaskNotePage,
                             RichText::new("💬").heading()
                         ))
