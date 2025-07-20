@@ -1,4 +1,4 @@
-use eframe::egui::{Color32, Frame, Label, Pos2, Rect, Scene, TextEdit, Ui, Vec2};
+use eframe::egui::{Color32, Frame, Pos2, Rect, Scene, TextEdit, Ui, Vec2};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -56,7 +56,7 @@ impl SceneEditor {
                         ui.add_space(16.0);
 
                         // Display each sticky note
-                        for (i, note) in self.sticky_notes.iter_mut().enumerate() {
+                        for (_, note) in self.sticky_notes.iter_mut().enumerate() {
                             let note_rect = Rect::from_min_size(
                                 note.position,
                                 Vec2::new(200.0, 150.0), // Fixed size for each sticky note

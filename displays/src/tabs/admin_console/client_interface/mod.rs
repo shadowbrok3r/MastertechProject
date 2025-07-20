@@ -37,6 +37,7 @@ pub struct WebSocketClient {
     receive_cmd_rx: Receiver<Cmd>,
     msg_to_client_rx: Receiver<WsMessage>,
     msg_from_client_tx: Sender<WsMessage>,
+    msg_from_client_rx: Receiver<WsMessage>,
     /// Sending / Receiving of UI state
     display_state_channel: (Sender<WsDisplayState>, Receiver<WsDisplayState>),
 
@@ -58,7 +59,22 @@ pub struct WebSocketClient {
     notifications: i32,
     resource_monitor: ResourceMonitor,
     #[cfg(feature="tokio")]
-    remote_terminal: RemoteTerminal
+    remote_terminal: RemoteTerminal,
+    #[cfg(feature="tokio")]
+    stop_tx: Option<crossbeam::channel::Sender<()>>,
+    size_rx: Receiver<ratatui::layout::Rect>,
+    stop_rx: Receiver<()>
+}
+
+impl Drop for WebSocketClient {
+    fn drop(&mut self) {
+        #[cfg(feature = "tokio")]
+        {
+            if let Some(stop_tx) = &self.stop_tx {
+                let _ = stop_tx.send(());
+            }
+        }
+    }
 }
 
 impl WebSocketClient {
@@ -80,36 +96,21 @@ impl WebSocketClient {
         let remote_terminal = RemoteTerminal::new(msg_to_client_tx, size_tx.clone());
 
         #[cfg(feature="tokio")]
-        {
-            let current_area = remote_terminal.current_area;
-            let tx = remote_terminal.buffer_tx.clone();
-    
-            PlatformSpawner::spawn(async move {
-                log::info!("Checking for messages from client");
-                loop {
-                    while let Ok(msg) = msg_from_client_rx.try_recv() {
-                        log::info!("GOT A BUFFER");
-                        if let WsMessage::Binary(buffer_array) = msg {
-                            RemoteTerminal::receive_buffer(
-                                tx.clone(), 
-                                &size_rx, 
-                                buffer_array, 
-                                current_area
-                            );
-                        }
-                    }
-                }
-            });
-        }
+        let (stop_tx, stop_rx) = crossbeam::channel::unbounded::<()>();
 
         Self {
             #[cfg(feature="tokio")]
             remote_terminal,
+            #[cfg(feature="tokio")]
+            stop_tx: if cfg!(feature = "tokio") { Some(stop_tx) } else { None },
             client,
             msg_to_client_rx,
             msg_from_client_tx,
+            msg_from_client_rx,
             ws_sender,
             ws_receiver,
+            size_rx,
+            stop_rx,
 
             send_cmd_tx, 
             send_cmd_rx,
@@ -134,9 +135,38 @@ impl WebSocketClient {
             resource_monitor: ResourceMonitor::default(),
         }
     }
+
+
+    #[cfg(feature="tokio")]
+    pub fn start_receiving_buffers(&mut self) {
+        let rx = self.msg_from_client_rx.clone();
+        let tx = self.remote_terminal.buffer_tx.clone();
+        let current_area = self.remote_terminal.current_area;
+        let size_rx = self.size_rx.clone();
+        let stop_rx = self.stop_rx.clone();
+        PlatformSpawner::spawn(async move {
+            loop {
+                // Check for stop signal
+                if stop_rx.try_recv().is_ok() {
+                    log::info!("Stopping RemoteTerminal receive_buffer task");
+                    break;
+                }
+                while let Ok(msg) = rx.try_recv() {
+                    if let WsMessage::Binary(buffer_array) = msg {
+                        RemoteTerminal::receive_buffer(
+                            tx.clone(), 
+                            &size_rx, 
+                            buffer_array, 
+                            current_area
+                        );
+                    }
+                }
+                // Add a small sleep to avoid busy-waiting
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        });
+    }
 }
-
-
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>> {
     if let Ok(data) = encode_to_vec(system_info, standard()) {

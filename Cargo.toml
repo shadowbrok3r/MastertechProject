@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0"] 
+members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server2"] 
 #"websocket_server2", "axum_middleware", "websocket_server"
 
 [workspace.dependencies]
@@ -20,7 +20,7 @@ serde = { version = "1", features = ["derive"] }
 egui_plot = "0.33.0"
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", rev = "c2a2960", features = ["persistency"]}
 lazy_static = "1"
-egui_json_tree = "0.12.0"
+egui_json_tree = "0.12.1"
 log="0.4"
 serde_json = "1"
 anyhow = "1"
@@ -54,13 +54,13 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
-
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
+codegen-units = 1
 
 # tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
 # socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }

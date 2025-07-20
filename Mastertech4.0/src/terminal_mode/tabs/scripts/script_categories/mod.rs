@@ -196,7 +196,7 @@ pub fn get_data_transfer_candidates() -> anyhow::Result<Vec<(String, String)>, a
 }
 
 /// Get the total size of a directory (recursive) in bytes
-fn get_directory_size(path: &Path) -> u64 {
+pub fn get_directory_size(path: &Path) -> u64 {
     WalkDir::new(path)
         .into_iter()
         .filter_map(|entry| entry.ok())
@@ -207,7 +207,7 @@ fn get_directory_size(path: &Path) -> u64 {
 }
 
 /// Convert bytes to human-readable MB/GB
-fn format_size(bytes: u64) -> String {
+pub fn format_size(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
     const GB: u64 = 1024 * MB;
 

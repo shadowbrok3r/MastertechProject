@@ -401,9 +401,13 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     // info!("GPU: {gpu_info:?}");
     sys.refresh_all();
     let cpu_name = &mut String::new();
-    let mut cpu_percentage = f32::default();
+    let cpu_percentage = &mut f32::default();
     let mut cpu_clock = f32::default();
     let mut disks = Vec::new();
+    let disk_list = Disks::new_with_refreshed_list();
+    let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
+    let mut component_temps: HashMap<String, f32> = HashMap::new();
+    let mut processes: Vec<SysProcess> = Vec::new();
     let motherboard = Motherboard::new();
     let motherboard_name = &mut String::new();
     let motherboard_serial = &mut String::new();
@@ -417,12 +421,8 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         *motherboard_vendor = mobo.vendor_name().unwrap_or_default();
     }
 
-    let disk_list = Disks::new_with_refreshed_list();
-    let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
-    let mut component_temps: HashMap<String, f32> = HashMap::new();
-    let mut processes: Vec<SysProcess> = Vec::new();
     // Components temperature:
-    let components = Components::new_with_refreshed_list();
+    let mut components = Components::new_with_refreshed_list();
     // Network interfaces name, total data received and total data transmitted:
     let networks = Networks::new_with_refreshed_list();
     // RAM and swap information:
@@ -434,10 +434,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
     let os_version = System::os_version().context("Could not retrieve os_version")?;
     let hostname = System::host_name().context("Could not retrieve hostname")?;
-
-    // Number of CPUs:
-    let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
-
+    
     // Display processes ID, name na disk usage:
     // for (pid, process) in sys.processes() {log::info!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
     for (pid, process) in sys.processes().iter() {
@@ -448,7 +445,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         
         let memory = (process.memory() as f32 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
 
-        let cpu_usage = process.cpu_usage();
+        let cpu_usage = process.cpu_usage() / System::physical_core_count().unwrap_or_default() as f32;
         let read_bytes = (process.disk_usage().read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
         let total_read_bytes = (process.disk_usage().total_read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
         let total_written_bytes = (process.disk_usage().total_written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
@@ -493,18 +490,19 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         }
     }
 
-    for component in &components {
+    for component in components.list_mut() {
+        component.refresh();
+        log::error!("component: {component:#?}");
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
         // comps += format!("{component:#?} \n", component.).as_str();
     }
 
-    // let mut s = System::new_with_specifics(RefreshKind::everything());
-
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // s.refresh_cpu_all(); // Refreshing CPU information.
+    *cpu_percentage = sys.global_cpu_usage();
+    // Refreshing CPU information.
     for cpu in sys.cpus() {
-        cpu_percentage = cpu.cpu_usage();
+        // cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
         *cpu_name = cpu.brand().to_string();
     }
@@ -517,14 +515,14 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         disks,
         total_memory,
         hostname,
-        cpu_percentage,
+        cpu_percentage: *cpu_percentage,
         cpu_clock,
         component_temps,
         used_memory,
-        number_of_cpus,
         network_interfaces,
         processes,
         cpu: cpu_name.clone(),
+        number_of_cpus: format!("NB CPUs: {} \n", System::physical_core_count().unwrap_or_default()),
         motherboard_name: motherboard_name.clone(),
         motherboard_serial: motherboard_serial.clone(),
         motherboard_asset_tag: motherboard_asset_tag.clone(),
@@ -564,7 +562,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     // info!("GPU: {gpu_info:?}");
     sys.refresh_all();
     let cpu_name = &mut String::new();
-    let mut cpu_percentage = f32::default();
+    let cpu_percentage = &mut f32::default();
     let mut cpu_clock = f32::default();
     let mut disks = Vec::new();
     let disk_list = Disks::new_with_refreshed_list();
@@ -585,7 +583,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
     }
 
     // Components temperature:
-    let components = Components::new_with_refreshed_list();
+    let mut components = Components::new_with_refreshed_list();
     // Network interfaces name, total data received and total data transmitted:
     let networks = Networks::new_with_refreshed_list();
     // RAM and swap information:
@@ -608,7 +606,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         
         let memory = (process.memory() as f32 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
 
-        let cpu_usage = process.cpu_usage();
+        let cpu_usage = process.cpu_usage() / System::physical_core_count().unwrap_or_default() as f32;
         let read_bytes = (process.disk_usage().read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
         let total_read_bytes = (process.disk_usage().total_read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
         let total_written_bytes = (process.disk_usage().total_written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
@@ -653,7 +651,8 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         }
     }
 
-    for component in components.list() {
+    for component in components.list_mut() {
+        component.refresh();
         log::error!("component: {component:#?}");
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
         // comps += format!("{component:#?} \n", component.).as_str();
@@ -661,9 +660,10 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
+    *cpu_percentage = sys.global_cpu_usage();
     // Refreshing CPU information.
     for cpu in sys.cpus() {
-        cpu_percentage = cpu.cpu_usage();
+        // cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
         *cpu_name = cpu.brand().to_string();
     }
@@ -676,14 +676,14 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
         disks,
         total_memory,
         hostname,
-        cpu_percentage,
+        cpu_percentage: *cpu_percentage,
         cpu_clock,
         component_temps,
         used_memory,
         network_interfaces,
         processes,
         cpu: cpu_name.clone(),
-        number_of_cpus: format!("NB CPUs: {} \n", sys.cpus().len()),
+        number_of_cpus: format!("NB CPUs: {} \n", System::physical_core_count().unwrap_or_default()),
         motherboard_name: motherboard_name.clone(),
         motherboard_serial: motherboard_serial.clone(),
         motherboard_asset_tag: motherboard_asset_tag.clone(),

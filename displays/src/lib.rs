@@ -202,21 +202,12 @@ pub trait DisplayModal {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Cmd {
     LiveData,
-    Command,
-    Tuneup,
-    Cps,
-    Qc,
-    SfcScan,
-    DismScan,
-    ChkDsk,
-    Mbr2Gpt,
     TaskManager,
     FileSystemAction(FileSystemAction),
     UninstallProgram(String),
     PullKeys(String),
     PullTicket(String),
     InteractiveInput(String),
-    CheckSeb,
     QuitInteractive,
     ReadEvents,
     Quit,
@@ -224,7 +215,7 @@ pub enum Cmd {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum FileSystemAction{
+pub enum FileSystemAction {
     Execute(String),
     CopyToClient(String),
     CopyFromClient(String),

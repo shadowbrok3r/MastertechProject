@@ -1,5 +1,6 @@
 use crate::{filesystem::get_client_hash, terminal_mode::{context::TerminalContext, systems::{communication_system::DataMessage, notification_system::Notification}, websockets::create_client}};
 use database::{WS_CLIENT_URL, schema::{utilities::get_tasks_for_store, User}};
+use displays::get_database_users;
 use std::{sync::{Arc, Mutex}, time::Duration};
 use crossbeam::channel::{Receiver, Sender};
 use super::communication_system::Message;
@@ -26,6 +27,7 @@ impl RenderSystem {
     }
 
     pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
+        
         loop {
             tokio::select! {
                 // Handle graceful shutdown (async)
@@ -70,7 +72,7 @@ impl RenderSystem {
                                         client.id
                                     );
                                     ctx.url = Some(connection_url.clone());
-
+                                    ctx.store_users = get_database_users();
                                     tokio::spawn(async move {
 
                                         client.assigned_user = Some(usr_id.clone());

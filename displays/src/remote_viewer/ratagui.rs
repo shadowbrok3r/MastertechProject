@@ -4,7 +4,6 @@ use ratatui::{backend::{Backend, ClearType, WindowSize}, buffer::{Buffer, Cell},
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use web_time::Instant;
-use std::io::{self, Error};
 // crossterm::event::{KeyCode, KeyModifiers}
 use super::{terminal_line::TerminalLine, SerializableBuffer};
 
@@ -408,7 +407,7 @@ impl RataguiBackend {
 impl Backend for RataguiBackend {
     // type Error = Error;
 
-    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
+    fn draw<'a, I>(&mut self, content: I) -> std::io::Result<()>
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
@@ -433,31 +432,31 @@ impl Backend for RataguiBackend {
         Ok(())
     }
 
-    fn hide_cursor(&mut self) -> io::Result<()> {
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
         self.cursor = false;
         Ok(())
     }
 
-    fn show_cursor(&mut self) -> io::Result<()> {
+    fn show_cursor(&mut self) -> std::io::Result<()> {
         self.cursor = true;
         Ok(())
     }
 
-    fn get_cursor_position(&mut self) -> io::Result<Position> {
+    fn get_cursor_position(&mut self) -> std::io::Result<Position> {
         Ok(self.pos.into())
     }
 
-    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> std::io::Result<()> {
         self.pos = position.into();
         Ok(())
     }
 
-    fn clear(&mut self) -> io::Result<()> {
+    fn clear(&mut self) -> std::io::Result<()> {
         self.buffer.reset();
         Ok(())
     }
 
-    fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
+    fn clear_region(&mut self, clear_type: ClearType) -> std::io::Result<()> {
         match clear_type {
             ClearType::All => self.clear()?,
             ClearType::AfterCursor => {
@@ -482,7 +481,7 @@ impl Backend for RataguiBackend {
         Ok(())
     }
 
-    fn append_lines(&mut self, n: u16) -> io::Result<()> {
+    fn append_lines(&mut self, n: u16) -> std::io::Result<()> {
         let (cur_x, cur_y) = self.get_cursor_position()?.into();
 
         // the next column ensuring that we don't go past the last column
@@ -510,11 +509,11 @@ impl Backend for RataguiBackend {
         Ok(())
     }
 
-    fn size(&self) -> io::Result<Size> {
+    fn size(&self) -> std::io::Result<Size> {
         Ok(Size::new(self.width, self.height))
     }
 
-    fn window_size(&mut self) -> io::Result<WindowSize> {
+    fn window_size(&mut self) -> std::io::Result<WindowSize> {
         // Some arbitrary window pixel size, probably doesn't need much testing.
         static WINDOW_PIXEL_SIZE: Size = Size {
             width: 640,
@@ -526,7 +525,7 @@ impl Backend for RataguiBackend {
         })
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
 }

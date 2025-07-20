@@ -1,7 +1,7 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
-use eframe::{egui::{Context, ViewportCommand}, Frame};
+use eframe::{egui::Context, Frame};
 use database::schema::GetKeysResponse;
 use surrealdb::RecordId;
 use std::sync::Arc;
@@ -19,6 +19,24 @@ impl MasterTechApp {
             }
             Err(e) => log::error!("Error setting theme: {e:?}")
         };
+
+        #[cfg(target_os = "windows")]
+        {
+            use crate::filesystem::system_info::ComputerInfo;
+            if self.context.computer_data.cpu.is_empty() {
+                let specs_tx = self.context.computer_data_tx.clone();
+                let current_antivirus_tx = self.context.current_antivirus_tx.clone();
+                tokio::spawn(async move {
+                    match database::schema::ComputerData::default().get_computer_data().await {
+                        Ok(data) => { let _ = specs_tx.try_send(data); }
+                        Err(e) => log::error!("Error getting specs: {e:?}"),
+                    }
+                    let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
+                    log::error!("installed_antivirus: {installed_antivirus:?}");
+                    let _ = current_antivirus_tx.try_send(installed_antivirus);
+                });
+            }
+        }
 
         if let Some(storage) = frame.storage() {
             self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
@@ -72,7 +90,7 @@ impl MasterTechApp {
         self.context.shared_ctx.receive_shared(frame, ctx);
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
-        self.receive_github();
+        self.receive_github(ctx);
         self.viewport_loader(ctx);
         // self.context.file_browser.try_lock()
         // ctx.request_repaint_after_secs(0.5);
@@ -175,33 +193,6 @@ impl MasterTechApp {
                     }
                     _ => {}
                 }
-            }
-        }
-
-        while let Ok(res) = self.context.bytes_rx.try_recv() {
-            ctx.request_repaint();
-            self.context.progress.1 = res.1 as f32;
-            self.context.progress.0 += res.0 as f32;
-            if res.0 == res.1 {
-                self.context.progress = (0.0, 0.0);
-                let current_exe = std::env::current_dir().unwrap().join("git-MasterTech.exe");
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::process::CommandExt;
-                    std::process::Command::new("cmd")
-                        .arg("/C")
-                        .arg(&current_exe)
-                        .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
-                        .creation_flags(0x00000008) // DETACHED_PROCESS flag
-                        .spawn()
-                        .unwrap();
-                }
-                let replacement = self_replace::self_replace(&current_exe);
-                log::info!("Replacement: {replacement:?}");
-                let rm = std::fs::remove_file(&current_exe);
-                log::info!("Removal: {rm:?}");
-
-                ctx.send_viewport_cmd(ViewportCommand::Close);
             }
         }
 

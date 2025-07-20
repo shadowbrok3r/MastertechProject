@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rayon::prelude::*;
 use std::fs::{self,File};
 use std::path::Path;
@@ -72,7 +72,7 @@ fn file_copy_benchmark(c: &mut Criterion) {
         // Define a benchmark for each function variant
         group.bench_with_input(BenchmarkId::new("Copy Method", name), &source_path, |b, sp| {
             b.iter(|| {
-                func(black_box(&sp), black_box(&dest_path))
+                func(std::hint::black_box(&sp), std::hint::black_box(&dest_path))
             })
         });
         // Teardown: Optionally clear the directory after each benchmark

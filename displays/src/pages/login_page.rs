@@ -255,7 +255,7 @@ impl SharedContext {
                                                             appstate_tx.clone(),
                                                         )
                                                         .await;
-                                                    log::warn!("Result: {res:?}");
+                                                        log::warn!("Result: {res:?}");
                                                     });
                                                 }
 

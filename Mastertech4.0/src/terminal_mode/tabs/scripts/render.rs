@@ -1,7 +1,9 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use unicode_width::UnicodeWidthStr;
+use crate::{terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::{checklist::TodoItem, script_categories::{format_size, get_directory_size}}, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
+use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -194,39 +196,41 @@ impl<'a> ScriptsTab<'a> {
         let mut item_to_flat_index: Vec<usize> = Vec::new();
         let mut flat_index = 0;
 
-        for list in self.checklists.values() {
-            checklist_items.push(
-                ListItem::new(
-                Line::styled(
-                    format!("* {} *", list.name),
-                    Style::default().fg(CATPPUCCIN.sapphire).bold(),
+        for list in Self::CHECKLIST_ORDERED {
+            if let Some(list) = self.checklists.get(list) {
+                checklist_items.push(
+                    ListItem::new(
+                    Line::styled(
+                        format!("* {} *", list.name),
+                        Style::default().fg(CATPPUCCIN.sapphire).bold(),
+                        )
                     )
-                )
-            );
+                );
 
-            for item in &list.items {
-                let symbol = match item.status {
-                    Status::Completed => "[X]", // ☒
-                    Status::Todo => "[ ]",
-                };
+                for item in &list.items {
+                    let symbol = match item.status {
+                        Status::Completed => "[X]", // ☒
+                        Status::Todo => "[ ]",
+                    };
 
-                let mut style = match item.status {
-                    Status::Completed => Style::default().fg(CATPPUCCIN.teal),
-                    Status::Todo => Style::default().fg(CATPPUCCIN.pink),
-                };
-                
-                if let Some((current_cat, current_text)) = &*self.current_script.borrow() {
-                    if *current_cat == item.category() && *current_text == item.text {
-                        style = Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.sky);
+                    let mut style = match item.status {
+                        Status::Completed => Style::default().fg(CATPPUCCIN.teal),
+                        Status::Todo => Style::default().fg(CATPPUCCIN.pink),
+                    };
+                    
+                    if let Some((current_cat, current_text)) = &*self.current_script.borrow() {
+                        if *current_cat == item.category() && *current_text == item.text {
+                            style = Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.sky);
+                        }
                     }
-                }
 
-                checklist_items.push(ListItem::new(Line::styled(
-                    format!("{} {}", symbol, item.text),
-                    style,
-                )));
-                item_to_flat_index.push(flat_index);
-                flat_index += 1;
+                    checklist_items.push(ListItem::new(Line::styled(
+                        format!("{} {}", symbol, item.text),
+                        style,
+                    )));
+                    item_to_flat_index.push(flat_index);
+                    flat_index += 1;
+                }
             }
         }
 
@@ -283,8 +287,13 @@ impl<'a> ScriptsTab<'a> {
         let button_count = self.data_path_buttons.len();
         let rows = (button_count + 1) / 2; // 2 columns
 
-        let popup_width: u16 = 80; // Fixed width, adjust as needed
-        
+        let max_width = self.data_path_buttons
+            .iter()
+            .map(|path| path.get_label().width() as u16)
+            .max()
+            .unwrap_or(popup_text.width() as u16);
+
+        let popup_width: u16 = (max_width * 2) + 10; 
         let inner_width = popup_width.saturating_sub(2); // Account for margins
         let text_lines = (popup_text.len() as u16 + inner_width - 1) / inner_width; // Ceiling division
         let text_height = text_lines.max(2); // Ensure at least 2 lines, adjust as needed
@@ -320,10 +329,10 @@ impl<'a> ScriptsTab<'a> {
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(text_height + 1), // Text area with padding
-                Constraint::Length(1), // Padding
+                Constraint::Length(text_height), // Text area with padding
+                Constraint::Length(8), // Padding
                 Constraint::Min(rows as u16 * 3), // Buttons
-                Constraint::Length(6), // Custom_path_field
+                Constraint::Length(3), // Custom_path_field
                 Constraint::Length(6), // Custom_path_field
             ])
             .split(inner_area);
@@ -355,8 +364,8 @@ impl<'a> ScriptsTab<'a> {
             f.render_widget(button, col_chunks[col].shrink(1, 0));
         }
 
-        self.custom_source_field.render_ref(content_chunks[3].shrink(1, 0), f.buffer_mut());
-        self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
+        self.custom_path_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
+        // self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
 
     }
 
@@ -584,6 +593,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
             *init = false;
         }
+        
         let mut frame_area = self.frame_area.borrow_mut();
         if frame_area.is_none() {
             *frame_area = Some(f.area());
@@ -693,7 +703,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 } else {
                     0.0
                 };
-            
+
+
                 let gauge = Gauge::default()
                     .block(Block::bordered().title(format!("{script_name} Progress")))
                     .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
@@ -703,7 +714,14 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
         }
         
-        f.render_widget(&self.run_btn, button_grid[8].shrink(4, 1));
+        if self.loading {
+            let throbber = throbber_widgets_tui::Throbber::default()
+                .label("Scanning Directories..")
+                .throbber_set(throbber_widgets_tui::VERTICAL_BLOCK);
+            f.render_widget(throbber, button_grid[8].shrink(0, 1));
+        }
+
+        f.render_widget(&self.run_btn, button_grid[9].shrink(4, 1));
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);
@@ -1082,8 +1100,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     self.run_btn.handle_mouse_event(&mouse_event);
                     self.user_scripts_btn.handle_mouse_event(&mouse_event);
                 } else {
-                    self.custom_source_field.handle_mouse_event(&mouse_event);
-                    self.custom_destination_field.handle_mouse_event(&mouse_event);
+                    self.custom_path_field.handle_mouse_event(&mouse_event);
                     for btn in self.data_path_buttons.iter() {
                         btn.handle_mouse_event(&mouse_event);
                     }
@@ -1159,17 +1176,36 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             }
             KeyCode::Enter => {
-                // let popup_open = *self.is_popup_open.borrow();
-                // if !popup_open {
-                    let list_state = self.list_state.borrow();
-                    if let Some(selected) = list_state.selected() {
-                        let (full_list, item_to_flat_index) = self.build_full_list();
+                let popup_open_res = self.is_popup_open.try_borrow();
+                if let Ok(popup_open) = popup_open_res {
+                    if !*popup_open {
+                        self.log_message("POPUP NOT OPEN");
+                        let list_state = self.list_state.borrow();
+                        if let Some(selected) = list_state.selected() {
+                            let (full_list, item_to_flat_index) = self.build_full_list();
 
-                        let flat_selected = item_to_flat_index.iter().position(|&i| i == selected).unwrap();
-                        let (current_category, current_item) = full_list[flat_selected].clone();
-                        log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
+                            let flat_selected = item_to_flat_index.iter().position(|&i| i == selected).unwrap();
+                            let (current_category, current_item) = full_list[flat_selected].clone();
+                            log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
+                        }
+                    } else {
+                        self.log_message("POPUP OPEN");
+                        let custom_path = self.custom_path_field.get_text()[0].clone();
+                        if !custom_path.is_empty() {
+                            self.log_message(format!("CUSTOM PATH: {:?}", custom_path));
+                            let tx = self.path_size_tx.clone();
+                            std::thread::spawn(move || {
+                                let dir_size = get_directory_size(Path::new(&custom_path));
+                                let _ = tx.try_send(vec![(custom_path, format_size(dir_size))]);
+                            });
+
+                            if let Ok(mut input) = self.custom_path_field.input.try_borrow_mut() {
+                                input.select_all();
+                                input.cut();
+                            }
+                        }
                     }
-                // }
+                }
                 true
             }
             KeyCode::PageUp => {
@@ -1183,7 +1219,14 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 true
             }
             _ => {
-                self.service_number_field.input.borrow_mut().input_without_shortcuts(key_event);
+                let popup_open_res = self.is_popup_open.try_borrow();
+                if let Ok(popup_open) = popup_open_res {
+                    if !*popup_open {
+                        self.service_number_field.handle_key_event(&key_event);
+                    } else {
+                        self.custom_path_field.handle_key_event(&key_event);
+                    }
+                }
                 false
             }
         }

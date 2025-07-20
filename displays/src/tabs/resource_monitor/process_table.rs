@@ -150,15 +150,15 @@ impl RowViewer<Process> for ProcessRowViewer {
     }
 
     fn num_columns(&mut self) -> usize {
-        7
+        6
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["PID", "Name", "CPU Usage", "Memory Usage", "Disk R/W", "UID", "CMD"][column].into()
+        ["PID", "Name", "CPU Usage", "Memory Usage", "Disk R/W", "CMD"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true, true][column]
+        [true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
@@ -184,8 +184,7 @@ impl RowViewer<Process> for ProcessRowViewer {
             2 => ui.horizontal_centered(|ui| ui.label(format!(" {}%", row.cpu_usage.clone()))).inner,
             3 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb", row.memory.clone()))).inner,
             4 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb / {}Mb", row.process_disk_usage.total_read_bytes.clone(), row.process_disk_usage.total_written_bytes.clone()))).inner,
-            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.user_id.clone().unwrap_or_default()))).inner,
-            6 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.cmd.clone()))).inner,
+            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.cmd.clone()))).inner,
             _ => unreachable!(),
         };
     }
@@ -197,9 +196,8 @@ impl RowViewer<Process> for ProcessRowViewer {
             1 => col_config.resizable(true).at_least(180.).at_most(225.),
             2 => col_config.resizable(true).at_least(90.).at_most(90.),
             3 => col_config.resizable(true).at_least(100.).at_most(100.),
-            4 => col_config.resizable(true).at_least(100.).at_most(100.),
-            5 => col_config.resizable(true).at_least(60.).at_most(60.),
-            6 => col_config.resizable(true).clip(false),
+            4 => col_config.resizable(true).at_least(100.).at_most(150.),
+            5 => col_config.resizable(true).clip(false),
             _ => col_config,
         }
     }
@@ -254,11 +252,10 @@ impl RowViewer<Process> for ProcessRowViewer {
         match column {
             0 => dst.id = src.id.clone(),
             1 => dst.name = src.name.clone(),
-            2 => dst.cmd = src.cmd.clone(),
-            3 => dst.user_id = src.user_id.clone(),
-            4 => dst.memory = src.memory.clone(),
-            5 => dst.cpu_usage = src.cpu_usage.clone(),
-            6 => dst.process_disk_usage = src.process_disk_usage.clone(),
+            2 => dst.cpu_usage = src.cpu_usage.clone(),
+            3 => dst.memory = src.memory.clone(),
+            4 => dst.process_disk_usage = src.process_disk_usage.clone(),
+            5 => dst.cmd = src.cmd.clone(),
             _ => unreachable!(),
         }
     }
@@ -272,11 +269,10 @@ impl RowViewer<Process> for ProcessRowViewer {
         match column {
             0 => row_l.id.cmp(&row_r.id),
             1 => row_l.name.cmp(&row_r.name),
-            2 => row_l.cmd.cmp(&row_r.cmd),
-            3 => row_l.user_id.cmp(&row_r.user_id),
-            4 => row_l.memory.to_string().cmp(&row_r.memory.to_string()),
-            5 => row_l.cpu_usage.to_string().cmp(&row_r.cpu_usage.to_string()),
-            6 => row_l.process_disk_usage.total_read_bytes.to_string().cmp(&row_r.process_disk_usage.total_read_bytes.to_string()),
+            2 => row_l.cpu_usage.to_string().cmp(&row_r.cpu_usage.to_string()),
+            3 => row_l.memory.to_string().cmp(&row_r.memory.to_string()),
+            4 => row_l.process_disk_usage.total_read_bytes.to_string().cmp(&row_r.process_disk_usage.total_read_bytes.to_string()),
+            5 => row_l.cmd.cmp(&row_r.cmd),
             _ => row_l.id.cmp(&row_r.id)
         }
     }
@@ -300,11 +296,10 @@ impl RowCodec<Process> for Codec {
         match column {
             0 => dst.push_str(&src_row.id.to_string()),
             1 => dst.push_str(&src_row.name),
-            2 => dst.push_str(&src_row.cmd),
-            3 => dst.push_str(&src_row.user_id.clone().unwrap_or_default()),
-            4 => dst.push_str(&src_row.memory.to_string()),
-            5 => dst.push_str(&src_row.cpu_usage.to_string()),
-            6 => dst.push_str(&format!("{}/{}", src_row.process_disk_usage.read_bytes, src_row.process_disk_usage.written_bytes)),
+            2 => dst.push_str(&src_row.cpu_usage.to_string()),
+            3 => dst.push_str(&src_row.memory.to_string()),
+            4 => dst.push_str(&format!("{}/{}", src_row.process_disk_usage.read_bytes, src_row.process_disk_usage.written_bytes)),
+            5 => dst.push_str(&src_row.cmd),
             _ => unreachable!(),
         }
     }
@@ -318,11 +313,10 @@ impl RowCodec<Process> for Codec {
         match column {
             0 => dst_row.id = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             1 => dst_row.name = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            2 => dst_row.cmd = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            // 3 => dst_row.user_id = src_data.clone().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            4 => dst_row.memory = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            5 => dst_row.cpu_usage = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            // 6 => format!("{}/{}", dst_row.process_disk_usage.read_bytes, dst_row.process_disk_usage.written_bytes) = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            2 => dst_row.cpu_usage = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.memory = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            // 4 => dst_row.process_disk_usage = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            5 => dst_row.cmd = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             _ => unreachable!(),
         }
 

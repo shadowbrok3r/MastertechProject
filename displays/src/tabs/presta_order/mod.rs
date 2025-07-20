@@ -1,15 +1,15 @@
-use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, Sense, TextEdit, TopBottomPanel, Ui, UiBuilder, Widget};
-use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, CustomerData, Status, User}, PlatformSpawner, Spawner};
-use crossbeam::channel::{Receiver, Sender};
-use itertools::Itertools;
+use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, User}, PlatformSpawner, Spawner};
+use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, TextEdit, TopBottomPanel, Ui, UiBuilder, Widget};
 use crate::{get_current_user_from_auth, get_database_users, modals::tabs::return_colors};
+use crossbeam::channel::{Receiver, Sender};
 use web_time::{Duration, Instant};
+use itertools::Itertools;
 
 pub struct PrestashopOrderForm {
     order: Order,
     customer: Customer,
     address: Address,
-    service_order: ServiceOrder,
+    _service_order: ServiceOrder,
     service_details: ServiceDetails,
     state: UiState,
     data: Vec<(Customer, Address)>,
@@ -74,7 +74,7 @@ impl PrestashopOrderForm {
             order: Default::default(),
             customer: Default::default(),
             address: Default::default(),
-            service_order: Default::default(),
+            _service_order: Default::default(),
             service_details: ServiceDetails::default(),
             odoo_product_search: String::new(),
             searched_products: vec![],
@@ -296,7 +296,7 @@ impl PrestashopOrderForm {
             });
         });
 
-        ui.vertical_centered(|ui| {
+        ui.vertical_centered(|_ui| {
 
         });
     }
@@ -408,7 +408,7 @@ impl PrestashopOrderForm {
 
                                 let selected_text = self.service_details.device_mfg.as_str().to_string();
                                 let selected = &mut self.service_details.device_mfg;
-                                let current_selection = selected.clone();
+                                let _current_selection = selected.clone();
 
                                 ComboBox::new("Device Mfg Selection", "")
                                 .selected_text(selected_text)

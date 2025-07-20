@@ -1,5 +1,5 @@
 
-use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::Style, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, WidgetRef}, Frame};
+use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Modifier, Style, Stylize}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::HandleWidget};
 use std::{collections::HashMap, time::Instant};
 use super::SysinfoTab;
@@ -15,10 +15,14 @@ impl SysinfoTab {
         // Determine current value (or fallback to 0.0).
         let current_cpu = cpu_points.last().map(|p| p.1).unwrap_or(0.0);
         let cpu_canvas = Canvas::default()
+            .background_color(ratatui::style::Color::Rgb(10, 10, 14))
             .block(
                 Block::default().borders(Borders::ALL)
                     .border_type(ratatui::widgets::BorderType::Rounded)
+                    .border_style(Style::default().bg(ratatui::style::Color::Rgb(10, 10, 14)))
+                    .style(Style::new().bg(ratatui::style::Color::Rgb(10, 10, 14)))
                     .title("CPU Usage")
+                    .add_modifier(Modifier::BOLD)
             )
             .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
@@ -52,12 +56,15 @@ impl SysinfoTab {
             .collect();
         let current_mem = mem_points.last().map(|p| p.1).unwrap_or(0.0);
         let mem_canvas = Canvas::default()
+            .background_color(ratatui::style::Color::Rgb(10, 10, 14))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Memory Usage")
+                    .add_modifier(Modifier::BOLD)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .style(Style::default().fg(CATPPUCCIN.rosewater)),
+                    .border_style(Style::default().fg(CATPPUCCIN.rosewater).bg(ratatui::style::Color::Rgb(10, 10, 14)))
+                    .style(Style::default().fg(CATPPUCCIN.rosewater).bg(ratatui::style::Color::Rgb(10, 10, 14))),
             )
             .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
@@ -91,12 +98,15 @@ impl SysinfoTab {
         let current_gpu = gpu_points.last().map(|p| p.1).unwrap_or(0.0);
         let gpu_points_interp = interpolate_points(&gpu_points, 5);
         let gpu_canvas = Canvas::default()
+            .background_color(ratatui::style::Color::Rgb(10, 10, 14))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("GPU Usage")
+                    .add_modifier(Modifier::BOLD)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .style(Style::default().fg(CATPPUCCIN.mauve)),
+                    .border_style(Style::default().fg(CATPPUCCIN.mauve).bg(ratatui::style::Color::Rgb(10, 10, 14)))
+                    .style(Style::default().fg(CATPPUCCIN.mauve).bg(ratatui::style::Color::Rgb(10, 10, 14))),
             )
             .x_bounds([lower_bound, current_time])
             .y_bounds([0.0, 100.0])
@@ -179,11 +189,15 @@ impl SysinfoTab {
         ];
 
         let temp_canvas = Canvas::default()
+            .background_color(ratatui::style::Color::Rgb(10, 10, 14))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(ratatui::widgets::BorderType::Rounded)
-                    .title("Component Temps"),
+                    .border_style(Style::default().bg(ratatui::style::Color::Rgb(10, 10, 14)))
+                    .style(Style::default().bg(ratatui::style::Color::Rgb(10, 10, 14)))
+                    .title("Component Temps")
+                    .add_modifier(Modifier::BOLD),
             )
             // Use the actual time window for x.
             .x_bounds([lower_bound, current_time])
@@ -227,7 +241,7 @@ impl SysinfoTab {
     fn draw_process_table(&mut self) -> impl StatefulWidget<State = TableState> + use<> {
         self.processes.sort_by(|a, b| b.cpu_usage.total_cmp(&a.cpu_usage));
         let header = Row::new(
-            ["PID", "Name", "CPU %", "Memory"]
+            ["PID", "CPU %", "Memory", "Name"]
                 .iter()
                 .map(|h| Cell::from(*h).style(Style::default().fg(CATPPUCCIN.peach)))
                 .collect::<Vec<_>>(),
@@ -237,18 +251,18 @@ impl SysinfoTab {
         let rows = self.processes.iter().map(|proc| {
             let cells = vec![
                 Cell::from(proc.id.to_string()),
-                Cell::from(proc.name.clone()),
                 Cell::from(format!("{:.1}", proc.cpu_usage)),
                 Cell::from(format!("{:.1} MB", proc.memory)),
+                Cell::from(proc.name.clone()),
             ];
             Row::new(cells).height(1)
         });
         
         let table = Table::new(rows, vec![
             Constraint::Length(6),
-            Constraint::Percentage(50),
             Constraint::Length(8),
             Constraint::Length(10),
+            Constraint::Percentage(50),
         ])
         .header(header)
         .block(
@@ -256,7 +270,9 @@ impl SysinfoTab {
                 .borders(Borders::ALL)
                 .border_type(ratatui::widgets::BorderType::Rounded)
                 .title("Processes")
-                .style(Style::default().fg(CATPPUCCIN.red)),
+                .add_modifier(Modifier::BOLD)
+                .border_style(Style::default().fg(CATPPUCCIN.red).bg(ratatui::style::Color::Rgb(10, 10, 14)))
+                .style(Style::default().fg(CATPPUCCIN.red).bg(ratatui::style::Color::Rgb(10, 10, 14))),
         )
         .highlight_symbol(">>")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::WhenSelected);
@@ -282,7 +298,7 @@ impl SysinfoTab {
 
         for disk in self.system.disks.iter() {
             details_text.push_str(&format!(
-                "{}: {} - Total: {:.2}Gb / Avail: {:.2}Gb ",
+                "{}: {} - Total: {:.2}Gb / Avail: {:.2}Gb \n",
                 disk.mount_point,
                 disk.device_name,
                 disk.total_space as f32 / 1e9,
@@ -291,7 +307,7 @@ impl SysinfoTab {
         }
 
         let details_paragraph = Paragraph::new(details_text)
-            .style(Style::default().fg(CATPPUCCIN.subtext0));
+            .style(Style::default().fg(CATPPUCCIN.pink).bg(ratatui::style::Color::Rgb(10, 10, 14)));
 
         details_paragraph
     }
@@ -358,13 +374,15 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
         // Right: Process list.
         let bottom_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
             .split(overall_chunks[1]);
 
         // Left column: System Details Panel.
         let details_block = Block::default()
             .border_type(ratatui::widgets::BorderType::Rounded)
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(CATPPUCCIN.sapphire).bg(ratatui::style::Color::Rgb(10, 10, 14)))
+            .add_modifier(Modifier::BOLD)
             .title("System Details");
 
         f.render_widget_ref(details_block, bottom_chunks[0]);

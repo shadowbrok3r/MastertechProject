@@ -1,6 +1,6 @@
 use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
-use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
 use std::{collections::HashMap, fmt::Debug};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -182,8 +182,17 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), 
 
 pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
     debug!("get_connected_clients");
+
+    // Get the current time and subtract 2 days
+    let two_days_ago = Utc::now() - Duration::days(2);
+    let _: Vec<RecordId> = DATABASE
+        .query("UPDATE connected_client SET connected = false WHERE assigned_user == $auth.id && created_at <= $two_days_ago  && connected == true")
+        .bind(("two_days_ago", two_days_ago))
+        .await?
+        .take(0)?;
+
     let query: Vec<ConnectedClient> = DATABASE
-        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ")
+        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ORDER BY last_update DESC LIMIT 10")
         .await?
         .take(0)?;
     // info!("Clients: {:?}", query);
@@ -228,7 +237,7 @@ pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<
     debug!("get_notifications");
     let notifications: Vec<Notification> = DATABASE
         .query(
-            "SELECT * FROM notification ORDER BY created_at DESC WHERE user == $auth.id LIMIT 50 PARALLEL"
+            "SELECT * FROM notification WHERE user == $auth.id ORDER BY created_at DESC LIMIT 50 PARALLEL"
         )
         .await?
         .take(0)?;
@@ -306,7 +315,7 @@ pub fn get_local_seb_data() -> anyhow::Result<LocalSebData, anyhow::Error> {
 pub async fn create_full_task_payload(
     ticket_data: TicketData,
     customer_data: CustomerData,
-    computer_data: ComputerData,
+    mut computer_data: ComputerData,
     mut task_data: LiveTaskPayload,
     mut task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
@@ -337,12 +346,23 @@ pub async fn create_full_task_payload(
 
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
     let update_customer: Result<Option<Record>, surrealdb::Error> = DATABASE
-        .upsert(customer_id)
+        .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
     
     match update_customer {
-        Ok(record) => log::info!("Updated Customer {record:?}"),
+        Ok(record) => {
+            log::info!("Updated Customer {record:?}");
+            if let Some(record_id) = record {
+                if computer_data.customer.is_none() {
+                    computer_data.customer = Some(record_id.id);
+                }
+            } else {
+                if computer_data.customer.is_none() {
+                    computer_data.customer = Some(customer_id);
+                } 
+            }
+        },
         Err(e) => {
             log::warn!("Error updating Customer {e:?}");
             // if i have a customer from everest, i will need to delete
@@ -737,7 +757,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
 
     info!("schema/utilities.rs -> order: {order:#?}");
 
-    let user = &mut User::default();
+    // let user = &mut User::default();
 
     // This is the checkin shelf 'employee'
     // if order.id_employee_sales_rep.eq("1347") {
