@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{autocomplete::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
 use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
 use ratatui::{layout::Rect, style::Style};
@@ -87,8 +87,8 @@ impl<'a> ServiceFormTab<'a> {
             input_idx: RefCell::new(0),
             customer_name: InputField::new("Customer Name", WidgetId("CustomerName".to_string())),
             customer_phone: InputField::new("Customer Phone", WidgetId("CustomerPhone".to_string())),
-            salesman_name: AutoCompleteInput::new("Salesman Name", WidgetId("SalesmanName".to_string())).highlight(true).max_suggestions(5),
-            technician_name: AutoCompleteInput::new("Technician Name", WidgetId("TechnicianName".to_string())).highlight(true).max_suggestions(5),
+            salesman_name: AutoCompleteInput::new("Salesman Name", WidgetId("SalesmanName".to_string())),
+            technician_name: AutoCompleteInput::new("Technician Name", WidgetId("TechnicianName".to_string())),
             checkin_notes: InputField::new("CheckIn Notes", WidgetId("CheckInNotes".to_string())),
             recommendations: InputField::new("Recommendations", WidgetId("Recommendations".to_string())),
             get_ticket_btn: Button::new("Get Ticket",WidgetId("GetTicket".to_string())).theme(MEDIUMSLATEBLUE),

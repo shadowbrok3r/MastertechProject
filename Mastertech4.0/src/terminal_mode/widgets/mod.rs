@@ -2,7 +2,7 @@ use ratatui::{crossterm::event::{KeyEvent, MouseEvent}, layout::Rect, prelude::B
 use ratatui::symbols::border::Set;
 use button::ButtonState;
 
-pub mod autocomplete;
+// pub mod autocomplete;
 pub mod json_viewer;
 pub mod button;
 pub mod input_field;

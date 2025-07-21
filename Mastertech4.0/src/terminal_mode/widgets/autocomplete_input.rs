@@ -4,17 +4,17 @@ use ratatui::{
     layout::{Position, Rect}, 
     style::{Color, Style, Stylize}, 
     text::Line, 
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Widget, WidgetRef}
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Widget, WidgetRef}
 };
 use crate::terminal_mode::{
     events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, 
-    styling::{CATPPUCCIN, CATPPUCCINTHEME}
+    styling::{CATPPUCCIN, CATPPUCCINTHEME, DEEPPINK}
 };
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use crossbeam::channel::Sender;
 use tui_textarea::{CursorMove, TextArea};
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 /// AutoCompleteInput: An input field with popup autocomplete suggestions
 #[derive(Clone, Debug)]
@@ -24,8 +24,10 @@ pub struct AutoCompleteInput<'a> {
     pub input: RefCell<TextArea<'a>>,
     /// Title shown as the field's label.
     title: &'static str,
-    /// Store the last drawn area.
+    /// Store the last drawn area relative to its parent.
     area: RefCell<Option<Rect>>,
+    /// Store the last drawn area, relative to the screen
+    on_screen_area: RefCell<Option<Rect>>,
     /// Store the popup area for mouse interaction
     popup_area: RefCell<Option<Rect>>,
     /// state of input field
@@ -34,10 +36,9 @@ pub struct AutoCompleteInput<'a> {
     theme: Theme,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
-    has_wrapped: Rc<RefCell<bool>>,
-    last_width: RefCell<Option<usize>>,
+    
     /// Autocomplete suggestions
-    suggestions: RefCell<Vec<String>>,
+    pub suggestions: RefCell<Vec<String>>,
     /// Show popup flag
     show_popup: RefCell<bool>,
     /// Selected suggestion index
@@ -59,22 +60,12 @@ impl<'a> AutoCompleteInput<'a> {
             title,
             block: RefCell::new(None),
             area: RefCell::new(None),
+            on_screen_area: RefCell::new(None),
             popup_area: RefCell::new(None),
             state: RefCell::new(ButtonState::Normal),
             theme: CATPPUCCINTHEME,
             event_sender: get_event_sender(),
-            has_wrapped: Rc::new(RefCell::new(false)),
-            last_width: RefCell::new(None),
-            suggestions: RefCell::new(vec![
-                "John Smith".to_string(),
-                "Jane Doe".to_string(),
-                "Bob Johnson".to_string(),
-                "Alice Brown".to_string(),
-                "Charlie Wilson".to_string(),
-                "Diana Clark".to_string(),
-                "Eve Adams".to_string(),
-                "Frank Miller".to_string(),
-            ]),
+            suggestions: RefCell::new(vec![]),
             show_popup: RefCell::new(false),
             selected_suggestion: RefCell::new(None),
             total_offset: RefCell::new(0),
@@ -85,8 +76,8 @@ impl<'a> AutoCompleteInput<'a> {
         self.total_offset.replace(offset);
     }
 
-    pub fn id(&self) -> WidgetId {
-        self.id.clone()
+    pub fn set_on_screen_area(&self, area: Rect) {
+        self.on_screen_area.replace(Some(area));
     }
 
     fn set_cursor(&self) {
@@ -95,14 +86,6 @@ impl<'a> AutoCompleteInput<'a> {
             ButtonState::Active => input.set_cursor_style(Style::default().fg(Color::Cyan).not_hidden()),
             _ => input.set_cursor_style(Style::default().hidden())
         }
-    }
-
-    pub fn set_block(&self, block: Block<'a>) {
-        self.block.replace(Some(block));
-    }
-
-    pub fn get_text(&self) -> Vec<String> {
-        self.input.borrow().lines().to_vec()
     }
 
     pub fn get_cursor_position(&self) -> Option<Position> {
@@ -149,12 +132,12 @@ impl<'a> AutoCompleteInput<'a> {
     }
 
     /// Render the popup if it should be visible
-    fn render_popup(&self, buf: &mut Buffer) {
+    pub fn render_popup(&self, buf: &mut Buffer) {
         if !*self.show_popup.borrow() {
             return;
         }
 
-        let Some(area) = *self.area.borrow() else { return; };
+        let Some(area) = *self.on_screen_area.borrow() else { return; };
         let filtered = self.filter_suggestions();
         if filtered.is_empty() {
             return;
@@ -164,10 +147,21 @@ impl<'a> AutoCompleteInput<'a> {
         let popup_height = (filtered.len() as u16).min(5) + 2; // +2 for borders
         let popup_area = Rect {
             x: area.x,
-            y: area.y + area.height,
+            y: area.y + (area.height * 2), // area.y + area.height,
             width: area.width,
             height: popup_height,
         };
+
+        let block = Block::default()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(DEEPPINK.text))
+            .style(Style::new().bg(Color::Rgb(12, 12, 16)).fg(CATPPUCCIN.sky));
+
+        Clear.render(popup_area, buf);
+        buf.set_style(popup_area, Style::default().bg(Color::Rgb(12, 12, 16)));
+
+        let inner_area = block.inner(popup_area);
+        block.render(popup_area, buf);
 
         // Store popup area for mouse interaction
         self.popup_area.replace(Some(popup_area));
@@ -179,9 +173,9 @@ impl<'a> AutoCompleteInput<'a> {
             .map(|(i, suggestion)| {
                 let selected = Some(i) == *self.selected_suggestion.borrow();
                 let style = if selected {
-                    Style::default().bg(CATPPUCCIN.blue).fg(CATPPUCCIN.base)
+                    Style::default().bg(CATPPUCCIN.surface1)
                 } else {
-                    Style::default().fg(CATPPUCCIN.text)
+                    Style::default().bg(Color::Rgb(12, 12, 16))
                 };
                 ListItem::new(suggestion.clone()).style(style)
             })
@@ -202,7 +196,7 @@ impl<'a> AutoCompleteInput<'a> {
             list_state.select(Some(selected));
         }
 
-        Widget::render(list, popup_area, buf);
+        list.render(inner_area, buf);
     }
 
     /// Handle autocomplete-specific key events
@@ -238,17 +232,19 @@ impl<'a> AutoCompleteInput<'a> {
                 true
             }
             KeyCode::Enter | KeyCode::Tab => {
-                if let Some(selected_idx) = *self.selected_suggestion.borrow() {
-                    if let Some(suggestion) = filtered.get(selected_idx) {
-                        // Replace current input with suggestion
-                        let mut input = self.input.borrow_mut();
-                        input.delete_line_by_head();
-                        input.insert_str(suggestion);
-                        
-                        // Hide popup
-                        self.show_popup.replace(false);
-                        self.selected_suggestion.replace(None);
-                        return true;
+                if let Ok(mut selected_idx) = self.selected_suggestion.try_borrow_mut() {
+                    if let Some(idx) = *selected_idx {
+                        if let Some(suggestion) = filtered.get(idx) {
+                            // Replace current input with suggestion
+                            let mut input = self.input.borrow_mut();
+                            input.delete_line_by_head();
+                            input.insert_str(suggestion);
+                            
+                            // Hide popup
+                            self.show_popup.replace(false);
+                            *selected_idx = None;
+                            return true;
+                        }
                     }
                 }
                 false
@@ -263,7 +259,7 @@ impl<'a> AutoCompleteInput<'a> {
     }
 
     /// Handle mouse interaction with popup
-    fn handle_popup_mouse(&self, mouse_event: &MouseEvent) -> bool {
+    pub fn handle_popup_mouse(&self, mouse_event: &MouseEvent) -> bool {
         if !*self.show_popup.borrow() {
             return false;
         }
@@ -423,11 +419,6 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
     }
     
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-        // First check if it's a popup interaction
-        if self.handle_popup_mouse(mouse_event) {
-            return;
-        }
-
         // Handle regular input field mouse events
         let Some(area) = *self.area.borrow() else { return; };
 
@@ -473,31 +464,18 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
 impl<'a> WidgetRef for AutoCompleteInput<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (_background, text_color, _shadow, highlight) = self.colors();
-        
-        // Save the area for later use.
         self.set_area(area);
-
-        // Draw a bordered block with the field's title.
         let default_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(Line::raw(self.title).fg(text_color))
             .style(Style::default().fg(highlight));
-
-        let input = self.input.try_borrow_mut();
-
-        if let Ok(mut input) = input {
-            let block = if let Some(block) = self.block.borrow().clone() {
-                block
-            } else { 
-                default_block 
-            };
+        let input_try = self.input.try_borrow_mut();
+        if let Ok(mut input) = input_try {
+            let block = self.block.borrow().clone().unwrap_or(default_block);
             input.set_block(block);
             input.render(area, buf);
         }
-
-        // Render popup after the main input
-        self.render_popup(buf);
     }
 }
 
