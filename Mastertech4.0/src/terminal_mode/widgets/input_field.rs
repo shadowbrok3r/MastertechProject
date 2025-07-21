@@ -5,7 +5,7 @@ use super::{button::{ButtonState, Theme}, ButtonType};
 use tui_textarea::{CursorMove, TextArea};
 use std::{cell::RefCell, rc::Rc};
 use crossbeam::channel::Sender;
-use textwrap::{fill, refill};
+use textwrap::refill;
 
 // ---------------------------------------------------------------------------
 // InputField: A wrapper around tui_input::Input for our form fields.
@@ -70,15 +70,15 @@ impl <'a> InputField <'a>{
         self.input.borrow().lines().to_vec()
     }
 
-    pub fn insert_wrapped_text(&self, text: String, width: usize) {
-        let input_result = self.input.try_borrow_mut();
-        if let Ok(mut input) = input_result {
-            let wrapped = fill(&text, width);
+    // pub fn insert_wrapped_text(&self, text: String, width: usize) {
+    //     let input_result = self.input.try_borrow_mut();
+    //     if let Ok(mut input) = input_result {
+    //         let wrapped = textwrap::fill(&text, width);
 
-            input.delete_line_by_head();
-            input.insert_str(&wrapped);
-        }
-    }
+    //         input.delete_line_by_head();
+    //         input.insert_str(&wrapped);
+    //     }
+    // }
 
     pub fn get_cursor_position(&self) -> Option<Position> {
         let area = self.get_area()?;

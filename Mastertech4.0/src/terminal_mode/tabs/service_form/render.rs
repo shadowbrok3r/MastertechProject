@@ -107,8 +107,31 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(25); 4])
             .split(rows[4]);
-        self.salesman_name.render_ref(row5[0], scroll_view.buf_mut());
-        self.technician_name.render_ref(row5[1], scroll_view.buf_mut());
+
+        let salesman = &self.salesman_name;
+        let tech = &self.technician_name;
+        // Set the total offset for autocomplete coordinate adjustment
+        salesman.set_total_offset(total_offset);
+        tech.set_total_offset(total_offset);
+
+        if let (Ok(mut suggestions), Ok(mut tech_suggestions)) = (salesman.suggestions.try_borrow_mut(), tech.suggestions.try_borrow_mut()) {
+            if suggestions.is_empty() {
+                if let Ok(ctx) = self.ctx.try_lock() {
+                    // let my_usr = ;
+                    if !ctx.store_users.is_empty() {
+                        let users = ctx.store_users.iter().filter(|u| u.get_store() == ctx.user.get_store()).map(|u| u.get_username().to_string()).collect::<Vec<String>>();
+                        *tech_suggestions = users.clone();
+                        *suggestions = users;
+                    }
+                }
+            }
+        }
+
+        salesman.render_ref(row5[0], scroll_view.buf_mut());
+        salesman.set_on_screen_area(row5[0]);
+        tech.render_ref(row5[1], scroll_view.buf_mut());
+        tech.set_on_screen_area(row5[1]);
+        
         if self.seb_fields.len() > 0 {
             self.seb_fields[0].render_ref(row5[2], scroll_view.buf_mut()); // Carbonite Device Name
         }
@@ -199,11 +222,19 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             // Hide terminal cursor after rendering to avoid flying around
             // f.set_cursor_position(Position::new(0, 0)); // Off-screen position
         }
-        salesman.render_popup(f.buffer_mut(), row5[0], s_state);
-        tech.render_popup(f.buffer_mut(), row5[1], s_state);
+        salesman.render_popup(f.buffer_mut());
+        tech.render_popup(f.buffer_mut());
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        // Handle popup mouse events first, as they are on top
+        if self.salesman_name.handle_popup_mouse(mouse_event) {
+            return;
+        }
+        if self.technician_name.handle_popup_mouse(mouse_event) {
+            return;
+        }
+
         match mouse_event.kind {
             ratatui::crossterm::event::MouseEventKind::ScrollDown => self.scroll_state.borrow_mut().scroll_down(),
             ratatui::crossterm::event::MouseEventKind::ScrollUp => self.scroll_state.borrow_mut().scroll_up(),

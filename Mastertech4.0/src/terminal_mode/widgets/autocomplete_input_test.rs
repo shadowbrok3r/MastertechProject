@@ -5,9 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use num_traits::SaturatingSub;
-    use ratatui::{crossterm::event::{MouseEvent, MouseEventKind, MouseButton}, layout::Rect};
+    use ratatui::layout::Rect;
     use crate::terminal_mode::{events::action_handler::WidgetId, widgets::{autocomplete_input::AutoCompleteInput, button::ButtonState, ButtonType}};
 
     #[test] 
@@ -40,21 +39,11 @@ mod tests {
         
         // Test Case 1: Raw mouse coordinates (what would cause the offset issue)
         let raw_mouse_row = 25; // User clicks on what appears to be the second item
-        let raw_mouse_col = 15;
         
         // Test Case 2: Adjusted coordinates (what the fix provides)
         // The ServiceFormTab's handle_mouse_event already adjusts coordinates:
         // adjusted_y = mouse_event.row.saturating_sub(total_offset)
         let adjusted_mouse_row = raw_mouse_row.saturating_sub(&total_offset); // 25 - 5 = 20
-        let adjusted_mouse_col = raw_mouse_col;
-        
-        // Create mouse event with adjusted coordinates (simulating the fix)
-        let adjusted_mouse_event = MouseEvent {
-            kind: MouseEventKind::Moved,
-            column: adjusted_mouse_col,
-            row: adjusted_mouse_row,
-            modifiers: ratatui::crossterm::event::KeyModifiers::empty(),
-        };
         
         // Verify the coordinate adjustment results in correct behavior
         assert_eq!(adjusted_mouse_row, 20, "Adjusted mouse row should account for offset");
@@ -102,12 +91,6 @@ mod tests {
         ];
         
         for (mouse_row, expected_item_index) in test_cases {
-            let mouse_event = MouseEvent {
-                kind: MouseEventKind::Moved,
-                column: 10,
-                row: mouse_row,
-                modifiers: ratatui::crossterm::event::KeyModifiers::empty(),
-            };
             
             // Simulate the popup mouse handling
             let inside_popup = mouse_row >= popup_area.y && mouse_row < popup_area.y + popup_area.height;
@@ -123,40 +106,4 @@ mod tests {
         
         println!("Popup item selection test passed - accurate targeting verified");
     }
-}
-
-/// Demonstration of the coordinate offset issue and fix
-pub fn demonstrate_coordinate_fix() {
-    println!("=== AutoCompleteInput Mouse Coordinate Fix Demonstration ===\n");
-    
-    println!("PROBLEM:");
-    println!("  In terminal mode, there's a scroll buffer offset that causes mouse coordinates");
-    println!("  to be shifted. When users click on autocomplete popup items, the wrong item");
-    println!("  gets selected due to this coordinate difference.\n");
-    
-    println!("EXAMPLE SCENARIO:");
-    println!("  - Terminal scroll buffer offset: 5 rows");
-    println!("  - User clicks on what appears to be item 0 in popup");
-    println!("  - Raw mouse coordinates: row=25, col=15"); 
-    println!("  - Popup area starts at: row=20");
-    println!("  - Without fix: relative_y = 25 - 20 - 1 = 4 → selects item 4 (wrong!)");
-    println!("  - With fix: adjusted_y = 25 - 5 = 20 → relative_y = 20 - 20 - 1 = -1 → no selection");
-    println!("    (The fix prevents false selections outside actual popup bounds)\n");
-    
-    println!("SOLUTION:");
-    println!("  The ServiceFormTab's handle_mouse_event() already implements coordinate");
-    println!("  adjustment logic that subtracts the total_offset from mouse coordinates.");
-    println!("  The AutoCompleteInput widget receives these pre-adjusted coordinates,");
-    println!("  ensuring accurate mouse targeting within popup bounds.\n");
-    
-    println!("KEY COMPONENTS:");
-    println!("  1. ServiceFormTab tracks total_offset and service_form_area");
-    println!("  2. Mouse coordinates are adjusted: mouse_y = raw_y - total_offset");
-    println!("  3. AutoCompleteInput receives adjusted coordinates for popup interaction");
-    println!("  4. Popup item selection uses relative positioning within popup bounds\n");
-    
-    println!("RESULT:");
-    println!("  ✅ Mouse clicks now accurately target the intended autocomplete items");
-    println!("  ✅ No more 5-row offset causing wrong item selection");
-    println!("  ✅ Consistent behavior between GUI and terminal modes");
 }

@@ -161,7 +161,6 @@ impl<'a> AutoCompleteInput<'a> {
         }
     }
 
-
     fn accept(&self, index: usize) {
         let Ok(mut input) = self.input.try_borrow_mut() else { return; };
         let match_r = self.match_results.borrow();
