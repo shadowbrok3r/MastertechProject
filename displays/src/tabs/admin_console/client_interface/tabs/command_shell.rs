@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, ComboBox, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use crate::tabs::admin_console::WebSocketClient;
 use bincode::{config::standard, serde::*};
@@ -6,11 +6,31 @@ use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::mcp::{DiagnosticCommand, ShellType, CommandCompletion};
+
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct History {
     pub from: String,
     pub message: String,
     pub timestamp: String
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandSuggestion {
+    pub completion: String,
+    pub description: Option<String>,
+    pub confidence: f32,
+}
+
+impl Default for CommandSuggestion {
+    fn default() -> Self {
+        Self {
+            completion: String::new(),
+            description: None,
+            confidence: 0.0,
+        }
+    }
 }
 
 
@@ -48,39 +68,145 @@ impl WebSocketClient {
 
             ui.add_space(3.);
 
+            // AI Command Completion Section
+            ui.horizontal(|ui| {
+                ui.label("🤖");
+                if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
+                    if self.ai_completion_enabled {
+                        ui.ctx().request_repaint();
+                    }
+                }
+                
+                ui.add_space(10.);
+                
+                if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
+                    ui.label(format!("💡 {} suggestions", self.command_suggestions.len()));
+                    
+                    if ui.button("🔄 Refresh").clicked() {
+                        self.get_ai_command_completions();
+                    }
+                }
+            });
+
             let text_edit = TextEdit::singleline(&mut self.input)
-                .hint_text("Use Wisely..")
+                .hint_text("Use Wisely.. (Press Tab for AI suggestions)")
                 .margin(Margin::symmetric(10, 4))
                 .desired_width(ui.available_width())
                 .desired_rows(4)
                 .layouter(&mut layouter)
                 .ui(ui);
             
+            // Handle AI command completion
+            if self.ai_completion_enabled && text_edit.changed() {
+                if self.input != self.last_partial_command && !self.input.is_empty() {
+                    self.last_partial_command = self.input.clone();
+                    self.get_ai_command_completions();
+                }
+            }
+            
+            // Show AI suggestions if available
+            if self.ai_completion_enabled && self.show_suggestions && !self.command_suggestions.is_empty() {
+                ui.add_space(5.);
+                ui.group(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("🤖 AI Command Suggestions:").strong().color(Color32::LIGHT_BLUE));
+                        
+                        ScrollArea::vertical().max_height(150.).show(ui, |ui| {
+                            for (idx, suggestion) in self.command_suggestions.iter().enumerate() {
+                                let selected = idx == self.selected_suggestion;
+                                
+                                ui.horizontal(|ui| {
+                                    let response = ui.selectable_label(
+                                        selected,
+                                        RichText::new(&suggestion.completion)
+                                            .monospace()
+                                            .color(if selected { Color32::YELLOW } else { Color32::WHITE })
+                                    );
+                                    
+                                    if response.clicked() {
+                                        self.input = suggestion.completion.clone();
+                                        self.show_suggestions = false;
+                                        text_edit.request_focus();
+                                    }
+                                    
+                                    ui.add_space(5.);
+                                    
+                                    if let Some(desc) = &suggestion.description {
+                                        ui.label(RichText::new(desc).weak().italics());
+                                    }
+                                    
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.label(RichText::new(format!("{:.0}%", suggestion.confidence * 100.))
+                                            .small().weak());
+                                    });
+                                });
+                            }
+                        });
+                        
+                        ui.horizontal(|ui| {
+                            if ui.button("❌ Close").clicked() {
+                                self.show_suggestions = false;
+                            }
+                            ui.label(RichText::new("💡 Click suggestion to use, or press Tab to cycle").small().weak());
+                        });
+                    });
+                });
+            }
+            
 
             
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
             let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
+            let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
+            let escape_press = ui.input(|i| i.key_pressed(Key::Escape));
             let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
 
             if copy_key && text_edit.has_focus() {
                 self.input.clear();
             }
 
-            if down_press {
-                if self.history_idx <= self.my_history.len() {
-                    self.history_idx += 1;
+            // Handle AI suggestion navigation
+            if self.ai_completion_enabled && self.show_suggestions && !self.command_suggestions.is_empty() {
+                if tab_press {
+                    self.selected_suggestion = (self.selected_suggestion + 1) % self.command_suggestions.len();
                 }
-                if let Some(history) = self.my_history.get(self.history_idx){
-                    self.input = history.message.clone();
+                if escape_press {
+                    self.show_suggestions = false;
                 }
-            } 
-            if up_press {
-                if self.history_idx > 0 {
-                    self.history_idx -= 1;
+                if key_press {
+                    // Use selected suggestion
+                    if let Some(suggestion) = self.command_suggestions.get(self.selected_suggestion) {
+                        self.input = suggestion.completion.clone();
+                        self.show_suggestions = false;
+                    }
                 }
-                if let Some(history) = self.my_history.get(self.history_idx){
-                    self.input = history.message.clone();
+            } else {
+                // Normal history navigation when suggestions not shown
+                if down_press {
+                    if self.history_idx <= self.my_history.len() {
+                        self.history_idx += 1;
+                    }
+                    if let Some(history) = self.my_history.get(self.history_idx){
+                        self.input = history.message.clone();
+                    }
+                } 
+                if up_press {
+                    if self.history_idx > 0 {
+                        self.history_idx -= 1;
+                    }
+                    if let Some(history) = self.my_history.get(self.history_idx){
+                        self.input = history.message.clone();
+                    }
+                }
+                
+                // Show suggestions on Tab if AI is enabled
+                if tab_press && self.ai_completion_enabled && !self.input.is_empty() {
+                    if !self.show_suggestions {
+                        self.get_ai_command_completions();
+                    }
+                    self.show_suggestions = true;
+                    self.selected_suggestion = 0;
                 }
             }
 
@@ -327,5 +453,174 @@ impl WebSocketClient {
             });
         });
 
+    }
+
+    /// Get AI-powered command completions
+    fn get_ai_command_completions(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use crate::{PlatformSpawner, Spawner};
+            
+            if self.input.is_empty() || !self.ai_completion_enabled {
+                return;
+            }
+
+            let partial_command = self.input.clone();
+            
+            // Determine shell type based on OS or user preference
+            let shell_type = if cfg!(target_os = "windows") {
+                if self.input.contains("Get-") || self.input.contains("Set-") {
+                    ShellType::PowerShell
+                } else {
+                    ShellType::Cmd
+                }
+            } else {
+                ShellType::Bash
+            };
+
+            // Mock AI completions for now - this would integrate with actual MCP client
+            let suggestions = self.generate_mock_completions(&partial_command, &shell_type);
+            self.command_suggestions = suggestions;
+            self.show_suggestions = !self.command_suggestions.is_empty();
+            self.selected_suggestion = 0;
+        }
+    }
+
+    /// Generate mock command completions (placeholder for MCP integration)
+    fn generate_mock_completions(&self, partial: &str, shell_type: &ShellType) -> Vec<CommandSuggestion> {
+        let mut suggestions = Vec::new();
+
+        match shell_type {
+            #[cfg(not(target_arch = "wasm32"))]
+            ShellType::Cmd => {
+                if partial.starts_with("d") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "dir".to_string(),
+                        description: Some("List directory contents".to_string()),
+                        confidence: 0.95,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "dir /a".to_string(),
+                        description: Some("List all files including hidden".to_string()),
+                        confidence: 0.90,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "dir /s".to_string(),
+                        description: Some("List files recursively".to_string()),
+                        confidence: 0.85,
+                    });
+                }
+                if partial.starts_with("s") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "systeminfo".to_string(),
+                        description: Some("Display system configuration information".to_string()),
+                        confidence: 0.95,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "sfc /scannow".to_string(),
+                        description: Some("System File Checker - scan and repair".to_string()),
+                        confidence: 0.88,
+                    });
+                }
+                if partial.starts_with("t") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "tasklist".to_string(),
+                        description: Some("Display running processes".to_string()),
+                        confidence: 0.92,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "taskkill /im".to_string(),
+                        description: Some("Terminate process by image name".to_string()),
+                        confidence: 0.80,
+                    });
+                }
+                if partial.starts_with("i") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "ipconfig /all".to_string(),
+                        description: Some("Display complete network configuration".to_string()),
+                        confidence: 0.93,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "ipconfig /release".to_string(),
+                        description: Some("Release IP address configuration".to_string()),
+                        confidence: 0.75,
+                    });
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ShellType::PowerShell => {
+                if partial.starts_with("Get-") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "Get-Process".to_string(),
+                        description: Some("Get running processes".to_string()),
+                        confidence: 0.95,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "Get-Service".to_string(),
+                        description: Some("Get system services".to_string()),
+                        confidence: 0.93,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "Get-EventLog".to_string(),
+                        description: Some("Get Windows event logs".to_string()),
+                        confidence: 0.90,
+                    });
+                }
+                if partial.starts_with("Set-") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "Set-ExecutionPolicy".to_string(),
+                        description: Some("Set PowerShell execution policy".to_string()),
+                        confidence: 0.88,
+                    });
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            ShellType::Bash => {
+                if partial.starts_with("l") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "ls -la".to_string(),
+                        description: Some("List all files with details".to_string()),
+                        confidence: 0.95,
+                    });
+                    suggestions.push(CommandSuggestion {
+                        completion: "lscpu".to_string(),
+                        description: Some("Display CPU information".to_string()),
+                        confidence: 0.85,
+                    });
+                }
+                if partial.starts_with("p") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "ps aux".to_string(),
+                        description: Some("Show running processes".to_string()),
+                        confidence: 0.93,
+                    });
+                }
+                if partial.starts_with("d") {
+                    suggestions.push(CommandSuggestion {
+                        completion: "df -h".to_string(),
+                        description: Some("Show disk space usage".to_string()),
+                        confidence: 0.90,
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        // Add context-aware suggestions based on current working directory or previous commands
+        if partial.contains("log") {
+            suggestions.push(CommandSuggestion {
+                completion: format!("{} | tail -f", partial),
+                description: Some("Follow log file in real-time".to_string()),
+                confidence: 0.75,
+            });
+        }
+
+        // Sort by confidence
+        suggestions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Limit to top 8 suggestions
+        suggestions.truncate(8);
+        
+        suggestions
     }
 }
