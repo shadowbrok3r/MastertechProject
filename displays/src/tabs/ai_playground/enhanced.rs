@@ -1,6 +1,5 @@
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, ComboBox, Frame, Layout, Margin, RichText, 
-    ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui, Vec2
+    Align, Button, CentralPanel, Color32, ComboBox, Frame, Key, Layout, Margin, RichText, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui, Vec2
 };
 use crate::{
     app_state::SharedContext, 
@@ -308,7 +307,7 @@ impl SharedContext {
                 
                 let response = ui.add(text_edit);
                 
-                if ui.button("Send").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                if ui.button("Send").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
                     self.send_chat_message();
                 }
             });
