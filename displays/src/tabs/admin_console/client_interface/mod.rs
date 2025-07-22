@@ -67,7 +67,9 @@ pub struct WebSocketClient {
     /// Track connection status and last pong time
     pub is_connected: bool,
     pub last_pong_time: Option<Instant>,
-    pub connection_status: String
+    pub connection_status: String,
+    /// Track if we're using persistent shell mode
+    pub persistent_shell_mode: bool
 }
 
 impl Drop for WebSocketClient {
@@ -140,6 +142,7 @@ impl WebSocketClient {
             is_connected: false,
             last_pong_time: None,
             connection_status: "Disconnected".to_string(),
+            persistent_shell_mode: false,
         }
     }
 

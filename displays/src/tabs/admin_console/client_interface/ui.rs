@@ -40,6 +40,11 @@ impl WebSocketClient {
                         ui.label("No pong received");
                     }
                     
+                    // Persistent shell indicator
+                    if self.persistent_shell_mode {
+                        ui.colored_label(Color32::YELLOW, "🔗 Persistent Shell");
+                    }
+                    
                     ui.add_space(10.);
                     
                     let btn_color = ui.style().visuals.error_fg_color;
