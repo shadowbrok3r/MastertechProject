@@ -23,30 +23,6 @@ impl WebSocketClient {
             ui.add_space(2.);
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| { 
-                    // Connection status indicator
-                    let (status_color, status_text) = if self.is_connected {
-                        (Color32::GREEN, "●")
-                    } else {
-                        (Color32::RED, "●")
-                    };
-                    
-                    ui.colored_label(status_color, status_text);
-                    
-                    // Last pong time
-                    if let Some(last_pong) = self.last_pong_time {
-                        let elapsed = last_pong.elapsed().as_secs();
-                        ui.label(format!("Last pong: {}s ago", elapsed));
-                    } else {
-                        ui.label("No pong received");
-                    }
-                    
-                    // Persistent shell indicator
-                    if self.persistent_shell_mode {
-                        ui.colored_label(Color32::YELLOW, "🔗 Persistent Shell");
-                    }
-                    
-                    ui.add_space(10.);
-                    
                     let btn_color = ui.style().visuals.error_fg_color;
                     if Button::new(RichText::new("My Tools").color(btn_color)).ui(ui).clicked(){
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
@@ -92,6 +68,32 @@ impl WebSocketClient {
                         if Button::new(RichText::new("Quit").color(Color32::RED)).ui(ui).clicked(){
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                         }
+                    }
+
+                    ui.add_space(10.);
+                    
+                    // Connection status indicator
+                    let (status_color, status_text) = if self.is_connected {
+                        (Color32::GREEN, "●")
+                    } else {
+                        (Color32::RED, "●")
+                    };
+                    
+                    ui.colored_label(status_color, status_text);
+                    
+                    // Last pong time
+                    if let Some(last_pong) = self.last_pong_time {
+                        let elapsed = last_pong.elapsed().as_secs();
+                        ui.label(format!("Last pong: {}s ago", elapsed));
+                    } else {
+                        ui.label("No pong received");
+                    }
+                    
+                    ui.add_space(10.);
+                    
+                    // Persistent shell indicator
+                    if self.persistent_shell_mode {
+                        ui.colored_label(Color32::YELLOW, "🔗 Persistent Shell");
                     }
                 });
 
