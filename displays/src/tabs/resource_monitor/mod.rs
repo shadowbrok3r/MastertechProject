@@ -154,45 +154,39 @@ impl ResourceMonitor {
             eframe::egui::MenuBar::new().ui(ui, |ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
                     let button_stroke = ui.style().visuals.window_stroke;
-                    let button_size = Vec2::new(100.0, 15.0);
+                    let button_size = Vec2::new(120.0, 15.0);
 
-                    if Button::new("Cpu").min_size(button_size).frame(true).stroke(button_stroke).ui(ui).clicked() {
-                        self.state = ResourceMonitorState::Cpu
+                    let all_charts_selected = !matches!(self.state, ResourceMonitorState::Processes | ResourceMonitorState::Stop | ResourceMonitorState::RequestingData);
+                    
+                    if Button::new("📊 All Charts")
+                        .min_size(button_size)
+                        .frame(true)
+                        .stroke(button_stroke)
+                        .fill(if all_charts_selected { 
+                            ui.style().visuals.selection.bg_fill 
+                        } else { 
+                            Color32::TRANSPARENT 
+                        })
+                        .ui(ui)
+                        .clicked() 
+                    {
+                        self.state = ResourceMonitorState::Cpu; // Default to show all charts
                     }
 
-                    ui.add_space(5.);
+                    ui.add_space(10.);
 
-                    if Button::new("Graphics").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        self.state = ResourceMonitorState::Gpu
-                    }
-
-                    ui.add_space(5.);
-
-                    if Button::new("Ram").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        self.state =ResourceMonitorState::Ram
-                    }
-
-                    ui.add_space(5.);
-
-                    if Button::new("Drives").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        self.state = ResourceMonitorState::Drives
-                    }
-                    ui.add_space(5.);
-
-                    if Button::new("Processes").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                    if Button::new("📋 Processes")
+                        .min_size(button_size)
+                        .stroke(button_stroke)
+                        .fill(if matches!(self.state, ResourceMonitorState::Processes) { 
+                            ui.style().visuals.selection.bg_fill 
+                        } else { 
+                            Color32::TRANSPARENT 
+                        })
+                        .ui(ui)
+                        .clicked() 
+                    {
                         self.state = ResourceMonitorState::Processes
-                    }
-
-                    ui.add_space(5.);
-
-                    if Button::new("Temperatures").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        self.state = ResourceMonitorState::Temperatures
-                    }
-
-                    ui.add_space(5.);
-
-                    if Button::new("Network").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        self.state = ResourceMonitorState::Network
                     }
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui | {
@@ -233,100 +227,122 @@ impl ResourceMonitor {
                 colors.insert("Network Usage".to_string(), Color32::from_rgb(240, 141, 55));
 
                 match self.state {
-                    ResourceMonitorState::Cpu => {
-                        ui.group(|ui| {
-                            ui.vertical_centered(|ui| ui
-                                .label(
-                                    RichText::new("CPU") // format!("CPU ({})", self.)
-                                    .underline()
-                                    .color(
-                                        ui.style().visuals.error_fg_color
-                                    )
-                                    .heading()
-                                    .font(
-                                        FontId::proportional(20.)
-                                    )
-                                )
+                    ResourceMonitorState::Stop => {},
+                    ResourceMonitorState::RequestingData => {
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("Loading system data...")
+                                .color(ui.style().visuals.warn_fg_color)
+                                .heading()
                             );
-        
-                            ui.add_space(50.);
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
-                                ui.add_space(50.);
-                                ui.scope(|ui| {
-                                    ui.set_width(ui.available_width()/2.);
-                                    self.cpu_clock_chart.ui(ui, "CPU Clock", Color32::from_rgb(7, 242, 176));
-                                });
-                                self.cpu_usage_chart.ui(ui, "CPU Usage", Color32::from_rgb(62, 7, 242));
-                            });
-                        });
-                    },
-                    ResourceMonitorState::Ram => {
-                        ui.group(|ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.label(
-                                    RichText::new("RAM")
-                                    .color(
-                                        ui.style().visuals.error_fg_color
-                                    )
-                                    .heading()
-                                    .underline()
-                                    .font(
-                                        FontId::proportional(20.)
-                                    )
-                                );
-                                ui.add_space(50.);
-                                self.ram_usage_chart.ui(ui, "RAM Usage", Color32::from_rgb(242, 7, 179));
-                            });
-        
-                        });
-                    },
-                    ResourceMonitorState::Gpu => {
-                        ui.group(|ui| {
-                            ui.vertical_centered(|ui| ui
-                                .label(
-                                    RichText::new(format!("GPU"))
-                                    .underline()
-                                    .color(
-                                        ui.style().visuals.error_fg_color
-                                    )
-                                    .heading()
-                                    .font(
-                                        FontId::proportional(20.)
-                                    )
-                                )
-                            );
-        
-                            ui.add_space(50.);
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
-                                ui.add_space(50.);
-                                ui.scope(|ui| {
-                                    ui.set_width(ui.available_width()/2.);
-                                    self.gpu_temp_chart.ui(ui, "GPU Temps", Color32::from_rgb(7, 242, 176));
-                                });
-                                self.gpu_mem_chart.ui(ui, "GPU Memory Usage", Color32::from_rgb(62, 7, 242));
-                            });
                         });
                     },
                     ResourceMonitorState::Processes => {
                         self.process_table_viewer.show(ui);
                     },
-                    ResourceMonitorState::Network => {
-                        ui.group(|ui| {
-                            // self.disk_usage_plot.ui(ui, "Disk I/O", &colors);
-                            self.network_interface_plot.ui(ui, "Network Usage", &mut colors);
+                    _ => {
+                        // Show all charts in a grid layout
+                        ui.columns(2, |columns| {
+                            // Left column
+                            columns[0].group(|ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(
+                                        RichText::new("CPU Performance")
+                                        .underline()
+                                        .color(ui.style().visuals.error_fg_color)
+                                        .heading()
+                                        .font(FontId::proportional(18.))
+                                    );
+                                    ui.add_space(20.);
+                                    
+                                    // CPU Usage Chart
+                                    self.cpu_usage_chart.ui(ui, "CPU Usage", Color32::from_rgb(62, 7, 242));
+                                    ui.add_space(10.);
+                                    
+                                    // CPU Clock Chart
+                                    self.cpu_clock_chart.ui(ui, "CPU Clock", Color32::from_rgb(7, 242, 176));
+                                    ui.add_space(20.);
+                                    
+                                    // RAM Usage Chart
+                                    ui.label(
+                                        RichText::new("Memory Usage")
+                                        .underline()
+                                        .color(ui.style().visuals.error_fg_color)
+                                        .heading()
+                                        .font(FontId::proportional(18.))
+                                    );
+                                    ui.add_space(10.);
+                                    self.ram_usage_chart.ui(ui, "RAM Usage", Color32::from_rgb(242, 7, 179));
+                                });
+                            });
+
+                            // Right column
+                            columns[1].group(|ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(
+                                        RichText::new("GPU Performance")
+                                        .underline()
+                                        .color(ui.style().visuals.error_fg_color)
+                                        .heading()
+                                        .font(FontId::proportional(18.))
+                                    );
+                                    ui.add_space(20.);
+                                    
+                                    // GPU Temperature Chart
+                                    self.gpu_temp_chart.ui(ui, "GPU Temperature", Color32::from_rgb(7, 242, 176));
+                                    ui.add_space(10.);
+                                    
+                                    // GPU Memory Chart
+                                    self.gpu_mem_chart.ui(ui, "GPU Memory Usage", Color32::from_rgb(62, 7, 242));
+                                    ui.add_space(20.);
+                                    
+                                    // Component Temperatures
+                                    ui.label(
+                                        RichText::new("System Temperatures")
+                                        .underline()
+                                        .color(ui.style().visuals.error_fg_color)
+                                        .heading()
+                                        .font(FontId::proportional(18.))
+                                    );
+                                    ui.add_space(10.);
+                                    self.component_temp_plot.ui(ui, "Component Temps", &mut colors.clone());
+                                });
+                            });
                         });
-                    },
-                    ResourceMonitorState::Temperatures => {
-                        ui.group(|ui| {
-                            self.component_temp_plot.ui(ui, "Temps", &mut colors);
-                        });
-                    },
-                    ResourceMonitorState::Drives => {
-                        ui.group(|ui| {
-                            self.disk_usage_plot.ui(ui, "Drives", &mut colors);
+                        
+                        ui.add_space(20.);
+                        
+                        // Bottom row for Disk and Network usage
+                        ui.columns(2, |columns| {
+                            columns[0].group(|ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(
+                                        RichText::new("Disk Usage")
+                                        .underline()
+                                        .color(ui.style().visuals.error_fg_color)
+                                        .heading()
+                                        .font(FontId::proportional(18.))
+                                    );
+                                    ui.add_space(10.);
+                                    self.disk_usage_plot.ui(ui, "Disk Usage", &mut colors.clone());
+                                });
+                            });
+                            
+                            columns[1].group(|ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(
+                                        RichText::new("Network Activity")
+                                        .underline()
+                                        .color(ui.style().visuals.error_fg_color)
+                                        .heading()
+                                        .font(FontId::proportional(18.))
+                                    );
+                                    ui.add_space(10.);
+                                    self.network_interface_plot.ui(ui, "Network Usage", &mut colors.clone());
+                                });
+                            });
                         });
                     }
-                    _ => {},
                 }
             });
         });

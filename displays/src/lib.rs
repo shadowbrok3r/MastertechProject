@@ -26,6 +26,9 @@ pub mod chats;
 pub mod tabs;
 pub mod ai;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mcp;
+
 #[cfg(feature = "tokio")]
 pub mod remote_viewer;
 
