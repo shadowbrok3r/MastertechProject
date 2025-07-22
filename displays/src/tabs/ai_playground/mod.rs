@@ -10,6 +10,8 @@ use bytes::Bytes;
 use log::info;
 use core::str;
 
+pub mod enhanced;
+
 pub struct AiPlayground {
     pub selected_thread: String,
     chat_title: HashMap<String, String>,
