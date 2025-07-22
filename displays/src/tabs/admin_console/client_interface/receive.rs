@@ -19,13 +19,42 @@ impl WebSocketClient {
                     match msg{
                         WsMessage::Binary(bin) => self.handle_binary_message(bin),
                         WsMessage::Text(text) => self.handle_text_message(text),
+                        WsMessage::Pong(_) => {
+                            // Update pong time and connection status
+                            self.last_pong_time = Some(web_time::Instant::now());
+                            self.is_connected = true;
+                            self.connection_status = "Connected".to_string();
+                        },
                         _ => {}
                     }
                 },
-                _ => {
+                WsEvent::Opened => {
+                    self.is_connected = true;
+                    self.connection_status = "Connected".to_string();
                     self.history.push(History { 
                         from: "Client".to_string(), 
-                        message: format!("{event:?}"), 
+                        message: "Connection opened".to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    });
+                    self.notifications += 1;
+                },
+                WsEvent::Closed => {
+                    self.is_connected = false;
+                    self.connection_status = "Disconnected".to_string();
+                    self.last_pong_time = None;
+                    self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: "Connection closed".to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    });
+                    self.notifications += 1;
+                },
+                WsEvent::Error(err) => {
+                    self.is_connected = false;
+                    self.connection_status = format!("Error: {}", err);
+                    self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: format!("Connection error: {}", err), 
                         timestamp:  chrono::Local::now().to_rfc3339()
                     });
                     self.notifications += 1;
@@ -150,22 +179,32 @@ impl WebSocketClient {
                     self.loading = false;
                     let msg = String::from_utf8_lossy(&bin).to_string();
 
-                    // Check if the incoming message is "DONE"
-                    if msg.eq("DONE") {
+                    // Check if the incoming message ends with "DONE"
+                    if msg.trim().ends_with("DONE") {
+                        // Remove the DONE marker and add the content to buffer
+                        let content = msg.trim_end_matches("DONE").trim();
+                        if !content.is_empty() {
+                            self.buffer.push_str(content);
+                            self.buffer.push('\n');
+                        }
+                        
                         // Push the buffered content as a new history entry
                         if !self.buffer.is_empty() {
                             self.history.push(History {
                                 from: "Client".to_string(),
-                                message: self.buffer.clone(),
+                                message: self.buffer.trim().to_string(),
                                 timestamp: chrono::Local::now().to_rfc3339(),
                             });
                             self.buffer.clear(); // Clear the buffer after processing
+                            self.notifications += 1;
                         }
                     } else if msg.is_ascii() {
                         log::info!("Message that is ascii: {msg:?}");
                         // Append the incoming message to the buffer with a newline
                         self.buffer.push_str(&msg);
-                        self.buffer.push('\n');
+                        if !msg.ends_with('\n') {
+                            self.buffer.push('\n');
+                        }
                     } else {
                         // log::error!("Message not handled: {msg:?}");
                     }

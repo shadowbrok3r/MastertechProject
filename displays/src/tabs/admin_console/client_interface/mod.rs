@@ -63,7 +63,11 @@ pub struct WebSocketClient {
     #[cfg(feature="tokio")]
     stop_tx: Option<crossbeam::channel::Sender<()>>,
     size_rx: Receiver<ratatui::layout::Rect>,
-    stop_rx: Receiver<()>
+    stop_rx: Receiver<()>,
+    /// Track connection status and last pong time
+    pub is_connected: bool,
+    pub last_pong_time: Option<Instant>,
+    pub connection_status: String
 }
 
 impl Drop for WebSocketClient {
@@ -133,6 +137,9 @@ impl WebSocketClient {
             my_history: Default::default(),
             notifications: Default::default(),
             resource_monitor: ResourceMonitor::default(),
+            is_connected: false,
+            last_pong_time: None,
+            connection_status: "Disconnected".to_string(),
         }
     }
 

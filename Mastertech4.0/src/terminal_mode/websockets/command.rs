@@ -61,6 +61,9 @@ pub async fn handle_windows_cmd(
         log::info!("websockets -> output status not successfull");
         tx_clone.send(output.stderr).ok();
     }
+    
+    // Send DONE marker to indicate command completion
+    tx.send("DONE".as_bytes().to_vec()).ok();
 
     Ok(stdin)
 }
@@ -90,15 +93,18 @@ pub async fn handle_windows_cmd_interactive(
 
     // Ensure the child process is spawned in the runtime so it can
     // make progress on its own while we await for any output.
+    let tx_done = tx.clone();
     tokio::spawn(async move {
         let status = process.wait().await.expect("child process encountered an error");
         log::info!("websockets -> child status was: {}", status);
+        // Send DONE marker when process completes
+        tx_done.send("DONE".as_bytes().to_vec()).ok();
     });
 
     let tx_clone = tx.clone();
     tokio::spawn(async move {
         while let Some(line) = stderr_reader.next_line().await? {
-            tx_clone.send(line.into_bytes()).ok();
+            tx_clone.send(format!("{}\n", line).into_bytes()).ok();
         }
         Ok::<(), anyhow::Error>(())
     });
@@ -106,7 +112,7 @@ pub async fn handle_windows_cmd_interactive(
     let tx_clone = tx.clone();
     tokio::spawn(async move {
         while let Some(line) = stdout_reader.next_line().await? {
-            tx_clone.send(line.into_bytes()).ok();
+            tx_clone.send(format!("{}\n", line).into_bytes()).ok();
         }
         Ok::<(), anyhow::Error>(())
     });
@@ -114,11 +120,22 @@ pub async fn handle_windows_cmd_interactive(
     tokio::spawn(async move {
         while let Some(input) = rx.recv().await {
             if input != "quit".to_string() {
-                if let Err(e) = stdin.write_all(input.as_bytes()).await {
+                // Add newline to input for command execution
+                let input_with_newline = format!("{}\n", input);
+                if let Err(e) = stdin.write_all(input_with_newline.as_bytes()).await {
                     log::info!("websockets -> Failed to write to stdin: {}", e);
                     break;
                 }
-            } else { break; }
+                if let Err(e) = stdin.flush().await {
+                    log::info!("websockets -> Failed to flush stdin: {}", e);
+                    break;
+                }
+            } else { 
+                // Send quit command and break
+                let _ = stdin.write_all("exit\n".as_bytes()).await;
+                let _ = stdin.flush().await;
+                break; 
+            }
         }
     });
 
