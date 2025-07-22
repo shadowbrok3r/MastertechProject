@@ -9,7 +9,6 @@ tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
-egui_json_tree = { version = "0.12.0", features = ["serde_json"] }
 reqwest = { version = "0.12", features = ["stream", "json"] }
 structdiff = {version = "0.7.1", features = ["rustc_hash"]}
 rpc-router = "0.1"
@@ -25,6 +24,7 @@ egui_dock = { workspace=true }
 egui-data-table = { workspace = true }
 egui_logger = { workspace = true }
 base64 = { workspace=true }
+egui_json_tree = { workspace = true }
 egui_plot = { workspace = true }
 web-time = { workspace=true }
 bincode = { workspace=true } 
