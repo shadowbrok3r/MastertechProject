@@ -155,34 +155,20 @@ impl WebSocketClient {
                 let max_msg_width = ui.available_width() / 1.2;
                 let fixed_height = 50.0;
 
-                // Start with the history as the base for combined messages
-                let mut combined_messages = self.history.clone(); // Clone history only once
-
-                // If there's a buffer, add it as a temporary entry
+                // Display history messages
+                let mut display_messages = self.history.clone();
+                
+                // If there's a buffer with ongoing output, show it as a temporary preview
                 if !self.buffer.is_empty() {
-                    if let Some(last) = combined_messages.last_mut() {
-                        // Temporarily append the buffer to the last client message if applicable
-                        if last.from == "Client" {
-                            last.message.push_str(&self.buffer);
-                        } else {
-                            combined_messages.push(History {
-                                from: "Client".to_string(),
-                                message: self.buffer.clone(),
-                                timestamp: chrono::Local::now().to_rfc3339(),
-                            });
-                        }
-                    } else {
-                        // If no messages exist, the buffer is the first entry
-                        combined_messages.push(History {
-                            from: "Client".to_string(),
-                            message: self.buffer.clone(),
-                            timestamp: chrono::Local::now().to_rfc3339(),
-                        });
-                    }
+                    display_messages.push(History {
+                        from: "Client".to_string(),
+                        message: format!("{}\n[Receiving...]", self.buffer.trim()),
+                        timestamp: chrono::Local::now().to_rfc3339(),
+                    });
                 }
 
-                // Render combined messages
-                for item in &combined_messages {
+                // Render messages with improved styling
+                for item in &display_messages {
                     let is_message_from_myself = if item.from.eq("You"){ true } else { false };
     
                     // Messages from the user are right-aligned.
@@ -202,27 +188,26 @@ impl WebSocketClient {
                         ui.set_max_width(max_msg_width);
     
                         let rounding = 8.0;
-                        let margin = 8.0;
+                        let margin = 6.0;
                         
-                        // ui.set_min_width(min_width);
                         let rnding = eframe::egui::CornerRadius {
-                            ne: if is_message_from_myself { 0 } else { rounding  as u8},
-                            nw: if is_message_from_myself { rounding  as u8} else { 0 },
-                            se: rounding as u8,
-                            sw: rounding as u8,
+                            ne: if is_message_from_myself { 2.0 } else { rounding },
+                            nw: if is_message_from_myself { rounding } else { 2.0 },
+                            se: rounding,
+                            sw: rounding,
                         };
-    
+
+                        // Add hover effect
                         let response = Frame::new()
                             .corner_radius(rnding)
                             .inner_margin(margin)
                             .outer_margin(margin)
                             .fill(msg_color)
                             .show(ui, |ui| {
-                                ui.set_min_height(fixed_height);  // Set the fixed height for the message box
+                                ui.set_min_height(fixed_height);
                                 ui.set_max_width(max_msg_width);
-                                // Use a vertical layout to stack the name and message content
-                                ui.with_layout(Layout::top_down(Align::Min), |ui| 
-                                {
+                                
+                                ui.with_layout(Layout::top_down(Align::Min), |ui| {
     
                                     let mut shadow = Shadow::default();
                                     shadow.blur = 3;
@@ -241,12 +226,12 @@ impl WebSocketClient {
                                     let (from, txt) = if item.from.eq("You"){
                                         (
                                             RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                            RichText::new(item.message.clone()).strong().monospace()
+                                            RichText::new(item.message.clone()).monospace()
                                         )
                                     }else {
                                         (
-                                            RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                            RichText::new(item.message.clone()).strong().monospace()
+                                            RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_GREEN),
+                                            RichText::new(item.message.clone()).monospace()
                                         )
                                     };
                                     
@@ -338,26 +323,7 @@ impl WebSocketClient {
                 };
 
                 // After rendering, process the buffer
-                if self.buffer.ends_with("DONE") {
-                    if let Some(last) = self.history.last_mut() {
-                        if last.from == "Client" {
-                            last.message.push_str(&self.buffer);
-                        } else {
-                            self.history.push(History {
-                                from: "Client".to_string(),
-                                message: self.buffer.clone(),
-                                timestamp: chrono::Local::now().to_rfc3339(),
-                            });
-                        }
-                    } else {
-                        self.history.push(History {
-                            from: "Client".to_string(),
-                            message: self.buffer.clone(),
-                            timestamp: chrono::Local::now().to_rfc3339(),
-                        });
-                    }
-                    self.buffer.clear();
-                }
+                // Note: Buffer processing is now handled in receive.rs when DONE is detected
             });
         });
 
