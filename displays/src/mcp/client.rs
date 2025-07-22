@@ -1,6 +1,5 @@
 use super::types::*;
 use anyhow::{Context, Result};
-use rmcp::{Client, ClientOptions};
 use serde_json::json;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
