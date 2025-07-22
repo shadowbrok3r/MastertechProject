@@ -25,6 +25,8 @@ enum ChatMessage {
         room_id: RoomID,
         text: String,
         bin: Option<Vec<u8>>,
+        ping: Option<Vec<u8>>,
+        pong: Option<Vec<u8>>,
     },
     Command {
         from: SessionID,
@@ -146,6 +148,8 @@ impl ChatServer {
                                 room_id: room_id_clone.clone(),
                                 text: text.to_string(),
                                 bin: None,
+                                ping: None,
+                                pong: None,
                             })
                             .await;
                     }
@@ -156,6 +160,8 @@ impl ChatServer {
                                 room_id: room_id_clone.clone(),
                                 text: String::new(),
                                 bin: Some(bin.to_vec()),
+                                ping: None,
+                                pong: None,
                             })
                             .await;
                     }
@@ -169,8 +175,30 @@ impl ChatServer {
                             .await?;
                         break;
                     }
-                    Message::Ping(bytes) => info!("Ping: {:?}", bytes),
-                    Message::Pong(bytes) => info!("Pong: {:?}", bytes),
+                    Message::Ping(bytes) => {
+                        server_clone
+                            .handle_message(ChatMessage::Send {
+                                from: session_id_clone.clone(),
+                                room_id: room_id_clone.clone(),
+                                text: String::new(),
+                                bin: None,
+                                ping: Some(bytes.to_vec()), // Add a ping field
+                                pong: None,
+                            })
+                            .await;
+                    },
+                    Message::Pong(bytes) => {
+                        server_clone
+                            .handle_message(ChatMessage::Send {
+                                from: session_id_clone.clone(),
+                                room_id: room_id_clone.clone(),
+                                text: String::new(),
+                                bin: None,
+                                ping: None,
+                                pong: Some(bytes.to_vec()),
+                            })
+                            .await;
+                    },
                 }
             }
             server_clone
@@ -209,6 +237,8 @@ impl ChatServer {
                 room_id,
                 text,
                 bin,
+                ping,
+                pong
             } => {
                 let mut rooms = self.rooms.lock().await;
                 if let Some(room) = rooms.get_mut(&room_id) {
@@ -224,6 +254,10 @@ impl ChatServer {
                         let mut session = session.lock().await;
                         let send_result = if let Some(bin) = bin {
                             session.send(Message::Binary(bin.into())).await
+                        } else if let Some(ping) = ping {
+                            session.send(Message::Ping(ping.into())).await
+                        } else if let Some(pong) = pong {
+                            session.send(Message::Pong(pong.into())).await
                         } else {
                             session.send(Message::Text(text.into())).await
                         };
