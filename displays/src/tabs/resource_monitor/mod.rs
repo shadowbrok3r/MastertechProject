@@ -237,7 +237,7 @@ impl ResourceMonitor {
                         ui.group(|ui| {
                             ui.vertical_centered(|ui| ui
                                 .label(
-                                    RichText::new(format!("CPU ()"))
+                                    RichText::new("CPU") // format!("CPU ({})", self.)
                                     .underline()
                                     .color(
                                         ui.style().visuals.error_fg_color
