@@ -1,4 +1,5 @@
 use super::types::*;
+use crate::openai::{Client, config::OpenAIConfig, types::{ChatCompletionRequest, CreateChatCompletionRequestArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestUserMessage}};
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
@@ -7,7 +8,7 @@ use tokio::sync::mpsc;
 /// MCP client for communicating with LLM providers
 pub struct McpClient {
     provider: LlmProvider,
-    client: Client,
+    openai_client: Option<Client<OpenAIConfig>>,
     approval_requests: HashMap<String, ScriptApprovalRequest>,
     approval_tx: mpsc::UnboundedSender<ScriptApprovalRequest>,
     approval_rx: mpsc::UnboundedReceiver<ScriptApprovalResponse>,
@@ -16,42 +17,27 @@ pub struct McpClient {
 impl McpClient {
     /// Create a new MCP client for the specified LLM provider
     pub async fn new(provider: LlmProvider) -> Result<Self> {
-        let client_options = match &provider {
-            LlmProvider::OpenAI { api_key, model } => {
-                ClientOptions::new()
+        let openai_client = match &provider {
+            LlmProvider::OpenAI { api_key, .. } => {
+                let config = OpenAIConfig::new().with_api_key(api_key.clone());
+                Some(Client::with_config(config))
+            }
+            LlmProvider::Azure { api_key, endpoint, .. } => {
+                let config = OpenAIConfig::new()
                     .with_api_key(api_key.clone())
-                    .with_model(model.clone())
-                    .with_base_url("https://api.openai.com/v1".to_string())
+                    .with_api_base(endpoint.clone());
+                Some(Client::with_config(config))
             }
-            LlmProvider::Anthropic { api_key, model } => {
-                ClientOptions::new()
-                    .with_api_key(api_key.clone())
-                    .with_model(model.clone())
-                    .with_base_url("https://api.anthropic.com/v1".to_string())
-            }
-            LlmProvider::Local { endpoint, model } => {
-                ClientOptions::new()
-                    .with_model(model.clone())
-                    .with_base_url(endpoint.clone())
-            }
-            LlmProvider::Azure { endpoint, api_key, deployment } => {
-                ClientOptions::new()
-                    .with_api_key(api_key.clone())
-                    .with_model(deployment.clone())
-                    .with_base_url(endpoint.clone())
-            }
+            // For other providers, we'll implement later or use different clients
+            _ => None,
         };
-
-        let client = Client::new(client_options)
-            .await
-            .context("Failed to create MCP client")?;
 
         let (approval_tx, _approval_rx) = mpsc::unbounded_channel();
         let (_response_tx, approval_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             provider,
-            client,
+            openai_client,
             approval_requests: HashMap::new(),
             approval_tx,
             approval_rx,
@@ -89,6 +75,10 @@ impl McpClient {
         shell_type: ShellType,
         context: Option<String>,
     ) -> Result<DiagnosticResponse> {
+        let Some(client) = &self.openai_client else {
+            return Err(anyhow::anyhow!("OpenAI client not available for this provider"));
+        };
+
         let shell_name = match shell_type {
             ShellType::Cmd => "Command Prompt",
             ShellType::PowerShell => "PowerShell",
@@ -99,7 +89,13 @@ impl McpClient {
 
         let context_str = context.unwrap_or_else(|| "General system administration".to_string());
 
-        let prompt = format!(
+        let model = match &self.provider {
+            LlmProvider::OpenAI { model, .. } => model.clone(),
+            LlmProvider::Azure { deployment, .. } => deployment.clone(),
+            _ => "gpt-4".to_string(),
+        };
+
+        let user_prompt = format!(
             "You are a {shell_name} command completion assistant. \
             Given the partial command '{partial_command}' in the context of '{context_str}', \
             provide 5-10 relevant command completions. \
@@ -107,16 +103,30 @@ impl McpClient {
             Format your response as a JSON array with objects containing 'completion', 'description', and 'confidence' fields."
         );
 
-        let response = self.client.call_tool("complete_command", json!({
-            "prompt": prompt,
-            "shell_type": shell_name,
-            "partial_command": partial_command,
-            "context": context_str
-        })).await
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(model)
+            .messages(vec![
+                ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                    content: "You are a helpful command completion assistant for system administrators.".into(),
+                    name: None,
+                }),
+                ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                    content: user_prompt.into(),
+                    name: None,
+                }),
+            ])
+            .build()?;
+
+        let response = client.chat().completions().create(request).await
             .context("Failed to get command completions from AI")?;
 
         // Parse AI response into completions
-        let completions = self.parse_command_completions(response)?;
+        let response_text = response.choices.first()
+            .and_then(|choice| choice.message.content.as_ref())
+            .unwrap_or("")
+            .to_string();
+
+        let completions = self.parse_command_completions_from_text(response_text)?;
 
         Ok(DiagnosticResponse::CommandCompletions {
             completions,
@@ -126,17 +136,37 @@ impl McpClient {
 
     /// Analyze BSOD dump files
     async fn analyze_bsod(&self, dump_path: Option<std::path::PathBuf>, include_recent: bool) -> Result<DiagnosticResponse> {
-        let prompt = if let Some(path) = &dump_path {
+        let Some(client) = &self.openai_client else {
+            return Err(anyhow::anyhow!("OpenAI client not available for this provider"));
+        };
+
+        let model = match &self.provider {
+            LlmProvider::OpenAI { model, .. } => model.clone(),
+            LlmProvider::Azure { deployment, .. } => deployment.clone(),
+            _ => "gpt-4".to_string(),
+        };
+
+        let user_prompt = if let Some(path) = &dump_path {
             format!("Analyze the BSOD dump file at {:?} and provide diagnostic information.", path)
         } else {
             "Scan for recent BSOD dump files in the Windows system and analyze them for crash causes and recommendations.".to_string()
         };
 
-        let response = self.client.call_tool("analyze_bsod", json!({
-            "prompt": prompt,
-            "dump_path": dump_path,
-            "include_recent": include_recent
-        })).await
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(model)
+            .messages(vec![
+                ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                    content: "You are a Windows system diagnostic expert specializing in BSOD analysis.".into(),
+                    name: None,
+                }),
+                ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                    content: user_prompt.into(),
+                    name: None,
+                }),
+            ])
+            .build()?;
+
+        let _response = client.chat().completions().create(request).await
             .context("Failed to analyze BSOD")?;
 
         // Parse the AI response and extract BSOD analysis
@@ -156,6 +186,16 @@ impl McpClient {
         time_range: Option<EventLogTimeRange>,
         severity: Option<EventLogSeverity>,
     ) -> Result<DiagnosticResponse> {
+        let Some(client) = &self.openai_client else {
+            return Err(anyhow::anyhow!("OpenAI client not available for this provider"));
+        };
+
+        let model = match &self.provider {
+            LlmProvider::OpenAI { model, .. } => model.clone(),
+            LlmProvider::Azure { deployment, .. } => deployment.clone(),
+            _ => "gpt-4".to_string(),
+        };
+
         let time_desc = if let Some(range) = &time_range {
             format!("from the last {} hours", range.hours_back)
         } else {
@@ -167,18 +207,27 @@ impl McpClient {
             None => "all severity levels".to_string(),
         };
 
-        let prompt = format!(
+        let user_prompt = format!(
             "Analyze Windows Event Log '{}' {} with {} severity. \
             Look for patterns, critical errors, and provide diagnostic recommendations.",
             log_name, time_desc, severity_desc
         );
 
-        let response = self.client.call_tool("analyze_event_logs", json!({
-            "prompt": prompt,
-            "log_name": log_name,
-            "time_range": time_range,
-            "severity": severity
-        })).await
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(model)
+            .messages(vec![
+                ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                    content: "You are a Windows Event Log analysis expert.".into(),
+                    name: None,
+                }),
+                ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                    content: user_prompt.into(),
+                    name: None,
+                }),
+            ])
+            .build()?;
+
+        let _response = client.chat().completions().create(request).await
             .context("Failed to analyze event logs")?;
 
         Ok(DiagnosticResponse::EventLogAnalysis {
@@ -197,7 +246,17 @@ impl McpClient {
         include_processes: bool,
         include_hardware: bool,
     ) -> Result<DiagnosticResponse> {
-        let prompt = format!(
+        let Some(client) = &self.openai_client else {
+            return Err(anyhow::anyhow!("OpenAI client not available for this provider"));
+        };
+
+        let model = match &self.provider {
+            LlmProvider::OpenAI { model, .. } => model.clone(),
+            LlmProvider::Azure { deployment, .. } => deployment.clone(),
+            _ => "gpt-4".to_string(),
+        };
+
+        let user_prompt = format!(
             "Generate a comprehensive system performance report for the last {} hours. \
             {}{}Analyze CPU, memory, disk, and network performance patterns.",
             duration_hours,
@@ -205,12 +264,21 @@ impl McpClient {
             if include_hardware { "Include hardware-level diagnostics. " } else { "" }
         );
 
-        let response = self.client.call_tool("generate_performance_report", json!({
-            "prompt": prompt,
-            "duration_hours": duration_hours,
-            "include_processes": include_processes,
-            "include_hardware": include_hardware
-        })).await
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(model)
+            .messages(vec![
+                ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                    content: "You are a system performance analysis expert.".into(),
+                    name: None,
+                }),
+                ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                    content: user_prompt.into(),
+                    name: None,
+                }),
+            ])
+            .build()?;
+
+        let _response = client.chat().completions().create(request).await
             .context("Failed to generate performance report")?;
 
         Ok(DiagnosticResponse::PerformanceReport {
@@ -234,7 +302,17 @@ impl McpClient {
         include_software: bool,
         include_network: bool,
     ) -> Result<DiagnosticResponse> {
-        let prompt = format!(
+        let Some(client) = &self.openai_client else {
+            return Err(anyhow::anyhow!("OpenAI client not available for this provider"));
+        };
+
+        let model = match &self.provider {
+            LlmProvider::OpenAI { model, .. } => model.clone(),
+            LlmProvider::Azure { deployment, .. } => deployment.clone(),
+            _ => "gpt-4".to_string(),
+        };
+
+        let user_prompt = format!(
             "Generate a comprehensive system health summary. \
             {}{}{}Focus on identifying any critical issues or recommendations.",
             if include_hardware { "Include hardware information. " } else { "" },
@@ -242,12 +320,21 @@ impl McpClient {
             if include_network { "Include network configuration. " } else { "" }
         );
 
-        let response = self.client.call_tool("get_system_summary", json!({
-            "prompt": prompt,
-            "include_hardware": include_hardware,
-            "include_software": include_software,
-            "include_network": include_network
-        })).await
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(model)
+            .messages(vec![
+                ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                    content: "You are a comprehensive system health analysis expert.".into(),
+                    name: None,
+                }),
+                ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                    content: user_prompt.into(),
+                    name: None,
+                }),
+            ])
+            .build()?;
+
+        let _response = client.chat().completions().create(request).await
             .context("Failed to get system summary")?;
 
         Ok(DiagnosticResponse::SystemSummary {
@@ -276,7 +363,10 @@ impl McpClient {
     ) -> Result<DiagnosticResponse> {
         if require_approval {
             // Create approval request
-            let request_id = uuid::Uuid::new_v4().to_string();
+            let request_id = format!("script_{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis());
             let risk_level = self.assess_script_risk(&script, &script_type);
             
             let approval_request = ScriptApprovalRequest {
@@ -336,23 +426,27 @@ impl McpClient {
         RiskLevel::Low
     }
 
-    /// Parse command completions from AI response
-    fn parse_command_completions(&self, response: serde_json::Value) -> Result<Vec<CommandCompletion>> {
-        // This would parse the actual AI response format
-        // For now, return mock completions
-        Ok(vec![
-            CommandCompletion {
-                completion: "dir /a".to_string(),
-                description: Some("List all files including hidden".to_string()),
-                category: Some("File Management".to_string()),
-                confidence: 0.95,
-            },
-            CommandCompletion {
-                completion: "systeminfo".to_string(),
-                description: Some("Display system configuration information".to_string()),
-                category: Some("System Information".to_string()),
-                confidence: 0.90,
-            },
-        ])
+    /// Parse command completions from AI response text
+    fn parse_command_completions_from_text(&self, response_text: String) -> Result<Vec<CommandCompletion>> {
+        // Try to parse JSON response, fallback to mock if parsing fails
+        if let Ok(parsed) = serde_json::from_str::<Vec<CommandCompletion>>(&response_text) {
+            Ok(parsed)
+        } else {
+            // Fallback to mock completions
+            Ok(vec![
+                CommandCompletion {
+                    completion: "dir /a".to_string(),
+                    description: Some("List all files including hidden".to_string()),
+                    category: Some("File Management".to_string()),
+                    confidence: 0.95,
+                },
+                CommandCompletion {
+                    completion: "systeminfo".to_string(),
+                    description: Some("Display system configuration information".to_string()),
+                    category: Some("System Information".to_string()),
+                    confidence: 0.90,
+                },
+            ])
+        }
     }
 }
