@@ -21,6 +21,8 @@ pub enum WebConsolePageState {
     #[default]
     AllClients,
     ScriptEditor,
+    #[cfg(not(target_arch = "wasm32"))]
+    AiAssistant,
 }
 
 #[derive(Serialize)]
@@ -124,7 +126,7 @@ impl SharedContext {
                 }
 
                 ui.add_space(ui.available_width()/3.1);
-                let button_size = Vec2::new(50.0, 15.0);
+                let button_size = Vec2::new(70.0, 15.0);
                 if Button::new("Clients")
                     .min_size(button_size)
                     .ui(ui)
@@ -140,6 +142,15 @@ impl SharedContext {
                     .clicked() 
                 {
                     self.web_console_layout.state = WebConsolePageState::ScriptEditor;
+                }
+                ui.add_space(5.);
+                #[cfg(not(target_arch = "wasm32"))]
+                if Button::new("🤖 AI Assistant")
+                    .min_size(Vec2::new(90.0, 15.0))
+                    .ui(ui)
+                    .clicked() 
+                {
+                    self.web_console_layout.state = WebConsolePageState::AiAssistant;
                 }
             });
         });

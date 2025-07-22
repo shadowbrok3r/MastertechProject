@@ -11,7 +11,7 @@ use web_time::Instant;
 #[cfg(feature="tokio")]
 use tabs::terminal_viewer::RemoteTerminal;
 
-use super::client_interface::tabs::command_shell::History;
+use super::client_interface::tabs::command_shell::{History, CommandSuggestion};
 
 pub mod receive;
 pub mod tabs;
@@ -69,7 +69,13 @@ pub struct WebSocketClient {
     pub last_pong_time: Option<Instant>,
     pub connection_status: String,
     /// Track if we're using persistent shell mode
-    pub persistent_shell_mode: bool
+    pub persistent_shell_mode: bool,
+    /// AI-powered command completion
+    pub ai_completion_enabled: bool,
+    pub command_suggestions: Vec<CommandSuggestion>,
+    pub show_suggestions: bool,
+    pub last_partial_command: String,
+    pub selected_suggestion: usize,
 }
 
 impl Drop for WebSocketClient {
@@ -143,6 +149,11 @@ impl WebSocketClient {
             last_pong_time: None,
             connection_status: "Disconnected".to_string(),
             persistent_shell_mode: false,
+            ai_completion_enabled: true,
+            command_suggestions: Vec::new(),
+            show_suggestions: false,
+            last_partial_command: String::new(),
+            selected_suggestion: 0,
         }
     }
 
