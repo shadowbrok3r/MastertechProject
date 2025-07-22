@@ -187,12 +187,12 @@ impl WebSocketClient {
                     ui.with_layout(layout, |ui| {
                         ui.set_max_width(max_msg_width);
     
-                        let rounding = 8.0;
-                        let margin = 6.0;
+                        let rounding = 8;
+                        let margin = 6;
                         
                         let rnding = eframe::egui::CornerRadius {
-                            ne: if is_message_from_myself { 2.0 } else { rounding },
-                            nw: if is_message_from_myself { rounding } else { 2.0 },
+                            ne: if is_message_from_myself { 2 } else { rounding },
+                            nw: if is_message_from_myself { rounding } else { 2 },
                             se: rounding,
                             sw: rounding,
                         };
@@ -296,9 +296,9 @@ impl WebSocketClient {
                         .response;
     
                         let points = if !is_message_from_myself {
-                            let top = response.rect.left_top() + Vec2::splat(margin);
+                            let top = response.rect.left_top() + Vec2::splat(margin as f32);
                             let arrow_rect =
-                                Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
+                                Rect::from_two_pos(top, top + Vec2::new(-(rounding as f32), rounding as f32));
 
                             vec![
                                 arrow_rect.left_top(),
@@ -306,9 +306,9 @@ impl WebSocketClient {
                                 arrow_rect.right_bottom(),
                             ]
                         } else {
-                            let top = response.rect.right_top() + Vec2::new(-margin, margin);
+                            let top = response.rect.right_top() + Vec2::new(-(margin as f32), margin as f32);
                             let arrow_rect =
-                                Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
+                                Rect::from_two_pos(top, top + Vec2::new(rounding as f32, rounding as f32));
 
                             vec![
                                 arrow_rect.left_top(),
