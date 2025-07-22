@@ -95,6 +95,9 @@ impl PersistentShell {
                 if cfg!(target_os = "windows") {
                     // Look for command prompt pattern indicating command completion
                     if line.contains(">") && (line.contains("C:\\") || line.contains("D:\\") || line.contains("E:\\")) {
+                        // Send DONE marker to indicate command completion
+                        tx_clone.send("DONE".as_bytes().to_vec()).ok();
+                        
                         // Mark shell as ready for next command after a brief delay
                         let is_ready_clone = is_ready_clone.clone();
                         tokio::spawn(async move {
@@ -106,6 +109,9 @@ impl PersistentShell {
                 } else {
                     // For Unix shells, look for typical prompt patterns
                     if line.ends_with("$ ") || line.ends_with("# ") || line.ends_with("% ") {
+                        // Send DONE marker to indicate command completion
+                        tx_clone.send("DONE".as_bytes().to_vec()).ok();
+                        
                         let is_ready_clone = is_ready_clone.clone();
                         tokio::spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
