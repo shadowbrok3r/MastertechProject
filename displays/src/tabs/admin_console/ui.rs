@@ -143,6 +143,53 @@ impl AdminConsole {
     pub fn ui(&mut self, ui: &mut Ui) {
         match self.state {
             WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
+            #[cfg(not(target_arch = "wasm32"))]
+            WebConsolePageState::AiAssistant => {
+                // Show AI Assistant interface
+                ui.vertical_centered(|ui| {
+                    ui.add_space(20.);
+                    ui.heading("🤖 AI Diagnostic Assistant");
+                    ui.add_space(10.);
+                    ui.label("AI-powered computer diagnostics and command assistance for remote clients.");
+                    ui.add_space(20.);
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Features:");
+                        ui.add_space(20.);
+                        ui.vertical(|ui| {
+                            ui.label("🔧 Automated BSOD analysis");
+                            ui.label("📋 Event log parsing and insights");
+                            ui.label("📊 Performance report generation");
+                            ui.label("🖥️ System health summaries");
+                            ui.label("⚡ Smart command completion");
+                            ui.label("🛡️ Script approval workflow");
+                        });
+                    });
+                    
+                    ui.add_space(30.);
+                    
+                    if ui.button("🚀 Open Enhanced AI Playground").clicked() {
+                        // This would trigger opening the enhanced AI playground
+                        // For now, show a message
+                        ui.ctx().memory_mut(|mem| {
+                            mem.insert_temp(egui::Id::new("show_ai_message"), true);
+                        });
+                    }
+                    
+                    ui.add_space(20.);
+                    
+                    if ui.ctx().memory(|mem| mem.get_temp::<bool>(egui::Id::new("show_ai_message")).unwrap_or(false)) {
+                        ui.colored_label(Color32::LIGHT_GREEN, "🎉 Enhanced AI Playground will open in a separate tab!");
+                        ui.label("Use the 'AI Playground' tab in the main interface to access the full AI diagnostic capabilities.");
+                    }
+                    
+                    ui.add_space(20.);
+                    ui.separator();
+                    ui.add_space(10.);
+                    
+                    ui.label("💡 Tip: Enable AI Command Completion in the remote terminal shells for intelligent command suggestions.");
+                });
+            },
             _ => {
                 for client in self.clients.iter() {
                     if self.undock_client.iter().any(|c| 
