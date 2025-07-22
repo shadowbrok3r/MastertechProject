@@ -3,18 +3,21 @@ use std::process::Stdio;
 
 pub struct PersistentShell {
     process: Option<tokio::process::Child>,
-    stdin: Option<tokio::process::ChildStdin>,
     output_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    command_queue_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    is_ready: std::sync::Arc<tokio::sync::Mutex<bool>>,
 }
 
 impl PersistentShell {
     pub fn new(
         output_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ) -> Self {
+        let (command_queue_tx, _) = tokio::sync::mpsc::unbounded_channel();
         Self {
             process: None,
-            stdin: None,
             output_tx,
+            command_queue_tx,
+            is_ready: std::sync::Arc::new(tokio::sync::Mutex::new(true)),
         }
     }
 
@@ -40,15 +43,77 @@ impl PersistentShell {
         let mut stdout_reader = BufReader::new(stdout).lines();
         let mut stderr_reader = BufReader::new(stderr).lines();
 
-        // Store the stdin for sending commands
-        self.stdin = Some(stdin);
+        // Store the process
         self.process = Some(process);
 
-        // Handle stdout
-        let tx_clone = self.output_tx.clone();
+        // Create command queue processing
+        let (command_queue_tx, mut command_queue_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.command_queue_tx = command_queue_tx;
+
+        // Handle command queue processing with proper stdin handling
+        let output_tx_clone = self.output_tx.clone();
+        let is_ready_clone = self.is_ready.clone();
+        
         tokio::spawn(async move {
+            let mut stdin = stdin;
+            while let Some(command) = command_queue_rx.recv().await {
+                // Wait for shell to be ready
+                {
+                    let mut ready = is_ready_clone.lock().await;
+                    while !*ready {
+                        drop(ready);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        ready = is_ready_clone.lock().await;
+                    }
+                    *ready = false; // Mark as busy
+                }
+
+                // Send the COMMAND_SENT marker first
+                output_tx_clone.send(format!("COMMAND_SENT: {}\n", command).into_bytes()).ok();
+                
+                // Send command to shell
+                let command_with_newline = format!("{}\n", command);
+                if let Err(e) = stdin.write_all(command_with_newline.as_bytes()).await {
+                    log::error!("Failed to write command to stdin: {}", e);
+                    break;
+                } else if let Err(e) = stdin.flush().await {
+                    log::error!("Failed to flush stdin: {}", e);
+                    break;
+                }
+            }
+        });
+
+        // Handle stdout with command completion detection
+        let tx_clone = self.output_tx.clone();
+        let is_ready_clone = self.is_ready.clone();
+        tokio::spawn(async move {
+            let mut command_output_started = false;
             while let Some(line) = stdout_reader.next_line().await? {
                 tx_clone.send(format!("{}\n", line).into_bytes()).ok();
+                
+                // Detect command completion for Windows cmd
+                if cfg!(target_os = "windows") {
+                    // Look for command prompt pattern indicating command completion
+                    if line.contains(">") && (line.contains("C:\\") || line.contains("D:\\") || line.contains("E:\\")) {
+                        // Mark shell as ready for next command after a brief delay
+                        let is_ready_clone = is_ready_clone.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            let mut ready = is_ready_clone.lock().await;
+                            *ready = true;
+                        });
+                    }
+                } else {
+                    // For Unix shells, look for typical prompt patterns
+                    if line.ends_with("$ ") || line.ends_with("# ") || line.ends_with("% ") {
+                        let is_ready_clone = is_ready_clone.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            let mut ready = is_ready_clone.lock().await;
+                            *ready = true;
+                        });
+                    }
+                }
             }
             Ok::<(), anyhow::Error>(())
         });
@@ -66,22 +131,15 @@ impl PersistentShell {
     }
 
     pub async fn send_command(&mut self, command: String) -> anyhow::Result<()> {
-        if let Some(stdin) = &mut self.stdin {
-            let command_with_newline = format!("{}\n", command);
-            stdin.write_all(command_with_newline.as_bytes()).await?;
-            stdin.flush().await?;
-            
-            // Send a marker to indicate command was sent
-            self.output_tx.send(format!("COMMAND_SENT: {}\n", command).into_bytes()).ok();
-        }
+        // Queue the command instead of sending immediately
+        self.command_queue_tx.send(command)?;
         Ok(())
     }
 
     pub async fn close(&mut self) -> anyhow::Result<()> {
         if let Some(mut process) = self.process.take() {
-            if let Some(stdin) = self.stdin.take() {
-                drop(stdin); // Close stdin to signal process to terminate
-            }
+            // Try to terminate the process gracefully
+            let _ = process.kill().await;
             let _ = process.wait().await;
             self.output_tx.send("SHELL_CLOSED\nDONE".as_bytes().to_vec()).ok();
         }
