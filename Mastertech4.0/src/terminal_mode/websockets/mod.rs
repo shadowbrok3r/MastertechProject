@@ -99,14 +99,17 @@ impl TerminalWebsocketClient {
                                             *ready = true;
                                             log::info!("WebSocket sender marked as ready");
                                         } else if *ready && txt != "READY".to_string() {
+                                            log::error!("GOT TEXT: {txt:?}");
                                             // Check if we need to start a persistent shell
                                             if self.persistent_shell.is_none() {
+                                                log::error!("persistent_shell IS NONE");
                                                 let shell = PersistentShell::new(
                                                     self.command_tx.clone()
                                                 );
                                                 self.persistent_shell = Some(shell);
                                                 
                                                 if let Some(shell) = &mut self.persistent_shell {
+                                                    log::error!("persistent_shell IS SOME");
                                                     if let Err(e) = shell.start().await {
                                                         log::error!("Failed to start persistent shell: {}", e);
                                                         // Fallback to old method
@@ -121,6 +124,7 @@ impl TerminalWebsocketClient {
                                                         self.interactive_input_tx = new_input_tx.clone();
                                                         self.persistent_shell = None;
                                                     } else {
+                                                        log::error!("STARTED persistent_shell");
                                                         // Send the command to the persistent shell
                                                         if let Err(e) = shell.send_command(txt).await {
                                                             log::error!("Failed to send command to persistent shell: {}", e);
@@ -128,6 +132,7 @@ impl TerminalWebsocketClient {
                                                     }
                                                 }
                                             } else {
+                                                log::error!("USING persistent_shell");
                                                 // Use existing persistent shell
                                                 if let Some(shell) = &mut self.persistent_shell {
                                                     if let Err(e) = shell.send_command(txt).await {
