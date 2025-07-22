@@ -191,6 +191,10 @@ pub struct SharedContext {
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
+    /// Enhanced AI playground with MCP diagnostic capabilities
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    pub enhanced_ai_playground: crate::tabs::ai_playground::enhanced::EnhancedAiPlayground,
     #[serde(skip)]
     pub show_tasks_viewport: HashMap<RecordId, ViewportData>,
     pub refresh: bool,
@@ -336,6 +340,8 @@ impl SharedContext {
             stock_quantity_viewer: StockQuantityViewer::default(),
             stock_quantity_table: DataTable::<StockQuantityData>::default(),
             ai_playground: AiPlayground::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            enhanced_ai_playground: crate::tabs::ai_playground::enhanced::EnhancedAiPlayground::default(),
             task_audit_table: TaskAuditViewer::new(),
             resource_mon: ResourceMonitor::default(),
             
