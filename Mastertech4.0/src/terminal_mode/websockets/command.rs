@@ -1,6 +1,94 @@
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use std::process::Stdio;
 
+pub struct PersistentShell {
+    process: Option<tokio::process::Child>,
+    stdin: Option<tokio::process::ChildStdin>,
+    output_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl PersistentShell {
+    pub fn new(
+        output_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ) -> Self {
+        Self {
+            process: None,
+            stdin: None,
+            output_tx,
+        }
+    }
+
+    pub async fn start(&mut self) -> anyhow::Result<()> {
+        let mut process = if cfg!(target_os = "windows") {
+            tokio::process::Command::new("cmd")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?
+        } else {
+            tokio::process::Command::new("sh")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?
+        };
+
+        let stdout = process.stdout.take().expect("Failed to get stdout");
+        let stderr = process.stderr.take().expect("Failed to get stderr");
+        let stdin = process.stdin.take().expect("Failed to get stdin");
+
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
+
+        // Store the stdin for sending commands
+        self.stdin = Some(stdin);
+        self.process = Some(process);
+
+        // Handle stdout
+        let tx_clone = self.output_tx.clone();
+        tokio::spawn(async move {
+            while let Some(line) = stdout_reader.next_line().await? {
+                tx_clone.send(format!("{}\n", line).into_bytes()).ok();
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        // Handle stderr
+        let tx_clone = self.output_tx.clone();
+        tokio::spawn(async move {
+            while let Some(line) = stderr_reader.next_line().await? {
+                tx_clone.send(format!("ERROR: {}\n", line).into_bytes()).ok();
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        Ok(())
+    }
+
+    pub async fn send_command(&mut self, command: String) -> anyhow::Result<()> {
+        if let Some(stdin) = &mut self.stdin {
+            let command_with_newline = format!("{}\n", command);
+            stdin.write_all(command_with_newline.as_bytes()).await?;
+            stdin.flush().await?;
+            
+            // Send a marker to indicate command was sent
+            self.output_tx.send(format!("COMMAND_SENT: {}\n", command).into_bytes()).ok();
+        }
+        Ok(())
+    }
+
+    pub async fn close(&mut self) -> anyhow::Result<()> {
+        if let Some(mut process) = self.process.take() {
+            if let Some(stdin) = self.stdin.take() {
+                drop(stdin); // Close stdin to signal process to terminate
+            }
+            let _ = process.wait().await;
+            self.output_tx.send("SHELL_CLOSED\nDONE".as_bytes().to_vec()).ok();
+        }
+        Ok(())
+    }
+}
+
 pub async fn handle_command_payload(
     string_payload: String, 
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>

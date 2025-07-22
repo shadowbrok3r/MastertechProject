@@ -2,7 +2,7 @@ use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClie
 use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, FileSystemAction};
 use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
-use command::handle_windows_cmd_interactive;
+use command::{handle_windows_cmd_interactive, PersistentShell};
 use bincode::{config::standard, serde::*};
 use ewebsock::{WsEvent, WsMessage};
 use ratatui::buffer::Buffer;
@@ -25,6 +25,7 @@ pub struct TerminalWebsocketClient {
     sysinfo_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     sysinfo_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     join_handle: Option<tokio::task::JoinHandle<()>>,
+    persistent_shell: Option<PersistentShell>,
 }
 
 impl TerminalWebsocketClient {
@@ -48,6 +49,7 @@ impl TerminalWebsocketClient {
             interactive_input_rx,
             live_stats_stop_tx: None,
             join_handle: None,
+            persistent_shell: None,
             // explorer: FileSystem::new()
         }
     }
@@ -97,15 +99,44 @@ impl TerminalWebsocketClient {
                                             *ready = true;
                                             log::info!("WebSocket sender marked as ready");
                                         } else if *ready && txt != "READY".to_string() {
-                                            let tx = self.command_tx.clone();
-                                            let (new_input_tx, new_input_rx) = tokio::sync::mpsc::unbounded_channel();
-                                            let handle_windows_cmd_interactive = handle_windows_cmd_interactive(
-                                                txt, 
-                                                tx, 
-                                                new_input_rx
-                                            ).await;
-                                            log::info!("start_websocket_sender -> handle_windows_cmd_interactive: {handle_windows_cmd_interactive:?}");
-                                            self.interactive_input_tx = new_input_tx.clone();
+                                            // Check if we need to start a persistent shell
+                                            if self.persistent_shell.is_none() {
+                                                let shell = PersistentShell::new(
+                                                    self.command_tx.clone()
+                                                );
+                                                self.persistent_shell = Some(shell);
+                                                
+                                                if let Some(shell) = &mut self.persistent_shell {
+                                                    if let Err(e) = shell.start().await {
+                                                        log::error!("Failed to start persistent shell: {}", e);
+                                                        // Fallback to old method
+                                                        let tx = self.command_tx.clone();
+                                                        let (new_input_tx, new_input_rx) = tokio::sync::mpsc::unbounded_channel();
+                                                        let handle_windows_cmd_interactive = handle_windows_cmd_interactive(
+                                                            txt, 
+                                                            tx, 
+                                                            new_input_rx
+                                                        ).await;
+                                                        log::info!("start_websocket_sender -> handle_windows_cmd_interactive: {handle_windows_cmd_interactive:?}");
+                                                        self.interactive_input_tx = new_input_tx.clone();
+                                                        self.persistent_shell = None;
+                                                    } else {
+                                                        // Send the command to the persistent shell
+                                                        if let Err(e) = shell.send_command(txt).await {
+                                                            log::error!("Failed to send command to persistent shell: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                // Use existing persistent shell
+                                                if let Some(shell) = &mut self.persistent_shell {
+                                                    if let Err(e) = shell.send_command(txt).await {
+                                                        log::error!("Failed to send command to persistent shell: {}", e);
+                                                        // Reset shell on error
+                                                        self.persistent_shell = None;
+                                                    }
+                                                }
+                                            }
                                         }
                                     },
                                     WsMessage::Binary(bin) => {
@@ -263,13 +294,34 @@ impl TerminalWebsocketClient {
 
                 }
 
-                let _ = self.interactive_input_tx.send(cmd);
+                // Send to persistent shell if available, otherwise use the old method
+                if let Some(shell) = &mut self.persistent_shell {
+                    let shell_cmd = cmd.clone();
+                    let shell_ptr = shell as *mut PersistentShell;
+                    // Use a more direct approach to avoid lifetime issues
+                    if let Err(e) = shell.send_command(shell_cmd).await {
+                        log::error!("Failed to send interactive input to persistent shell: {}", e);
+                        // Fallback to old method
+                        let _ = self.interactive_input_tx.send(cmd);
+                    }
+                } else {
+                    let _ = self.interactive_input_tx.send(cmd);
+                }
             },
             Cmd::ReadEvents => {
                 
             },
             Cmd::QuitInteractive => {
-                let _ = self.interactive_input_tx.send("quit".to_string());
+                if let Some(shell) = self.persistent_shell.take() {
+                    let mut shell = shell;
+                    tokio::spawn(async move {
+                        if let Err(e) = shell.close().await {
+                            log::error!("Failed to close persistent shell: {}", e);
+                        }
+                    });
+                } else {
+                    let _ = self.interactive_input_tx.send("quit".to_string());
+                }
             },
             Cmd::LiveData => {
                 // If already running, do nothing
