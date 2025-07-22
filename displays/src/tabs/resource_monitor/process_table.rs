@@ -181,7 +181,7 @@ impl RowViewer<Process> for ProcessRowViewer {
         let _ = match column {
             0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.id.clone()))).inner,
             1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.name.clone()))).inner,
-            2 => ui.horizontal_centered(|ui| ui.label(format!(" {}%", row.cpu_usage.clone()))).inner,
+            2 => ui.horizontal_centered(|ui| ui.label(format!(" {:.2}%", row.cpu_usage.clone()))).inner,
             3 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb", row.memory.clone()))).inner,
             4 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb / {}Mb", row.process_disk_usage.total_read_bytes.clone(), row.process_disk_usage.total_written_bytes.clone()))).inner,
             5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.cmd.clone()))).inner,
@@ -196,7 +196,7 @@ impl RowViewer<Process> for ProcessRowViewer {
             1 => col_config.resizable(true).at_least(180.).at_most(225.),
             2 => col_config.resizable(true).at_least(90.).at_most(90.),
             3 => col_config.resizable(true).at_least(100.).at_most(100.),
-            4 => col_config.resizable(true).at_least(100.).at_most(150.),
+            4 => col_config.resizable(true).at_least(150.).at_most(200.),
             5 => col_config.resizable(true).clip(false),
             _ => col_config,
         }
