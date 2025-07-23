@@ -1,7 +1,7 @@
 use super::types::*;
-use crate::openai::{Client, config::OpenAIConfig, types::{ChatCompletionRequest, CreateChatCompletionRequestArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestUserMessage}};
+use crate::openai::{Client, config::OpenAIConfig, types::{CreateChatCompletionRequestArgs, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestUserMessage}};
 use anyhow::{Context, Result};
-use serde_json::json;
+// ...existing code...
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
@@ -117,14 +117,14 @@ impl McpClient {
             ])
             .build()?;
 
-        let response = client.chat().completions().create(request).await
+        let response = client.chat().create(request).await
             .context("Failed to get command completions from AI")?;
 
         // Parse AI response into completions
         let response_text = response.choices.first()
             .and_then(|choice| choice.message.content.as_ref())
-            .unwrap_or("")
-            .to_string();
+            .map(|s| s.to_string())
+            .unwrap_or_else(String::new);
 
         let completions = self.parse_command_completions_from_text(response_text)?;
 
@@ -166,7 +166,8 @@ impl McpClient {
             ])
             .build()?;
 
-        let _response = client.chat().completions().create(request).await
+        let _ = include_recent; // silence unused variable warning
+        let _response = client.chat().create(request).await
             .context("Failed to analyze BSOD")?;
 
         // Parse the AI response and extract BSOD analysis
@@ -227,7 +228,7 @@ impl McpClient {
             ])
             .build()?;
 
-        let _response = client.chat().completions().create(request).await
+        let _response = client.chat().create(request).await
             .context("Failed to analyze event logs")?;
 
         Ok(DiagnosticResponse::EventLogAnalysis {
@@ -278,7 +279,7 @@ impl McpClient {
             ])
             .build()?;
 
-        let _response = client.chat().completions().create(request).await
+        let _response = client.chat().create(request).await
             .context("Failed to generate performance report")?;
 
         Ok(DiagnosticResponse::PerformanceReport {
@@ -334,7 +335,7 @@ impl McpClient {
             ])
             .build()?;
 
-        let _response = client.chat().completions().create(request).await
+        let _response = client.chat().create(request).await
             .context("Failed to get system summary")?;
 
         Ok(DiagnosticResponse::SystemSummary {
@@ -405,7 +406,7 @@ impl McpClient {
     /// Assess the risk level of a script
     fn assess_script_risk(&self, script: &str, script_type: &ScriptType) -> RiskLevel {
         let script_lower = script.to_lowercase();
-        
+        // ...existing code...
         // Check for high-risk patterns
         if script_lower.contains("format") || 
            script_lower.contains("del ") || 

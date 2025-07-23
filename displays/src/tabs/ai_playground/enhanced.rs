@@ -1,5 +1,5 @@
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, ComboBox, Frame, Key, Layout, Margin, RichText, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui, Vec2
+    CentralPanel, Color32, ComboBox, Frame, Key, Margin, RichText, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui
 };
 use crate::{
     app_state::SharedContext, 
@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::mcp::{McpService, LlmProvider, DiagnosticCommand, DiagnosticResponse};
+use crate::mcp::{McpService, LlmProvider};
 
 use std::collections::HashMap;
 use crossbeam::channel::{Receiver, Sender};
@@ -300,85 +300,112 @@ impl SharedContext {
 
     fn show_chat_input(&mut self, ui: &mut Ui) {
         if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+            // Move input to a local variable to avoid borrow issues
+            let mut input = thread.input.clone();
+            let mut send = false;
             ui.horizontal(|ui| {
-                let text_edit = TextEdit::multiline(&mut thread.input)
+                let text_edit = TextEdit::multiline(&mut input)
                     .desired_width(ui.available_width() - 80.)
                     .hint_text("Ask me anything...");
-                
                 let response = ui.add(text_edit);
-                
                 if ui.button("Send").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
-                    self.send_chat_message();
+                    send = true;
                 }
             });
+            // Write back input if changed
+            if thread.input != input {
+                thread.input = input;
+            }
+            if send {
+                self.send_chat_message();
+            }
         }
     }
 
     fn show_diagnostics_input(&mut self, ui: &mut Ui) {
         if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+            let mut input = thread.input.clone();
+            let mut analyze = false;
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    let text_edit = TextEdit::multiline(&mut thread.input)
+                    let text_edit = TextEdit::multiline(&mut input)
                         .desired_width(ui.available_width() - 80.)
                         .hint_text("Describe the issue you're experiencing...");
-                    
                     ui.add(text_edit);
-                    
                     if ui.button("Analyze").clicked() {
-                        self.send_diagnostic_request();
+                        analyze = true;
                     }
                 });
-                
                 ui.label(RichText::new("💡 Try: 'My computer is running slow', 'Blue screen occurred', 'Check for errors'")
                     .italics().weak());
             });
+            if thread.input != input {
+                thread.input = input;
+            }
+            if analyze {
+                self.send_diagnostic_request();
+            }
         }
     }
 
     fn show_shell_input(&mut self, ui: &mut Ui) {
         if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+            let mut input = thread.input.clone();
+            let mut changed = false;
+            let mut complete = false;
             ui.horizontal(|ui| {
-                let text_edit = TextEdit::singleline(&mut thread.input)
+                let text_edit = TextEdit::singleline(&mut input)
                     .desired_width(ui.available_width() - 80.)
                     .hint_text("Type a partial command...");
-                
                 let response = ui.add(text_edit);
-                
                 if response.changed() {
-                    self.enhanced_ai_playground.last_partial_command = thread.input.clone();
-                    self.get_command_completions();
+                    changed = true;
                 }
-                
                 if ui.button("Complete").clicked() {
-                    self.get_command_completions();
+                    complete = true;
                 }
             });
+            if thread.input != input {
+                thread.input = input.clone();
+            }
+            if changed {
+                self.enhanced_ai_playground.last_partial_command = input;
+                self.get_command_completions();
+            }
+            if complete {
+                self.get_command_completions();
+            }
         }
     }
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
         // Regular chat display (similar to existing implementation)
+        let messages = if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
+            thread.messages.clone()
+        } else {
+            Vec::new()
+        };
         ScrollArea::vertical().show(ui, |ui| {
-            if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
-                for message in &thread.messages {
-                    self.render_chat_message(ui, message);
-                }
+            for message in messages.iter() {
+                self.render_chat_message(ui, message);
             }
         });
     }
 
     fn show_diagnostics_content(&mut self, ui: &mut Ui) {
+        let messages = if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
+            thread.messages.clone()
+        } else {
+            Vec::new()
+        };
+        let threads_empty = self.enhanced_ai_playground.threads.is_empty();
         ScrollArea::vertical().show(ui, |ui| {
             ui.heading("🔧 Computer Diagnostics");
             ui.separator();
-            
-            if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
-                for message in &thread.messages {
-                    self.render_diagnostic_message(ui, message);
-                }
+            for message in messages.iter() {
+                self.render_diagnostic_message(ui, message);
             }
-            
-            if self.enhanced_ai_playground.threads.is_empty() {
+            if threads_empty {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.);
                     ui.heading("Welcome to Computer Diagnostics");
@@ -396,13 +423,13 @@ impl SharedContext {
     }
 
     fn show_shell_content(&mut self, ui: &mut Ui) {
+        let suggestions: Vec<String> = self.enhanced_ai_playground.completion_suggestions.clone();
         ScrollArea::vertical().show(ui, |ui| {
             ui.heading("⚡ Shell Command Assistant");
             ui.separator();
-            
-            if !self.enhanced_ai_playground.completion_suggestions.is_empty() {
+            if !suggestions.is_empty() {
                 ui.label("Command Completions:");
-                for suggestion in &self.enhanced_ai_playground.completion_suggestions {
+                for suggestion in &suggestions {
                     ui.horizontal(|ui| {
                         if ui.button("▶").clicked() {
                             // Execute command suggestion
@@ -503,7 +530,7 @@ impl SharedContext {
         }
     }
 
-    fn run_diagnostic_tool(&mut self, tool_name: &str, params: serde_json::Value) {
+    fn run_diagnostic_tool(&mut self, tool_name: &str, _params: serde_json::Value) {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let response_tx = self.enhanced_ai_playground.response_tx.clone();
