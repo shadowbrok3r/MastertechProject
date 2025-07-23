@@ -172,13 +172,13 @@ impl AdminConsole {
                         // This would trigger opening the enhanced AI playground
                         // For now, show a message
                         ui.ctx().memory_mut(|mem| {
-                            mem.insert_temp(Id::new("show_ai_message"), true);
+                            mem.data.insert_temp(Id::new("show_ai_message"), true);
                         });
                     }
                     
                     ui.add_space(20.);
                     
-                    if ui.ctx().memory(|mem| mem.get_temp::<bool>(Id::new("show_ai_message")).unwrap_or(false)) {
+                    if ui.ctx().memory(|mem| mem.data.get_temp::<bool>(Id::new("show_ai_message")).unwrap_or(false)) {
                         ui.colored_label(Color32::LIGHT_GREEN, "🎉 Enhanced AI Playground will open in a separate tab!");
                         ui.label("Use the 'AI Playground' tab in the main interface to access the full AI diagnostic capabilities.");
                     }
