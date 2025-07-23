@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, tabs::tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, PlatformSpawner, Spawner};
+use crate::{channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, PlatformSpawner, Spawner};
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, ScrollArea, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, Sortable};
 use crossbeam::channel::{Receiver, Sender};
@@ -52,6 +52,7 @@ pub struct AdminConsole {
     pub ws_clients: HashMap<String, WebSocketClient>,
     pub error: String,
     script_editor: ScriptEditor,
+    pub ai_playground: EnhancedAiPlayground,
 }
 
 impl AdminConsole {
@@ -72,7 +73,8 @@ impl AdminConsole {
             ui_actions_channel,
             error: Default::default(),
             state: Default::default(),
-            script_editor: ScriptEditor::new()
+            script_editor: ScriptEditor::new(),
+            ai_playground: EnhancedAiPlayground::default()
         }
     }
 
@@ -222,7 +224,7 @@ impl SharedContext {
                 });
                 ws_layout.error.clear();
             }
-            ws_layout.ui_with_context(ui, Some(self));
+            ws_layout.ui(ui);
         });
     }
 
