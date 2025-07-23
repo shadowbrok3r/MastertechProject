@@ -7,15 +7,12 @@ use crate::{
     tabs::ai_playground::{ChatMessage, ChatThread, SentFrom, ChatMessageType},
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::mcp::{McpService, LlmProvider};
-
 use std::collections::HashMap;
 use crossbeam::channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use log::info;
 
-/// Enhanced AI playground with MCP diagnostic capabilities
+/// Enhanced AI playground with diagnostic capabilities
 pub struct EnhancedAiPlayground {
     pub selected_thread: String,
     pub chat_title: HashMap<String, String>,
@@ -27,11 +24,8 @@ pub struct EnhancedAiPlayground {
     pub image_id: String,
     pub open_modal: bool,
     
-    // MCP-specific fields
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mcp_service: McpService,
+    // Enhanced features
     pub current_mode: AiMode,
-    pub llm_provider: LlmProvider,
     pub show_provider_config: bool,
     
     // Diagnostic features
@@ -71,10 +65,7 @@ impl Default for EnhancedAiPlayground {
             image_id: String::new(),
             open_modal: false,
             
-            #[cfg(not(target_arch = "wasm32"))]
-            mcp_service: McpService::default(),
             current_mode: AiMode::Chat,
-            llm_provider: LlmProvider::default(),
             show_provider_config: false,
             
             pending_approvals: Vec::new(),
@@ -124,20 +115,8 @@ impl SharedContext {
                     ui.separator();
                     ui.horizontal(|ui| {
                         ui.label("Provider:");
-                        match &mut self.enhanced_ai_playground.llm_provider {
-                            LlmProvider::OpenAI { model, .. } => {
-                                ComboBox::from_label("OpenAI Model")
-                                    .selected_text(model.as_str())
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(model, "gpt-4".to_string(), "GPT-4");
-                                        ui.selectable_value(model, "gpt-4-turbo".to_string(), "GPT-4 Turbo");
-                                        ui.selectable_value(model, "gpt-3.5-turbo".to_string(), "GPT-3.5 Turbo");
-                                    });
-                            }
-                            _ => {
-                                ui.label("Other providers coming soon...");
-                            }
-                        }
+                        ui.label("OpenAI GPT-4 (Default)");
+                        ui.label("🟢 Connected");
                     });
                 }
             });
@@ -488,39 +467,33 @@ impl SharedContext {
     }
 
     fn send_diagnostic_request(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
-                let input = thread.input.clone();
-                let response_tx = self.enhanced_ai_playground.response_tx.clone();
-                
-                PlatformSpawner::spawn(async move {
-                    // This would integrate with MCP diagnostic tools
-                    let response = ChatMessage {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        thread_id: "diagnostic".to_string(),
-                        ts: chrono::Utc::now().timestamp() as i32,
-                        from: SentFrom::Gpt,
-                        content: ChatMessageType::Text(format!("Analyzing: {}", input)),
-                    };
-                    let _ = response_tx.send(response);
-                });
-            }
+        if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
+            let input = thread.input.clone();
+            let response_tx = self.enhanced_ai_playground.response_tx.clone();
+            
+            PlatformSpawner::spawn(async move {
+                // This would integrate with diagnostic tools
+                let response = ChatMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    thread_id: "diagnostic".to_string(),
+                    ts: chrono::Utc::now().timestamp() as i32,
+                    from: SentFrom::Gpt,
+                    content: ChatMessageType::Text(format!("Analyzing: {}", input)),
+                };
+                let _ = response_tx.send(response);
+            });
         }
     }
 
     fn get_command_completions(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let partial_command = self.enhanced_ai_playground.last_partial_command.clone();
-            if !partial_command.is_empty() {
-                // This would use MCP command completion
-                self.enhanced_ai_playground.completion_suggestions = vec![
-                    format!("{} /?", partial_command),
-                    format!("{}list", partial_command),
-                    format!("{}info", partial_command),
-                ];
-            }
+        let partial_command = self.enhanced_ai_playground.last_partial_command.clone();
+        if !partial_command.is_empty() {
+            // This would use command completion
+            self.enhanced_ai_playground.completion_suggestions = vec![
+                format!("{} /?", partial_command),
+                format!("{}list", partial_command),
+                format!("{}info", partial_command),
+            ];
         }
     }
 
@@ -531,23 +504,20 @@ impl SharedContext {
     }
 
     fn run_diagnostic_tool(&mut self, tool_name: &str, _params: serde_json::Value) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let response_tx = self.enhanced_ai_playground.response_tx.clone();
-            let tool_name = tool_name.to_string();
-            
-            PlatformSpawner::spawn(async move {
-                // This would run the actual MCP diagnostic tool
-                let response = ChatMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    thread_id: "diagnostic".to_string(),
-                    ts: chrono::Utc::now().timestamp() as i32,
-                    from: SentFrom::Gpt,
-                    content: ChatMessageType::Text(format!("Running {}...", tool_name)),
-                };
-                let _ = response_tx.send(response);
-            });
-        }
+        let response_tx = self.enhanced_ai_playground.response_tx.clone();
+        let tool_name = tool_name.to_string();
+        
+        PlatformSpawner::spawn(async move {
+            // This would run the actual diagnostic tool
+            let response = ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                thread_id: "diagnostic".to_string(),
+                ts: chrono::Utc::now().timestamp() as i32,
+                from: SentFrom::Gpt,
+                content: ChatMessageType::Text(format!("Running {}...", tool_name)),
+            };
+            let _ = response_tx.send(response);
+        });
     }
 
     fn render_chat_message(&self, ui: &mut Ui, message: &ChatMessage) {

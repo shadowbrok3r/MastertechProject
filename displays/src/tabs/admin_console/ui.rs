@@ -5,6 +5,7 @@ use crossbeam::channel::Sender;
 use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
 use log::info;
+use crate::app_state::SharedContext;
 
 use super::{AdminConsole, WebConsolePageState};
 
@@ -141,6 +142,10 @@ impl AdminConsole {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
+        self.ui_with_context(ui, None);
+    }
+
+    pub fn ui_with_context(&mut self, ui: &mut Ui, context: Option<&mut SharedContext>) {
         match self.state {
             WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
@@ -189,6 +194,70 @@ impl AdminConsole {
                     
                     ui.label("💡 Tip: Enable AI Command Completion in the remote terminal shells for intelligent command suggestions.");
                 });
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            WebConsolePageState::AiPlayground => {
+                if let Some(ctx) = context {
+                    // Show the actual enhanced AI playground
+                    ctx.enhanced_ai_playground(ui);
+                } else {
+                    // Fallback UI when context is not available
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(20.);
+                        ui.heading("🎮 Enhanced AI Playground");
+                        ui.add_space(10.);
+                        ui.label("Enhanced AI playground with diagnostic capabilities");
+                        ui.add_space(20.);
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("Mode:");
+                            ui.selectable_label(true, "💬 Chat");
+                            ui.selectable_label(false, "🔧 Diagnostics");
+                            ui.selectable_label(false, "⚡ Shell Assistant");
+                        });
+                        
+                        ui.add_space(20.);
+                        ui.separator();
+                        ui.add_space(20.);
+                        
+                        // Chat interface placeholder
+                        ui.vertical(|ui| {
+                            ui.heading("Chat Interface");
+                            ui.label("💬 Start a conversation with the AI assistant");
+                            ui.add_space(10.);
+                            
+                            // Message input area
+                            ui.horizontal(|ui| {
+                                ui.text_edit_multiline(&mut String::new());
+                                if ui.button("Send").clicked() {
+                                    // Handle send
+                                }
+                            });
+                        });
+                        
+                        ui.add_space(20.);
+                        ui.separator();
+                        
+                        // Diagnostic tools
+                        ui.vertical(|ui| {
+                            ui.heading("🔧 Diagnostic Tools");
+                            ui.horizontal(|ui| {
+                                if ui.button("🟦 Analyze BSOD").clicked() {
+                                    info!("BSOD analysis clicked");
+                                }
+                                if ui.button("📋 Event Logs").clicked() {
+                                    info!("Event logs clicked");
+                                }
+                                if ui.button("📊 Performance").clicked() {
+                                    info!("Performance analysis clicked");
+                                }
+                                if ui.button("🖥️ System Summary").clicked() {
+                                    info!("System summary clicked");
+                                }
+                            });
+                        });
+                    });
+                }
             },
             _ => {
                 for client in self.clients.iter() {

@@ -23,6 +23,8 @@ pub enum WebConsolePageState {
     ScriptEditor,
     #[cfg(not(target_arch = "wasm32"))]
     AiAssistant,
+    #[cfg(not(target_arch = "wasm32"))]
+    AiPlayground,
 }
 
 #[derive(Serialize)]
@@ -152,6 +154,15 @@ impl SharedContext {
                 {
                     self.web_console_layout.state = WebConsolePageState::AiAssistant;
                 }
+                ui.add_space(5.);
+                #[cfg(not(target_arch = "wasm32"))]
+                if Button::new("🎮 AI Playground")
+                    .min_size(Vec2::new(95.0, 15.0))
+                    .ui(ui)
+                    .clicked() 
+                {
+                    self.web_console_layout.state = WebConsolePageState::AiPlayground;
+                }
             });
         });
 
@@ -211,7 +222,7 @@ impl SharedContext {
                 });
                 ws_layout.error.clear();
             }
-            ws_layout.ui(ui);
+            ws_layout.ui_with_context(ui, Some(self));
         });
     }
 
