@@ -13,12 +13,15 @@ use serde::{Deserialize, Serialize};
 use log::info;
 
 /// Enhanced AI playground with diagnostic capabilities
+#[derive(Serialize)]
 pub struct EnhancedAiPlayground {
     pub selected_thread: String,
     pub chat_title: HashMap<String, String>,
     pub edit_title: bool,
     pub threads: HashMap<String, ChatThread>,
+    #[serde(skip)]
     pub response_tx: Sender<ChatMessage>,
+    #[serde(skip)]
     pub response_rx: Receiver<ChatMessage>,
     pub save_chats: bool,
     pub image_id: String,
@@ -34,7 +37,7 @@ pub struct EnhancedAiPlayground {
     pub last_partial_command: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum AiMode {
     Chat,           // Regular chat mode
     Diagnostics,    // Computer diagnostics mode
@@ -75,7 +78,7 @@ impl Default for EnhancedAiPlayground {
     }
 }
 
-impl SharedContext {
+impl EnhancedAiPlayground {
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
         // Top panel with mode selection and provider config
         TopBottomPanel::top("enhanced_ai_top")
@@ -86,24 +89,24 @@ impl SharedContext {
                     // Mode selection
                     ui.label(RichText::new("Mode:").strong());
                     ComboBox::from_label("")
-                        .selected_text(format!("{:?}", self.enhanced_ai_playground.current_mode))
+                        .selected_text(format!("{:?}", self.current_mode))
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.enhanced_ai_playground.current_mode, AiMode::Chat, "💬 Chat");
-                            ui.selectable_value(&mut self.enhanced_ai_playground.current_mode, AiMode::Diagnostics, "🔧 Diagnostics");
-                            ui.selectable_value(&mut self.enhanced_ai_playground.current_mode, AiMode::Shell, "⚡ Shell Assistant");
+                            ui.selectable_value(&mut self.current_mode, AiMode::Chat, "💬 Chat");
+                            ui.selectable_value(&mut self.current_mode, AiMode::Diagnostics, "🔧 Diagnostics");
+                            ui.selectable_value(&mut self.current_mode, AiMode::Shell, "⚡ Shell Assistant");
                         });
 
                     ui.add_space(20.);
 
                     // Provider configuration
-                    if ui.button("⚙️ Provider Config").clicked() {
-                        self.enhanced_ai_playground.show_provider_config = !self.enhanced_ai_playground.show_provider_config;
+                    if ui.button("⚙ Provider Config").clicked() {
+                        self.show_provider_config = !self.show_provider_config;
                     }
 
                     ui.add_space(ui.available_width() - 200.);
 
                     // Status indicator
-                    match self.enhanced_ai_playground.current_mode {
+                    match self.current_mode {
                         AiMode::Chat => ui.label(RichText::new("💬 Ready for conversation").color(Color32::LIGHT_GREEN)),
                         AiMode::Diagnostics => ui.label(RichText::new("🔧 Diagnostic tools available").color(Color32::LIGHT_BLUE)),
                         AiMode::Shell => ui.label(RichText::new("⚡ Command completion active").color(Color32::YELLOW)),
@@ -111,12 +114,12 @@ impl SharedContext {
                 });
 
                 // Provider configuration row
-                if self.enhanced_ai_playground.show_provider_config {
+                if self.show_provider_config {
                     ui.separator();
                     ui.horizontal(|ui| {
                         ui.label("Provider:");
                         ui.label("OpenAI GPT-4 (Default)");
-                        ui.label("🟢 Connected");
+                        ui.label("⊙ Connected");
                     });
                 }
             });
@@ -126,7 +129,7 @@ impl SharedContext {
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_width(220.)
             .show_inside(ui, |ui| {
-                match self.enhanced_ai_playground.current_mode {
+                match self.current_mode {
                     AiMode::Chat => self.show_chat_sidebar(ui),
                     AiMode::Diagnostics => self.show_diagnostics_sidebar(ui),
                     AiMode::Shell => self.show_shell_sidebar(ui),
@@ -138,7 +141,7 @@ impl SharedContext {
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(80.)
             .show_inside(ui, |ui| {
-                match self.enhanced_ai_playground.current_mode {
+                match self.current_mode {
                     AiMode::Chat => self.show_chat_input(ui),
                     AiMode::Diagnostics => self.show_diagnostics_input(ui),
                     AiMode::Shell => self.show_shell_input(ui),
@@ -149,7 +152,7 @@ impl SharedContext {
         CentralPanel::default()
             .frame(Frame::dark_canvas(ui.style()))
             .show_inside(ui, |ui| {
-                match self.enhanced_ai_playground.current_mode {
+                match self.current_mode {
                     AiMode::Chat => self.show_chat_content(ui),
                     AiMode::Diagnostics => self.show_diagnostics_content(ui),
                     AiMode::Shell => self.show_shell_content(ui),
@@ -166,9 +169,9 @@ impl SharedContext {
             ui.separator();
 
             // Show existing threads
-            let selected_thread = self.enhanced_ai_playground.selected_thread.clone();
-            for (thread_id, _) in self.enhanced_ai_playground.threads.iter() {
-                let title = self.enhanced_ai_playground.chat_title
+            let selected_thread = self.selected_thread.clone();
+            for (thread_id, _) in self.threads.iter() {
+                let title = self.chat_title
                     .get(thread_id)
                     .unwrap_or(thread_id);
 
@@ -176,7 +179,7 @@ impl SharedContext {
                     selected_thread.eq(thread_id), 
                     RichText::new(title)
                 ).clicked() {
-                    self.enhanced_ai_playground.selected_thread = thread_id.clone();
+                    self.selected_thread = thread_id.clone();
                 }
             }
 
@@ -223,7 +226,7 @@ impl SharedContext {
             ui.separator();
             ui.heading("⏳ Pending Approvals");
 
-            for approval in &self.enhanced_ai_playground.pending_approvals {
+            for approval in &self.pending_approvals {
                 ui.group(|ui| {
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&approval.description).strong());
@@ -249,10 +252,10 @@ impl SharedContext {
 
             ui.label("Recent Commands:");
             ScrollArea::vertical().max_height(200.).show(ui, |ui| {
-                for suggestion in &self.enhanced_ai_playground.completion_suggestions {
+                for suggestion in &self.completion_suggestions {
                     if ui.button(suggestion).clicked() {
                         // Use this suggestion
-                        if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+                        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
                             thread.input = suggestion.clone();
                         }
                     }
@@ -278,7 +281,7 @@ impl SharedContext {
     }
 
     fn show_chat_input(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
             // Move input to a local variable to avoid borrow issues
             let mut input = thread.input.clone();
             let mut send = false;
@@ -302,7 +305,7 @@ impl SharedContext {
     }
 
     fn show_diagnostics_input(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
             let mut input = thread.input.clone();
             let mut analyze = false;
             ui.vertical(|ui| {
@@ -328,7 +331,7 @@ impl SharedContext {
     }
 
     fn show_shell_input(&mut self, ui: &mut Ui) {
-        if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
             let mut input = thread.input.clone();
             let mut changed = false;
             let mut complete = false;
@@ -348,7 +351,7 @@ impl SharedContext {
                 thread.input = input.clone();
             }
             if changed {
-                self.enhanced_ai_playground.last_partial_command = input;
+                self.last_partial_command = input;
                 self.get_command_completions();
             }
             if complete {
@@ -359,7 +362,7 @@ impl SharedContext {
 
     fn show_chat_content(&mut self, ui: &mut Ui) {
         // Regular chat display (similar to existing implementation)
-        let messages = if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
+        let messages = if let Some(thread) = self.threads.get(&self.selected_thread) {
             thread.messages.clone()
         } else {
             Vec::new()
@@ -372,12 +375,12 @@ impl SharedContext {
     }
 
     fn show_diagnostics_content(&mut self, ui: &mut Ui) {
-        let messages = if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
+        let messages = if let Some(thread) = self.threads.get(&self.selected_thread) {
             thread.messages.clone()
         } else {
             Vec::new()
         };
-        let threads_empty = self.enhanced_ai_playground.threads.is_empty();
+        let threads_empty = self.threads.is_empty();
         ScrollArea::vertical().show(ui, |ui| {
             ui.heading("🔧 Computer Diagnostics");
             ui.separator();
@@ -402,7 +405,7 @@ impl SharedContext {
     }
 
     fn show_shell_content(&mut self, ui: &mut Ui) {
-        let suggestions: Vec<String> = self.enhanced_ai_playground.completion_suggestions.clone();
+        let suggestions: Vec<String> = self.completion_suggestions.clone();
         ScrollArea::vertical().show(ui, |ui| {
             ui.heading("⚡ Shell Command Assistant");
             ui.separator();
@@ -433,10 +436,10 @@ impl SharedContext {
     }
 
     fn handle_enhanced_ai_events(&mut self, ui: &mut Ui) {
-        while let Ok(response) = self.enhanced_ai_playground.response_rx.try_recv() {
+        while let Ok(response) = self.response_rx.try_recv() {
             ui.ctx().request_repaint();
             
-            let current_thread = self.enhanced_ai_playground.threads
+            let current_thread = self.threads
                 .entry(response.thread_id.clone())
                 .or_insert_with(|| ChatThread {
                     id: response.thread_id.clone(),
@@ -452,8 +455,8 @@ impl SharedContext {
     // Helper methods
     fn create_new_chat_thread(&mut self) {
         let thread_id = uuid::Uuid::new_v4().to_string();
-        self.enhanced_ai_playground.selected_thread = thread_id.clone();
-        self.enhanced_ai_playground.threads.insert(thread_id.clone(), ChatThread {
+        self.selected_thread = thread_id.clone();
+        self.threads.insert(thread_id.clone(), ChatThread {
             id: thread_id,
             messages: Vec::new(),
             images: Vec::new(),
@@ -467,9 +470,9 @@ impl SharedContext {
     }
 
     fn send_diagnostic_request(&mut self) {
-        if let Some(thread) = self.enhanced_ai_playground.threads.get(&self.enhanced_ai_playground.selected_thread) {
+        if let Some(thread) = self.threads.get(&self.selected_thread) {
             let input = thread.input.clone();
-            let response_tx = self.enhanced_ai_playground.response_tx.clone();
+            let response_tx = self.response_tx.clone();
             
             PlatformSpawner::spawn(async move {
                 // This would integrate with diagnostic tools
@@ -486,10 +489,10 @@ impl SharedContext {
     }
 
     fn get_command_completions(&mut self) {
-        let partial_command = self.enhanced_ai_playground.last_partial_command.clone();
+        let partial_command = self.last_partial_command.clone();
         if !partial_command.is_empty() {
             // This would use command completion
-            self.enhanced_ai_playground.completion_suggestions = vec![
+            self.completion_suggestions = vec![
                 format!("{} /?", partial_command),
                 format!("{}list", partial_command),
                 format!("{}info", partial_command),
@@ -498,13 +501,13 @@ impl SharedContext {
     }
 
     fn suggest_command(&mut self, command: &str) {
-        if let Some(thread) = self.enhanced_ai_playground.threads.get_mut(&self.enhanced_ai_playground.selected_thread) {
+        if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
             thread.input = command.to_string();
         }
     }
 
     fn run_diagnostic_tool(&mut self, tool_name: &str, _params: serde_json::Value) {
-        let response_tx = self.enhanced_ai_playground.response_tx.clone();
+        let response_tx = self.response_tx.clone();
         let tool_name = tool_name.to_string();
         
         PlatformSpawner::spawn(async move {
