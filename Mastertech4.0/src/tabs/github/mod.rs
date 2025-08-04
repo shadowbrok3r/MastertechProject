@@ -9,7 +9,7 @@ use egui_extras::{Column, TableBuilder};
 use futures::StreamExt;
 use log::{error, info};
 use reqwest::{
-    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+    header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
     Client,
 };
 use self_updater::{Asset, GithubRelease};
@@ -18,7 +18,6 @@ use tokio::spawn;
 use crate::app_state::MastertechContext;
 
 use self::issues::create_new_issue;
-const TOKEN: &str = "Bearer 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";
 
 pub mod issues;
 pub mod self_updater;
@@ -193,7 +192,7 @@ pub async fn get_github_releases(
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "shadowbrok3r")
-        .header("Authorization", TOKEN)
+        .bearer_auth(database::DOWNLOAD_TOKEN)
         .send()
         .await?
         .json()
@@ -215,7 +214,7 @@ pub async fn download_release(
     if !asset.url.is_empty() {
         let resp = client
             .get(&asset.url)
-            .header(AUTHORIZATION, TOKEN)
+            .bearer_auth(database::DOWNLOAD_TOKEN)
             .header(ACCEPT, "application/octet-stream")
             .header(CONTENT_TYPE, "application/octet-stream")
             .header(USER_AGENT, "shadowbrok3r")

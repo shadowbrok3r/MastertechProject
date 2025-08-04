@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-pub const TOKEN: &str =
-    "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";
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct GithubRelease {
@@ -40,7 +39,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
         .header(ACCEPT, "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header(USER_AGENT, "shadowbrok3r")
-        .bearer_auth(TOKEN)
+        .bearer_auth(database::DOWNLOAD_TOKEN)
         .send()
         .await?
         .json()
@@ -59,7 +58,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 .header(CONTENT_TYPE, "application/octet-stream")
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .header(USER_AGENT, "shadowbrok3r")
-                .bearer_auth(TOKEN)
+                .bearer_auth(database::DOWNLOAD_TOKEN)
                 .send()
                 .await
                 .map_err(|e| {
