@@ -15,8 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{app_state::SharedContext, markdown_editor, PlatformSpawner, Spawner};
 
-pub const TOKEN: &str = "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";
-
 pub struct GithubIssue {
     pub github_issue_descript: String,
     pub github_issue_title: String,
@@ -119,7 +117,7 @@ pub async fn create_new_issue(
     let params = serde_json::json!({ "title": title, "body": body, "assignees": ["shadowbrok3r"], "labels": ["bug"] });
     let res = client
         .post("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/issues")
-        .bearer_auth(TOKEN)
+        .bearer_auth(database::ISSUE_TOKEN)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
         // .header("X-GitHub-Api-Version", "2022-11-28")
