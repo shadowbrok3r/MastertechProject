@@ -22,6 +22,9 @@ pub const WS_CLIENT_URL_LOCAL: &str = "ws://localhost:8081/websocket?role=client
 pub const WS_MASTER_URL_LOCAL: &str = "ws://localhost:8081/websocket?role=master";
 pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
 pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
+pub const ISSUE_TOKEN: &str = "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";
+pub const DOWNLOAD_TOKEN: &str = "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";
+
 
 // The static variable holding the currently logged-in user (if any)
 // Wrapped in Mutex for safe interior mutability

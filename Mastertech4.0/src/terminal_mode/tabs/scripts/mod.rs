@@ -86,8 +86,10 @@ pub struct ScriptsTab<'a> {
     current_script: RefCell<Option<(Category, String)>>, 
     is_popup_open: RefCell<bool>,
     // destination_directory: String,
-    data_transfer_progress_tx: Sender<Vec<u8>>,
-    data_transfer_progress_rx: Receiver<Vec<u8>>,
+    data_transfer_progress_tx: Sender<(f64, f64)>,
+    data_transfer_progress_rx: Receiver<(f64, f64)>,
+    total_bytes_read: f64,
+    total_byes_written: f64,
     source_directories: Vec<(String, String)>,
     
     has_scrolled_manually: RefCell<bool>,
@@ -241,6 +243,8 @@ impl<'a> ScriptsTab<'a> {
             path_size_rx,
             data_transfer_progress_tx, 
             data_transfer_progress_rx, 
+            total_bytes_read: 0.0,
+            total_byes_written: 0.0,
             progress_tx, progress_rx,
 
             checklists,
@@ -345,16 +349,23 @@ impl<'a> ScriptsTab<'a> {
         }
 
 
-        if let Ok(data_transfer_progress) = self.data_transfer_progress_rx.try_recv() {
-            let out = String::from_utf8(data_transfer_progress);
-            match out {
-                Ok(output) => {
-                    // Replace tabs with 4 spaces
-                    let cleaned_output = output.trim_ascii().replace("\t", "    ");
-                    self.log_message(cleaned_output);
-                },
-                Err(e) => self.log_message(format!("FromUTF8 Err: {e:?}")),
+        if let Ok((total_read, total_written)) = self.data_transfer_progress_rx.try_recv() {
+            if self.total_bytes_read != total_read {
+                self.total_bytes_read = total_read;
             }
+            if self.total_byes_written != total_written {
+                self.total_byes_written = total_written;
+            }
+
+            // let out = String::from_utf8(data_transfer_progress);
+            // match out {
+            //     Ok(output) => {
+            //         // Replace tabs with 4 spaces
+            //         let cleaned_output = output.trim_ascii().replace("\t", "    ");
+            //         self.log_message(cleaned_output);
+            //     },
+            //     Err(e) => self.log_message(format!("FromUTF8 Err: {e:?}")),
+            // }
         }
 
         #[cfg(target_os="windows")]

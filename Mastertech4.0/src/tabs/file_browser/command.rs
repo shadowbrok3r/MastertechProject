@@ -1,6 +1,7 @@
-use std::{env, fs::create_dir, path::PathBuf, process::Stdio};
+use std::{env, fs::create_dir, path::PathBuf, process::Stdio, time::Duration};
 use chrono::Utc;
-use tokio::{fs, io::{AsyncBufReadExt, BufReader}};
+use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
+use tokio::fs; //, io::{AsyncBufReadExt, BufReader}};
 use crossbeam::channel::Sender;
 use fs_extra::dir::get_size;
 use log::{debug, error};
@@ -189,7 +190,7 @@ impl FileBrowser{
 pub async fn run_robocopy(
     source: &PathBuf, 
     destination: &PathBuf,
-    tx: Sender<Vec<u8>>
+    tx: Sender<(f64, f64)>
 ) -> anyhow::Result<(), anyhow::Error> {
     if !source.exists() && !destination.exists() {
         return Err(
@@ -203,6 +204,8 @@ pub async fn run_robocopy(
 
     let source_user_name = source.file_name().clone().unwrap_or_default();
     let backup_folder = destination.join("Desktop").join("UsersBackup").join(source_user_name);
+    let log_location = destination.join("Desktop").join(format!("Robocopy-{}.txt", Utc::now().date_naive().format("%Y-%m-%d")));
+    let log_arg = format!("/LOG:{}", log_location.display());
     std::fs::create_dir_all(&backup_folder)?;
 
     log::info!(
@@ -213,7 +216,7 @@ pub async fn run_robocopy(
         backup_folder,
     );
 
-    let mut process = tokio::process::Command::new("robocopy")
+    let process = tokio::process::Command::new("robocopy")
         .arg(source)
         .arg(backup_folder)
         .arg("*.*")
@@ -226,44 +229,63 @@ pub async fn run_robocopy(
         .arg("/ZB")
         .arg("/bytes")
         .arg("/np")
-        .arg(format!("/LOG:Robocopy-{}", Utc::now().date_naive().format("%Y-%m-%d")))
+        .arg(log_arg)
         .arg(format!("/MT:{}", sysinfo::System::physical_core_count().unwrap_or(4)))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
 
     // Create a Tokio stream for stdout
-    let stdout = process.stdout.take().expect("Failed to get stdout");
+    // let stdout = process.stdout.take().expect("Failed to get stdout");
     // Create a Tokio stream for stderr
-    let stderr = process.stderr.take().expect("Failed to get stderr");
-
-    let mut stdout_reader = BufReader::new(stdout).lines();
-    let mut stderr_reader = BufReader::new(stderr).lines();
+    // let stderr = process.stderr.take().expect("Failed to get stderr");
+    let pid = process.id();
+    // let mut stdout_reader = BufReader::new(stdout).lines();
+    // let mut stderr_reader = BufReader::new(stderr).lines();
     
-    let tx_clone = tx.clone();
+    // let tx_clone = tx.clone();
     tokio::spawn(async move {
-        while let Some(line) = stderr_reader.next_line().await? {
-            tx_clone.try_send(line.into_bytes()).ok();
+        // while let Some(line) = stderr_reader.next_line().await? {
+        //     tx_clone.try_send(line.into_bytes()).ok();
+        // }
+        let sys = sysinfo::System::new_with_specifics(
+            RefreshKind::default().with_processes(
+                ProcessRefreshKind::default().with_disk_usage()
+            )
+        );
+
+        // let output = process.t().await?;
+
+        if let Some(pid) = pid {
+            if let Some(process_info) = sys.process(Pid::from_u32(pid)) {
+                let total_read = process_info.disk_usage().total_read_bytes;
+                let total_written = process_info.disk_usage().total_written_bytes;
+                // let x = process_info.
+                let total_read_mb = total_read as f64 / 1_048_576.0;
+                let total_written_mb = total_written as f64 / 1_048_576.0;
+                tx.try_send((total_read_mb, total_written_mb)).ok();
+                tokio::time::sleep(Duration::from_secs_f32(0.1)).await;
+            }
         }
         Ok::<(), anyhow::Error>(())
     });
 
-    let tx_clone = tx.clone();
-    tokio::spawn(async move {
-        while let Some(line) = stdout_reader.next_line().await? {
-            tx_clone.try_send(line.into_bytes()).ok();
-        }
-        Ok::<(), anyhow::Error>(())
-    });
+    // let tx_clone = tx.clone();
+    // tokio::spawn(async move {
+    //     while let Some(line) = stdout_reader.next_line().await? {
+    //         tx_clone.try_send(line.into_bytes()).ok();
+    //     }
+    //     Ok::<(), anyhow::Error>(())
+    // });
 
-    let output = process.wait_with_output().await?;
-    info!("robocopy -> output: {:?}", output);
+    // let output = process.wait_with_output().await?;
+    // info!("robocopy -> output: {:?}", output);
 
-    let tx_clone = tx.clone();
-    if !output.status.success() {
-        info!("robocopy -> output status not successful");
-        tx_clone.try_send(output.stderr).ok();
-    }
+    // let tx_clone = tx.clone();
+    // if !output.status.success() {
+    //     info!("robocopy -> output status not successful");
+    //     tx_clone.try_send(output.stderr).ok();
+    // }
 
     Ok(())
 }
