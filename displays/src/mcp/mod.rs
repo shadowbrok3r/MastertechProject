@@ -5,6 +5,8 @@ pub mod server;
 pub mod tools;
 pub mod types;
 
+use std::sync::Arc;
+
 pub use client::*;
 pub use server::*;
 pub use tools::*;
@@ -15,8 +17,8 @@ use tokio::sync::mpsc;
 
 /// MCP service for handling AI-powered computer diagnostics
 pub struct McpService {
-    pub server: Option<DiagnosticServer>,
-    pub client: Option<McpClient>,
+    pub server: Option<Arc<DiagnosticServer>>,
+    pub client: Option<Arc<McpClient>>,
     pub command_tx: mpsc::UnboundedSender<DiagnosticCommand>,
     pub response_rx: mpsc::UnboundedReceiver<DiagnosticResponse>,
 }
@@ -41,17 +43,14 @@ impl McpService {
         let server = create_diagnostic_server().await
             .context("Failed to create diagnostic server")?;
         
-        self.server = Some(server);
+        self.server = Some(Arc::new(server));
         Ok(())
     }
 
     /// Initialize MCP client for external AI providers
-    pub async fn init_client(&mut self, provider: LlmProvider) -> Result<()> {
-        let client = McpClient::new(provider).await
-            .context("Failed to create MCP client")?;
-        
-        self.client = Some(client);
-        Ok(())
+    pub fn init_client(mut self, provider: LlmProvider) -> Self {
+        self.client = Some(Arc::new(McpClient::new(provider)));
+        self
     }
 
     /// Execute a diagnostic command through MCP

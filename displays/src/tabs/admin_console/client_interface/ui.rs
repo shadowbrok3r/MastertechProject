@@ -12,12 +12,12 @@ pub enum WsDisplayState {
 }
 
 impl WebSocketClient {
-    pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
+    pub fn show(&mut self, ui: &mut Ui) {
         self.receive(ui.ctx());
         ui.set_min_height(600.);
 
         TopBottomPanel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
-        .exact_height(26.)// .frame(top_frame)
+        .exact_height(35.)
         .show_inside(ui, |ui| 
         {
             ui.add_space(2.);
@@ -74,9 +74,9 @@ impl WebSocketClient {
                     
                     // Connection status indicator
                     let (status_color, status_text) = if self.is_connected {
-                        (Color32::GREEN, "●")
+                        (Color32::GREEN, "✔")
                     } else {
-                        (Color32::RED, "●")
+                        (Color32::RED, "✖")
                     };
                     
                     ui.colored_label(status_color, status_text);
@@ -93,7 +93,7 @@ impl WebSocketClient {
                     
                     // Persistent shell indicator
                     if self.persistent_shell_mode {
-                        ui.colored_label(Color32::YELLOW, "🔗 Persistent Shell");
+                        ui.colored_label(Color32::YELLOW, "🖳 Persistent Shell");
                     }
                 });
 

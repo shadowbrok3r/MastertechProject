@@ -119,7 +119,7 @@ impl EnhancedAiPlayground {
                     ui.horizontal(|ui| {
                         ui.label("Provider:");
                         ui.label("OpenAI GPT-4 (Default)");
-                        ui.label("⊙ Connected");
+                        ui.label("⭕ Connected");
                     });
                 }
             });
@@ -196,7 +196,7 @@ impl EnhancedAiPlayground {
             ui.heading("🔧 Diagnostic Tools");
             ui.separator();
 
-            if ui.button("🟦 Analyze BSOD Dumps").clicked() {
+            if ui.button("🕱 Analyze BSOD Dumps").clicked() {
                 self.run_diagnostic_tool("analyze_bsod", serde_json::json!({"include_recent": true}));
             }
 
@@ -215,7 +215,7 @@ impl EnhancedAiPlayground {
                 }));
             }
 
-            if ui.button("🖥️ System Summary").clicked() {
+            if ui.button("💻 System Summary").clicked() {
                 self.run_diagnostic_tool("get_system_summary", serde_json::json!({
                     "include_hardware": true,
                     "include_software": true,
@@ -268,7 +268,7 @@ impl EnhancedAiPlayground {
             if ui.button("🔍 System Info").clicked() {
                 self.suggest_command("systeminfo");
             }
-            if ui.button("🗂️ List Processes").clicked() {
+            if ui.button("📂 List Processes").clicked() {
                 self.suggest_command("tasklist");
             }
             if ui.button("🌐 Network Status").clicked() {

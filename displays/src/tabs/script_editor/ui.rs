@@ -10,10 +10,9 @@ impl ScriptEditor {
         self.filesystem.receive();
         
         TopBottomPanel::top("Script editor top panel")
-            .exact_height(30.)
+            .exact_height(40.)
             .frame(
                 Frame::default()
-                .corner_radius(ui.style().visuals.resize_corner_size)
                 .fill(ui.style().visuals.extreme_bg_color)
                 .stroke(Stroke::new(1., Color32::from_additive_luminance(150)))
                 .outer_margin(Margin::symmetric(0, 2))
