@@ -16,7 +16,7 @@ pub struct McpClient {
 
 impl McpClient {
     /// Create a new MCP client for the specified LLM provider
-    pub async fn new(provider: LlmProvider) -> Result<Self> {
+    pub fn new(provider: LlmProvider) -> Self {
         let openai_client = match &provider {
             LlmProvider::OpenAI { api_key, .. } => {
                 let config = OpenAIConfig::new().with_api_key(api_key.clone());
@@ -35,13 +35,13 @@ impl McpClient {
         let (approval_tx, _approval_rx) = mpsc::unbounded_channel();
         let (_response_tx, approval_rx) = mpsc::unbounded_channel();
 
-        Ok(Self {
+        Self {
             provider,
             openai_client,
             approval_requests: HashMap::new(),
             approval_tx,
             approval_rx,
-        })
+        }
     }
 
     /// Execute a diagnostic command through the MCP client
@@ -92,7 +92,7 @@ impl McpClient {
         let model = match &self.provider {
             LlmProvider::OpenAI { model, .. } => model.clone(),
             LlmProvider::Azure { deployment, .. } => deployment.clone(),
-            _ => "gpt-4".to_string(),
+            _ => "gpt-4.1-mini".to_string(),
         };
 
         let user_prompt = format!(

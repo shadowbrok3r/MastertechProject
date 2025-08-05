@@ -23,7 +23,7 @@ impl PersistentShell {
 
     pub async fn start(&mut self) -> anyhow::Result<()> {
         let mut process = if cfg!(target_os = "windows") {
-            tokio::process::Command::new("cmd")
+            tokio::process::Command::new("powershell")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

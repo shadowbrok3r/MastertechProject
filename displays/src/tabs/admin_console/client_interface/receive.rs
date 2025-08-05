@@ -9,6 +9,72 @@ impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
         self.explorer.receive();
 
+        if let Ok(diagnostic_msg) = self.diagnostic_rx.try_recv() {
+            // log::warn!("Diagnostic info: {diagnostic_msg:?}");
+            match diagnostic_msg {
+                crate::mcp::DiagnosticResponse::BsodAnalysis { 
+                    summary, 
+                    crash_reason, 
+                    driver_issues, 
+                    recommendations, 
+                    dump_files_analyzed
+                } => {
+
+                },
+                crate::mcp::DiagnosticResponse::EventLogAnalysis { 
+                    summary, 
+                    critical_events, 
+                    error_patterns, 
+                    recommendations, 
+                    total_events_analyzed 
+                } => {
+
+                },
+                crate::mcp::DiagnosticResponse::PerformanceReport { 
+                    summary, 
+                    cpu_analysis, 
+                    memory_analysis, 
+                    disk_analysis, 
+                    network_analysis, 
+                    recommendations, 
+                    charts_data 
+                } => {
+
+                },
+                crate::mcp::DiagnosticResponse::SystemSummary { 
+                    overview, 
+                    hardware_summary, 
+                    software_summary, 
+                    network_summary, 
+                    health_score, 
+                    critical_issues 
+                } => {
+
+                },
+                crate::mcp::DiagnosticResponse::ScriptExecution { 
+                    success, 
+                    output, 
+                    error, 
+                    approval_required, 
+                    approved
+                } => {
+
+                },
+                crate::mcp::DiagnosticResponse::CommandCompletions { 
+                    completions, 
+                    context_info 
+                } => {
+                    self.command_suggestions.extend_from_slice(&completions);
+                },
+                crate::mcp::DiagnosticResponse::Error { 
+                    message, 
+                    details 
+                } => {
+
+                },
+            }
+        }
+
         if let Ok(msg) = self.msg_to_client_rx.try_recv() {
             self.ws_sender.send(msg);
         }
