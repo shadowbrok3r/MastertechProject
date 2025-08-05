@@ -1,36 +1,20 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, ComboBox, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use crate::{tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
-use crate::tabs::admin_console::WebSocketClient;
 use bincode::{config::standard, serde::*};
+use crate::mcp::CommandCompletion;
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::mcp::{DiagnosticCommand, ShellType, CommandCompletion};
+use crate::mcp::ShellType;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct History {
     pub from: String,
     pub message: String,
     pub timestamp: String
-}
-
-#[derive(Clone, Debug)]
-pub struct CommandSuggestion {
-    pub completion: String,
-    pub description: Option<String>,
-    pub confidence: f32,
-}
-
-impl Default for CommandSuggestion {
-    fn default() -> Self {
-        Self {
-            completion: String::new(),
-            description: None,
-            confidence: 0.0,
-        }
-    }
 }
 
 
@@ -70,12 +54,16 @@ impl WebSocketClient {
 
             // AI Command Completion Section
             ui.horizontal(|ui| {
-                ui.label("🤖");
+                ui.label("👾");
                 if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
                     if self.ai_completion_enabled {
                         ui.ctx().request_repaint();
                     }
                 }
+
+                /*
+                    Selectable labels for Command prompt, Powershell, etc.
+                */
                 
                 ui.add_space(10.);
                 
@@ -88,11 +76,12 @@ impl WebSocketClient {
                 }
             });
 
-            let text_edit = TextEdit::singleline(&mut self.input)
+            let text_edit = TextEdit::multiline(&mut self.input)
                 .hint_text("Use Wisely.. (Press Tab for AI suggestions)")
                 .margin(Margin::symmetric(10, 4))
                 .desired_width(ui.available_width())
                 .desired_rows(4)
+                // .return_key(return_key)
                 .layouter(&mut layouter)
                 .ui(ui);
             
@@ -100,7 +89,22 @@ impl WebSocketClient {
             if self.ai_completion_enabled && text_edit.changed() {
                 if self.input != self.last_partial_command && !self.input.is_empty() {
                     self.last_partial_command = self.input.clone();
-                    self.get_ai_command_completions();
+                    let partial_command = self.last_partial_command.clone();
+                    let tx = self.diagnostic_tx.clone();
+                    if let Some(client) = self.mcp_service.client.clone() {
+                        PlatformSpawner::spawn(async move {
+                            match client.execute_diagnostic(
+                                crate::mcp::DiagnosticCommand::GetCommandCompletions { 
+                                    partial_command, 
+                                    shell_type: ShellType::PowerShell, 
+                                    context: None
+                                }
+                            ).await {
+                                Ok(diagnostic_msg) => { let _ = tx.try_send(diagnostic_msg); },
+                                Err(e) => log::error!("Error executing command: {e:?}"),
+                            }
+                        });
+                    }
                 }
             }
             
@@ -109,7 +113,7 @@ impl WebSocketClient {
                 ui.add_space(5.);
                 ui.group(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("🤖 AI Command Suggestions:").strong().color(Color32::LIGHT_BLUE));
+                        ui.label(RichText::new("👾 AI Command Suggestions:").strong().color(Color32::LIGHT_BLUE));
                         
                         ScrollArea::vertical().max_height(150.).show(ui, |ui| {
                             for (idx, suggestion) in self.command_suggestions.iter().enumerate() {
@@ -152,8 +156,6 @@ impl WebSocketClient {
                     });
                 });
             }
-            
-
             
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
@@ -257,13 +259,13 @@ impl WebSocketClient {
         
         });
 
-        let central_panel_frame = Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
-            .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-            .inner_margin(Margin::same(6));
-
         // info!("avail_size: {:?}", avail_size);
         CentralPanel::default()
-            .frame(central_panel_frame)
+            .frame(
+                Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
+                .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+                .inner_margin(Margin::same(6))
+            )
             .show_inside(ui, |ui| 
         {
         // ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
@@ -277,9 +279,9 @@ impl WebSocketClient {
                 .stick_to_bottom(true)
                 .show(ui, |ui| 
             {
+                // ui.set_min_height(ui.available_height()/1.1);
                 ui.set_width(ui.available_width());
-                let max_msg_width = ui.available_width() / 1.2;
-                let fixed_height = 50.0;
+                let max_msg_width = ui.available_width() / 2.2;
 
                 // Display history messages
                 let mut display_messages = self.history.clone();
@@ -296,155 +298,129 @@ impl WebSocketClient {
                 // Render messages with improved styling
                 for item in &display_messages {
                     let is_message_from_myself = if item.from.eq("You"){ true } else { false };
-    
+                    let username_txt_color = ui.style().visuals.hyperlink_color;
+                    let from = if is_message_from_myself {
+                        RichText::new("Command Sent:").strong().monospace().color(username_txt_color)
+                    }else {
+                        RichText::new("Client Response:").strong().monospace().color(username_txt_color)
+                    };
                     // Messages from the user are right-aligned.
-                    let layout = if is_message_from_myself { 
+                    let layout = if is_message_from_myself {
                         Layout::top_down(Align::Max)
-                    } else { 
+                    } else {
                         Layout::top_down(Align::Min)
                     };
-    
+
                     let msg_color = if is_message_from_myself {
-                        ui.style().visuals.widgets.inactive.bg_fill
+                        ui.style().visuals.widgets.active.bg_fill
                     } else {
                         ui.style().visuals.widgets.active.weak_bg_fill
                     };
     
                     ui.with_layout(layout, |ui| {
                         ui.set_max_width(max_msg_width);
-    
-                        let rounding = 8;
-                        let margin = 6;
-                        
+                        let rounding = 8.;
+                        let outer_margin = Margin { left: 1, right: 1, top: 4, bottom: 1 };
+                        let inner_margin = Margin { left: 0, right: 0, top: 1, bottom: 0 };
+
                         let rnding = eframe::egui::CornerRadius {
-                            ne: if is_message_from_myself { 2 } else { rounding },
-                            nw: if is_message_from_myself { rounding } else { 2 },
-                            se: rounding,
-                            sw: rounding,
+                            ne: if is_message_from_myself { 0 } else { rounding as u8 },
+                            nw: if is_message_from_myself { rounding as u8 } else { 0 },
+                            se: rounding as u8,
+                            sw: rounding as u8,
+                        };
+
+                        let style = ui.style().clone();
+
+                        let (fill, stroke, shadow) = if self.hovered.contains(&item.timestamp) {
+                            (
+                                style.visuals.widgets.inactive.bg_fill + Color32::from_rgb(1, 1, 4),
+                                style.visuals.widgets.hovered.fg_stroke,
+                                style.visuals.window_shadow
+                            )
+                        } else {
+                            (
+                                msg_color,
+                                style.visuals.widgets.open.bg_stroke,
+                                Shadow::default()
+                            )
                         };
 
                         // Add hover effect
-                        let response = Frame::new()
-                            .corner_radius(rnding)
-                            .inner_margin(margin)
-                            .outer_margin(margin)
-                            .fill(msg_color)
-                            .show(ui, |ui| {
-                                ui.set_min_height(fixed_height);
-                                ui.set_max_width(max_msg_width);
-                                
-                                ui.with_layout(Layout::top_down(Align::Min), |ui| {
-    
-                                    let mut shadow = Shadow::default();
-                                    shadow.blur = 3;
-                                    shadow.spread = 3;
-                                    shadow.color = Color32::from_rgb(40,36,40);
-                                    
-                                    let mut b_panel_marg = Margin::default();
-                                    b_panel_marg.top = 3;
-    
-                                    let color = Color32::from_rgb(10,10,12);
-    
-                                    let note_frame = Frame::new().fill(color)
-                                        .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                        .inner_margin(Margin::symmetric(6, 10)).corner_radius(rnding);
-    
-                                    let (from, txt) = if item.from.eq("You"){
-                                        (
-                                            RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                            RichText::new(item.message.clone()).monospace()
-                                        )
-                                    }else {
-                                        (
-                                            RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_GREEN),
-                                            RichText::new(item.message.clone()).monospace()
-                                        )
-                                    };
-                                    
-    
-                                    if is_message_from_myself {
-                                        ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                            Direction::RightToLeft,
-                                            Align::Min,
-                                        ), |ui| {
-                                            Button::new(from)
-                                                .fill(Color32::TRANSPARENT)
-                                                .min_size(Vec2::new(30.0, 20.0))
-                                                .frame(false)
-                                                .sense(Sense::hover())
-                                                .ui(ui);
+                        if Frame::new()
+                        .corner_radius(rnding)
+                        .inner_margin(inner_margin)
+                        .outer_margin(outer_margin)
+                        .fill(fill)
+                        .shadow(shadow)
+                        .stroke(stroke)
+                        .show(ui, |ui| { // NOTE FRAME SCOPED UI
+                            ui.set_width(max_msg_width);
+                            // Use a vertical layout to stack the name and message content
+                            ui.vertical_centered(|ui| {
+                                let btn_txt_color = ui.style().visuals.error_fg_color;
+                                if is_message_from_myself {
+                                    ui.horizontal(|ui| {
+                                        let btn_txt_color = ui.style().visuals.error_fg_color;
+                                        if Button::new(RichText::new("🗐").color(btn_txt_color))
+                                        .ui(ui)
+                                        .on_hover_text(RichText::new("Copy Message"))
+                                        .clicked() {
+                                            ui.ctx().copy_text(item.message.clone());
+                                        }
+                                        ui.add_space(5.);
 
-                                            ui.add_space(max_msg_width / 1.1);
-
-                                            let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
-                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
-                                                .on_hover_text(RichText::new("Copy Command"));
-
-                                            if copy_btn.clicked(){
-                                                ui.ctx().copy_text(item.message.to_string());
-                                            }
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui|{
+                                            Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 35.)).ui(ui);
+                                            ui.add_space(5.);
+                                            ui.label(RichText::new(item.timestamp.clone()).weak()); // .format("%m/%d @ %I:%M%p").to_string()
                                         });
-                                    } else {
-                                        ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                            Direction::LeftToRight,
-                                            Align::Min,
-                                        ), |ui| {
-                                            Button::new(from)
-                                                .fill(Color32::TRANSPARENT)
-                                                .min_size(Vec2::new(30.0, 20.0))
-                                                .frame(false)
-                                                .sense(Sense::hover())
-                                                .ui(ui);
+                                    });
 
-                                            ui.add_space(max_msg_width / 1.1);
-                                            let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
-                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 35.)).ui(ui);
 
-                                            if btn.clicked(){
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if Button::new(RichText::new("🗐").color(btn_txt_color))
+                                            .ui(ui)
+                                            .clicked(){
                                                 ui.ctx().copy_text(item.message.clone());
                                             }
                                         });
-                                    }
-                                    note_frame.show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let style = ui.style_mut();
-                                        style.visuals.widgets.inactive.corner_radius = eframe::egui::CornerRadius::same(2);
-                                        ui.label(txt);
-                                        // egui_extras::syntax_highlighting::code_view_ui(
-                                        //     ui, 
-                                        //     &CodeTheme::dark(12.), 
-                                        //     txt.text(), 
-                                        //     "bash"
-                                        // );
                                     });
+                                }
+                            
+                                Frame::new() // Frame for the actual note text itself // or for modifying the note
+                                    .fill(Color32::from_rgb(10,10,12))
+                                    .stroke(style.visuals.widgets.inactive.bg_stroke)
+                                    .outer_margin(Margin { top: 1, ..Default::default() })
+                                    .inner_margin(Margin::symmetric(6, 10))
+                                    .corner_radius(rnding)
+                                    .show(ui, |ui| 
+                                {
+                                    ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                        Direction::TopDown,
+                                        Align::Center,
+                                    ), |ui| {
+                                        ui.set_width(ui.available_width());
+                                        crate::markdown_editor::viewer::easy_mark(ui, &item.message);
+                                    });
+                                });
                             });
+
+                            let rm = &mut self.remove_hovered;
+                            if rm.is_some() {
+                                *rm = None;
+                                self.hovered.remove(&item.timestamp);
+                            }
                         })
-                        .response;
-    
-                        let points = if !is_message_from_myself {
-                            let top = response.rect.left_top() + Vec2::splat(margin as f32);
-                            let arrow_rect =
-                                Rect::from_two_pos(top, top + Vec2::new(-(rounding as f32), rounding as f32));
-
-                            vec![
-                                arrow_rect.left_top(),
-                                arrow_rect.right_top(),
-                                arrow_rect.right_bottom(),
-                            ]
+                        .response
+                        .hovered() {
+                            self.hovered.insert(item.timestamp.clone());
                         } else {
-                            let top = response.rect.right_top() + Vec2::new(-(margin as f32), margin as f32);
-                            let arrow_rect =
-                                Rect::from_two_pos(top, top + Vec2::new(rounding as f32, rounding as f32));
-
-                            vec![
-                                arrow_rect.left_top(),
-                                arrow_rect.right_top(),
-                                arrow_rect.left_bottom(),
-                            ]
-                        };
-
-                        ui.painter()
-                            .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
+                            self.remove_hovered = Some(item.timestamp.clone());
+                        }
                     });
                 };
 
@@ -459,7 +435,6 @@ impl WebSocketClient {
     fn get_ai_command_completions(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use crate::{PlatformSpawner, Spawner};
             
             if self.input.is_empty() || !self.ai_completion_enabled {
                 return;
@@ -487,60 +462,69 @@ impl WebSocketClient {
     }
 
     /// Generate mock command completions (placeholder for MCP integration)
-    fn generate_mock_completions(&self, partial: &str, shell_type: &ShellType) -> Vec<CommandSuggestion> {
+    fn generate_mock_completions(&self, partial: &str, shell_type: &ShellType) -> Vec<CommandCompletion> {
         let mut suggestions = Vec::new();
 
         match shell_type {
             #[cfg(not(target_arch = "wasm32"))]
             ShellType::Cmd => {
                 if partial.starts_with("d") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "dir".to_string(),
                         description: Some("List directory contents".to_string()),
                         confidence: 0.95,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "dir /a".to_string(),
                         description: Some("List all files including hidden".to_string()),
                         confidence: 0.90,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "dir /s".to_string(),
                         description: Some("List files recursively".to_string()),
                         confidence: 0.85,
                     });
                 }
                 if partial.starts_with("s") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "systeminfo".to_string(),
                         description: Some("Display system configuration information".to_string()),
                         confidence: 0.95,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "sfc /scannow".to_string(),
                         description: Some("System File Checker - scan and repair".to_string()),
                         confidence: 0.88,
                     });
                 }
                 if partial.starts_with("t") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "tasklist".to_string(),
                         description: Some("Display running processes".to_string()),
                         confidence: 0.92,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "taskkill /im".to_string(),
                         description: Some("Terminate process by image name".to_string()),
                         confidence: 0.80,
                     });
                 }
                 if partial.starts_with("i") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "ipconfig /all".to_string(),
                         description: Some("Display complete network configuration".to_string()),
                         confidence: 0.93,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "ipconfig /release".to_string(),
                         description: Some("Release IP address configuration".to_string()),
                         confidence: 0.75,
@@ -550,24 +534,28 @@ impl WebSocketClient {
             #[cfg(not(target_arch = "wasm32"))]
             ShellType::PowerShell => {
                 if partial.starts_with("Get-") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "Get-Process".to_string(),
                         description: Some("Get running processes".to_string()),
                         confidence: 0.95,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "Get-Service".to_string(),
                         description: Some("Get system services".to_string()),
                         confidence: 0.93,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "Get-EventLog".to_string(),
                         description: Some("Get Windows event logs".to_string()),
                         confidence: 0.90,
                     });
                 }
                 if partial.starts_with("Set-") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "Set-ExecutionPolicy".to_string(),
                         description: Some("Set PowerShell execution policy".to_string()),
                         confidence: 0.88,
@@ -577,26 +565,32 @@ impl WebSocketClient {
             #[cfg(not(target_arch = "wasm32"))]
             ShellType::Bash => {
                 if partial.starts_with("l") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "ls -la".to_string(),
                         description: Some("List all files with details".to_string()),
                         confidence: 0.95,
                     });
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "lscpu".to_string(),
                         description: Some("Display CPU information".to_string()),
                         confidence: 0.85,
                     });
                 }
                 if partial.starts_with("p") {
-                    suggestions.push(CommandSuggestion {
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "ps aux".to_string(),
                         description: Some("Show running processes".to_string()),
                         confidence: 0.93,
                     });
                 }
                 if partial.starts_with("d") {
-                    suggestions.push(CommandSuggestion {
+                    
+
+                    suggestions.push(CommandCompletion {
+                        category: None,
                         completion: "df -h".to_string(),
                         description: Some("Show disk space usage".to_string()),
                         confidence: 0.90,
@@ -608,7 +602,8 @@ impl WebSocketClient {
 
         // Add context-aware suggestions based on current working directory or previous commands
         if partial.contains("log") {
-            suggestions.push(CommandSuggestion {
+            suggestions.push(CommandCompletion {
+                category: None,
                 completion: format!("{} | tail -f", partial),
                 description: Some("Follow log file in real-time".to_string()),
                 confidence: 0.75,

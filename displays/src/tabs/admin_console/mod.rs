@@ -22,8 +22,6 @@ pub enum WebConsolePageState {
     AllClients,
     ScriptEditor,
     #[cfg(not(target_arch = "wasm32"))]
-    AiAssistant,
-    #[cfg(not(target_arch = "wasm32"))]
     AiPlayground,
 }
 
@@ -146,15 +144,6 @@ impl SharedContext {
                     .clicked() 
                 {
                     self.web_console_layout.state = WebConsolePageState::ScriptEditor;
-                }
-                ui.add_space(5.);
-                #[cfg(not(target_arch = "wasm32"))]
-                if Button::new("🤖 AI Assistant")
-                    .min_size(Vec2::new(90.0, 15.0))
-                    .ui(ui)
-                    .clicked() 
-                {
-                    self.web_console_layout.state = WebConsolePageState::AiAssistant;
                 }
                 ui.add_space(5.);
                 #[cfg(not(target_arch = "wasm32"))]

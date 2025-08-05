@@ -1,11 +1,10 @@
-use eframe::egui::{Id, text::LayoutJob, Align, Button, Color32, FontFamily, FontId, Frame, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText};
+use eframe::egui::{text::LayoutJob, Align, Button, Color32, FontFamily, FontId, Frame, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText};
 use database::schema::ConnectedClient;
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
 use log::info;
-use crate::app_state::SharedContext;
 
 use super::{AdminConsole, WebConsolePageState};
 
@@ -94,7 +93,7 @@ impl AdminConsole {
                     let txt = if let Some(docked) = undock_client.get(client.connection_string.as_str()) {
                         if *docked { "🔒" } // Docked = locked
                         else { "🔓" }       // Undocked = unlocked
-                    } else { "🔓" };        // Default to undocked
+                    } else { "🔒" };        // Default to docked
 
                     let undock = Button::new(RichText::new(txt).strong().color(Color32::LIGHT_RED))
                         .fill(ui.style().visuals.window_fill)
@@ -145,56 +144,7 @@ impl AdminConsole {
         match self.state {
             WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
-            WebConsolePageState::AiAssistant => {
-                // Show AI Assistant interface
-                ui.vertical_centered(|ui| {
-                    ui.add_space(20.);
-                    ui.heading("🤖 AI Diagnostic Assistant");
-                    ui.add_space(10.);
-                    ui.label("AI-powered computer diagnostics and command assistance for remote clients.");
-                    ui.add_space(20.);
-                    
-                    ui.horizontal(|ui| {
-                        ui.label("Features:");
-                        ui.add_space(20.);
-                        ui.vertical(|ui| {
-                            ui.label("🔧 Automated BSOD analysis");
-                            ui.label("📋 Event log parsing and insights");
-                            ui.label("📊 Performance report generation");
-                            ui.label("🖥️ System health summaries");
-                            ui.label("⚡ Smart command completion");
-                            ui.label("🛡️ Script approval workflow");
-                        });
-                    });
-                    
-                    ui.add_space(30.);
-                    
-                    if ui.button("🚀 Open Enhanced AI Playground").clicked() {
-                        // This would trigger opening the enhanced AI playground
-                        // For now, show a message
-                        ui.ctx().memory_mut(|mem| {
-                            mem.data.insert_temp(Id::new("show_ai_message"), true);
-                        });
-                    }
-                    
-                    ui.add_space(20.);
-                    
-                    if ui.ctx().memory(|mem| mem.data.get_temp::<bool>(Id::new("show_ai_message")).unwrap_or(false)) {
-                        ui.colored_label(Color32::LIGHT_GREEN, "🎉 Enhanced AI Playground will open in a separate tab!");
-                        ui.label("Use the 'AI Playground' tab in the main interface to access the full AI diagnostic capabilities.");
-                    }
-                    
-                    ui.add_space(20.);
-                    ui.separator();
-                    ui.add_space(10.);
-                    
-                    ui.label("💡 Tip: Enable AI Command Completion in the remote terminal shells for intelligent command suggestions.");
-                });
-            },
-            #[cfg(not(target_arch = "wasm32"))]
-            WebConsolePageState::AiPlayground => {
-                self.ai_playground.enhanced_ai_playground(ui);
-            },
+            WebConsolePageState::AiPlayground => self.ai_playground.enhanced_ai_playground(ui),
             _ => {
                 for client in self.clients.iter() {
                     if self.undock_client.iter().any(|c| 

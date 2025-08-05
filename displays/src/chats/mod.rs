@@ -474,7 +474,7 @@ impl ChatView {
                                 let username_txt_color = ui.style().visuals.hyperlink_color;
                                 let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
                                 ui.add_space(5.);
-                                if  Button::new(RichText::new("🗙").color(btn_txt_color))
+                                if Button::new(RichText::new("🗙").color(btn_txt_color))
                                 .min_size(Vec2::new(15., 14.))
                                 .ui(ui)
                                 .on_hover_text(
