@@ -1,4 +1,6 @@
-use crate::{channel_manager::ChannelManager, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
+use std::collections::HashSet;
+
+use crate::{channel_manager::ChannelManager, mcp::{CommandCompletion, DiagnosticResponse, McpService}, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
 use database::schema::{ConnectedClient, SystemInformation};
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use filesystem_helper::WebSocketHelperDelegate;
@@ -11,7 +13,7 @@ use web_time::Instant;
 #[cfg(feature="tokio")]
 use tabs::terminal_viewer::RemoteTerminal;
 
-use super::client_interface::tabs::command_shell::{History, CommandSuggestion};
+use super::client_interface::tabs::command_shell::History;
 
 pub mod receive;
 pub mod tabs;
@@ -24,6 +26,9 @@ pub enum ClientConnection{
 }
 
 pub struct WebSocketClient {
+    pub mcp_service: McpService,
+    pub diagnostic_tx: Sender<DiagnosticResponse>,
+    pub diagnostic_rx: Receiver<DiagnosticResponse>,
     pub client: ConnectedClient,
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
@@ -52,6 +57,8 @@ pub struct WebSocketClient {
     pub interactive: bool,
     pub history_idx: usize,
     helper_delegate: WebSocketHelperDelegate,
+    hovered: HashSet<String>,
+    remove_hovered: Option<String>,
     // bin_msg_delegate: BinHelperDelegate,
     /// Accumulates fragments of messages
     buffer: String,     
@@ -72,7 +79,7 @@ pub struct WebSocketClient {
     pub persistent_shell_mode: bool,
     /// AI-powered command completion
     pub ai_completion_enabled: bool,
-    pub command_suggestions: Vec<CommandSuggestion>,
+    pub command_suggestions: Vec<CommandCompletion>,
     pub show_suggestions: bool,
     pub last_partial_command: String,
     pub selected_suggestion: usize,
@@ -96,7 +103,7 @@ impl WebSocketClient {
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
         let (msg_to_client_tx, msg_to_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
         let (msg_from_client_tx, msg_from_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
-
+        let (diagnostic_tx, diagnostic_rx) = crossbeam::channel::unbounded();
         let helper_delegate = WebSocketHelperDelegate::new(send_cmd_tx.clone());
         let mut explorer = FileSystem::new();
         explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
@@ -109,8 +116,16 @@ impl WebSocketClient {
 
         #[cfg(feature="tokio")]
         let (stop_tx, stop_rx) = crossbeam::channel::unbounded::<()>();
-
+        
         Self {
+            mcp_service: McpService::default()
+            .init_client(
+                crate::mcp::LlmProvider::OpenAI { 
+                    api_key: std::env!("OPENAI_API_KEY").to_string(), 
+                    model: "gpt-4.1-nano".to_string()
+                }
+            ),
+            diagnostic_tx, diagnostic_rx,
             #[cfg(feature="tokio")]
             remote_terminal,
             #[cfg(feature="tokio")]
@@ -154,6 +169,8 @@ impl WebSocketClient {
             show_suggestions: false,
             last_partial_command: String::new(),
             selected_suggestion: 0,
+            hovered: HashSet::new(),
+            remove_hovered: None,
         }
     }
 
