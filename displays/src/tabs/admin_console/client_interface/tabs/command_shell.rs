@@ -2,13 +2,10 @@ use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Directi
 use crate::{tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
-use crate::mcp::CommandCompletion;
+use crate::mcp::{CommandCompletion, DiagnosticResponse, ShellType};
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::mcp::ShellType;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct History {
@@ -85,26 +82,12 @@ impl WebSocketClient {
                 .layouter(&mut layouter)
                 .ui(ui);
             
-            // Handle AI command completion
+            // Handle AI command completion (live as you type)
             if self.ai_completion_enabled && text_edit.changed() {
                 if self.input != self.last_partial_command && !self.input.is_empty() {
                     self.last_partial_command = self.input.clone();
-                    let partial_command = self.last_partial_command.clone();
-                    let tx = self.diagnostic_tx.clone();
-                    if let Some(client) = self.mcp_service.client.clone() {
-                        PlatformSpawner::spawn(async move {
-                            match client.execute_diagnostic(
-                                crate::mcp::DiagnosticCommand::GetCommandCompletions { 
-                                    partial_command, 
-                                    shell_type: ShellType::PowerShell, 
-                                    context: None
-                                }
-                            ).await {
-                                Ok(diagnostic_msg) => { let _ = tx.try_send(diagnostic_msg); },
-                                Err(e) => log::error!("Error executing command: {e:?}"),
-                            }
-                        });
-                    }
+                    // Reuse the same flow as the Refresh button
+                    self.get_ai_command_completions();
                 }
             }
             
@@ -186,10 +169,10 @@ impl WebSocketClient {
             } else {
                 // Normal history navigation when suggestions not shown
                 if down_press {
-                    if self.history_idx <= self.my_history.len() {
+                    if self.history_idx <= self.my_command_history.len() {
                         self.history_idx += 1;
                     }
-                    if let Some(history) = self.my_history.get(self.history_idx){
+                    if let Some(history) = self.my_command_history.get(self.history_idx){
                         self.input = history.message.clone();
                     }
                 } 
@@ -197,7 +180,7 @@ impl WebSocketClient {
                     if self.history_idx > 0 {
                         self.history_idx -= 1;
                     }
-                    if let Some(history) = self.my_history.get(self.history_idx){
+                    if let Some(history) = self.my_command_history.get(self.history_idx){
                         self.input = history.message.clone();
                     }
                 }
@@ -224,7 +207,7 @@ impl WebSocketClient {
 
                 self.notifications += 1;
 
-                self.my_history.push(History { 
+                self.my_command_history.push(History { 
                     from: "You".to_string(), 
                     message: self.input.clone(), 
                     timestamp:  chrono::Local::now().to_rfc3339()
@@ -241,7 +224,7 @@ impl WebSocketClient {
                 });
                 self.notifications += 1;
 
-                self.my_history.push(History { 
+                self.my_command_history.push(History { 
                     from: "You".to_string(), 
                     message: self.input.clone(), 
                     timestamp:  chrono::Local::now().to_rfc3339()
@@ -431,191 +414,66 @@ impl WebSocketClient {
 
     }
 
-    /// Get AI-powered command completions
+    /// Get AI-powered command completions (via MCP provider)
     fn get_ai_command_completions(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            
             if self.input.is_empty() || !self.ai_completion_enabled {
                 return;
             }
 
-            let partial_command = self.input.clone();
-            
-            // Determine shell type based on OS or user preference
-            let shell_type = if cfg!(target_os = "windows") {
-                if self.input.contains("Get-") || self.input.contains("Set-") {
-                    ShellType::PowerShell
-                } else {
-                    ShellType::Cmd
-                }
-            } else {
-                ShellType::Bash
-            };
+            // Clear old suggestions before fetching; they will be filled when response arrives
+            self.command_suggestions.clear();
 
-            // Mock AI completions for now - this would integrate with actual MCP client
-            let suggestions = self.generate_mock_completions(&partial_command, &shell_type);
-            self.command_suggestions = suggestions;
-            self.show_suggestions = !self.command_suggestions.is_empty();
-            self.selected_suggestion = 0;
+            let partial_command = self.input.clone();
+            let shell_type = self.detect_shell_type();
+            let tx = self.diagnostic_tx.clone();
+            PlatformSpawner::spawn(async move {
+                // Map ShellType to tool helper's string dialect
+                let shell = match shell_type {
+                    ShellType::Cmd => "cmd",
+                    ShellType::PowerShell => "powershell",
+                    ShellType::Bash => "bash",
+                    ShellType::Zsh => "zsh",
+                    ShellType::Fish => "fish",
+                }.to_string();
+
+                match crate::mcp::tools::mcp_complete_command(partial_command, shell, None) {
+                    Ok(payload) => {
+                        // Extract completions array into Vec<CommandCompletion>
+                        let mut completions: Vec<CommandCompletion> = Vec::new();
+                        if let Some(arr) = payload.get("completions").and_then(|v| v.as_array()) {
+                            for item in arr {
+                                if let Some(comp) = item.get("completion").and_then(|v| v.as_str()) {
+                                    let description = item.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
+                                    let category = item.get("category").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    completions.push(CommandCompletion { completion: comp.to_string(), description, category, confidence });
+                                }
+                            }
+                        }
+                        let _ = tx.try_send(DiagnosticResponse::CommandCompletions { completions, context_info: None });
+                    }
+                    Err(e) => {
+                        log::error!("Error generating completions: {e:?}");
+                    }
+                }
+            });
         }
     }
 
-    /// Generate mock command completions (placeholder for MCP integration)
-    fn generate_mock_completions(&self, partial: &str, shell_type: &ShellType) -> Vec<CommandCompletion> {
-        let mut suggestions = Vec::new();
-
-        match shell_type {
-            #[cfg(not(target_arch = "wasm32"))]
-            ShellType::Cmd => {
-                if partial.starts_with("d") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "dir".to_string(),
-                        description: Some("List directory contents".to_string()),
-                        confidence: 0.95,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "dir /a".to_string(),
-                        description: Some("List all files including hidden".to_string()),
-                        confidence: 0.90,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "dir /s".to_string(),
-                        description: Some("List files recursively".to_string()),
-                        confidence: 0.85,
-                    });
-                }
-                if partial.starts_with("s") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "systeminfo".to_string(),
-                        description: Some("Display system configuration information".to_string()),
-                        confidence: 0.95,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "sfc /scannow".to_string(),
-                        description: Some("System File Checker - scan and repair".to_string()),
-                        confidence: 0.88,
-                    });
-                }
-                if partial.starts_with("t") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "tasklist".to_string(),
-                        description: Some("Display running processes".to_string()),
-                        confidence: 0.92,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "taskkill /im".to_string(),
-                        description: Some("Terminate process by image name".to_string()),
-                        confidence: 0.80,
-                    });
-                }
-                if partial.starts_with("i") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "ipconfig /all".to_string(),
-                        description: Some("Display complete network configuration".to_string()),
-                        confidence: 0.93,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "ipconfig /release".to_string(),
-                        description: Some("Release IP address configuration".to_string()),
-                        confidence: 0.75,
-                    });
-                }
+    /// Detect shell type from input and platform
+    fn detect_shell_type(&self) -> ShellType {
+        #[cfg(target_os = "windows")]
+        {
+            if self.input.starts_with("Get-") || self.input.starts_with("Set-") {
+                return ShellType::PowerShell;
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            ShellType::PowerShell => {
-                if partial.starts_with("Get-") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "Get-Process".to_string(),
-                        description: Some("Get running processes".to_string()),
-                        confidence: 0.95,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "Get-Service".to_string(),
-                        description: Some("Get system services".to_string()),
-                        confidence: 0.93,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "Get-EventLog".to_string(),
-                        description: Some("Get Windows event logs".to_string()),
-                        confidence: 0.90,
-                    });
-                }
-                if partial.starts_with("Set-") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "Set-ExecutionPolicy".to_string(),
-                        description: Some("Set PowerShell execution policy".to_string()),
-                        confidence: 0.88,
-                    });
-                }
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            ShellType::Bash => {
-                if partial.starts_with("l") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "ls -la".to_string(),
-                        description: Some("List all files with details".to_string()),
-                        confidence: 0.95,
-                    });
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "lscpu".to_string(),
-                        description: Some("Display CPU information".to_string()),
-                        confidence: 0.85,
-                    });
-                }
-                if partial.starts_with("p") {
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "ps aux".to_string(),
-                        description: Some("Show running processes".to_string()),
-                        confidence: 0.93,
-                    });
-                }
-                if partial.starts_with("d") {
-                    
-
-                    suggestions.push(CommandCompletion {
-                        category: None,
-                        completion: "df -h".to_string(),
-                        description: Some("Show disk space usage".to_string()),
-                        confidence: 0.90,
-                    });
-                }
-            }
-            _ => {}
+            ShellType::Cmd
         }
-
-        // Add context-aware suggestions based on current working directory or previous commands
-        if partial.contains("log") {
-            suggestions.push(CommandCompletion {
-                category: None,
-                completion: format!("{} | tail -f", partial),
-                description: Some("Follow log file in real-time".to_string()),
-                confidence: 0.75,
-            });
+        #[cfg(not(target_os = "windows"))]
+        {
+            ShellType::Bash
         }
-
-        // Sort by confidence
-        suggestions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
-        
-        // Limit to top 8 suggestions
-        suggestions.truncate(8);
-        
-        suggestions
     }
 }

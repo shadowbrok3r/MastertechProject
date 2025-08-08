@@ -1,19 +1,16 @@
-use std::collections::HashSet;
-
-use crate::{channel_manager::ChannelManager, mcp::{CommandCompletion, DiagnosticResponse, McpService}, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
+use crate::{channel_manager::ChannelManager, mcp::{CommandCompletion, DiagnosticResponse, McpService}, tabs::{admin_console::client_interface::tabs::command_shell::History, resource_monitor::ResourceMonitor}, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
 use database::schema::{ConnectedClient, SystemInformation};
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use filesystem_helper::WebSocketHelperDelegate;
 use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use ui::WsDisplayState;
 use web_time::Instant;
 
 #[cfg(feature="tokio")]
 use tabs::terminal_viewer::RemoteTerminal;
-
-use super::client_interface::tabs::command_shell::History;
 
 pub mod receive;
 pub mod tabs;
@@ -62,7 +59,7 @@ pub struct WebSocketClient {
     // bin_msg_delegate: BinHelperDelegate,
     /// Accumulates fragments of messages
     buffer: String,     
-    my_history: Vec<History>,
+    my_command_history: Vec<History>,
     notifications: i32,
     resource_monitor: ResourceMonitor,
     #[cfg(feature="tokio")]
@@ -117,14 +114,20 @@ impl WebSocketClient {
         #[cfg(feature="tokio")]
         let (stop_tx, stop_rx) = crossbeam::channel::unbounded::<()>();
         
+        let mcp_service = McpService::default();
+        // Attempt to connect OpenAI bridge to local MCP TCP server in the background
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // model can be overridden later; default to lightweight model
+
+            use crate::mcp::run_mcp_server_tcp;
+            mcp_service.spawn_openai_connect("127.0.0.1:9002", "gpt-4o-mini", None);
+            let run_mcp_server_tcp = run_mcp_server_tcp();
+            log::warn!("run_mcp_server_tcp: {run_mcp_server_tcp:?}");
+        }
+
         Self {
-            mcp_service: McpService::default()
-            .init_client(
-                crate::mcp::LlmProvider::OpenAI { 
-                    api_key: std::env!("OPENAI_API_KEY").to_string(), 
-                    model: "gpt-4.1-nano".to_string()
-                }
-            ),
+            mcp_service,
             diagnostic_tx, diagnostic_rx,
             #[cfg(feature="tokio")]
             remote_terminal,
@@ -136,7 +139,9 @@ impl WebSocketClient {
             msg_from_client_rx,
             ws_sender,
             ws_receiver,
+            #[cfg(feature="tokio")]
             size_rx,
+            #[cfg(feature="tokio")]
             stop_rx,
 
             send_cmd_tx, 
@@ -157,7 +162,7 @@ impl WebSocketClient {
             loading: Default::default(),
             history_idx: Default::default(),
             buffer: Default::default(),
-            my_history: Default::default(),
+            my_command_history: Default::default(),
             notifications: Default::default(),
             resource_monitor: ResourceMonitor::default(),
             is_connected: false,
