@@ -1,8 +1,8 @@
-use super::types::*;
-use anyhow::{Context, Result};
+// use super::types::*;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
+// use std::process::Command;
 
 /// Computer diagnostic tools for MCP integration
 pub struct DiagnosticTools {
@@ -423,7 +423,7 @@ fn generate_bsod_summary(analyses: &[serde_json::Value]) -> String {
     format!("Analyzed {} dump files. Common patterns: driver issues, memory problems", analyses.len())
 }
 
-async fn collect_event_logs(log_name: &str, hours_back: u64, severity: Option<&str>) -> Result<Vec<serde_json::Value>> {
+async fn collect_event_logs(_log_name: &str, _hours_back: u64, _severity: Option<&str>) -> Result<Vec<serde_json::Value>> {
     // This would use Windows Event Log APIs
     Ok(vec![
         serde_json::json!({
@@ -499,7 +499,7 @@ async fn collect_hardware_metrics() -> Result<serde_json::Value> {
     }))
 }
 
-fn generate_performance_recommendations(cpu: &serde_json::Value, memory: &serde_json::Value, disk: &serde_json::Value) -> Vec<String> {
+fn generate_performance_recommendations(_cpu: &serde_json::Value, _memory: &serde_json::Value, _disk: &serde_json::Value) -> Vec<String> {
     vec![
         "Consider adding more RAM for improved performance".to_string(),
         "Schedule regular disk maintenance".to_string(),
@@ -515,18 +515,18 @@ async fn collect_system_info(include_hardware: bool, include_software: bool, inc
     }))
 }
 
-fn calculate_system_health_score(system_info: &serde_json::Value) -> f32 {
+fn calculate_system_health_score(_system_info: &serde_json::Value) -> f32 {
     8.5 // Mock health score
 }
 
-fn generate_system_recommendations(system_info: &serde_json::Value) -> Vec<String> {
+fn generate_system_recommendations(_system_info: &serde_json::Value) -> Vec<String> {
     vec![
         "Update Windows to latest version".to_string(),
         "Run disk cleanup".to_string(),
     ]
 }
 
-fn generate_command_completions(partial: &str, shell_type: &str, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
+fn generate_command_completions(partial: &str, shell_type: &str, _context: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let mut completions = Vec::new();
 
     match shell_type {
@@ -579,7 +579,7 @@ struct ScriptExecutionResult {
     error: Option<String>,
 }
 
-async fn execute_script_safely(script: &str, script_type: &str) -> Result<ScriptExecutionResult> {
+async fn execute_script_safely(_script: &str, _script_type: &str) -> Result<ScriptExecutionResult> {
     // This would integrate with the terminal/shell system
     // For now, return a mock result
     Ok(ScriptExecutionResult {
@@ -587,4 +587,166 @@ async fn execute_script_safely(script: &str, script_type: &str) -> Result<Script
         output: "Script executed successfully".to_string(),
         error: None,
     })
+}
+
+// === Public MCP-oriented tool helpers ===
+// These functions encapsulate the concrete logic used by rmcp tool handlers in mcp.rs.
+
+/// Analyze Windows Blue Screen dump(s) and return a JSON payload used by MCP.
+pub async fn mcp_analyze_bsod(dump_path: Option<String>, include_recent: bool) -> Result<serde_json::Value> {
+    let mut analyzed: Vec<serde_json::Value> = Vec::new();
+    if let Some(p) = dump_path {
+        let path = PathBuf::from(&p);
+        if path.exists() {
+            analyzed.push(analyze_dump_file(&path).await?);
+        } else {
+            // Still include basic info if path provided, to mirror previous behavior
+            analyzed.push(serde_json::json!({
+                "file": p,
+                "crash_code": "0x0000007E",
+                "module": "ntoskrnl.exe",
+                "analysis": "System service exception",
+            }));
+        }
+    }
+    if include_recent {
+        for f in find_recent_dump_files().await? {
+            analyzed.push(analyze_dump_file(&f).await?);
+        }
+    }
+    let summary = format!(
+        "Analyzed {} dump file(s). Common patterns: driver issues, memory pressure.",
+        analyzed.len()
+    );
+    Ok(serde_json::json!({
+        "summary": summary,
+        "analysis": analyzed,
+        "recommendations": [
+            "Update GPU drivers",
+            "Run memory diagnostics",
+        ],
+    }))
+}
+
+/// Analyze Windows Event Logs and return JSON used by MCP.
+pub async fn mcp_analyze_event_logs(
+    log_name: Option<String>,
+    hours_back: Option<u32>,
+    _severity: Option<String>,
+) -> Result<serde_json::Value> {
+    let log = log_name.unwrap_or_else(|| "System".to_string());
+    let hours = hours_back.unwrap_or(24) as u64;
+    let events = collect_event_logs(&log, hours, None).await?;
+    let analysis = analyze_event_patterns(&events)?;
+    Ok(serde_json::json!({
+        "log_name": log,
+        "hours_analyzed": hours,
+        "total_events": events.len(),
+        "critical_events": analysis.critical_events,
+        "error_patterns": analysis.error_patterns,
+        "recommendations": analysis.recommendations,
+    }))
+}
+
+/// Generate performance report JSON used by MCP.
+pub async fn mcp_generate_performance_report(
+    duration_hours: Option<u32>,
+    include_processes: Option<bool>,
+    include_hardware: Option<bool>,
+) -> Result<serde_json::Value> {
+    let hours = duration_hours.unwrap_or(24) as u64;
+    let include_processes = include_processes.unwrap_or(true);
+    let include_hardware = include_hardware.unwrap_or(true);
+
+    let cpu = collect_cpu_performance_data(hours).await?;
+    let mem = collect_memory_performance_data(hours).await?;
+    let disk = collect_disk_performance_data(hours).await?;
+    let net = collect_network_performance_data(hours).await?;
+    let process = if include_processes { Some(collect_process_data().await?) } else { None };
+    let hw = if include_hardware { Some(collect_hardware_metrics().await?) } else { None };
+
+    let recs = generate_performance_recommendations(&cpu, &mem, &disk);
+
+    Ok(serde_json::json!({
+        "summary": "System performance is within normal parameters",
+        "cpu_analysis": cpu,
+        "memory_analysis": mem,
+        "disk_analysis": disk,
+        "network_analysis": net,
+        "process_analysis": process,
+        "hardware_metrics": hw,
+        "recommendations": recs,
+    }))
+}
+
+/// Summarize system state JSON used by MCP.
+pub async fn mcp_get_system_summary(
+    include_hardware: Option<bool>,
+    include_software: Option<bool>,
+    include_network: Option<bool>,
+) -> Result<serde_json::Value> {
+    let hw = include_hardware.unwrap_or(true);
+    let sw = include_software.unwrap_or(true);
+    let net = include_network.unwrap_or(true);
+    let info = collect_system_info(hw, sw, net).await?;
+    Ok(serde_json::json!({
+        "overview": "System is operating normally",
+        "hardware_summary": info.get("hardware").cloned(),
+        "software_summary": info.get("software").cloned(),
+        "network_summary": info.get("network").cloned(),
+        "health_score": calculate_system_health_score(&info),
+        "critical_issues": [],
+    }))
+}
+
+/// Provide intelligent shell completions JSON used by MCP.
+pub fn mcp_complete_command(
+    partial_command: String,
+    shell_type: String,
+    context: Option<String>,
+) -> Result<serde_json::Value> {
+    let completions = generate_command_completions(&partial_command, &shell_type, context.as_deref())?;
+    Ok(serde_json::json!({
+        "partial_command": partial_command,
+        "shell_type": shell_type,
+        "completions": completions,
+        "context": context,
+    }))
+}
+
+/// Execute a script with approval workflow JSON used by MCP.
+pub async fn mcp_execute_script(
+    script: String,
+    script_type: String,
+    description: String,
+    require_approval: Option<bool>,
+) -> Result<serde_json::Value> {
+    let require = require_approval.unwrap_or(true);
+    if require {
+        let risk_level = assess_script_risk(&script);
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        return Ok(serde_json::json!({
+            "success": false,
+            "approval_required": true,
+            "approval_id": approval_id,
+            "script_type": script_type,
+            "description": description,
+            "risk_level": risk_level,
+            "message": "Script execution requires approval",
+        }));
+    }
+    let result = execute_script_safely(&script, &script_type).await?;
+    Ok(serde_json::json!({
+        "success": result.success,
+        "output": result.output,
+        "error": result.error,
+        "approval_required": false,
+    }))
+}
+
+/// Wait for a specified duration and return JSON used by MCP.
+pub async fn mcp_wait(duration_ms: Option<u64>) -> Result<serde_json::Value> {
+    let ms = duration_ms.unwrap_or(2000);
+    // No actual sleep here; MCP handler performs sleep. This keeps function side-effect free.
+    Ok(serde_json::json!({ "status": "success", "duration_ms": ms }))
 }
