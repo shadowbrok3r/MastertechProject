@@ -4,6 +4,7 @@ pub mod client;
 pub mod server;
 pub mod tools;
 pub mod types;
+pub mod mcp;
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ pub use client::*;
 pub use server::*;
 pub use tools::*;
 pub use types::*;
+pub use mcp::DiagnosticToolProvider; // re-export rmcp provider for easy access
 
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
@@ -19,6 +21,7 @@ use tokio::sync::mpsc;
 pub struct McpService {
     pub server: Option<Arc<DiagnosticServer>>,
     pub client: Option<Arc<McpClient>>,
+    pub rmcp_provider: Option<Arc<DiagnosticToolProvider>>, // rmcp tool provider
     pub command_tx: mpsc::UnboundedSender<DiagnosticCommand>,
     pub response_rx: mpsc::UnboundedReceiver<DiagnosticResponse>,
 }
@@ -31,6 +34,7 @@ impl Default for McpService {
         Self {
             server: None,
             client: None,
+            rmcp_provider: None,
             command_tx,
             response_rx,
         }
@@ -45,6 +49,12 @@ impl McpService {
         
         self.server = Some(Arc::new(server));
         Ok(())
+    }
+
+    /// Initialize rmcp tool provider (DiagnosticToolProvider) so tools are MCP-compatible
+    pub fn init_rmcp_tools(&mut self) {
+        let provider = DiagnosticToolProvider::new();
+        self.rmcp_provider = Some(Arc::new(provider));
     }
 
     /// Initialize MCP client for external AI providers
