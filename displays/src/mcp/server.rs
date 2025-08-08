@@ -1,8 +1,6 @@
-use super::types::*;
-use anyhow::{Context, Result};
+use super::mcp::DiagnosticToolProvider;
+use anyhow::Result;
 use serde_json::{json, Value};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Create diagnostic server functionality (placeholder for rmcp server tools)
 /// Note: This is a simplified version since rmcp 0.3.0 doesn't have the server types we originally tried to use
@@ -39,6 +37,11 @@ pub async fn create_diagnostic_server() -> Result<DiagnosticServer> {
     server.tools.push(create_script_executor_tool());
 
     Ok(server)
+}
+
+/// Create the rmcp DiagnosticToolProvider (MCP-compatible tools)
+pub fn create_rmcp_provider() -> DiagnosticToolProvider {
+    DiagnosticToolProvider::new()
 }
 
 /// Create BSOD analyzer tool
