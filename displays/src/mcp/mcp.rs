@@ -5,9 +5,19 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+// no direct serde_json imports needed; payloads are constructed in tools module
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 use tokio::time::{sleep, Duration};
-use uuid::Uuid;
+// uuid is used in tools helpers, not directly here
+use super::tools::{
+    mcp_analyze_bsod,
+    mcp_analyze_event_logs,
+    mcp_generate_performance_report,
+    mcp_get_system_summary,
+    mcp_complete_command,
+    mcp_execute_script,
+    mcp_wait as mcp_wait_payload,
+};
 
 // --- Shared domain types (pared down to what tools need) ---
 
@@ -127,35 +137,10 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(AnalyzeBsodParams { dump_path, include_recent }): Parameters<AnalyzeBsodParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let include_recent = include_recent.unwrap_or(true);
-
-        // Placeholder logic; wire to actual dbgeng/windbg or kd scripts if desired.
-        let mut analyzed: Vec<Value> = Vec::new();
-        if let Some(p) = dump_path {
-            analyzed.push(json!({
-                "file": p,
-                "crash_code": "0x0000007E",
-                "module": "ntoskrnl.exe",
-                "analysis": "System service exception",
-            }));
-        }
-        if include_recent {
-            analyzed.push(json!({
-                "file": "C:/Windows/Minidump/012125-1234-01.dmp",
-                "crash_code": "0x0000003B",
-                "module": "dxgmms2.sys",
-                "analysis": "Graphics driver access violation",
-            }));
-        }
-        let summary = format!("Analyzed {} dump file(s). Common patterns: driver issues, memory pressure.", analyzed.len());
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "summary": summary,
-            "analysis": analyzed,
-            "recommendations": [
-                "Update GPU drivers",
-                "Run memory diagnostics",
-            ],
-        })).map_err(to_internal)?]))
+        let payload = mcp_analyze_bsod(dump_path, include_recent.unwrap_or(true))
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     /// Parse Windows Event Logs and surface patterns.
@@ -164,26 +149,14 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(params): Parameters<AnalyzeEventLogsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let log_name = params.log_name.unwrap_or_else(|| "System".to_string());
-        let hours = params.time_range.as_ref().map(|t| t.hours_back).unwrap_or(24);
-        let _severity = params.severity; // Not used in mock
-        
-        // Placeholder: swap with Windows eventlog API ingestion.
-        let events = vec![json!({
-            "id": 41, "level": "Error", "source": "Kernel-Power", "message": "The system has rebooted without cleanly shutting down first.",
-        })];
-        let critical: Vec<_> = events.clone();
-        let patterns = vec!["Repeated service failures".to_string()];
-        let recs = vec!["Check service dependencies".to_string()];
-
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "log_name": log_name,
-            "hours_analyzed": hours,
-            "total_events": events.len(),
-            "critical_events": critical,
-            "error_patterns": patterns,
-            "recommendations": recs,
-        })).map_err(to_internal)?]))
+        let payload = mcp_analyze_event_logs(
+            params.log_name,
+            params.time_range.as_ref().map(|t| t.hours_back),
+            params.severity.as_ref().map(|s| format!("{:?}", s)),
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     /// Build a performance report over a time window.
@@ -192,38 +165,14 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(p): Parameters<GeneratePerformanceReportParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let hours = p.duration_hours.unwrap_or(24);
-        let include_processes = p.include_processes.unwrap_or(true);
-        let include_hardware = p.include_hardware.unwrap_or(true);
-
-        // Placeholder telemetry; attach to PDH/WMI/perf counters as needed.
-        let cpu = json!({"average_usage": 35.2, "peak_usage": 78.9, "duration_hours": hours});
-        let mem = json!({"average_usage_percent": 62.5, "peak_usage_percent": 89.1, "total_gb": 32});
-        let disk = json!({"average_queue_length": 0.8, "peak_queue_length": 4.2});
-        let net = json!({"average_bandwidth_mbps": 15.3, "peak_bandwidth_mbps": 85.7});
-        let process = include_processes.then(|| json!({
-            "top_cpu_processes": [
-                {"name": "chrome.exe", "cpu_percent": 12.5},
-                {"name": "System", "cpu_percent": 8.2}
-            ]
-        }));
-        let hw = include_hardware.then(|| json!({"cpu_temp": 58, "gpu_temp": 65, "fan_speeds": {"cpu": 1850, "case": 1200}}));
-
-        let recs = vec![
-            "Consider adding more RAM".to_string(),
-            "Schedule disk maintenance".to_string(),
-        ];
-
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "summary": "System performance is within normal parameters",
-            "cpu_analysis": cpu,
-            "memory_analysis": mem,
-            "disk_analysis": disk,
-            "network_analysis": net,
-            "process_analysis": process,
-            "hardware_metrics": hw,
-            "recommendations": recs,
-        })).map_err(to_internal)?]))
+        let payload = mcp_generate_performance_report(
+            p.duration_hours,
+            p.include_processes,
+            p.include_hardware,
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     /// Summarize system state and health.
@@ -232,18 +181,14 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(p): Parameters<GetSystemSummaryParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let hw = p.include_hardware.unwrap_or(true);
-        let sw = p.include_software.unwrap_or(true);
-        let net = p.include_network.unwrap_or(true);
-
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "overview": "System is operating normally",
-            "hardware_summary": if hw { Some("Intel i7, 32GB RAM, NVMe") } else { None },
-            "software_summary": if sw { Some("Up‑to‑date; 127 programs installed") } else { None },
-            "network_summary": if net { Some("Ethernet connected; DNS ok") } else { None },
-            "health_score": 8.5,
-            "critical_issues": [],
-        })).map_err(to_internal)?]))
+        let payload = mcp_get_system_summary(
+            p.include_hardware,
+            p.include_software,
+            p.include_network,
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     /// Provide intelligent shell completions.
@@ -252,31 +197,13 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(p): Parameters<CompleteCommandParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let shell = p.shell_type.unwrap_or(ShellType::Cmd);
-        let mut completions: Vec<Value> = Vec::new();
-        match shell {
-            ShellType::Cmd => {
-                if p.partial_command.starts_with('d') {
-                    completions.push(json!({"completion": "dir", "description": "List directory contents", "confidence": 0.95}));
-                }
-                if p.partial_command.starts_with('s') {
-                    completions.push(json!({"completion": "systeminfo", "description": "Display system information", "confidence": 0.90}));
-                }
-            }
-            ShellType::PowerShell => {
-                if p.partial_command.to_lowercase().starts_with("get-") {
-                    completions.push(json!({"completion": "Get-Process", "description": "Get running processes", "confidence": 0.95}));
-                }
-            }
-            _ => {}
-        }
-
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "partial_command": p.partial_command,
-            "shell_type": format!("{:?}", shell),
-            "completions": completions,
-            "context": p.context,
-        })).map_err(to_internal)?]))
+        let payload = mcp_complete_command(
+            p.partial_command,
+            format!("{:?}", p.shell_type.unwrap_or(ShellType::Cmd)).to_lowercase(),
+            p.context,
+        )
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     /// Execute a script with an approval workflow.
@@ -285,27 +212,15 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(p): Parameters<ExecuteScriptParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let require_approval = p.require_approval.unwrap_or(true);
-        let risk = assess_script_risk(&p.script);
-        if require_approval {
-            let approval_id = Uuid::new_v4().to_string();
-            return Ok(CallToolResult::success(vec![Content::json(json!({
-                "success": false,
-                "approval_required": true,
-                "approval_id": approval_id,
-                "script_type": format!("{:?}", p.script_type),
-                "description": p.description,
-                "risk_level": format!("{:?}", risk),
-                "message": "Script execution requires approval",
-            })).map_err(to_internal)?]));
-        }
-        // Placeholder executor; wire to your sandboxed runner.
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "success": true,
-            "output": "Script executed successfully",
-            "error": Value::Null,
-            "approval_required": false,
-        })).map_err(to_internal)?]))
+        let payload = mcp_execute_script(
+            p.script,
+            format!("{:?}", p.script_type),
+            p.description,
+            p.require_approval,
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     /// Simple wait tool useful for orchestration.
@@ -314,11 +229,11 @@ impl DiagnosticToolProvider {
         &self,
         Parameters(DurationParams { duration_ms }): Parameters<DurationParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let ms = duration_ms.unwrap_or(2000);
-        sleep(Duration::from_millis(ms)).await;
-        Ok(CallToolResult::success(vec![Content::json(json!({
-            "status": "success", "duration_ms": ms
-        })).map_err(to_internal)?]))
+    let ms = duration_ms.unwrap_or(2000);
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    sleep(Duration::from_millis(ms)).await;
+    let payload = mcp_wait_payload(Some(ms)).await.map_err(to_internal)?;
+    Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 }
 
@@ -326,6 +241,7 @@ impl DiagnosticToolProvider {
 #[serde(rename_all = "camelCase")]
 struct DurationParams { #[schemars(default)] duration_ms: Option<u64> }
 
+#[allow(dead_code)]
 fn assess_script_risk(script: &str) -> RiskLevel {
     let s = script.to_lowercase();
     if s.contains("format") || s.contains(" del ") || s.contains("rm -rf") || s.contains("regedit") { return RiskLevel::Critical; }

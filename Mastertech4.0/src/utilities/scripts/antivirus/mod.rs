@@ -257,7 +257,7 @@ pub async fn install_supereasybackup(
 ) -> anyhow::Result<(), anyhow::Error> {
     info!("running install_supereasybackup!");
     let response = client
-        .get("https://dcgeneral.blob.core.windows.net/downloads/MUS/v11.2.0/DCProtect-11.2.0.5777-SuperEasyBackup.msi")
+        .get("https://dcgeneral.blob.core.windows.net/downloads/MUS/v11.5.0/DCProtect-11.5.0.8737-SuperEasyBackup.msi")
         .send()
         .await?;
 

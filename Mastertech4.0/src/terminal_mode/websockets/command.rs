@@ -87,7 +87,7 @@ impl PersistentShell {
         let tx_clone = self.output_tx.clone();
         let is_ready_clone = self.is_ready.clone();
         tokio::spawn(async move {
-            let mut command_output_started = false;
+            // let mut command_output_started = false;
             while let Some(line) = stdout_reader.next_line().await? {
                 tx_clone.send(format!("{}\n", line).into_bytes()).ok();
                 
@@ -153,7 +153,7 @@ impl PersistentShell {
     }
 }
 
-pub async fn handle_command_payload(
+pub async fn _handle_command_payload(
     string_payload: String, 
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
 ) 
@@ -161,12 +161,12 @@ pub async fn handle_command_payload(
 { 
     // #[cfg(target_os="windows")]{ return handle_windows_cmd(string_payload, tx.clone()).await?; }
     if cfg!(target_os="windows") { 
-        let _ = handle_windows_cmd(string_payload.clone(), tx.clone()).await?;
+        let _ = _handle_windows_cmd(string_payload.clone(), tx.clone()).await?;
     }
-    Ok(handle_linux_cmd(string_payload, tx.clone()).await?)
+    Ok(_handle_linux_cmd(string_payload, tx.clone()).await?)
 }
 
-pub async fn handle_windows_cmd(
+pub async fn _handle_windows_cmd(
     command_payload: String, 
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
 ) 
@@ -294,7 +294,7 @@ pub async fn handle_windows_cmd_interactive(
     Ok(())
 }
 
-pub async fn handle_linux_cmd(
+pub async fn _handle_linux_cmd(
     command_payload: String, 
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
 ) 

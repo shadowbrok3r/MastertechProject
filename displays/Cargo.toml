@@ -56,6 +56,7 @@ async-openai = { workspace = true}
 rusty-s3 = { workspace=true }
 rmcp = { workspace = true }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}# "tls"
+dotenv = { version = "0.15" }
 # tokio-tungstenite = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

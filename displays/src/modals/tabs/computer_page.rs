@@ -2,6 +2,8 @@ use eframe::egui::{Color32, Grid, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget}
 use database::schema::{ComputerData, TicketData, COMPUTER_TABLE};
 use surrealdb::RecordId;
 
+use crate::{PlatformSpawner, Spawner};
+
 use super::return_colors;
 
 
@@ -27,6 +29,15 @@ pub fn display_computer_page(
         .show(ui, |ui|
     {
         ui.vertical_centered(|ui| {
+            if ui.button("Update").clicked() {
+                let computer_data: ComputerData = computer.clone();
+                PlatformSpawner::spawn(async move {
+                    match computer_data.update_computer().await {
+                        Ok(pc) => log::info!("Updated computer: {pc:?}"),
+                        Err(e) => log::error!("Error creating computer: {e:?}"),
+                    }
+                });
+            }
             ui.group(|ui| {
                 Grid::new(format!("{} grid", computer.cpu))
                 .max_col_width(avail_size.x / 2.14)
