@@ -97,6 +97,24 @@ impl ComputerData {
 
         Ok(computers)
     }
+
+    pub async fn create_computer(&self) -> anyhow::Result<Option<Self>, anyhow::Error> {
+        let computer: Option<Self> = DATABASE
+            .create(self.id.clone())
+            .content(self.clone())
+            .await?;
+
+        Ok(computer)
+    }
+
+    pub async fn update_computer(&self) -> anyhow::Result<Option<Self>, anyhow::Error> {
+        let computer: Option<Self> = DATABASE
+            .upsert(self.id.clone())
+            .content(self.clone())
+            .await?;
+
+        Ok(computer)
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
