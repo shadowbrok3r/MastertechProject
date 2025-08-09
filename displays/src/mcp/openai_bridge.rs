@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use futures::{future::pending, StreamExt};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use tokio::net::{TcpSocket, TcpStream};
+use tokio::net::TcpSocket;
 
 use crate::openai::{
     config::OpenAIConfig,
@@ -24,7 +24,7 @@ use crate::openai::{
     Client as OpenAIClient,
 };
 
-use rmcp::{serve_client, service::RunningService, model::{ListToolsResult, CallToolRequestParam}};
+use rmcp::{serve_client, service::{RunningService, Peer, RoleClient}, model::{CallToolRequestParam}};
 
 /// A bridge session that connects OpenAI Chat Completions to an MCP server over TCP.
 pub struct OpenAiMcpSession {
@@ -35,6 +35,8 @@ pub struct OpenAiMcpSession {
     history: VecDeque<ChatCompletionRequestMessage>,
     /// Background task that holds a long‑lived MCP client connection open (keepalive)
     keepalive: Option<tokio::task::JoinHandle<()>>,
+    /// Persistent MCP peer for reusing tool calls (avoids opening new TCP sockets per tool)
+    mcp_peer: Peer<RoleClient>,
 }
 
 impl OpenAiMcpSession {
@@ -47,14 +49,15 @@ impl OpenAiMcpSession {
 
         let oa_client = OpenAIClient::new();
 
-        // Connect once to enumerate tools
+        // Establish a single persistent MCP client connection
         let stream = TcpSocket::new_v4()?
             .connect(mcp_addr.parse()?)
             .await
             .with_context(|| format!("Failed to connect to MCP server at {}", mcp_addr))?;
-        let tools = Self::list_mcp_tools(stream).await?;
-
-        // Convert tools for OpenAI
+        let running: RunningService<_, ()> = serve_client((), stream).await?;
+        let peer = running.peer().clone();
+        // Enumerate tools once via persistent peer
+        let tools = peer.list_tools(None).await?;
         let openai_tools = Self::convert_mcp_tools(tools)?;
 
         // Build base history
@@ -66,13 +69,7 @@ impl OpenAiMcpSession {
             history.push_back(sys.into());
         }
 
-        // Start a persistent client connection to keep the MCP session visible/connected.
-        // This avoids immediate server-side "task cancelled/Closed" logs after the initial probe.
-        let stream2 = TcpSocket::new_v4()?
-            .connect(mcp_addr.parse()?)
-            .await
-            .with_context(|| format!("Failed to connect to MCP server at {}", mcp_addr))?;
-        let running: RunningService<_, ()> = serve_client((), stream2).await?;
+        // Keep the RunningService alive in background (Single connection model)
         let keepalive = tokio::spawn(async move {
             // Hold the RunningService for the lifetime of this task.
             // When this task is aborted/dropped, the connection is closed.
@@ -80,16 +77,10 @@ impl OpenAiMcpSession {
             // Park forever; no explicit heartbeats needed for local TCP.
             let _ = pending::<()>().await;
         });
-
-        Ok(Self { oa_client, model: model.into(), mcp_addr: mcp_addr.to_string(), openai_tools, history, keepalive: Some(keepalive) })
+        Ok(Self { oa_client, model: model.into(), mcp_addr: mcp_addr.to_string(), openai_tools, history, keepalive: Some(keepalive), mcp_peer: peer })
     }
 
-    async fn list_mcp_tools(stream: TcpStream) -> Result<ListToolsResult> {
-        let running: RunningService<_, ()> = serve_client((), stream).await?;
-        let peer = running.peer().clone();
-        let tools = peer.list_tools(None).await?;
-        Ok(tools)
-    }
+    // (Removed old list_mcp_tools – now handled inside connect)
 
     fn convert_mcp_tools(mcp_tools: rmcp::model::ListToolsResult) -> Result<Vec<ChatCompletionTool>> {
         let mut out = Vec::new();
@@ -220,6 +211,7 @@ impl OpenAiMcpSession {
     pub fn history(&self) -> &VecDeque<ChatCompletionRequestMessage> { &self.history }
 
     async fn call_mcp_tool(addr: &str, name: &str, args: Value) -> Result<String> {
+        // Temporary legacy path: open fresh connection (will be phased out)
         let stream = TcpSocket::new_v4()?
             .connect(addr.parse()?)
             .await
@@ -228,21 +220,55 @@ impl OpenAiMcpSession {
         let peer = running.peer().clone();
         use std::borrow::Cow;
         let name_cow: Cow<'static, str> = Cow::Owned(name.to_string());
-        // Ensure arguments is an object/map as required by rmcp schema
         let args_obj = match args {
             Value::Object(map) => map,
-            other => {
-                // wrap non-object into { "input": other }
-                let mut map = serde_json::Map::new();
-                map.insert("input".to_string(), other);
-                map
-            }
+            other => { let mut map = serde_json::Map::new(); map.insert("input".to_string(), other); map }
         };
         let param = CallToolRequestParam { name: name_cow, arguments: Some(args_obj) };
         let result = peer.call_tool(param).await?;
-        // Best-effort stringify result for model consumption
-        let tool_output = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-        Ok(tool_output)
+        Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
+    }
+}
+
+impl OpenAiMcpSession {
+    /// Request command completions via MCP tool using the persistent peer (no additional sockets)
+    pub async fn request_command_completions(&self, partial: &str, shell: &str, context: Option<&str>) -> Result<Vec<crate::mcp::CommandCompletion>> {
+        use std::borrow::Cow;
+        use rmcp::model::CallToolRequestParam;
+        let mut map = serde_json::Map::new();
+        map.insert("partial_command".to_string(), Value::String(partial.to_string()));
+        map.insert("shell_type".to_string(), Value::String(shell.to_string()));
+        if let Some(ctx) = context { map.insert("context".to_string(), Value::String(ctx.to_string())); }
+        let param = CallToolRequestParam { name: Cow::Borrowed("complete_command"), arguments: Some(map) };
+        let result = self.mcp_peer.call_tool(param).await?;
+        let value = serde_json::to_value(&result)?;
+        // Recursive search for first 'completions' array
+        fn find_completions(v: &Value) -> Option<&Vec<Value>> {
+            match v {
+                Value::Object(o) => {
+                    if let Some(arr) = o.get("completions").and_then(|c| c.as_array()) { return Some(arr); }
+                    for (_, val) in o { if let Some(arr) = find_completions(val) { return Some(arr); } }
+                    None
+                }
+                Value::Array(a) => {
+                    for val in a { if let Some(arr) = find_completions(val) { return Some(arr); } }
+                    None
+                }
+                _ => None,
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(arr) = find_completions(&value) {
+            for item in arr.iter() {
+                if let Some(comp) = item.get("completion").and_then(|v| v.as_str()) {
+                    let description = item.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.7) as f32;
+                    let category = item.get("category").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    out.push(crate::mcp::CommandCompletion { completion: comp.to_string(), description, category, confidence });
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
