@@ -161,8 +161,8 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                             target_ordered_keys,
                             self.store_users.clone(),
                             self.search_results.clone(),
-                        );
-
+                        ); // TODO!!
+                        todo!("We need to not call new() every iteration.. only when needed. otherwise we get a very verbose log 'WE HAVE A USER FROM GLOBAL STATE'");
                         if target_config.update_assignees {
                             new_layout.update_assignees(self.store_users.clone());
                         }

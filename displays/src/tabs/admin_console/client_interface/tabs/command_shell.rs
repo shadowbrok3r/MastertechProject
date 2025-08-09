@@ -139,14 +139,19 @@ impl WebSocketClient {
                     });
                 });
             }
-            
+
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
             let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
             let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
             let escape_press = ui.input(|i| i.key_pressed(Key::Escape));
             let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
-
+            let any_key = [key_press, up_press, down_press, tab_press, escape_press, copy_key];
+            if any_key.iter().any(|a| *a) {
+                ui.input_mut(|i| {
+                    i.events = vec![];
+                });
+            }
             if copy_key && text_edit.has_focus() {
                 self.input.clear();
             }
@@ -242,26 +247,22 @@ impl WebSocketClient {
         
         });
 
-        // info!("avail_size: {:?}", avail_size);
         CentralPanel::default()
-            .frame(
-                Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
-                .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                .inner_margin(Margin::same(6))
-            )
-            .show_inside(ui, |ui| 
-        {
-        // ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
+        .frame(
+            Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
+            .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+            .inner_margin(Margin::same(6))
+        )
+        .show_inside(ui, |ui| {
             let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
+
             ScrollArea::vertical()
-                .id_salt(id)
-                .animated(true)
-                .max_width(f32::INFINITY)
-                // .max_height(400.)
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| 
-            {
+            .id_salt(id)
+            .animated(true)
+            .max_width(f32::INFINITY)
+            .auto_shrink([false, false])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
                 // ui.set_min_height(ui.available_height()/1.1);
                 ui.set_width(ui.available_width());
                 let max_msg_width = ui.available_width() / 2.2;
@@ -411,7 +412,6 @@ impl WebSocketClient {
                 // Note: Buffer processing is now handled in receive.rs when DONE is detected
             });
         });
-
     }
 
     /// Get AI-powered command completions (via MCP provider)
@@ -426,7 +426,7 @@ impl WebSocketClient {
             self.command_suggestions.clear();
 
             let partial_command = self.input.clone();
-            let shell_type = self.detect_shell_type();
+            let shell_type = ShellType::PowerShell;
             let tx = self.diagnostic_tx.clone();
             PlatformSpawner::spawn(async move {
                 // Map ShellType to tool helper's string dialect
@@ -435,7 +435,6 @@ impl WebSocketClient {
                     ShellType::PowerShell => "powershell",
                     ShellType::Bash => "bash",
                     ShellType::Zsh => "zsh",
-                    ShellType::Fish => "fish",
                 }.to_string();
 
                 match crate::mcp::tools::mcp_complete_command(partial_command, shell, None) {
@@ -452,6 +451,9 @@ impl WebSocketClient {
                                 }
                             }
                         }
+                        if !completions.is_empty(){ 
+                            log::warn!("New completions: {completions:?}");
+                        }
                         let _ = tx.try_send(DiagnosticResponse::CommandCompletions { completions, context_info: None });
                     }
                     Err(e) => {
@@ -461,19 +463,128 @@ impl WebSocketClient {
             });
         }
     }
+}
 
-    /// Detect shell type from input and platform
-    fn detect_shell_type(&self) -> ShellType {
-        #[cfg(target_os = "windows")]
-        {
-            if self.input.starts_with("Get-") || self.input.starts_with("Set-") {
-                return ShellType::PowerShell;
+
+/// Generate mock command completions (placeholder for MCP integration)
+fn generate_mock_completions(partial: &str, shell_type: &ShellType) -> Vec<CommandCompletion> {
+    let mut suggestions = Vec::new();
+
+    match shell_type {
+        #[cfg(not(target_arch = "wasm32"))]
+        ShellType::Cmd => {
+            if partial.starts_with("d") {
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "dir".to_string(),
+                    description: Some("List directory contents".to_string()),
+                    confidence: 0.95,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "dir /a".to_string(),
+                    description: Some("List all files including hidden".to_string()),
+                    confidence: 0.90,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "dir /s".to_string(),
+                    description: Some("List files recursively".to_string()),
+                    confidence: 0.85,
+                });
             }
-            ShellType::Cmd
+            if partial.starts_with("s") {
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "systeminfo".to_string(),
+                    description: Some("Display system configuration information".to_string()),
+                    confidence: 0.95,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "sfc /scannow".to_string(),
+                    description: Some("System File Checker - scan and repair".to_string()),
+                    confidence: 0.88,
+                });
+            }
+            if partial.starts_with("t") {
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "tasklist".to_string(),
+                    description: Some("Display running processes".to_string()),
+                    confidence: 0.92,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "taskkill /im".to_string(),
+                    description: Some("Terminate process by image name".to_string()),
+                    confidence: 0.80,
+                });
+            }
+            if partial.starts_with("i") {
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "ipconfig /all".to_string(),
+                    description: Some("Display complete network configuration".to_string()),
+                    confidence: 0.93,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "ipconfig /release".to_string(),
+                    description: Some("Release IP address configuration".to_string()),
+                    confidence: 0.75,
+                });
+            }
         }
-        #[cfg(not(target_os = "windows"))]
-        {
-            ShellType::Bash
+        #[cfg(not(target_arch = "wasm32"))]
+        ShellType::PowerShell => {
+            if partial.to_lowercase().starts_with("get-") {
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "Get-Process".to_string(),
+                    description: Some("Get running processes".to_string()),
+                    confidence: 0.95,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "Get-Service".to_string(),
+                    description: Some("Get system services".to_string()),
+                    confidence: 0.93,
+                });
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "Get-EventLog".to_string(),
+                    description: Some("Get Windows event logs".to_string()),
+                    confidence: 0.90,
+                });
+            }
+            if partial.starts_with("Set-") {
+                suggestions.push(CommandCompletion {
+                    category: None,
+                    completion: "Set-ExecutionPolicy".to_string(),
+                    description: Some("Set PowerShell execution policy".to_string()),
+                    confidence: 0.88,
+                });
+            }
         }
+        _ => {}
     }
+
+    // Add context-aware suggestions based on current working directory or previous commands
+    if partial.contains("log") {
+        suggestions.push(CommandCompletion {
+            category: None,
+            completion: format!("{} | tail -f", partial),
+            description: Some("Follow log file in real-time".to_string()),
+            confidence: 0.75,
+        });
+    }
+
+    // Sort by confidence
+    suggestions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    
+    // Limit to top 8 suggestions
+    suggestions.truncate(8);
+    
+    suggestions
 }
