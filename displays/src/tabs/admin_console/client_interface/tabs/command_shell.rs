@@ -21,6 +21,7 @@ impl WebSocketClient {
 
         let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
 
+        let text_response = &mut None;
         TopBottomPanel::bottom(id)
             .default_height(ui.available_height()/1.2) // .resizable(false)
             .show_inside(ui, |ui| 
@@ -66,10 +67,11 @@ impl WebSocketClient {
                 
                 if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
                     ui.label(format!("💡 {} suggestions", self.command_suggestions.len()));
-                    
-                    if ui.button("🔄 Refresh").clicked() {
-                        self.get_ai_command_completions();
-                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("🔄 Refresh").clicked() {
+                            self.get_ai_command_completions();
+                        }
+                    });
                 }
             });
 
@@ -78,10 +80,19 @@ impl WebSocketClient {
                 .margin(Margin::symmetric(10, 4))
                 .desired_width(ui.available_width())
                 .desired_rows(4)
-                // .return_key(return_key)
                 .layouter(&mut layouter)
                 .ui(ui);
-            
+
+            *text_response = Some(text_edit.clone());
+
+            let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
+
+            if tab_press && self.command_suggestions.is_empty() {
+                text_edit.request_focus();
+            } else if tab_press && self.command_suggestions.is_empty() && text_edit.lost_focus() {
+                text_edit.request_focus();
+            }
+
             // Handle AI command completion (live as you type)
             if self.ai_completion_enabled && text_edit.changed() {
                 if self.input != self.last_partial_command && !self.input.is_empty() {
@@ -92,7 +103,7 @@ impl WebSocketClient {
             }
             
             // Show AI suggestions if available
-            if self.ai_completion_enabled && self.show_suggestions && !self.command_suggestions.is_empty() {
+            if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
                 ui.add_space(5.);
                 ui.group(|ui| {
                     ui.vertical(|ui| {
@@ -143,7 +154,6 @@ impl WebSocketClient {
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
             let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
-            let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
             let escape_press = ui.input(|i| i.key_pressed(Key::Escape));
             let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
             let any_key = [key_press, up_press, down_press, tab_press, escape_press, copy_key];
@@ -152,12 +162,13 @@ impl WebSocketClient {
                     i.events = vec![];
                 });
             }
+
             if copy_key && text_edit.has_focus() {
                 self.input.clear();
             }
 
             // Handle AI suggestion navigation
-            if self.ai_completion_enabled && self.show_suggestions && !self.command_suggestions.is_empty() {
+            if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
                 if tab_press {
                     self.selected_suggestion = (self.selected_suggestion + 1) % self.command_suggestions.len();
                 }
@@ -255,6 +266,18 @@ impl WebSocketClient {
         )
         .show_inside(ui, |ui| {
             let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
+
+            let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
+            if tab_press {
+                ui.input_mut(|i| {
+                    i.events = vec![];
+                });
+                if let Some(res) = text_response {
+                    if res.lost_focus() {
+                        res.request_focus();
+                    }
+                }
+            }
 
             ScrollArea::vertical()
             .id_salt(id)
@@ -363,7 +386,14 @@ impl WebSocketClient {
 
                                 } else {
                                     ui.horizontal(|ui| {
-                                        Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 35.)).ui(ui);
+                                        let btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 35.)).ui(ui);
+
+                                        if btn.has_focus() {
+                                            btn.surrender_focus();
+                                            if let Some(res) = text_response {
+                                                res.request_focus();
+                                            }
+                                        }
 
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                             if Button::new(RichText::new("🗐").color(btn_txt_color))
@@ -426,41 +456,19 @@ impl WebSocketClient {
             self.command_suggestions.clear();
 
             let partial_command = self.input.clone();
-            let shell_type = ShellType::PowerShell;
+            let shell_type = ShellType::PowerShell; // TODO: make user selectable
             let tx = self.diagnostic_tx.clone();
-            PlatformSpawner::spawn(async move {
-                // Map ShellType to tool helper's string dialect
-                let shell = match shell_type {
-                    ShellType::Cmd => "cmd",
-                    ShellType::PowerShell => "powershell",
-                    ShellType::Bash => "bash",
-                    ShellType::Zsh => "zsh",
-                }.to_string();
-
-                match crate::mcp::tools::mcp_complete_command(partial_command, shell, None) {
-                    Ok(payload) => {
-                        // Extract completions array into Vec<CommandCompletion>
-                        let mut completions: Vec<CommandCompletion> = Vec::new();
-                        if let Some(arr) = payload.get("completions").and_then(|v| v.as_array()) {
-                            for item in arr {
-                                if let Some(comp) = item.get("completion").and_then(|v| v.as_str()) {
-                                    let description = item.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                    let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
-                                    let category = item.get("category").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                    completions.push(CommandCompletion { completion: comp.to_string(), description, category, confidence });
-                                }
-                            }
-                        }
-                        if !completions.is_empty(){ 
-                            log::warn!("New completions: {completions:?}");
-                        }
-                        let _ = tx.try_send(DiagnosticResponse::CommandCompletions { completions, context_info: None });
-                    }
-                    Err(e) => {
-                        log::error!("Error generating completions: {e:?}");
-                    }
-                }
-            });
+            // TODO: Integrate with persistent OpenAiMcpSession stored in WebSocketClient (openai_session field)
+            if false { // placeholder until openai_session field exists
+                // unreachable
+            } else {
+                // Fallback to local heuristic while session not yet initialized
+                let tx2 = tx.clone();
+                PlatformSpawner::spawn(async move {
+                    let mocks = generate_mock_completions(&partial_command, &shell_type);
+                    let _ = tx2.try_send(DiagnosticResponse::CommandCompletions { completions: mocks, context_info: None });
+                });
+            }
         }
     }
 }
