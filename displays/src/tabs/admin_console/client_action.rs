@@ -32,6 +32,7 @@ impl AdminConsole {
                 self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
             },
             ClientUiAction::ConnectClient(mut client) => {
+                self.open_menu = false;
                 self.undock_client.insert(client.connection_string.clone(), false);
                 log::info!("Received Connection Command");
                 let url = format!(
