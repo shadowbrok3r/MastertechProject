@@ -176,7 +176,6 @@ pub enum ShellType {
     PowerShell,
     Bash,
     Zsh,
-    Fish,
 }
 
 /// Command completion suggestion
