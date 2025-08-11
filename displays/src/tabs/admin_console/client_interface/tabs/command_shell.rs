@@ -1,8 +1,8 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use crate::{tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
+use crate::{mcp::mcp::ShellType, tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
-use crate::mcp::{CommandCompletion, DiagnosticResponse, ShellType};
+use crate::mcp::{CommandCompletion, DiagnosticResponse};
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
@@ -458,17 +458,29 @@ impl WebSocketClient {
             let partial_command = self.input.clone();
             let shell_type = ShellType::PowerShell; // TODO: make user selectable
             let tx = self.diagnostic_tx.clone();
-            // TODO: Integrate with persistent OpenAiMcpSession stored in WebSocketClient (openai_session field)
-            if false { // placeholder until openai_session field exists
-                // unreachable
-            } else {
-                // Fallback to local heuristic while session not yet initialized
-                let tx2 = tx.clone();
-                PlatformSpawner::spawn(async move {
-                    let mocks = generate_mock_completions(&partial_command, &shell_type);
-                    let _ = tx2.try_send(DiagnosticResponse::CommandCompletions { completions: mocks, context_info: None });
-                });
-            }
+            let openai_session = self.mcp_service.openai_session.clone();
+            let tx = tx.clone();
+            let partial_command = partial_command.clone();
+            PlatformSpawner::spawn(async move {
+                if let Ok(client_guard) = openai_session.try_lock() {
+                    if let Some(c) = &*client_guard {
+                        match c.request_command_completions(&partial_command, &shell_type, None).await {
+                            Ok(mut new_commands) => {
+                                log::error!("New commands: {new_commands:?}");
+                                new_commands.append(&mut generate_mock_completions(&partial_command, &shell_type));
+                                let diag_res = DiagnosticResponse::CommandCompletions { 
+                                    completions: new_commands, 
+                                    context_info: None 
+                                };
+                                let _ = tx.try_send(diag_res);
+                            },
+                            Err(e) => {
+                                log::error!("Error getting command completions: {e:?}");
+                            },
+                        }
+                    }
+                }
+            });
         }
     }
 }
