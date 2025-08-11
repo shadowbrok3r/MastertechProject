@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use tokio::net::TcpSocket;
 
-use crate::openai::{
+use crate::{mcp::mcp::ShellType, openai::{
     config::OpenAIConfig,
     types::{
         ChatCompletionRequestAssistantMessageArgs,
@@ -22,7 +22,7 @@ use crate::openai::{
         FunctionObject,
     },
     Client as OpenAIClient,
-};
+}};
 
 use rmcp::{serve_client, service::{RunningService, Peer, RoleClient}, model::{CallToolRequestParam}};
 
@@ -232,7 +232,7 @@ impl OpenAiMcpSession {
 
 impl OpenAiMcpSession {
     /// Request command completions via MCP tool using the persistent peer (no additional sockets)
-    pub async fn request_command_completions(&self, partial: &str, shell: &str, context: Option<&str>) -> Result<Vec<crate::mcp::CommandCompletion>> {
+    pub async fn request_command_completions(&self, partial: &str, shell: &ShellType, context: Option<&str>) -> Result<Vec<crate::mcp::CommandCompletion>> {
         use std::borrow::Cow;
         use rmcp::model::CallToolRequestParam;
         let mut map = serde_json::Map::new();

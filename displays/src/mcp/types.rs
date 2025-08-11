@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::mcp::mcp::ShellType;
+
 /// Supported LLM providers for MCP integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LlmProvider {
@@ -167,15 +169,6 @@ pub enum ScriptType {
     Batch,
     Python,
     Bash,
-}
-
-/// Shell types for command completion
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ShellType {
-    Cmd,
-    PowerShell,
-    Bash,
-    Zsh,
 }
 
 /// Command completion suggestion
