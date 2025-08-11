@@ -22,33 +22,38 @@ use super::tools::{
 // --- Shared domain types (pared down to what tools need) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct EventLogTimeRange {
     pub hours_back: u32,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")] 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)] 
 pub enum EventLogSeverity { Critical, Error, Warning, Information, Verbose }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")] 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)] 
 pub enum ScriptType { PowerShell, Batch, Python, Bash }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")] 
-pub enum ShellType { Cmd, PowerShell, Bash, Zsh, Fish }
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)] 
+pub enum ShellType { Cmd, PowerShell, Bash, Zsh }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")] 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)] 
 pub enum RiskLevel { Low, Medium, High, Critical }
+
+impl ShellType {
+    pub fn to_string(&self) -> String {
+        match self {
+            ShellType::Cmd => "Cmd".to_string(),
+            ShellType::PowerShell => "PowerShell".to_string(),
+            ShellType::Bash => "Bash".to_string(),
+            ShellType::Zsh => "Zsh".to_string(),
+        }
+    }
+}
 
 // --- Tool Parameter Structs ---
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct AnalyzeBsodParams {
     #[schemars(description = "Specific dump file to analyze (optional)")]
     pub dump_path: Option<String>,
@@ -57,7 +62,6 @@ pub struct AnalyzeBsodParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct AnalyzeEventLogsParams {
     #[schemars(description = "Event log name")]
     pub log_name: Option<String>,
@@ -66,7 +70,6 @@ pub struct AnalyzeEventLogsParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct GeneratePerformanceReportParams {
     #[schemars(description = "Hours of history to analyze", default = "default_24")]
     pub duration_hours: Option<u32>,
@@ -77,7 +80,6 @@ pub struct GeneratePerformanceReportParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct GetSystemSummaryParams {
     #[schemars(default = "default_true")]
     pub include_hardware: Option<bool>,
@@ -88,7 +90,6 @@ pub struct GetSystemSummaryParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct CompleteCommandParams {
     #[schemars(description = "Partial command to complete")]
     pub partial_command: String,
@@ -99,7 +100,6 @@ pub struct CompleteCommandParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ExecuteScriptParams {
     pub script: String,
     pub script_type: ScriptType,
@@ -238,7 +238,6 @@ impl DiagnosticToolProvider {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 struct DurationParams { #[schemars(default)] duration_ms: Option<u64> }
 
 #[allow(dead_code)]
