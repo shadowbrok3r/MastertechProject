@@ -80,6 +80,9 @@ pub struct WebSocketClient {
     pub show_suggestions: bool,
     pub last_partial_command: String,
     pub selected_suggestion: usize,
+    #[cfg(feature="tokio")]
+    pub completion_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    pub last_input_change_time: Option<Instant>,
 }
 
 impl Drop for WebSocketClient {
@@ -176,6 +179,9 @@ impl WebSocketClient {
             selected_suggestion: 0,
             hovered: HashSet::new(),
             remove_hovered: None,
+            #[cfg(feature="tokio")]
+            completion_cancel_tx: None,
+            last_input_change_time: None,
         }
     }
 
