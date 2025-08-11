@@ -93,17 +93,25 @@ impl WebSocketClient {
                 text_edit.request_focus();
             }
 
-            // Handle AI command completion (live as you type)
+            // Handle AI command completion with debouncing
             if self.ai_completion_enabled && text_edit.changed() {
-                if self.input != self.last_partial_command && !self.input.is_empty() {
-                    self.last_partial_command = self.input.clone();
-                    // Reuse the same flow as the Refresh button
-                    self.get_ai_command_completions();
+                self.last_input_change_time = Some(web_time::Instant::now());
+                self.command_suggestions.clear(); // Clear old suggestions on new input
+                self.show_suggestions = false;
+            }
+
+            if self.ai_completion_enabled {
+                if let Some(last_change) = self.last_input_change_time {
+                    if last_change.elapsed() > std::time::Duration::from_millis(300) && !self.input.is_empty() && self.input != self.last_partial_command {
+                        self.get_ai_command_completions();
+                        self.last_partial_command = self.input.clone();
+                        self.last_input_change_time = None; // Reset timer
+                    }
                 }
             }
-            
+
             // Show AI suggestions if available
-            if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
+            if self.ai_completion_enabled && !self.command_suggestions.is_empty() && self.show_suggestions {
                 ui.add_space(5.);
                 ui.group(|ui| {
                     ui.vertical(|ui| {
@@ -122,7 +130,7 @@ impl WebSocketClient {
                                     );
                                     
                                     if response.clicked() {
-                                        self.input = suggestion.completion.clone();
+                                        self.input.push_str(&suggestion.completion);
                                         self.show_suggestions = false;
                                         text_edit.request_focus();
                                     }
@@ -168,7 +176,7 @@ impl WebSocketClient {
             }
 
             // Handle AI suggestion navigation
-            if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
+            if self.ai_completion_enabled && !self.command_suggestions.is_empty() && self.show_suggestions {
                 if tab_press {
                     self.selected_suggestion = (self.selected_suggestion + 1) % self.command_suggestions.len();
                 }
@@ -178,7 +186,7 @@ impl WebSocketClient {
                 if key_press {
                     // Use selected suggestion
                     if let Some(suggestion) = self.command_suggestions.get(self.selected_suggestion) {
-                        self.input = suggestion.completion.clone();
+                        self.input.push_str(&suggestion.completion);
                         self.show_suggestions = false;
                     }
                 }
@@ -452,31 +460,37 @@ impl WebSocketClient {
                 return;
             }
 
-            // Clear old suggestions before fetching; they will be filled when response arrives
+            // Cancel any previous completion task
+            if let Some(cancel_tx) = self.completion_cancel_tx.take() {
+                let _ = cancel_tx.send(());
+            }
+
+            // Clear old suggestions before fetching
             self.command_suggestions.clear();
 
             let partial_command = self.input.clone();
             let shell_type = ShellType::PowerShell; // TODO: make user selectable
             let tx = self.diagnostic_tx.clone();
             let openai_session = self.mcp_service.openai_session.clone();
-            let tx = tx.clone();
-            let partial_command = partial_command.clone();
+            
+            let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+            self.completion_cancel_tx = Some(cancel_tx);
+
             PlatformSpawner::spawn(async move {
-                if let Ok(client_guard) = openai_session.try_lock() {
-                    if let Some(c) = &*client_guard {
-                        match c.request_command_completions(&partial_command, &shell_type, None).await {
-                            Ok(mut new_commands) => {
-                                log::error!("New commands: {new_commands:?}");
-                                new_commands.append(&mut generate_mock_completions(&partial_command, &shell_type));
-                                let diag_res = DiagnosticResponse::CommandCompletions { 
-                                    completions: new_commands, 
-                                    context_info: None 
-                                };
-                                let _ = tx.try_send(diag_res);
-                            },
+                if let Ok(guard) = openai_session.try_lock() {
+                    if let Some(session) = guard.as_ref() {
+                        // Use the new streaming completion method with cancellation
+                        match session.stream_command_completions(&partial_command, &shell_type, cancel_rx).await {
+                            Ok(completions) => {
+                                if !completions.is_empty() {
+                                    let _ = tx.try_send(DiagnosticResponse::CommandCompletions { completions, context_info: None });
+                                }
+                            }
                             Err(e) => {
-                                log::error!("Error getting command completions: {e:?}");
-                            },
+                                if e.to_string() != "Request cancelled" {
+                                    log::error!("AI streaming completion error: {e:?}");
+                                }
+                            }
                         }
                     }
                 }
