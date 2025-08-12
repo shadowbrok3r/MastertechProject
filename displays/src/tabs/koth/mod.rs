@@ -673,18 +673,21 @@ impl Koth {
                     let uid = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
                     
                     if self.pulling_all_orders {
-                        if let Some(orders) = self.orders.get_mut(&uid) {
-                            orders.append(&mut orders.clone());
-                            orders.sort_by(sort);
-                        } else {
-                            self.orders.insert(uid.clone(), orders);
+                        // Append only truly new orders (by id) and keep list sorted
+                        let entry = self
+                            .orders
+                            .entry(uid.clone())
+                            .or_insert_with(Vec::new);
+
+                        for o in new_orders.into_iter() {
+                            if !entry.iter().any(|e| e.id == o.id) { // dedup by order id
+                                entry.push(o);
+                            }
                         }
+                        entry.sort_by(sort);
                     } else {
-                        if let Some(orders) = self.orders.get_mut(&uid) {
-                            *orders = new_orders;
-                        } else {
-                            self.orders.insert(uid, new_orders.clone());
-                        }
+                        // Replace with latest snapshot
+                        self.orders.insert(uid, new_orders.clone());
                     }
                 },
                 KothSelection::AllEmployees => {
@@ -747,17 +750,8 @@ impl Koth {
         if let Ok(payment) = self.order_payment_rx.try_recv() {
             match self.koth_selection {
                 KothSelection::Me => {
-                    let uid = self
-                        .user
-                        .get_employee_id()
-                        .map(|id| id.to_string())
-                        .unwrap_or_default();
-
-                    self
-                        .payments
-                        .get_mut(&uid)
-                        .get_or_insert(&mut vec![])
-                        .push(payment.clone());
+                    let uid = self.user.get_employee_id().map(|id| id.to_string()).unwrap_or_default();
+                    self.payments.entry(uid).or_insert_with(Vec::new).push(payment.clone());
                 },
                 KothSelection::AllEmployees => { // PROBLEM - LOOK INTO MULTIPLE PAYMENTS ON SAME ORDER. Am i accounting for this?
                     let order_id = payment.id_order.clone();

@@ -13,63 +13,79 @@ impl WebSocketClient {
             // log::warn!("Diagnostic info: {diagnostic_msg:?}");
             match diagnostic_msg {
                 crate::mcp::DiagnosticResponse::BsodAnalysis { 
-                    summary, 
-                    crash_reason, 
-                    driver_issues, 
-                    recommendations, 
-                    dump_files_analyzed
+                    summary: _summary, 
+                    crash_reason: _crash_reason, 
+                    driver_issues: _driver_issues, 
+                    recommendations: _recommendations, 
+                    dump_files_analyzed: _dump_files_analyzed
                 } => {
 
                 },
                 crate::mcp::DiagnosticResponse::EventLogAnalysis { 
-                    summary, 
-                    critical_events, 
-                    error_patterns, 
-                    recommendations, 
-                    total_events_analyzed 
+                    summary: _summary, 
+                    critical_events: _critical_events, 
+                    error_patterns: _error_patterns, 
+                    recommendations: _recommendations, 
+                    total_events_analyzed: _total_events_analyzed 
                 } => {
 
                 },
                 crate::mcp::DiagnosticResponse::PerformanceReport { 
-                    summary, 
-                    cpu_analysis, 
-                    memory_analysis, 
-                    disk_analysis, 
-                    network_analysis, 
-                    recommendations, 
-                    charts_data 
+                    summary: _summary, 
+                    cpu_analysis: _cpu_analysis, 
+                    memory_analysis: _memory_analysis, 
+                    disk_analysis: _disk_analysis, 
+                    network_analysis: _network_analysis, 
+                    recommendations: _recommendations, 
+                    charts_data: _charts_data 
                 } => {
 
                 },
                 crate::mcp::DiagnosticResponse::SystemSummary { 
-                    overview, 
-                    hardware_summary, 
-                    software_summary, 
-                    network_summary, 
-                    health_score, 
-                    critical_issues 
+                    overview: _overview, 
+                    hardware_summary: _hardware_summary, 
+                    software_summary: _software_summary, 
+                    network_summary: _network_summary, 
+                    health_score: _health_score, 
+                    critical_issues: _critical_issues 
                 } => {
 
                 },
                 crate::mcp::DiagnosticResponse::ScriptExecution { 
-                    success, 
-                    output, 
-                    error, 
-                    approval_required, 
-                    approved
+                    success: _success, 
+                    output: _output, 
+                    error: _error, 
+                    approval_required: _approval_required, 
+                    approved: _approved
                 } => {
 
                 },
                 crate::mcp::DiagnosticResponse::CommandCompletions { 
                     completions, 
-                    context_info 
+                    context_info: _context_info 
                 } => {
+                    // Replace existing suggestions with the new batch
+                    self.command_suggestions.clear();
                     self.command_suggestions.extend_from_slice(&completions);
+                    // Auto‑show suggestions if they came from a debounced background fetch
+                    if !self.command_suggestions.is_empty() {
+                        self.show_suggestions = true;
+                    }
+                    // Clear any in‑flight cancellation handle (request finished)
+                    #[cfg(feature="tokio")]
+                    { self.completion_cancel_tx = None; }
+                    // Make sure UI updates
+                    ctx.request_repaint();
                 },
                 crate::mcp::DiagnosticResponse::Error { 
                     message, 
                     details 
                 } => {
+                    // On error also clear spinner state
+                    #[cfg(feature="tokio")]
+                    { self.completion_cancel_tx = None; }
+                    log::error!("AI Diagnostic error: {message} - {details:?}");
+                    ctx.request_repaint();
 
                 },
             }

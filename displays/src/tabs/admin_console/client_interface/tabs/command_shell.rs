@@ -2,7 +2,7 @@ use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Directi
 use crate::{mcp::mcp::ShellType, tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
-use crate::mcp::{CommandCompletion, DiagnosticResponse};
+use crate::mcp::{DiagnosticResponse};
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
@@ -16,6 +16,38 @@ pub struct History {
 
 
 impl WebSocketClient {
+    // Replace current command token (or argument) intelligently with chosen completion.
+    fn apply_command_suggestion(&mut self, completion: &str) {
+        let current = self.input.clone();
+        let trimmed = current.trim_end_matches(|c: char| c == '\n' || c == '\r');
+        let ends_with_space = current.ends_with(char::is_whitespace);
+        let mut parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.is_empty() {
+            self.input = completion.to_string();
+            return;
+        }
+        if parts.len() == 1 && !ends_with_space {
+            // Replace the sole fragment (command fragment)
+            self.input = completion.to_string();
+            return;
+        }
+        // Argument mode: replace last token that starts with '-' OR append if ending with space
+        if ends_with_space {
+            // Append new argument (ensure space)
+            if !self.input.ends_with(' ') { self.input.push(' '); }
+            self.input.push_str(completion);
+        } else {
+            // Replace last token
+            if let Some(last) = parts.last_mut() { *last = completion; }
+            // Rebuild preserving original trailing whitespace (none, since not ends_with_space)
+            let mut rebuilt = String::new();
+            for (i, p) in parts.iter().enumerate() {
+                if i > 0 { rebuilt.push(' '); }
+                rebuilt.push_str(p);
+            }
+            self.input = rebuilt;
+        }
+    }
     pub fn show_shell(&mut self, ui: &mut Ui) {
         let b_panel_marg = Margin::symmetric(5, 10);
 
@@ -52,11 +84,25 @@ impl WebSocketClient {
 
             // AI Command Completion Section
             ui.horizontal(|ui| {
-                ui.label("👾");
-                if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
-                    if self.ai_completion_enabled {
-                        ui.ctx().request_repaint();
+                if self.ai_completion_enabled {
+                    ui.label("👾");
+                    if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
+                        if !self.ai_completion_enabled {
+                            self.command_suggestions.clear();
+                            self.show_suggestions = false;
+                            // Also cancel any in-flight request
+                            if let Some(cancel) = self.completion_cancel_tx.take() {
+                                let _ = cancel.send(());
+                            }
+                        }
                     }
+                    if self.completion_cancel_tx.is_some() {
+                        ui.spinner();
+                        ui.label(RichText::new("Thinking...").weak());
+                    }
+                } else {
+                    ui.label("👾");
+                    ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion");
                 }
 
                 /*
@@ -75,13 +121,17 @@ impl WebSocketClient {
                 }
             });
 
-            let text_edit = TextEdit::multiline(&mut self.input)
+            let text_edit_out = TextEdit::multiline(&mut self.input)
                 .hint_text("Use Wisely.. (Press Tab for AI suggestions)")
                 .margin(Margin::symmetric(10, 4))
                 .desired_width(ui.available_width())
                 .desired_rows(4)
                 .layouter(&mut layouter)
-                .ui(ui);
+                .show(ui);
+
+            // text_edit_out.response.c
+
+            let text_edit = text_edit_out.response;
 
             *text_response = Some(text_edit.clone());
 
@@ -102,10 +152,12 @@ impl WebSocketClient {
 
             if self.ai_completion_enabled {
                 if let Some(last_change) = self.last_input_change_time {
-                    if last_change.elapsed() > std::time::Duration::from_millis(300) && !self.input.is_empty() && self.input != self.last_partial_command {
-                        self.get_ai_command_completions();
-                        self.last_partial_command = self.input.clone();
-                        self.last_input_change_time = None; // Reset timer
+                    if last_change.elapsed() > std::time::Duration::from_millis(100) {
+                        // Timer has expired, clear it and fire the request.
+                        self.last_input_change_time = None;
+                        if !self.input.is_empty() {
+                            self.get_ai_command_completions();
+                        }
                     }
                 }
             }
@@ -118,7 +170,9 @@ impl WebSocketClient {
                         ui.label(RichText::new("👾 AI Command Suggestions:").strong().color(Color32::LIGHT_BLUE));
                         
                         ScrollArea::vertical().max_height(150.).show(ui, |ui| {
-                            for (idx, suggestion) in self.command_suggestions.iter().enumerate() {
+                            let len = self.command_suggestions.len();
+                            for idx in 0..len {
+                                let suggestion = &self.command_suggestions[idx];
                                 let selected = idx == self.selected_suggestion;
                                 
                                 ui.horizontal(|ui| {
@@ -126,11 +180,13 @@ impl WebSocketClient {
                                         selected,
                                         RichText::new(&suggestion.completion)
                                             .monospace()
-                                            .color(if selected { Color32::YELLOW } else { Color32::WHITE })
+                                            .color(if selected { Color32::CYAN } else { Color32::WHITE })
                                     );
                                     
                                     if response.clicked() {
-                                        self.input.push_str(&suggestion.completion);
+                                        let completion_str = suggestion.completion.clone();
+                                        // Defer mutation after UI borrow scope
+                                        self.pending_completion = Some(completion_str);
                                         self.show_suggestions = false;
                                         text_edit.request_focus();
                                     }
@@ -142,8 +198,7 @@ impl WebSocketClient {
                                     }
                                     
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        ui.label(RichText::new(format!("{:.0}%", suggestion.confidence * 100.))
-                                            .small().weak());
+                                        ui.label(RichText::new(format!("{:.0}%", suggestion.confidence * 100.)).weak());
                                     });
                                 });
                             }
@@ -159,12 +214,29 @@ impl WebSocketClient {
                 });
             }
 
+            // Apply any deferred completion outside of the borrowing loops
+            if let Some(done) = self.pending_completion.take() {
+                self.apply_command_suggestion(&done);
+                // Move caret to end after applying suggestion so user can continue typing.
+                let text_id = text_edit.id;
+                if let Some(mut state) = eframe::egui::widgets::text_edit::TextEditState::load(ui.ctx(), text_id) {
+                    use eframe::egui::text::{CCursor, CCursorRange};
+                    let end = CCursor::new(self.input.chars().count());
+                    let mut cursor = state.cursor.clone();
+                    cursor.set_char_range(Some(CCursorRange::one(end)));
+                    state.cursor = cursor;
+                    state.store(ui.ctx(), text_id);
+                }
+                text_edit.request_focus();
+            }
+
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
             let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
             let escape_press = ui.input(|i| i.key_pressed(Key::Escape));
             let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
             let any_key = [key_press, up_press, down_press, tab_press, escape_press, copy_key];
+            
             if any_key.iter().any(|a| *a) {
                 ui.input_mut(|i| {
                     i.events = vec![];
@@ -186,7 +258,7 @@ impl WebSocketClient {
                 if key_press {
                     // Use selected suggestion
                     if let Some(suggestion) = self.command_suggestions.get(self.selected_suggestion) {
-                        self.input.push_str(&suggestion.completion);
+                        self.pending_completion = Some(suggestion.completion.clone());
                         self.show_suggestions = false;
                     }
                 }
@@ -211,9 +283,12 @@ impl WebSocketClient {
                 
                 // Show suggestions on Tab if AI is enabled
                 if tab_press && self.ai_completion_enabled && !self.input.is_empty() {
-                    if !self.show_suggestions {
+                    // If suggestions are not showing, and no request is currently in flight,
+                    // then we can trigger a request manually.
+                    if !self.show_suggestions && self.completion_cancel_tx.is_none() {
                         self.get_ai_command_completions();
                     }
+                    // In any case, show the suggestion area and reset selection.
                     self.show_suggestions = true;
                     self.selected_suggestion = 0;
                 }
@@ -456,19 +531,25 @@ impl WebSocketClient {
     fn get_ai_command_completions(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if self.input.is_empty() || !self.ai_completion_enabled {
+            let partial_command = self.input.clone();
+            if partial_command.is_empty() || !self.ai_completion_enabled {
                 return;
             }
 
-            // Cancel any previous completion task
+            // If a request for the same command is already in flight, do nothing.
+            if self.completion_cancel_tx.is_some() && partial_command == self.last_partial_command {
+                return;
+            }
+
+            // Cancel any previous, different request.
             if let Some(cancel_tx) = self.completion_cancel_tx.take() {
                 let _ = cancel_tx.send(());
             }
 
-            // Clear old suggestions before fetching
+            // Set state for the new request *before* spawning.
+            self.last_partial_command = partial_command.clone();
             self.command_suggestions.clear();
 
-            let partial_command = self.input.clone();
             let shell_type = ShellType::PowerShell; // TODO: make user selectable
             let tx = self.diagnostic_tx.clone();
             let openai_session = self.mcp_service.openai_session.clone();
@@ -480,15 +561,14 @@ impl WebSocketClient {
                 if let Ok(guard) = openai_session.try_lock() {
                     if let Some(session) = guard.as_ref() {
                         // Use the new streaming completion method with cancellation
-                        match session.stream_command_completions(&partial_command, &shell_type, cancel_rx).await {
-                            Ok(completions) => {
-                                if !completions.is_empty() {
-                                    let _ = tx.try_send(DiagnosticResponse::CommandCompletions { completions, context_info: None });
-                                }
+                        match session.stream_command_completions(&partial_command, &shell_type, cancel_rx, tx.clone()).await {
+                            Ok(()) => {
+                                // Completion stream finished; nothing else to do.
                             }
                             Err(e) => {
                                 if e.to_string() != "Request cancelled" {
                                     log::error!("AI streaming completion error: {e:?}");
+                                    let _ = tx.try_send(DiagnosticResponse::Error { message: "AI completion error".to_string(), details: Some(e.to_string()) });
                                 }
                             }
                         }
@@ -499,126 +579,3 @@ impl WebSocketClient {
     }
 }
 
-
-/// Generate mock command completions (placeholder for MCP integration)
-fn generate_mock_completions(partial: &str, shell_type: &ShellType) -> Vec<CommandCompletion> {
-    let mut suggestions = Vec::new();
-
-    match shell_type {
-        #[cfg(not(target_arch = "wasm32"))]
-        ShellType::Cmd => {
-            if partial.starts_with("d") {
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "dir".to_string(),
-                    description: Some("List directory contents".to_string()),
-                    confidence: 0.95,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "dir /a".to_string(),
-                    description: Some("List all files including hidden".to_string()),
-                    confidence: 0.90,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "dir /s".to_string(),
-                    description: Some("List files recursively".to_string()),
-                    confidence: 0.85,
-                });
-            }
-            if partial.starts_with("s") {
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "systeminfo".to_string(),
-                    description: Some("Display system configuration information".to_string()),
-                    confidence: 0.95,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "sfc /scannow".to_string(),
-                    description: Some("System File Checker - scan and repair".to_string()),
-                    confidence: 0.88,
-                });
-            }
-            if partial.starts_with("t") {
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "tasklist".to_string(),
-                    description: Some("Display running processes".to_string()),
-                    confidence: 0.92,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "taskkill /im".to_string(),
-                    description: Some("Terminate process by image name".to_string()),
-                    confidence: 0.80,
-                });
-            }
-            if partial.starts_with("i") {
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "ipconfig /all".to_string(),
-                    description: Some("Display complete network configuration".to_string()),
-                    confidence: 0.93,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "ipconfig /release".to_string(),
-                    description: Some("Release IP address configuration".to_string()),
-                    confidence: 0.75,
-                });
-            }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        ShellType::PowerShell => {
-            if partial.to_lowercase().starts_with("get-") {
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "Get-Process".to_string(),
-                    description: Some("Get running processes".to_string()),
-                    confidence: 0.95,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "Get-Service".to_string(),
-                    description: Some("Get system services".to_string()),
-                    confidence: 0.93,
-                });
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "Get-EventLog".to_string(),
-                    description: Some("Get Windows event logs".to_string()),
-                    confidence: 0.90,
-                });
-            }
-            if partial.starts_with("Set-") {
-                suggestions.push(CommandCompletion {
-                    category: None,
-                    completion: "Set-ExecutionPolicy".to_string(),
-                    description: Some("Set PowerShell execution policy".to_string()),
-                    confidence: 0.88,
-                });
-            }
-        }
-        _ => {}
-    }
-
-    // Add context-aware suggestions based on current working directory or previous commands
-    if partial.contains("log") {
-        suggestions.push(CommandCompletion {
-            category: None,
-            completion: format!("{} | tail -f", partial),
-            description: Some("Follow log file in real-time".to_string()),
-            confidence: 0.75,
-        });
-    }
-
-    // Sort by confidence
-    suggestions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
-    
-    // Limit to top 8 suggestions
-    suggestions.truncate(8);
-    
-    suggestions
-}
