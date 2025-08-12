@@ -83,6 +83,7 @@ pub struct WebSocketClient {
     #[cfg(feature="tokio")]
     pub completion_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub last_input_change_time: Option<Instant>,
+    pub pending_completion: Option<String>,
 }
 
 impl Drop for WebSocketClient {
@@ -124,7 +125,14 @@ impl WebSocketClient {
             // model can be overridden later; default to lightweight model
 
             use crate::mcp::run_mcp_server_tcp;
-            mcp_service.spawn_openai_connect("127.0.0.1:9002", "gpt-4o-mini", None);
+            mcp_service.spawn_openai_connect("127.0.0.1:9002", "gpt-4.1-nano", Some(
+                format!("You are a command-line completion assistant. Provide a list of up to 5 command completions for a Powershell shell.
+Each completion should be on a new line. Do not add any extra text, explanations, or formatting.
+The user wants to append the completion to their existing input, so provide the remaining part of the command.
+For example, if the user types 'get' you should return suggestions like: 
+Get-CimClass
+Get-WmiObject")
+            ));
             let run_mcp_server_tcp = run_mcp_server_tcp();
             log::warn!("run_mcp_server_tcp: {run_mcp_server_tcp:?}");
         }
@@ -182,6 +190,7 @@ impl WebSocketClient {
             #[cfg(feature="tokio")]
             completion_cancel_tx: None,
             last_input_change_time: None,
+            pending_completion: None,
         }
     }
 
