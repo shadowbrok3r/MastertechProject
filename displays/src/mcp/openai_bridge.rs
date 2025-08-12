@@ -349,17 +349,16 @@ impl OpenAiMcpSession {
             "You are a command-line completion assistant. Provide a list of up to 5 command completions for a {shell:?} shell. The user has typed: '{partial}'.
 Each completion should be on a new line. Do not add any extra text, explanations, or formatting.
 The user wants to append the completion to their existing input, so provide the remaining part of the command.
-For example, if the user types 'git com', you should return suggestions like:
-mit
-mit --amend
-mmit -m"
+For example, if the user types 'get' you should return suggestions like: 
+Get-CimClass
+Get-WmiObject"
         );
 
         let request = CreateChatCompletionRequest {
             model: self.model.clone(),
             messages: vec![
                 ChatCompletionRequestSystemMessageArgs::default()
-                    .content("You are a command-line completion assistant who provides only raw text suggestions and nothing else.")
+                    .content("You are a command-line completion assistant who provides only powershell/cmd command suggestions.")
                     .build()?
                     .into(),
                 ChatCompletionRequestUserMessageArgs::default()
