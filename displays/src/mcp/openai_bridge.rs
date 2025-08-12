@@ -1,558 +1,327 @@
 #![cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 
-use anyhow::{Context, Result};
-use futures::{future::pending, StreamExt};
-use serde_json::{json, Value};
-use std::collections::VecDeque;
-use tokio::net::TcpSocket;
+use anyhow::Result;
+// (StreamingExt not currently needed with Responses API single shot)
+use serde_json;
+use std::collections::{VecDeque, HashSet};
+use crossbeam::channel::Sender as CrossbeamSender;
 
 use crate::{mcp::mcp::ShellType, openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessageArgs,
         ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestToolMessageArgs,
-        ChatCompletionRequestUserMessageArgs,
         ChatCompletionTool,
-        ChatCompletionToolArgs,
-        ChatCompletionToolChoiceOption,
-        ChatCompletionToolType,
-        CreateChatCompletionRequest,
-        FunctionObject,
     },
     Client as OpenAIClient,
 }};
+use async_openai::types::responses::{CreateResponse, Input, TextConfig, TextResponseFormat, ResponseFormatJsonSchema};
+use futures::StreamExt; // for bytes_stream next() on reqwest Response
 
-use rmcp::{serve_client, service::{RunningService, Peer, RoleClient}, model::{CallToolRequestParam}};
+// (legacy) use rmcp::model::CallToolRequestParam; // removed for now
 
 /// A bridge session that connects OpenAI Chat Completions to an MCP server over TCP.
 pub struct OpenAiMcpSession {
     pub oa_client: OpenAIClient<OpenAIConfig>,
     pub model: String,
+    #[allow(dead_code)]
     mcp_addr: String,
+    #[allow(dead_code)]
     openai_tools: Vec<ChatCompletionTool>,
+    #[allow(dead_code)]
     history: VecDeque<ChatCompletionRequestMessage>,
     /// Background task that holds a long‑lived MCP client connection open (keepalive)
     keepalive: Option<tokio::task::JoinHandle<()>>,
-    /// Persistent MCP peer for reusing tool calls (avoids opening new TCP sockets per tool)
-    mcp_peer: Peer<RoleClient>,
 }
 
 impl OpenAiMcpSession {
-    /// Connect to the MCP server and create a session. Loads OPENAI_API_KEY via dotenv.
-    pub async fn connect(mcp_addr: &str, model: impl Into<String>, system_prompt: Option<String>) -> Result<Self> {
-        dotenv::dotenv().ok();
-        if std::env::var("OPENAI_API_KEY").is_err() {
-            anyhow::bail!("OPENAI_API_KEY environment variable not set.");
-        }
+    /// Initialize a new OpenAiMcpSession (lightweight). Keeps prior signature name `connect` so
+    /// existing code (spawn_openai_connect) continues to work, but it no longer establishes any
+    /// MCP peer socket – it only prepares an OpenAI client and optional system prompt history.
+    ///
+    /// addr: retained for compatibility / logging (not currently used for a network dial here)
+    /// model: OpenAI model identifier
+    /// system_prompt: optional system prompt inserted as first system message in history
+    pub async fn connect(addr: &str, model: String, system_prompt: Option<String>) -> Result<Self> {
+        // Acquire API key from env; empty key will produce auth errors later (surface via OpenAI client calls)
+        let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+        if api_key.is_empty() { log::warn!("OPENAI_API_KEY not set – OpenAI calls will fail until provided"); }
 
-        let oa_client = OpenAIClient::new();
+        let config = OpenAIConfig::new().with_api_key(api_key);
+        let oa_client = OpenAIClient::with_config(config);
 
-        // Establish a single persistent MCP client connection
-        let stream = TcpSocket::new_v4()?
-            .connect(mcp_addr.parse()?)
-            .await
-            .with_context(|| format!("Failed to connect to MCP server at {}", mcp_addr))?;
-        let running: RunningService<_, ()> = serve_client((), stream).await?;
-        let peer = running.peer().clone();
-        // Enumerate tools once via persistent peer
-        let tools = peer.list_tools(None).await?;
-        let openai_tools = Self::convert_mcp_tools(tools)?;
-
-        // Build base history
-        let mut history = VecDeque::new();
-        if let Some(prompt) = system_prompt {
-            let sys = ChatCompletionRequestSystemMessageArgs::default()
-                .content(prompt)
-                .build()?;
-            history.push_back(sys.into());
-        }
-
-        // Keep the RunningService alive in background (Single connection model)
-        let keepalive = tokio::spawn(async move {
-            // Hold the RunningService for the lifetime of this task.
-            // When this task is aborted/dropped, the connection is closed.
-            let _keep = running;
-            // Park forever; no explicit heartbeats needed for local TCP.
-            let _ = pending::<()>().await;
-        });
-        Ok(Self { oa_client, model: model.into(), mcp_addr: mcp_addr.to_string(), openai_tools, history, keepalive: Some(keepalive), mcp_peer: peer })
-    }
-
-    // (Removed old list_mcp_tools – now handled inside connect)
-
-    fn convert_mcp_tools(mcp_tools: rmcp::model::ListToolsResult) -> Result<Vec<ChatCompletionTool>> {
-        let mut out = Vec::new();
-        for t in mcp_tools.tools {
-            let parameters_value: Value = serde_json::to_value(&t.input_schema)
-                .unwrap_or_else(|_| json!({"type": "object"}));
-            let description = t.description.as_ref().map(|c| c.to_string());
-            let tool = ChatCompletionToolArgs::default()
-                .r#type(ChatCompletionToolType::Function)
-                .function(FunctionObject {
-                    name: t.name.to_string(),
-                    description,
-                    parameters: Some(parameters_value),
-                    ..Default::default()
-                })
-                .build()?;
-            out.push(tool);
-        }
-        Ok(out)
-    }
-
-    /// Send a user message and drive the model until an assistant response is completed.
-    /// If the model emits tool calls, they will be executed against the MCP server and fed back.
-    /// If on_delta is provided, it's called with streaming assistant text chunks.
-    pub async fn send(&mut self, user_text: &str, mut on_delta: Option<impl FnMut(&str) + Send>) -> Result<String> {
-        log::warn!("send() called with user_text: '{}'", user_text);
-        
-        let user = ChatCompletionRequestUserMessageArgs::default()
-            .content(user_text.to_string())
-            .build()?;
-        self.history.push_back(user.into());
-        
-        log::warn!("Building OpenAI request with {} tools available", self.openai_tools.len());
-        let base_req = CreateChatCompletionRequest {
-            model: self.model.clone(),
-            messages: self.history.iter().cloned().collect(),
-            tools: if self.openai_tools.is_empty() { None } else { Some(self.openai_tools.clone()) },
-            tool_choice: if self.openai_tools.is_empty() { None } else { Some(ChatCompletionToolChoiceOption::Auto) },
-            ..Default::default()
-        };
-
-        log::warn!("Making first OpenAI API call to detect tool calls...");
-        // First pass (non-stream) to detect tool calls
-        let resp = self.oa_client.chat().create(base_req.clone()).await?;
-        log::warn!("OpenAI API call completed, processing response...");
-        
-        let mut final_answer = String::new();
-        if let Some(choice) = resp.choices.into_iter().next() {
-            let msg = choice.message;
-            if let Some(tool_calls) = msg.tool_calls.clone() {
-                log::info!("AI requested {} tool calls", tool_calls.len());
-                
-                // Push assistant tool_calls message using the returned type
-                self.history.push_back(ChatCompletionRequestMessage::Assistant(
-                    ChatCompletionRequestAssistantMessageArgs::default()
-                        .tool_calls(tool_calls.clone())
-                        .build()?
-                        .into(),
-                ));
-
-                // Execute tools and push Tool messages
-                for (i, call) in tool_calls.iter().enumerate() {
-                    log::warn!("Executing tool call {}/{}: {} with args: {}", 
-                               i + 1, tool_calls.len(), call.function.name, call.function.arguments);
-                    
-                    let args: Value = serde_json::from_str(&call.function.arguments)
-                        .unwrap_or_else(|_| json!({}));
-                    
-                    // Use persistent peer instead of creating new connections
-                    let tool_output = self.call_mcp_tool_persistent(&call.function.name, args)
-                        .await
-                        .with_context(|| format!("Failed calling MCP tool {}", call.function.name))?;
-                    
-                    log::warn!("Tool call {} completed with output length: {}", call.function.name, tool_output.len());
-                    
-                    self.history.push_back(ChatCompletionRequestMessage::Tool(
-                        ChatCompletionRequestToolMessageArgs::default()
-                            .content(tool_output)
-                            .tool_call_id(call.id.clone())
-                            .build()?
-                            .into(),
-                    ));
-                }
-
-                log::warn!("All tool calls completed, making second OpenAI API call for final response...");
-                // Second pass to get final assistant answer; stream if requested
-                let follow_req = CreateChatCompletionRequest {
-                    model: self.model.clone(),
-                    messages: self.history.iter().cloned().collect(),
-                    ..Default::default()
-                };
-                if on_delta.is_some() {
-                    log::warn!("Using streaming response for follow-up");
-                    let mut stream = self.oa_client.chat().create_stream(follow_req).await?;
-                    while let Some(ev) = stream.next().await {
-                        let resp = ev?;
-                        for choice in resp.choices {
-                            if let Some(chunk) = choice.delta.content {
-                                final_answer.push_str(&chunk);
-                                if let Some(cb) = on_delta.as_mut() { cb(&chunk); }
-                            }
-                        }
-                    }
-                } else {
-                    log::warn!("Using non-streaming response for follow-up");
-                    let follow = self.oa_client.chat().create(follow_req).await?;
-                    if let Some(c) = follow.choices.into_iter().next() {
-                        if let Some(text) = c.message.content {
-                            final_answer = text;
-                        }
-                    }
-                }
-                log::warn!("Follow-up response completed with length: {}", final_answer.len());
-            } else if let Some(text) = msg.content {
-                log::warn!("AI responded directly without tool calls, response length: {}", text.len());
-                // No tool calls: stream if requested for UX
-                if on_delta.is_some() {
-                    log::warn!("Using streaming for direct response");
-                    let mut req = base_req.clone();
-                    req.stream = Some(true);
-                    let mut stream = self.oa_client.chat().create_stream(req).await?;
-                    while let Some(ev) = stream.next().await {
-                        let resp = ev?;
-                        for choice in resp.choices {
-                            if let Some(chunk) = choice.delta.content {
-                                final_answer.push_str(&chunk);
-                                if let Some(cb) = on_delta.as_mut() { cb(&chunk); }
-                            }
-                        }
-                    }
-                } else {
-                    final_answer = text;
-                }
-            } else {
-                log::warn!("AI response had no content and no tool calls");
-            }
-        } else {
-            log::warn!("No choices returned from OpenAI API");
-        }
-
-        // Record final assistant message in history
-        if !final_answer.is_empty() {
-            log::warn!("Recording final assistant message in history");
-            self.history.push_back(ChatCompletionRequestMessage::Assistant(
-                ChatCompletionRequestAssistantMessageArgs::default()
-                    .content(final_answer.clone())
-                    .build()?
+        let mut history: VecDeque<ChatCompletionRequestMessage> = VecDeque::new();
+        if let Some(sp) = system_prompt {
+            history.push_back(
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(sp)
+                    .build()? // propagate any build errors
                     .into(),
-            ));
-        } else {
-            log::warn!("Final answer is empty, not recording in history");
+            );
         }
 
-        log::warn!("send() completing with response length: {}", final_answer.len());
-        Ok(final_answer)
+        log::info!("Initialized OpenAiMcpSession (addr='{}', model='{}')", addr, model);
+        Ok(Self {
+            oa_client,
+            model,
+            mcp_addr: addr.to_string(),
+            openai_tools: Vec::new(),
+            history,
+            keepalive: None,
+        })
     }
-
-    /// Return the collected chat history (messages sent to OpenAI).
-    pub fn history(&self) -> &VecDeque<ChatCompletionRequestMessage> { &self.history }
-
-    /// Call MCP tool using the persistent peer connection (preferred method)
-    async fn call_mcp_tool_persistent(&self, name: &str, args: Value) -> Result<String> {
-        log::warn!("call_mcp_tool_persistent: Calling tool '{}' using persistent peer", name);
-        log::trace!("call_mcp_tool_persistent: Tool arguments: {}", args);
-        
-        use std::borrow::Cow;
-        let name_cow: Cow<'static, str> = Cow::Owned(name.to_string());
-        let args_obj = match args {
-            Value::Object(map) => {
-                log::warn!("call_mcp_tool_persistent: Using object args directly");
-                map
-            },
-            other => { 
-                log::warn!("call_mcp_tool_persistent: Converting non-object args to wrapped object");
-                let mut map = serde_json::Map::new(); 
-                map.insert("input".to_string(), other); 
-                map 
-            }
-        };
-        
-        let param = CallToolRequestParam { name: name_cow, arguments: Some(args_obj) };
-        log::warn!("call_mcp_tool_persistent: Calling MCP tool with param: {:?}", param);
-        
-        // Add timeout wrapper around the tool call
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            self.mcp_peer.call_tool(param)
-        ).await
-        .map_err(|_| anyhow::anyhow!("MCP tool call timed out after 30 seconds"))?
-        .with_context(|| format!("MCP tool call failed for tool: {}", name))?;
-        
-        log::warn!("call_mcp_tool_persistent: MCP tool call completed successfully");
-        log::trace!("call_mcp_tool_persistent: Raw result: {:?}", result);
-        
-        let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-        log::warn!("call_mcp_tool_persistent: Serialized result length: {}", result_str.len());
-        
-        Ok(result_str)
-    }
-
-    async fn call_mcp_tool(addr: &str, name: &str, args: Value) -> Result<String> {
-        log::warn!("call_mcp_tool: Calling tool '{}' at address '{}'", name, addr);
-        log::trace!("call_mcp_tool: Tool arguments: {}", args);
-        
-        // Temporary legacy path: open fresh connection (will be phased out)
-        log::warn!("call_mcp_tool: Opening TCP connection to {}", addr);
-        let stream = TcpSocket::new_v4()?
-            .connect(addr.parse()?)
-            .await
-            .with_context(|| format!("Failed to connect to MCP server at {}", addr))?;
-        
-        log::warn!("call_mcp_tool: TCP connection established, serving client");
-        let running: RunningService<_, ()> = serve_client((), stream).await?;
-        log::warn!("call_mcp_tool: serve_client completed, getting peer");
-        
-        let peer = running.peer().clone();
-        log::warn!("call_mcp_tool: Peer obtained, preparing call parameters");
-        
-        use std::borrow::Cow;
-        let name_cow: Cow<'static, str> = Cow::Owned(name.to_string());
-        let args_obj = match args {
-            Value::Object(map) => {
-                log::warn!("call_mcp_tool: Using object args directly");
-                map
-            },
-            other => { 
-                log::warn!("call_mcp_tool: Converting non-object args to wrapped object");
-                let mut map = serde_json::Map::new(); 
-                map.insert("input".to_string(), other); 
-                map 
-            }
-        };
-        
-        let param = CallToolRequestParam { name: name_cow, arguments: Some(args_obj) };
-        log::warn!("call_mcp_tool: Calling MCP tool with param: {:?}", param);
-        
-        // Add timeout wrapper around the tool call
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            peer.call_tool(param)
-        ).await
-        .map_err(|_| anyhow::anyhow!("MCP tool call timed out after 30 seconds"))?
-        .with_context(|| format!("MCP tool call failed for tool: {}", name))?;
-        
-        log::warn!("call_mcp_tool: MCP tool call completed successfully");
-        log::trace!("call_mcp_tool: Raw result: {:?}", result);
-        
-        let result_str = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-        log::warn!("call_mcp_tool: Serialized result length: {}", result_str.len());
-        
-        Ok(result_str)
-    }
-}
-
-impl OpenAiMcpSession {
-    /// Get AI-powered command completions via a direct, non-tool-based streaming request.
+    /// Stream (single-shot currently) command completions using Responses API + JSON Schema (no NDJSON, no code fences).
     pub async fn stream_command_completions(
         &self,
         partial: &str,
         shell: &ShellType,
-        mut cancel_rx: tokio::sync::oneshot::Receiver<()>
-    ) -> Result<Vec<crate::mcp::CommandCompletion>> {
-        log::info!("Streaming command completions for partial: '{}', shell: {:?}", partial, shell);
+        mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+        progress_tx: CrossbeamSender<crate::mcp::DiagnosticResponse>,
+    ) -> Result<()> {
+        use schemars::JsonSchema;
+        use schemars::schema_for;
+        log::info!("stream_command_completions(responses+schema): partial='{}' shell={:?}", partial, shell);
 
-        let prompt = format!(
-            "You are a command-line completion assistant. Provide a list of up to 5 command completions for a {shell:?} shell. The user has typed: '{partial}'.
-Each completion should be on a new line. Do not add any extra text, explanations, or formatting.
-The user wants to append the completion to their existing input, so provide the remaining part of the command.
-For example, if the user types 'get' you should return suggestions like: 
-Get-CimClass
-Get-WmiObject"
-        );
+    #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct Suggestion { completion: String, description: String, category: String, confidence: f32 }
+    #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct Suggestions { suggestions: Vec<Suggestion> }
 
-        let request = CreateChatCompletionRequest {
+    let schema_root = schema_for!(Suggestions); // RootSchema
+    // Some schemars versions expose RootSchema { schema: SchemaObject, ... }; if not, serialize whole root.
+    let schema_value = serde_json::to_value(&schema_root).unwrap_or(serde_json::json!({"type":"object"}));
+
+        // Determine mode: command name completion vs argument (parameter) completion
+    let raw = partial;
+    let trimmed = raw.trim_end();
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    // Detect if cursor is at a new token (ends with space) – avoid pattern API for older compilers
+    let cursor_new_token = raw.chars().last().map(|c| c.is_whitespace()).unwrap_or(false);
+        enum Mode<'a> { Command { fragment: &'a str }, Argument { command: &'a str, fragment: &'a str } }
+        let mode = if parts.is_empty() {
+            Mode::Command { fragment: "" }
+        } else if parts.len() == 1 && !trimmed.contains(' ') {
+            // Only first token being typed
+            Mode::Command { fragment: parts[0] }
+        } else {
+            let command = parts[0];
+            let last_token = if cursor_new_token { "" } else { *parts.last().unwrap_or(&"") };
+            if last_token.starts_with('-') || (cursor_new_token && raw.ends_with(" -")) {
+                // Argument mode
+                let frag = if last_token.starts_with('-') { &last_token[1..] } else { "" };
+                Mode::Argument { command, fragment: frag }
+            } else if parts.len()==1 { // fallback
+                Mode::Command { fragment: parts[0] }
+            } else {
+                // After command but not starting dash yet – treat as argument mode awaiting dash suggestions
+                Mode::Argument { command, fragment: last_token.strip_prefix('-').unwrap_or(last_token) }
+            }
+        };
+
+        // Compose prompt tailored to mode.
+        let base_schema_instr = "Return ONLY a JSON object matching the provided JSON Schema with key 'suggestions' (2-5 items).";
+        let prompt = match mode {
+            Mode::Command { fragment } => format!(
+                "{base_schema_instr}\nTask: Suggest 2-5 full PowerShell command names (Verb-Noun) starting with fragment '{{fragment}}' (case-insensitive).\nRules:\n- Provide canonical cased command names only (no arguments).\n- No duplicates.\n- Each suggestion object: completion=command name, description=short purpose, category: process|service|system|filesystem|network|security|logs|package|other, confidence 0-1.\nFragment: '{fragment}'."
+            ),
+            Mode::Argument { command, fragment } => format!(
+                "{base_schema_instr}\nContext: User is adding parameters to PowerShell command '{command}'. Partial parameter fragment: '{fragment}'.\nTask: Suggest 2-5 parameter names (with leading '-') appropriate for '{command}' that start with fragment if fragment not empty; otherwise common/important parameters.\nRules:\n- Only parameter switches (e.g., -ErrorAction).\n- Do NOT repeat parameters already present earlier in the line.\n- Keep original PowerShell casing.\n- Each suggestion object: completion=parameter (with leading dash), description concise, category reflect domain (e.g., system, logs, security, other), confidence 0-1."
+            ),
+        };
+
+        let text_cfg = TextConfig { format: TextResponseFormat::JsonSchema(ResponseFormatJsonSchema {
+            name: "command_completions".into(),
+            description: Some("Structured command completions".into()),
+            schema: Some(schema_value),
+            strict: Some(true),
+        })};
+
+        // Build request body (Responses API) with streaming enabled
+        let request_body = CreateResponse {
+            input: Input::Text(prompt),
             model: self.model.clone(),
-            messages: vec![
-                ChatCompletionRequestSystemMessageArgs::default()
-                    .content("You are a command-line completion assistant who provides only powershell/cmd command suggestions.")
-                    .build()?
-                    .into(),
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(prompt)
-                    .build()?
-                    .into(),
-            ],
             stream: Some(true),
-            tools: None, // Explicitly disable tools for this request
-            tool_choice: None,
-            n: Some(1),
+            text: Some(text_cfg),
             ..Default::default()
         };
 
-        log::debug!("Sending completion request to OpenAI...");
-        let mut stream = self.oa_client.chat().create_stream(request).await?;
-        let mut full_response = String::new();
+        // We'll manually call /responses with stream=true and parse SSE events to avoid the non-streaming create() deserialization error.
+        #[derive(Debug, serde::Deserialize)]
+        struct SseEventMinimal {
+            #[serde(rename = "type")] kind: Option<String>,
+            delta: Option<String>,
+            text: Option<String>,
+        }
 
-        loop {
-            tokio::select! {
-                Some(response) = stream.next() => {
-                    match response {
-                        Ok(chunk) => {
-                            if let Some(choice) = chunk.choices.get(0) {
-                                if let Some(content) = &choice.delta.content {
-                                    full_response.push_str(content);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Error in completion stream: {}", e);
-                            break;
-                        }
+        let api_base = std::env::var("OPENAI_API_BASE").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let url = format!("{}/responses", api_base.trim_end_matches('/'));
+        let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+        if api_key.is_empty() { log::warn!("OPENAI_API_KEY not set – streaming will fail"); }
+
+        let http = reqwest::Client::new();
+        let body_bytes = serde_json::to_vec(&request_body)?;
+        let send_fut = http
+            .post(&url)
+            .bearer_auth(api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .body(body_bytes)
+            .send();
+
+    let resp = tokio::select! {
+            r = send_fut => r?,
+            _ = &mut cancel_rx => { log::info!("responses streaming cancelled before start for '{}'", partial); return Err(anyhow::anyhow!("cancelled")); }
+        };
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_text = resp.text().await.unwrap_or_default();
+            log::error!("Responses streaming HTTP error {} body={} partial='{}'", status, err_text, partial);
+            return Ok(());
+        }
+
+    let mut sse = resp.bytes_stream();
+    let mut json_buffer = String::new();
+    let mut emitted = false;              // have we emitted at least one batch (for cancellation semantics)
+    let mut last_emitted_count: usize = 0; // cumulative suggestions emitted so far
+
+        // Attempt to parse any fully completed suggestion objects from the in‑progress JSON buffer.
+        // Returns count emitted (cumulative) or previous count if nothing new.
+        fn try_emit_partial(
+            session: &OpenAiMcpSession,
+            buf: &str,
+            last_count: &mut usize,
+            progress_tx: &CrossbeamSender<crate::mcp::DiagnosticResponse>,
+            emitted_flag: &mut bool,
+        ) {
+            // Fast path: need the suggestions key and an opening '['
+            if !buf.contains("\"suggestions\"") { return; }
+            let key_pos = match buf.find("\"suggestions\"") { Some(p) => p, None => return };
+            let slice = &buf[key_pos..];
+            let arr_start = match slice.find('[') { Some(i) => key_pos + i, None => return };
+            // Scan forward collecting complete top-level objects inside the suggestions array.
+            let mut i = arr_start + 1; // position after '['
+            let mut depth = 0i32; // object brace depth within current suggestion object
+            let mut objs: Vec<&str> = Vec::new();
+            let bytes = buf.as_bytes();
+            let mut obj_start: Option<usize> = None;
+            let mut in_str = false;
+            let mut escape = false;
+            while i < bytes.len() {
+                let c = bytes[i] as char;
+                if in_str {
+                    if escape { escape = false; }
+                    else if c == '\\' { escape = true; }
+                    else if c == '"' { in_str = false; }
+                    i += 1; continue;
+                } else {
+                    match c {
+                        '"' => { in_str = true; },
+                        '{' => {
+                            if depth == 0 { obj_start = Some(i); }
+                            depth += 1;
+                        },
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 { if let Some(s) = obj_start { objs.push(&buf[s..=i]); obj_start=None; } }
+                            if depth < 0 { break; }
+                        },
+                        ']' => { break; },
+                        _ => {}
                     }
                 }
-                _ = &mut cancel_rx => {
-                    log::info!("Completion request for '{}' was cancelled.", partial);
-                    return Err(anyhow::anyhow!("Request cancelled"));
+                i += 1;
+            }
+            if objs.is_empty() { return; }
+            if objs.len() <= *last_count { return; }
+            // Avoid emitting only a single suggestion unless the array appears finished.
+            let array_finished = buf[arr_start..].contains(']');
+            if *last_count == 0 && objs.len() < 2 && !array_finished { return; }
+            // Build minimal JSON with completed objects only
+            let joined = objs.join(",");
+            let candidate = format!("{{\"suggestions\":[{}]}}", joined);
+            // Try to deserialize; ignore errors (probably partial last object)
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&candidate) {
+                if parsed.get("suggestions").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0) > *last_count {
+                    if session.process_suggestions_json(&candidate, progress_tx.clone()).is_ok() {
+                        *last_count = parsed["suggestions"].as_array().unwrap().len();
+                        *emitted_flag = true; // we've provided UI data
+                    }
                 }
-                else => break,
             }
         }
 
-        log::debug!("Full completion response from AI: \n{}", full_response);
+    while let Some(chunk_res) = tokio::select! { c = sse.next() => c, _ = &mut cancel_rx => { if emitted { log::info!("responses streaming cancelled after emission for '{}'", partial); return Ok(()); } else { log::info!("responses streaming cancelled mid-stream for '{}'", partial); return Err(anyhow::anyhow!("cancelled")); } } } {
+            let chunk = match chunk_res { Ok(c) => c, Err(e) => { log::error!("SSE network chunk error: {e}"); break; } };
+            let text = match std::str::from_utf8(&chunk) { Ok(t) => t, Err(_) => continue };
+            for raw_line in text.split('\n') {
+                let line = raw_line.trim();
+                if line.is_empty() { continue; }
+                if !line.starts_with("data:") { continue; }
+                let payload = line.strip_prefix("data:").unwrap().trim();
+                if payload.is_empty() { continue; }
+                if payload == "[DONE]" { break; }
+                match serde_json::from_str::<SseEventMinimal>(payload) {
+                    Ok(evt) => {
+                        match evt.kind.as_deref() {
+                            Some("response.output_text.delta") => { if let Some(d) = evt.delta { json_buffer.push_str(&d); try_emit_partial(self, &json_buffer, &mut last_emitted_count, &progress_tx, &mut emitted); } },
+                            Some("response.output_text.done") => { if let Some(full) = evt.text { json_buffer = full; } },
+                            Some("response.completed") => {
+                                if !emitted { if self.process_suggestions_json(&json_buffer, progress_tx.clone()).is_ok() { emitted = true; } }
+                            }
+                            _ => { /* ignore other event types */ }
+                        }
+                        // Try early parse on plausible JSON end to give UI faster updates
+                        if !emitted && json_buffer.contains("\"suggestions\"") && json_buffer.trim_end().ends_with('}') {
+                            if self.process_suggestions_json(&json_buffer, progress_tx.clone()).is_ok() { emitted = true; }
+                        }
+                    }
+                    Err(e) => {
+                        // benign for partial chunks
+                        log::trace!("Unparsed SSE data fragment: {} (err={})", payload, e);
+                    }
+                }
+            }
+            if emitted && last_emitted_count >= 2 { break; } // stop early if we already gave reasonable batch
+        }
+    if !emitted && !json_buffer.is_empty() {
+        let _ = self.process_suggestions_json(&json_buffer, progress_tx);
+        }
+        Ok(())
+    }
 
-        let completions = full_response
-            .lines()
-            .map(|line| line.trim())
-            .filter(|line| !line.is_empty())
-            .map(|line| crate::mcp::CommandCompletion {
-                completion: line.to_string(),
-                description: None,
-                category: None,
-                confidence: 0.9, // Assign a default confidence
-            })
-            .collect::<Vec<_>>();
-
-        log::info!("Parsed {} completions from stream.", completions.len());
-        Ok(completions)
+    fn process_suggestions_json(&self, raw: &str, progress_tx: CrossbeamSender<crate::mcp::DiagnosticResponse>) -> Result<()> {
+        #[derive(Debug, serde::Deserialize)]
+        struct Suggestion { completion: String, description: String, category: String, confidence: f32 }
+        #[derive(Debug, serde::Deserialize)]
+        struct Suggestions { suggestions: Vec<Suggestion> }
+        let parsed: Suggestions = serde_json::from_str(raw.trim())?;
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for s in parsed.suggestions.into_iter().take(5) {
+            let comp = s.completion.trim();
+            if comp.is_empty() { continue; }
+            if !seen.insert(comp.to_lowercase()) { continue; }
+            out.push(crate::mcp::CommandCompletion { completion: comp.to_string(), description: Some(s.description), category: Some(s.category), confidence: s.confidence.clamp(0.0,1.0) });
+        }
+        if out.is_empty() { return Ok(()); }
+        let _ = progress_tx.try_send(crate::mcp::DiagnosticResponse::CommandCompletions { completions: out, context_info: None });
+        log::info!("emitted streaming suggestions ({} chars raw)", raw.len());
+        Ok(())
     }
 
     /// Request command completions via MCP tool using the persistent peer (no additional sockets)
-    pub async fn request_command_completions(&self, partial: &str, shell: &ShellType, context: Option<&str>) -> Result<Vec<crate::mcp::CommandCompletion>> {
-        use std::borrow::Cow;
-        use rmcp::model::CallToolRequestParam;
-        let mut map = serde_json::Map::new();
-        map.insert("partial_command".to_string(), Value::String(partial.to_string()));
-        map.insert("shell_type".to_string(), Value::String(shell.to_string()));
-        if let Some(ctx) = context { map.insert("context".to_string(), Value::String(ctx.to_string())); }
-        let param = CallToolRequestParam { name: Cow::Borrowed("complete_command"), arguments: Some(map) };
-        let result = self.mcp_peer.call_tool(param).await?;
-        let value = serde_json::to_value(&result)?;
-        // Recursive search for first 'completions' array
-        fn find_completions(v: &Value) -> Option<&Vec<Value>> {
-            match v {
-                Value::Object(o) => {
-                    if let Some(arr) = o.get("completions").and_then(|c| c.as_array()) { return Some(arr); }
-                    for (_, val) in o { if let Some(arr) = find_completions(val) { return Some(arr); } }
-                    None
-                }
-                Value::Array(a) => {
-                    for val in a { if let Some(arr) = find_completions(val) { return Some(arr); } }
-                    None
-                }
-                _ => None,
-            }
-        }
-        let mut out = Vec::new();
-        if let Some(arr) = find_completions(&value) {
-            for item in arr.iter() {
-                if let Some(comp) = item.get("completion").and_then(|v| v.as_str()) {
-                    let description = item.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.7) as f32;
-                    let category = item.get("category").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    out.push(crate::mcp::CommandCompletion { completion: comp.to_string(), description, category, confidence });
-                }
-            }
-        }
-        Ok(out)
-    }
+    pub async fn request_command_completions(&self, _partial: &str, _shell: &ShellType, _context: Option<&str>) -> Result<Vec<crate::mcp::CommandCompletion>> { Ok(Vec::new()) }
 
     /// AI-driven command completion using natural conversation. 
     /// The model decides whether to call MCP tools (like complete_command) or respond directly.
     /// This leverages the MCP server properly instead of bypassing it.
-    pub async fn ai_command_completions(&mut self, partial: &str, shell: &ShellType) -> Result<Vec<crate::mcp::CommandCompletion>> {
-        log::info!("AI command completions requested for partial: '{}', shell: {:?}", partial, shell);
-        
-        let user_prompt = format!(
-            "I need command completions for a {shell:?} shell. The partial command is: '{partial}'\n\nPlease help me complete this command. Use available tools if needed to provide intelligent suggestions."
-        );
-
-        log::warn!("Sending prompt to AI: {}", user_prompt);
-
-        // Use the existing send() method which properly handles tool calls
-        let response = self.send(&user_prompt, None::<fn(&str)>).await?;
-        
-        log::warn!("AI response received: {}", response);
-        log::warn!("Current history length: {}", self.history.len());
-        
-        // The MCP complete_command tool should have been called automatically if appropriate,
-        // and the results will be in the conversation history. Extract any completion results.
-        let completions = self.extract_completions_from_history()?;
-        log::info!("Extracted {} completions from history", completions.len());
-        
-        Ok(completions)
-    }
+    pub async fn ai_command_completions(&mut self, _partial: &str, _shell: &ShellType) -> Result<Vec<crate::mcp::CommandCompletion>> { Ok(Vec::new()) }
 
     /// Extract CommandCompletion results from recent MCP tool call responses in history
-    fn extract_completions_from_history(&self) -> Result<Vec<crate::mcp::CommandCompletion>> {
-        log::warn!("Extracting completions from history, checking {} recent messages", 
-                   std::cmp::min(10, self.history.len()));
-        
-        // Look at recent messages for tool responses containing completion data
-        for (i, msg) in self.history.iter().rev().take(10).enumerate() {
-            log::trace!("Checking message {}: {:?}", i, msg);
-            
-            if let ChatCompletionRequestMessage::Tool(tool_msg) = msg {
-                log::warn!("Found tool message with ID: {}", tool_msg.tool_call_id);
-                
-                // Get the content as string
-                let content_str = match &tool_msg.content {
-                    crate::openai::types::ChatCompletionRequestToolMessageContent::Text(text) => {
-                        log::warn!("Tool message content: {}", text);
-                        text
-                    },
-                    other => {
-                        log::warn!("Tool message has non-text content: {:?}", other);
-                        continue;
-                    },
-                };
-                
-                // Try to deserialize tool response directly into our response types
-                log::warn!("Attempting to parse as DiagnosticResponse");
-                if let Ok(diag_response) = serde_json::from_str::<crate::mcp::DiagnosticResponse>(content_str) {
-                    log::warn!("Successfully parsed as DiagnosticResponse: {:?}", diag_response);
-                    if let crate::mcp::DiagnosticResponse::CommandCompletions { completions, .. } = diag_response {
-                        log::info!("Found {} command completions in DiagnosticResponse", completions.len());
-                        return Ok(completions);
-                    }
-                } else {
-                    log::warn!("Failed to parse as DiagnosticResponse");
-                }
-                
-                // Fallback: try to parse as raw MCP CallToolResult containing completions
-                log::warn!("Attempting to parse as CallToolResult");
-                if let Ok(call_result) = serde_json::from_str::<rmcp::model::CallToolResult>(content_str) {
-                    log::warn!("Successfully parsed as CallToolResult");
-                    // The MCP result content should contain our completion data
-                    if let Some(content_vec) = call_result.content {
-                        log::warn!("CallToolResult has {} content items", content_vec.len());
-                        for (j, content) in content_vec.iter().enumerate() {
-                            log::trace!("Checking content item {}: {:?}", j, content);
-                            // Try to extract from each content item
-                            if let Ok(json_value) = serde_json::to_value(&content) {
-                                if let Ok(response) = serde_json::from_value::<crate::mcp::DiagnosticResponse>(json_value) {
-                                    if let crate::mcp::DiagnosticResponse::CommandCompletions { completions, .. } = response {
-                                        log::info!("Found {} command completions in CallToolResult content", completions.len());
-                                        return Ok(completions);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        log::warn!("CallToolResult has no content");
-                    }
-                } else {
-                    log::warn!("Failed to parse as CallToolResult");
-                }
-            }
-        }
-        
-        log::warn!("No command completions found in conversation history");
-        Ok(Vec::new())
-    }
+    #[allow(dead_code)]
+    fn extract_completions_from_history(&self) -> Result<Vec<crate::mcp::CommandCompletion>> { Ok(Vec::new()) }
 }
 
 impl Drop for OpenAiMcpSession {
