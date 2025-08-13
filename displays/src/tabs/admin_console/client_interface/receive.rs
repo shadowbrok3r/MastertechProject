@@ -9,6 +9,7 @@ impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
         self.explorer.receive();
 
+        #[cfg(not(target_arch="wasm32"))]
         if let Ok(diagnostic_msg) = self.diagnostic_rx.try_recv() {
             // log::warn!("Diagnostic info: {diagnostic_msg:?}");
             match diagnostic_msg {

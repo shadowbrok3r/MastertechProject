@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{ChatAction, ChatMessageType, ChatThread, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
@@ -153,19 +153,6 @@ impl UserChat {
     }
 
     fn chat_input(&mut self, ui: &mut Ui) {
-            // ui.visuals_mut().extreme_bg_color= Color32::BLACK;
-            // ui.visuals_mut().code_bg_color = Color32::BLACK;
-            // ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
-            // let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
-            // let markdown_editor = &mut self.markdown_editor;
-            // markdown_editor.inputs = self.users.clone();
-            // if let Some(response) = markdown_editor.ui(ui) {
-            //     if response.clicked() || enter_pressed {
-            //         let txt = markdown_editor.submit();
-            //         info!("chats/mod.rs -> Txt: {txt}");
-            //         markdown_editor.clear();
-            //     }
-            // }
         if self.selected_thread.is_some() {
             ui.horizontal_centered(|ui| {
                 let text_edit = TextEdit::multiline(&mut self.input)
@@ -263,8 +250,8 @@ impl UserChat {
                 frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
 
                 let ui = &mut frame.content_ui;
-                // ui.set_min_height(fixed_height);  // Set the fixed height for the message box
                 ui.set_width(max_msg_width);
+
                 // Use a vertical layout to stack the name and message content
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
                     if is_message_from_myself {
@@ -293,9 +280,9 @@ impl UserChat {
                             .ui(ui)
                             .on_hover_text(RichText::new("Copy Task Note"))
                             .clicked() {
-                                    if let ChatMessageType::Text(txt) = &item.content {
-                                        ui.ctx().copy_text(txt.clone());
-                                    }
+                                if let ChatMessageType::Text(txt) = &item.content {
+                                    ui.ctx().copy_text(txt.clone());
+                                }
                             }
                             
                             let id = &item.id;
@@ -328,7 +315,8 @@ impl UserChat {
                                     .ui(ui);
 
                                 if from_btn.clicked(){
-                                    Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into())
+                                    Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
+                                    self.open = !self.open;
                                 }
 
                                 popup_widget(from_btn, style.clone(), &item);
@@ -351,9 +339,11 @@ impl UserChat {
                             ui.add_space(2.);
                             let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
                             if from_btn.clicked(){
-                                Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into())
+                                Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
+                                self.open = !self.open;
                             }
-                            popup_widget(from_btn, style.clone(), &item);
+
+                            popup_widget( from_btn, style.clone(), &item);
 
                             ui.add_space(5.);
                         
@@ -479,8 +469,12 @@ impl UserChat {
 
 
 pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &UserMessage) {
-    let popup = Popup::from_response(&btn_response);
-    popup.show(|ui| {
+    Popup::menu(&btn_response)
+    .width(btn_response.rect.width().min(300.0))
+    .align(RectAlign::BOTTOM)
+    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+    // .open_bool(open)
+    .show(|ui| {
         ui.vertical_centered_justified(|ui| {
             ui.set_width(300.0);
             ui.horizontal(|ui| {

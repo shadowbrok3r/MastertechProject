@@ -41,6 +41,7 @@ pub struct UserChat {
     input: String,
     edit_text: HashMap<String, UserMessage>,
     allow_edit: HashSet<String>,
+    open: bool
 }
 
 impl Default for UserChat {
@@ -73,6 +74,7 @@ impl Default for UserChat {
             input: String::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
+            open: false,
         }
     }
 }

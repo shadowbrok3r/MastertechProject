@@ -15,7 +15,7 @@ use crate::{mcp::mcp::ShellType, openai::{
     },
     Client as OpenAIClient,
 }};
-use async_openai::types::responses::{CreateResponse, Input, TextConfig, TextResponseFormat, ResponseFormatJsonSchema};
+use crate::openai::types::responses::{CreateResponse, Input, TextConfig, TextResponseFormat, ResponseFormatJsonSchema};
 use futures::StreamExt; // for bytes_stream next() on reqwest Response
 
 // (legacy) use rmcp::model::CallToolRequestParam; // removed for now
