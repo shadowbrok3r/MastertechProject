@@ -1,6 +1,5 @@
 #[derive(Default, serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct KothTableData {
-    pub idx: usize,
     pub order_id: String,
     pub date: String,
     pub order_state: String,
@@ -9,4 +8,5 @@ pub struct KothTableData {
     pub warranty: String,
     pub total_paid: f64,
     pub total_without_tax: f64,
+    pub spiffs: f64,
 }

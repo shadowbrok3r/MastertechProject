@@ -823,6 +823,47 @@ impl DesktopModel {
     ];
 }
 
+pub enum OrderType {
+    SalesOrder,
+    ServiceOrder,
+    ReadyToRoll,
+    Bsd,
+    Rci,
+}
+
+impl OrderType {
+    pub fn to_id(&self) -> i32 {
+        match self {
+            Self::SalesOrder => 1,
+            Self::ServiceOrder => 2,
+            Self::ReadyToRoll => 12,
+            Self::Bsd => 13,
+            Self::Rci => 14,
+        }
+    }
+
+    pub fn from_id(id: i32) -> Self {
+        match id {
+            1 => Self::SalesOrder,
+            2 => Self::ServiceOrder,
+            12 => Self::ReadyToRoll,
+            13 => Self::Bsd,
+            14 => Self::Rci,
+            _ => Self::SalesOrder
+        }
+    }
+
+    pub fn from_id_str(id_str: &str) -> Self {
+        match id_str {
+            "1" => Self::SalesOrder,
+            "2" => Self::ServiceOrder,
+            "12" => Self::ReadyToRoll,
+            "13" => Self::Bsd,
+            "14" => Self::Rci,
+            _ => Self::SalesOrder
+        }
+    }
+}
 
 pub trait SubResource {
     fn get_subresource(&self, field: &str) -> Option<String>;
