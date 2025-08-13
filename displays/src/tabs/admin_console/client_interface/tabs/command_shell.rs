@@ -1,8 +1,9 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use crate::{mcp::mcp::ShellType, tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
+use crate::{tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
-use crate::mcp::{DiagnosticResponse};
+#[cfg(not(target_arch="wasm32"))]
+use crate::mcp::{DiagnosticResponse, mcp::ShellType};
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
@@ -48,6 +49,7 @@ impl WebSocketClient {
             self.input = rebuilt;
         }
     }
+
     pub fn show_shell(&mut self, ui: &mut Ui) {
         let b_panel_marg = Margin::symmetric(5, 10);
 
@@ -84,6 +86,7 @@ impl WebSocketClient {
 
             // AI Command Completion Section
             ui.horizontal(|ui| {
+                #[cfg(not(target_arch="wasm32"))]
                 if self.ai_completion_enabled {
                     ui.label("👾");
                     if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
@@ -111,6 +114,7 @@ impl WebSocketClient {
                 
                 ui.add_space(10.);
                 
+                #[cfg(not(target_arch="wasm32"))]
                 if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
                     ui.label(format!("💡 {} suggestions", self.command_suggestions.len()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -137,19 +141,26 @@ impl WebSocketClient {
 
             let tab_press = ui.input(|i| i.key_pressed(Key::Tab));
 
+            #[cfg(not(target_arch="wasm32"))]
             if tab_press && self.command_suggestions.is_empty() {
                 text_edit.request_focus();
-            } else if tab_press && self.command_suggestions.is_empty() && text_edit.lost_focus() {
+            } else if cfg!(not(target_arch="wasm32")) && tab_press && text_edit.lost_focus() {
+                text_edit.request_focus();
+            }
+
+            if tab_press && text_edit.lost_focus() {
                 text_edit.request_focus();
             }
 
             // Handle AI command completion with debouncing
+            #[cfg(not(target_arch="wasm32"))]
             if self.ai_completion_enabled && text_edit.changed() {
                 self.last_input_change_time = Some(web_time::Instant::now());
                 self.command_suggestions.clear(); // Clear old suggestions on new input
                 self.show_suggestions = false;
             }
 
+            #[cfg(not(target_arch="wasm32"))]
             if self.ai_completion_enabled {
                 if let Some(last_change) = self.last_input_change_time {
                     if last_change.elapsed() > std::time::Duration::from_millis(100) {
@@ -163,6 +174,8 @@ impl WebSocketClient {
             }
 
             // Show AI suggestions if available
+            #[cfg(not(target_arch="wasm32"))]
+            #[cfg(not(target_arch="wasm32"))]
             if self.ai_completion_enabled && !self.command_suggestions.is_empty() && self.show_suggestions {
                 ui.add_space(5.);
                 ui.group(|ui| {
@@ -214,20 +227,23 @@ impl WebSocketClient {
                 });
             }
 
-            // Apply any deferred completion outside of the borrowing loops
-            if let Some(done) = self.pending_completion.take() {
-                self.apply_command_suggestion(&done);
-                // Move caret to end after applying suggestion so user can continue typing.
-                let text_id = text_edit.id;
-                if let Some(mut state) = eframe::egui::widgets::text_edit::TextEditState::load(ui.ctx(), text_id) {
-                    use eframe::egui::text::{CCursor, CCursorRange};
-                    let end = CCursor::new(self.input.chars().count());
-                    let mut cursor = state.cursor.clone();
-                    cursor.set_char_range(Some(CCursorRange::one(end)));
-                    state.cursor = cursor;
-                    state.store(ui.ctx(), text_id);
+            // Apply any deferred completion outside of the borrowing loops (native only)
+            #[cfg(not(target_arch="wasm32"))]
+            {
+                if let Some(done) = self.pending_completion.take() {
+                    self.apply_command_suggestion(&done);
+                    // Move caret to end after applying suggestion so user can continue typing.
+                    let text_id = text_edit.id;
+                    if let Some(mut state) = eframe::egui::widgets::text_edit::TextEditState::load(ui.ctx(), text_id) {
+                        use eframe::egui::text::{CCursor, CCursorRange};
+                        let end = CCursor::new(self.input.chars().count());
+                        let mut cursor = state.cursor.clone();
+                        cursor.set_char_range(Some(CCursorRange::one(end)));
+                        state.cursor = cursor;
+                        state.store(ui.ctx(), text_id);
+                    }
+                    text_edit.request_focus();
                 }
-                text_edit.request_focus();
             }
 
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
@@ -247,50 +263,47 @@ impl WebSocketClient {
                 self.input.clear();
             }
 
-            // Handle AI suggestion navigation
-            if self.ai_completion_enabled && !self.command_suggestions.is_empty() && self.show_suggestions {
-                if tab_press {
-                    self.selected_suggestion = (self.selected_suggestion + 1) % self.command_suggestions.len();
-                }
-                if escape_press {
-                    self.show_suggestions = false;
-                }
-                if key_press {
-                    // Use selected suggestion
-                    if let Some(suggestion) = self.command_suggestions.get(self.selected_suggestion) {
-                        self.pending_completion = Some(suggestion.completion.clone());
-                        self.show_suggestions = false;
+            // Handle AI suggestion navigation (native) or fallback to history navigation (wasm)
+            #[cfg(not(target_arch="wasm32"))]
+            {
+                if self.ai_completion_enabled && !self.command_suggestions.is_empty() && self.show_suggestions {
+                    if tab_press {
+                        self.selected_suggestion = (self.selected_suggestion + 1) % self.command_suggestions.len();
+                    }
+                    if escape_press { self.show_suggestions = false; }
+                    if key_press {
+                        if let Some(suggestion) = self.command_suggestions.get(self.selected_suggestion) {
+                            self.pending_completion = Some(suggestion.completion.clone());
+                            self.show_suggestions = false;
+                        }
+                    }
+                } else {
+                    // Normal history navigation when suggestions not shown
+                    if down_press {
+                        if self.history_idx <= self.my_command_history.len() { self.history_idx += 1; }
+                        if let Some(history) = self.my_command_history.get(self.history_idx){ self.input = history.message.clone(); }
+                    }
+                    if up_press {
+                        if self.history_idx > 0 { self.history_idx -= 1; }
+                        if let Some(history) = self.my_command_history.get(self.history_idx){ self.input = history.message.clone(); }
+                    }
+                    if tab_press && self.ai_completion_enabled && !self.input.is_empty() {
+                        if !self.show_suggestions && self.completion_cancel_tx.is_none() { self.get_ai_command_completions(); }
+                        self.show_suggestions = true;
+                        self.selected_suggestion = 0;
                     }
                 }
-            } else {
-                // Normal history navigation when suggestions not shown
+            }
+            #[cfg(target_arch="wasm32")]
+            {
+                // WASM: Only history navigation
                 if down_press {
-                    if self.history_idx <= self.my_command_history.len() {
-                        self.history_idx += 1;
-                    }
-                    if let Some(history) = self.my_command_history.get(self.history_idx){
-                        self.input = history.message.clone();
-                    }
-                } 
-                if up_press {
-                    if self.history_idx > 0 {
-                        self.history_idx -= 1;
-                    }
-                    if let Some(history) = self.my_command_history.get(self.history_idx){
-                        self.input = history.message.clone();
-                    }
+                    if self.history_idx <= self.my_command_history.len() { self.history_idx += 1; }
+                    if let Some(history) = self.my_command_history.get(self.history_idx){ self.input = history.message.clone(); }
                 }
-                
-                // Show suggestions on Tab if AI is enabled
-                if tab_press && self.ai_completion_enabled && !self.input.is_empty() {
-                    // If suggestions are not showing, and no request is currently in flight,
-                    // then we can trigger a request manually.
-                    if !self.show_suggestions && self.completion_cancel_tx.is_none() {
-                        self.get_ai_command_completions();
-                    }
-                    // In any case, show the suggestion area and reset selection.
-                    self.show_suggestions = true;
-                    self.selected_suggestion = 0;
+                if up_press {
+                    if self.history_idx > 0 { self.history_idx -= 1; }
+                    if let Some(history) = self.my_command_history.get(self.history_idx){ self.input = history.message.clone(); }
                 }
             }
 

@@ -25,7 +25,8 @@ pub struct User {
     id_store: Option<String>,
     user_statuses: Option<Vec<Status>>,
     authorization: UserAuthorization,
-    version: String
+    version: String,
+    sales: Option<Vec<RecordId>>
 }
 
 impl Default for User {
@@ -45,6 +46,7 @@ impl Default for User {
             user_statuses: Some(Status::VALUES.to_vec()),
             authorization: UserAuthorization::User,
             version: String::new(),
+            sales: None,
         }
     }
 }
@@ -68,6 +70,7 @@ pub struct UserSettings {
 pub struct UiLayout {
     mtechserver: Value,
     mastertech: Value,
+    task_column_layout: Option<Value>
 }
 
 impl UserSettings {
@@ -86,6 +89,15 @@ impl UserSettings {
 
     pub fn set_ui_layout_mtechserver(&mut self, ui_layout_mtechserver: Value) -> &mut Self {
         self.ui_layout.mtechserver = ui_layout_mtechserver;
+        self
+    }
+
+    pub fn get_task_column_layout(&self) -> Option<Value> {
+        self.ui_layout.task_column_layout.clone()
+    }
+
+    pub fn set_task_column_layout(&mut self, layout: Value) -> &mut Self {
+        self.ui_layout.task_column_layout = Some(layout);
         self
     }
 }
@@ -160,6 +172,23 @@ impl User {
 
     pub fn get_user_settings(&self) -> UserSettings {
         self.user_settings.clone()
+    }
+
+    /// Returns the raw Value of task column layout map (page -> [columns]) if any.
+    pub fn get_task_column_layout(&self) -> Option<Value> {
+        self.user_settings.get_task_column_layout()
+    }
+
+    /// Returns the saved column order for a given page, if present and valid.
+    pub fn get_page_task_columns(&self, page: &str) -> Option<Vec<String>> {
+        match self.get_task_column_layout() {
+            Some(Value::Object(map)) => map.get(page).and_then(|v| {
+                if let Value::Array(arr) = v {
+                    Some(arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                } else { None }
+            }),
+            _ => None,
+        }
     }
 
     pub fn get_statuses(&self) -> Vec<Status> {
@@ -291,6 +320,29 @@ impl User {
         {
             Ok(res) => log::info!("helper_traits -> Result: {res:?}"),
             Err(e) => log::error!("helper_traits -> Error updating User Settings: {e:?}"),
+        }
+        Ok(())
+    }
+
+    /// Saves the task column layout map (page -> [columns]) to the current user's settings.
+    /// This method merges the provided page order into existing settings.
+    pub async fn save_page_task_columns(&mut self, page: &str, order: Vec<String>) -> anyhow::Result<(), anyhow::Error> {
+        // Merge into existing map
+        let mut root = match self.get_task_column_layout() {
+            Some(Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+
+        root.insert(page.to_string(), serde_json::Value::Array(order.into_iter().map(serde_json::Value::from).collect()));
+        let settings = serde_json::Value::Object(root);
+
+        match DATABASE
+            .query("UPDATE $auth.id SET user_settings.ui_layout.task_column_layout = $settings")
+            .bind(("settings", settings.clone()))
+            .await
+        {
+            Ok(_) => log::info!("helper_traits -> save_page_task_columns Ran Ok"),
+            Err(e) => log::error!("helper_traits -> save_page_task_columns -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }

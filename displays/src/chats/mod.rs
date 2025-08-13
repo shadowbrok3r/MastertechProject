@@ -1,9 +1,8 @@
-use chrono::Utc;
-use eframe::egui::{popup_below_widget, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, PopupCloseBehavior, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
-use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
+use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
@@ -11,6 +10,7 @@ use surrealdb::RecordId;
 use itertools::Itertools;
 use log::{error, info};
 use serde::Serialize;
+use chrono::Utc;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatView{
@@ -526,10 +526,10 @@ impl ChatView {
                                         .ui(ui);
 
                                     if from_btn.clicked(){
-                                        ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}", item.id).into()));
+                                        Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
                                     }
 
-                                    popup_widget(ui, from_btn, style.clone(), &item);
+                                    popup_widget(from_btn, style.clone(), &item);
 
                                     ui.add_space(5.);
 
@@ -546,9 +546,10 @@ impl ChatView {
                                 ui.add_space(2.);
                                 let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
                                 if from_btn.clicked(){
-                                    ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-from-{:?}",item.id).into()));
+                                    Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
                                 }
-                                popup_widget(ui, from_btn, style.clone(), &item);
+
+                                popup_widget(from_btn, style.clone(), &item);
 
                                 ui.add_space(5.);
                             
@@ -650,15 +651,12 @@ impl ChatView {
 }
 
 
-pub fn popup_widget(ui: &mut Ui, btn_response: Response, style: Arc<Style>, item: &TaskNotePayload) {
-
-    popup_below_widget(
-        ui, 
-        format!("sub_menu-from-{:?}",item.id).into(), 
-        &btn_response, 
-        PopupCloseBehavior::CloseOnClickOutside, 
-        |ui| 
-    {
+pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &TaskNotePayload) {
+    Popup::menu(&btn_response)
+    .width(btn_response.rect.width().min(300.0))
+    .align(RectAlign::BOTTOM)
+    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+    .show(|ui| {
         ui.vertical_centered_justified(|ui| {
             ui.set_width(300.0);
             ui.horizontal(|ui| {
