@@ -66,19 +66,6 @@ impl MtechServer {
 
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                        
-                        // let result = AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
-                        //         .highlight_matches(true)
-                        //         .max_suggestions(5)
-                        //         .set_text_edit_properties(|text_edit: TextEdit<'_>| {
-                        //             text_edit
-                        //                 .hint_text(" Search for task")
-                        //                 .desired_width(150.0)
-                        //                 .desired_rows(1)
-                        //                 .font(FontId::proportional(12.0))
-                        //                 .frame(true)
-                        //         })
-                        //         .ui(ui);
 
                         let result = TextEdit::singleline(&mut self.context.search_input).desired_width(165.0).hint_text(" Search Tasks").ui(ui);
                         ui.add_space(5.);
@@ -239,45 +226,6 @@ impl MtechServer {
                                 
                                 ui.separator();
 
-                                ui.horizontal(|ui| {
-                                    ui.add_space(ui.available_width()/2.5);
-                                    Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
-                                        ComboBox::new("Store_Selection", "")                    
-                                        .width(60.)
-                                        .selected_text(selected_text)
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(selected, 76, "RIV");
-                                            ui.selectable_value(selected, 73, "LTN");
-                                            ui.selectable_value(selected, 74, "MUR");
-                                            ui.selectable_value(selected, 78, "WJ");
-                                            ui.selectable_value(selected, 75, "ORE");
-                                            ui.selectable_value(selected, 72, "AF");
-                                            ui.selectable_value(selected, 77, "SAN");
-                                        });
-                            
-                                        if *selected != current {
-                                            let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                                            let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
-                                            let store_selection = std::convert::Into::<Store>::into(*selected);
-                                            self.context.shared_ctx.store_users.clear();
-                                            self.context.shared_ctx.tasks.clear();
-                                            self.context.shared_ctx.layout_configs = None; // Force reinitialization
-                                            info!("Switching to store: {:?}", store_selection.as_str());
-                                            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-                                            spawn_local(async move {
-                                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                                let tasks = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                                                let get_store_users = get_store_users(store_users_tx, store_selection).await;
-                                                info!("get_completed_tasks_for_store: {tasks:?}");
-                                                info!("get_tasks_for_store: {store_tasks:?}");
-                                                info!("get_store_users: {get_store_users:?}");
-                                            });
-                                        }
-                                    });
-                                });
-
-                                ui.separator();
-
                                 if ui.add(Button::new("Modify Theme")).clicked() {
                                     self.context.shared_ctx.modify_theme = true;
                                     ui.close_kind(UiKind::Menu)
@@ -344,6 +292,7 @@ impl MtechServer {
                                     } else {
                                         info!("No window");
                                     }
+                                    
                                     let logout_msg = "Logged out".to_string();
                                     self.context.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
                                     match self
@@ -602,6 +551,44 @@ impl MtechServer {
                                 }
                             });
                         });
+
+                        ui.add_space(20.);
+
+                        Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
+                            ComboBox::new("Store_Selection", "")                    
+                            .width(60.)
+                            .selected_text(selected_text)
+                            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(selected, 76, "RIV");
+                                ui.selectable_value(selected, 73, "LTN");
+                                ui.selectable_value(selected, 74, "MUR");
+                                ui.selectable_value(selected, 78, "WJ");
+                                ui.selectable_value(selected, 75, "ORE");
+                                ui.selectable_value(selected, 72, "AF");
+                                ui.selectable_value(selected, 77, "SAN");
+                            });
+                        });
+
+                        if *selected != current {
+                            let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
+                            let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
+                            let store_selection = std::convert::Into::<Store>::into(*selected);
+                            self.context.shared_ctx.store_users.clear();
+                            self.context.shared_ctx.tasks.clear();
+                            self.context.shared_ctx.layout_configs = None; // Force reinitialization
+                            info!("Switching to store: {:?}", store_selection.as_str());
+                            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+                            spawn_local(async move {
+                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                let tasks = get_completed_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                let get_store_users = get_store_users(store_users_tx, store_selection).await;
+                                info!("get_completed_tasks_for_store: {tasks:?}");
+                                info!("get_tasks_for_store: {store_tasks:?}");
+                                info!("get_store_users: {get_store_users:?}");
+                            });
+                        }
+                                    
                     });
                 } else {
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {

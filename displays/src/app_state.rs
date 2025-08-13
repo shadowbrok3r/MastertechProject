@@ -407,7 +407,9 @@ impl SharedContext {
                 .iter()
                 .flat_map(|u| u.get_statuses())
                 .collect::<std::collections::HashSet<Status>>();
+
             log::warn!("Store users statuses: {:?}", store_user_statuses);
+            
             statuses.extend(store_user_statuses.into_iter());
             // Add statuses from tasks
             let task_statuses = self.task_index
@@ -439,7 +441,21 @@ impl SharedContext {
                     .into_iter()
                     .collect::<Vec<String>>();
                 log::warn!("MyTasks valid_statuses: {:?}", filtered_statuses);
-                filtered_statuses
+                // If user has a saved order for My Tasks, apply it here
+                if let Some(user) = self.current_user.as_ref() {
+                    if let Some(saved) = user.get_page_task_columns("My Tasks") {
+                        let mut applied: Vec<String> = Vec::new();
+                        for k in saved.iter() {
+                            if filtered_statuses.contains(k) && !applied.contains(k) {
+                                applied.push(k.clone());
+                            }
+                        }
+                        for k in filtered_statuses.iter() {
+                            if !applied.contains(k) { applied.push(k.clone()); }
+                        }
+                        applied
+                    } else { filtered_statuses }
+                } else { filtered_statuses }
             };
 
             // MyTasks: Current user's tasks, non-Complete, keyed by status
@@ -463,16 +479,41 @@ impl SharedContext {
             );
 
             // StoreTasks: Incomplete tasks for store users, keyed by username
+            // Build default order of usernames for store tasks
+            let mut store_users_default: Vec<String> = self
+                .store_users
+                .iter()
+                .map(|u| u.get_username().to_string())
+                .collect();
+            // Apply saved order if present
+            if let Some(user) = self.current_user.as_ref() {
+                if let Some(saved) = user.get_page_task_columns("Store Tasks") {
+                    let mut applied: Vec<String> = Vec::new();
+                    for k in saved.iter() {
+                        if store_users_default.contains(k) && !applied.contains(k) { applied.push(k.clone()); }
+                    }
+                    for k in store_users_default.iter() {
+                        if !applied.contains(k) { applied.push(k.clone()); }
+                    }
+                    store_users_default = applied;
+                }
+            }
+
             layout_configs.insert(
                 "Store Tasks".to_string(),
                 LayoutConfig {
-                    valid_keys: self
-                        .store_users
-                        .iter()
-                        .map(|u| u.get_username().to_string())
-                        .collect(),
-                    key_provider: Box::new(|users| {
-                        users.iter().map(|u| u.get_username().to_string()).collect()
+                    valid_keys: store_users_default.clone(),
+                    key_provider: Box::new(move |users| {
+                        // Rebuild current usernames but order by saved template (store_users_default)
+                        let current: Vec<String> = users.iter().map(|u| u.get_username().to_string()).collect();
+                        let mut applied: Vec<String> = Vec::new();
+                        for k in store_users_default.iter() {
+                            if current.contains(k) && !applied.contains(k) { applied.push(k.clone()); }
+                        }
+                        for k in current.iter() {
+                            if !applied.contains(k) { applied.push(k.clone()); }
+                        }
+                        applied
                     }),
                     filter: Box::new(|task, current_user, store_users, store| {
                         current_user
@@ -494,16 +535,39 @@ impl SharedContext {
             );
 
             // CompletedTasks: Completed tasks for store users, keyed by username
+            // Build default order for Completed Tasks usernames
+            let mut completed_users_default: Vec<String> = self
+                .store_users
+                .iter()
+                .map(|u| u.get_username().to_string())
+                .collect();
+            if let Some(user) = self.current_user.as_ref() {
+                if let Some(saved) = user.get_page_task_columns("Completed Tasks") {
+                    let mut applied: Vec<String> = Vec::new();
+                    for k in saved.iter() {
+                        if completed_users_default.contains(k) && !applied.contains(k) { applied.push(k.clone()); }
+                    }
+                    for k in completed_users_default.iter() {
+                        if !applied.contains(k) { applied.push(k.clone()); }
+                    }
+                    completed_users_default = applied;
+                }
+            }
+
             layout_configs.insert(
                 "Completed Tasks".to_string(),
                 LayoutConfig {
-                    valid_keys: self
-                        .store_users
-                        .iter()
-                        .map(|u| u.get_username().to_string())
-                        .collect(),
-                    key_provider: Box::new(|users| {
-                        users.iter().map(|u| u.get_username().to_string()).collect()
+                    valid_keys: completed_users_default.clone(),
+                    key_provider: Box::new(move |users| {
+                        let current: Vec<String> = users.iter().map(|u| u.get_username().to_string()).collect();
+                        let mut applied: Vec<String> = Vec::new();
+                        for k in completed_users_default.iter() {
+                            if current.contains(k) && !applied.contains(k) { applied.push(k.clone()); }
+                        }
+                        for k in current.iter() {
+                            if !applied.contains(k) { applied.push(k.clone()); }
+                        }
+                        applied
                     }),
                     filter: Box::new(|task, _current_user, store_users, store| {
                         store_users.iter().any(|u| {

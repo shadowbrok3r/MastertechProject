@@ -206,7 +206,7 @@ impl CreateTaskModal {
             )
             .highlight_matches(true)
             .max_suggestions(3)
-            .set_text_edit_properties(move |text_edit| {
+            .set_text_edit_properties(|text_edit| {
                 text_edit
                     .hint_text("Assignee")
                     .desired_width(200.0)

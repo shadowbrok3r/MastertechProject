@@ -51,6 +51,7 @@ impl AdminConsole {
                             self.filesystem.clone(),
                         );
 
+                        #[cfg(not(target_arch="wasm32"))]
                         ws_client.start_receiving_buffers();
                         
                         self.ws_clients

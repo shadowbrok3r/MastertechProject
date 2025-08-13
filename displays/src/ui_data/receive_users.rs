@@ -150,6 +150,12 @@ impl SharedContext {
                 if config.update_assignees {
                     layout.update_assignees(self.store_users.clone());
                 }
+                // Try to load and apply user's saved order for this page
+                if let Some(user) = self.current_user.as_ref() {
+                    if let Some(saved) = user.get_page_task_columns(page) {
+                        layout.update_col_names(saved);
+                    }
+                }
             }
 
             // Reset pending_store if users match the new store
