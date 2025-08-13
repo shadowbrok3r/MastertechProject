@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, mcp::{CommandCompletion, DiagnosticResponse, McpService}, tabs::{admin_console::client_interface::tabs::command_shell::History, resource_monitor::ResourceMonitor}, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
+use crate::{channel_manager::ChannelManager, tabs::{admin_console::client_interface::tabs::command_shell::History, resource_monitor::ResourceMonitor}, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
 use database::schema::{ConnectedClient, SystemInformation};
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use filesystem_helper::WebSocketHelperDelegate;
@@ -9,8 +9,12 @@ use std::collections::HashSet;
 use ui::WsDisplayState;
 use web_time::Instant;
 
-#[cfg(feature="tokio")]
-use tabs::terminal_viewer::RemoteTerminal;
+#[cfg(not(target_arch="wasm32"))]
+use {
+    tabs::terminal_viewer::RemoteTerminal,
+    crate::mcp::{CommandCompletion, DiagnosticResponse, McpService},
+};
+
 
 pub mod receive;
 pub mod tabs;
@@ -23,8 +27,11 @@ pub enum ClientConnection{
 }
 
 pub struct WebSocketClient {
+    #[cfg(not(target_arch="wasm32"))]
     pub mcp_service: McpService,
+    #[cfg(not(target_arch="wasm32"))]
     pub diagnostic_tx: Sender<DiagnosticResponse>,
+    #[cfg(not(target_arch="wasm32"))]
     pub diagnostic_rx: Receiver<DiagnosticResponse>,
     pub client: ConnectedClient,
     pub ws_sender: WsSender,
@@ -62,11 +69,13 @@ pub struct WebSocketClient {
     my_command_history: Vec<History>,
     notifications: i32,
     resource_monitor: ResourceMonitor,
-    #[cfg(feature="tokio")]
+    #[cfg(not(target_arch="wasm32"))]
     remote_terminal: RemoteTerminal,
-    #[cfg(feature="tokio")]
+    #[cfg(not(target_arch="wasm32"))]
     stop_tx: Option<crossbeam::channel::Sender<()>>,
+    #[cfg(not(target_arch="wasm32"))]
     size_rx: Receiver<ratatui::layout::Rect>,
+    #[cfg(not(target_arch="wasm32"))]
     stop_rx: Receiver<()>,
     /// Track connection status and last pong time
     pub is_connected: bool,
@@ -76,13 +85,16 @@ pub struct WebSocketClient {
     pub persistent_shell_mode: bool,
     /// AI-powered command completion
     pub ai_completion_enabled: bool,
+    #[cfg(not(target_arch="wasm32"))]
     pub command_suggestions: Vec<CommandCompletion>,
     pub show_suggestions: bool,
     pub last_partial_command: String,
     pub selected_suggestion: usize,
-    #[cfg(feature="tokio")]
+    #[cfg(not(target_arch="wasm32"))]
     pub completion_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    #[cfg(not(target_arch="wasm32"))]
     pub last_input_change_time: Option<Instant>,
+    #[cfg(not(target_arch="wasm32"))]
     pub pending_completion: Option<String>,
 }
 
@@ -104,20 +116,21 @@ impl WebSocketClient {
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
         let (msg_to_client_tx, msg_to_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
         let (msg_from_client_tx, msg_from_client_rx) = crossbeam::channel::unbounded::<WsMessage>();
+        #[cfg(not(target_arch="wasm32"))]
         let (diagnostic_tx, diagnostic_rx) = crossbeam::channel::unbounded();
         let helper_delegate = WebSocketHelperDelegate::new(send_cmd_tx.clone());
         let mut explorer = FileSystem::new();
         explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
 
-        #[cfg(feature="tokio")]
+        #[cfg(not(target_arch="wasm32"))]
         let (size_tx, size_rx) = crossbeam::channel::unbounded::<ratatui::layout::Rect>();
 
-        #[cfg(feature="tokio")]
+        #[cfg(not(target_arch="wasm32"))]
         let remote_terminal = RemoteTerminal::new(msg_to_client_tx, size_tx.clone());
 
-        #[cfg(feature="tokio")]
+        #[cfg(not(target_arch="wasm32"))]
         let (stop_tx, stop_rx) = crossbeam::channel::unbounded::<()>();
-        
+        #[cfg(not(target_arch="wasm32"))]
         let mcp_service = McpService::default();
         // Attempt to connect OpenAI bridge to local MCP TCP server in the background
         #[cfg(not(target_arch = "wasm32"))]
@@ -138,21 +151,25 @@ Get-WmiObject")
         }
 
         Self {
+            #[cfg(not(target_arch="wasm32"))]
             mcp_service,
-            diagnostic_tx, diagnostic_rx,
-            #[cfg(feature="tokio")]
+            #[cfg(not(target_arch="wasm32"))]
+            diagnostic_tx, 
+            #[cfg(not(target_arch="wasm32"))]
+            diagnostic_rx,
+            #[cfg(not(target_arch="wasm32"))]
             remote_terminal,
-            #[cfg(feature="tokio")]
-            stop_tx: if cfg!(feature = "tokio") { Some(stop_tx) } else { None },
+            #[cfg(not(target_arch="wasm32"))]
+            stop_tx: if cfg!(not(target_arch="wasm32")) { Some(stop_tx) } else { None },
             client,
             msg_to_client_rx,
             msg_from_client_tx,
             msg_from_client_rx,
             ws_sender,
             ws_receiver,
-            #[cfg(feature="tokio")]
+            #[cfg(not(target_arch="wasm32"))]
             size_rx,
-            #[cfg(feature="tokio")]
+            #[cfg(not(target_arch="wasm32"))]
             stop_rx,
 
             send_cmd_tx, 
@@ -181,21 +198,24 @@ Get-WmiObject")
             connection_status: "Disconnected".to_string(),
             persistent_shell_mode: false,
             ai_completion_enabled: true,
+            #[cfg(not(target_arch="wasm32"))]
             command_suggestions: Vec::new(),
             show_suggestions: false,
             last_partial_command: String::new(),
             selected_suggestion: 0,
             hovered: HashSet::new(),
             remove_hovered: None,
-            #[cfg(feature="tokio")]
+            #[cfg(not(target_arch="wasm32"))]
             completion_cancel_tx: None,
+            #[cfg(not(target_arch="wasm32"))]
             last_input_change_time: None,
+            #[cfg(not(target_arch="wasm32"))]
             pending_completion: None,
         }
     }
 
 
-    #[cfg(feature="tokio")]
+    #[cfg(not(target_arch="wasm32"))]
     pub fn start_receiving_buffers(&mut self) {
         let rx = self.msg_from_client_rx.clone();
         let tx = self.remote_terminal.buffer_tx.clone();

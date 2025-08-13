@@ -48,9 +48,8 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
             self.task_index.values().cloned().collect::<Vec<LiveTaskPayload>>()
         });
 
-        if page == "My Tasks" {
-            // Collect tasks for each status
-            let mut temp_entries = Vec::new();
+    if page == "My Tasks" {
+            // Collect tasks for each status and include empty columns so saved order persists
             for status_str in &config.valid_keys {
                 let status = Status::from_str(status_str);
                 let filtered = tasks_to_filter
@@ -61,24 +60,8 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                     .filter(|task| !task.completed)
                     .collect::<Vec<LiveTaskPayload>>();
 
-                if !filtered.is_empty() {
-                    temp_entries.push((status_str.clone(), filtered));
-                }
-            }
-            // Sort entries: Todo first, then In Repair, then others
-            temp_entries.sort_by(|(a, _), (b, _)| {
-                match (a.as_str(), b.as_str()) {
-                    ("Todo", _) => std::cmp::Ordering::Less,
-                    (_, "Todo") => std::cmp::Ordering::Greater,
-                    ("In Repair", _) => std::cmp::Ordering::Less,
-                    (_, "In Repair") => std::cmp::Ordering::Greater,
-                    _ => a.cmp(b),
-                }
-            });
-            // Insert sorted entries into task_map and build ordered_keys
-            for (status_str, filtered) in temp_entries {
                 map.insert(status_str.clone(), filtered);
-                ordered_keys.push(status_str);
+                ordered_keys.push(status_str.clone());
             }
         } else {
             for user in self.store_users.iter() {
@@ -96,6 +79,24 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
             }
         }
 
+    // Apply user's saved column order for this page, if any
+        if let Some(user) = self.current_user.as_ref() {
+            if let Some(saved) = user.get_page_task_columns(page) {
+                let mut applied: Vec<String> = Vec::new();
+                for k in saved.iter() {
+                    if map.contains_key(k) && !applied.contains(k) {
+                        applied.push(k.clone());
+                    }
+                }
+        for k in ordered_keys.iter() {
+                    if !applied.contains(k) {
+                        applied.push(k.clone());
+                    }
+                }
+                ordered_keys = applied;
+            }
+        }
+
         // If task_map is empty and search_results exist, try switching to a page with matching tasks
         if map.is_empty() && self.search_results.is_some() {
             let other_pages = ["My Tasks", "Store Tasks", "Completed Tasks"]
@@ -110,6 +111,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                     let mut temp_entries = Vec::new();
                     for status_str in &target_config.valid_keys {
                         let status = Status::from_str(status_str);
+                        
                         let filtered = tasks_to_filter
                             .clone()
                             .filter_by_status(&status)
@@ -117,6 +119,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                             .into_iter()
                             .filter(|task| !task.completed)
                             .collect::<Vec<LiveTaskPayload>>();
+
                         if !filtered.is_empty() {
                             temp_entries.push((status_str.clone(), filtered));
                         }
@@ -156,13 +159,29 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                         // log::debug!("Switched to page {} with matching tasks", target_page);
                         // Update the current page to render the target page
                         let target_config = layout_configs.get(*target_page).expect("Layout config not found");
+                        // Build initial order and then apply user's saved order if present
+                        // Apply user's saved order to target_ordered_keys if any
+                        if let Some(user) = self.current_user.as_ref() {
+                            if let Some(saved) = user.get_page_task_columns(target_page) {
+                                let mut applied: Vec<String> = Vec::new();
+                                for k in saved.iter() {
+                                    if target_map.contains_key(k) && !applied.contains(k) { applied.push(k.clone()); }
+                                }
+                                for k in target_ordered_keys.iter() {
+                                    if !applied.contains(k) { applied.push(k.clone()); }
+                                }
+                                target_ordered_keys = applied;
+                            }
+                        }
+
                         let mut new_layout = TaskLayout::new(
                             target_map,
                             target_ordered_keys,
                             self.store_users.clone(),
                             self.search_results.clone(),
-                        ); // TODO!!
-                        todo!("We need to not call new() every iteration.. only when needed. otherwise we get a very verbose log 'WE HAVE A USER FROM GLOBAL STATE'");
+                            target_page.to_string(),
+                        ); 
+                        
                         if target_config.update_assignees {
                             new_layout.update_assignees(self.store_users.clone());
                         }
@@ -186,7 +205,14 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                 ordered_keys.clone(),
                 self.store_users.clone(),
                 self.search_results.clone(),
+                page.to_string(),
             );
+            // Try to load and apply user's saved order for this page
+            if let Some(user) = self.current_user.as_ref() {
+                if let Some(saved) = user.get_page_task_columns(page) {
+                    layout.update_col_names(saved);
+                }
+            }
             if config.update_assignees {
                 layout.update_assignees(self.store_users.clone());
             }
@@ -195,6 +221,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
 
         // Update existing layout
         layout.task_map = map;
+        // Preserve current layout order; just merge in any new/removed columns
         layout.update_col_names(ordered_keys);
 
         // Render the layout

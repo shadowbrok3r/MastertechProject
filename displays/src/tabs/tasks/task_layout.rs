@@ -24,6 +24,7 @@ pub struct TaskLayout{
     user: User,
     search_results: Option<Vec<LiveTaskPayload>>, // Add search results
     pub column_order: Vec<String>,
+    pub page: String,
     #[serde(skip)]
     _notes_tx: Sender<Vec<TaskNotePayload>>,
     #[serde(skip)]
@@ -64,6 +65,7 @@ impl TaskLayout {
         column_order: Vec<String>,
         assignees: Vec<User>,
         search_results: Option<Vec<LiveTaskPayload>>,
+        page: String,
     ) -> Self {
         let (_notes_tx, notes_rx) = crossbeam::channel::unbounded();
 
@@ -85,6 +87,7 @@ impl TaskLayout {
             notes_rx,
             task_map, 
             column_order,
+            page,
             assignees, 
             search_inputs: HashMap::new(), 
             open_menu: false, 
@@ -106,38 +109,53 @@ impl TaskLayout {
     }
 
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
-        // Update column_order to include new columns and remove non-existent ones
-        self.column_order.retain(|name| column_names.contains(name));
-        // Add new columns, preserving "Todo", "In Repair" order
-        let mut new_order = Vec::new();
-
-        // Prioritize "Todo" and "In Repair"
-        if column_names.contains(&"Todo".to_string()) {
-            new_order.push("Todo".to_string());
+        // If no current order, accept the provided order as-is (lets saved order win)
+        if self.column_order.is_empty() {
+            self.column_order = column_names;
+        } else {
+            // Retain only those still present
+            let mut retained: Vec<String> = self
+                .column_order
+                .iter()
+                .filter(|n| column_names.contains(*n))
+                .cloned()
+                .collect();
+            // Append new ones
+            for n in column_names.iter() {
+                if !retained.contains(n) { retained.push(n.clone()); }
+            }
+            self.column_order = retained;
         }
-
-        if column_names.contains(&"In Repair".to_string()) {
-            new_order.push("In Repair".to_string());
-        }
-
-        // Collect existing columns and new columns separately
-        let existing_columns: Vec<String> = self
-            .column_order
-            .iter()
-            .filter(|name| column_names.contains(name) && **name != "Todo" && **name != "In Repair")
-            .cloned()
-            .collect();
-
-        let new_columns: Vec<String> = column_names
-            .into_iter()
-            .filter(|name| !self.column_order.contains(name) && *name != "Todo" && *name != "In Repair")
-            .collect();
-        
-        // Append existing columns in their current order, then new columns
-        new_order.extend(existing_columns);
-        new_order.extend(new_columns);
-        self.column_order = new_order;
         self
+    }
+
+    fn persist_column_order(&mut self) {
+        let mut user = self.user.clone();
+        let page = self.page.clone();
+        let order = self.column_order.clone();
+        PlatformSpawner::spawn(async move {
+            if let Err(e) = user.save_page_task_columns(&page, order).await {
+                log::error!("Failed to save task column layout for {page}: {e:?}");
+            }
+        });
+    }
+
+    fn move_column_left(&mut self, key: &str) {
+        if let Some(idx) = self.column_order.iter().position(|k| k == key) {
+            if idx > 0 {
+                self.column_order.swap(idx, idx - 1);
+                self.persist_column_order();
+            }
+        }
+    }
+
+    fn move_column_right(&mut self, key: &str) {
+        if let Some(idx) = self.column_order.iter().position(|k| k == key) {
+            if idx + 1 < self.column_order.len() {
+                self.column_order.swap(idx, idx + 1);
+                self.persist_column_order();
+            }
+        }
     }
 
     pub fn update_assignees(&mut self, assignees: Vec<User>) -> &mut Self {
@@ -149,6 +167,8 @@ impl TaskLayout {
         ui.style_mut().visuals.window_corner_radius = ui.style().visuals.window_corner_radius;
         let style = ui.style().clone();
         let mut inputs = BTreeSet::new();
+        // Defer any column move to after UI borrows are released
+        let mut requested_move: Option<(String, i8)> = None; // (-1 left, +1 right)
 
         //-----------------------------------------------------------------
         // **Grab the viewport height *before* we start nesting UIs**. A child
@@ -179,10 +199,13 @@ impl TaskLayout {
             .auto_shrink(false)
             .scroll_bar_visibility(eframe::egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .show(ui, |ui| {
-            // ui.columns(self.column_names.len(), |ui| {
             ui.horizontal(|ui| {
                 for (i, name) in self.column_order.iter().enumerate() {
                     if let Some(tasks) = self.task_map.get_mut(name) {
+                        if tasks.is_empty() {
+                            continue;
+                        }
+                        
                         ui.vertical(|col_ui| {
                             let sort_by = self.sort_by.entry(name.clone()).or_default();
                             let direction = &sort_by.direction;
@@ -288,48 +311,36 @@ impl TaskLayout {
                                             }).inner
                                         });
                                         if let Some(response) = res {
-                                            if let TaskActions::MoveLeft = response.inner {
-                                                // self.action_tx.try_send(msg);
-                                                // if i > 0 {
-                                                //     let prev_name = &self.column_names[i - 1];
-                                                //     if let Some(prev_tasks) = self.task_map.get_mut(prev_name) {
-                                                //         // Move tasks to the left
-                                                //         prev_tasks.append(&mut tasks.clone());
-                                                //         self.task_map.remove(name);
-                                                //     }
-                                                // }
-                                            } else if let TaskActions::MoveRight = response.inner {
-                                                // if i + 1 < self.column_names.len() {
-                                                //     let next_name = &self.column_names[i + 1];
-                                                //     if let Some(next_tasks) = self.task_map.get_mut(next_name) {
-                                                //         // Move tasks to the right
-                                                //         next_tasks.append(&mut tasks.clone());
-                                                //         self.task_map.remove(name);
-                                                //     }
-                                                // }
-                                            } else {
-                                                PlatformSpawner::spawn(async move {
-                                                    let action = response.inner; 
-                                                    match action {
-                                                        TaskActions::MarkComplete => {
-                                                            let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                                .bind(("record", ids.clone()))
-                                                                .bind(("completion", true))
-                                                                .await.unwrap().take(0).unwrap();
-                                                        },
-                                                        TaskActions::MarkIncomplete => {
-                                                            let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                                .bind(("record", ids.clone()))
-                                                                .bind(("completion", false))
-                                                                .await.unwrap().take(0).unwrap();
-                                                        },
-                                                        TaskActions::MarkDueToday => {
-                                                            let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
-                                                                .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
-                                                        }, 
-                                                        _ => {}
-                                                    }
-                                                });
+                                            match response.inner {
+                                                TaskActions::MoveLeft => {
+                                                    requested_move = Some((name.clone(), -1));
+                                                }
+                                                TaskActions::MoveRight => {
+                                                    requested_move = Some((name.clone(), 1));
+                                                }
+                                                other => {
+                                                    PlatformSpawner::spawn(async move {
+                                                        match other {
+                                                            TaskActions::MarkComplete => {
+                                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                                    .bind(("record", ids.clone()))
+                                                                    .bind(("completion", true))
+                                                                    .await.unwrap().take(0).unwrap();
+                                                            },
+                                                            TaskActions::MarkIncomplete => {
+                                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                                    .bind(("record", ids.clone()))
+                                                                    .bind(("completion", false))
+                                                                    .await.unwrap().take(0).unwrap();
+                                                            },
+                                                            TaskActions::MarkDueToday => {
+                                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
+                                                                    .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
+                                                            }, 
+                                                            _ => {}
+                                                        }
+                                                    });
+                                                }
                                             }
                                         }
                                     });
@@ -514,6 +525,11 @@ impl TaskLayout {
                 }
             });
         });
+
+        // Apply any requested column move now that no UI borrows are active
+        if let Some((key, dir)) = requested_move.take() {
+            if dir < 0 { self.move_column_left(&key); } else { self.move_column_right(&key); }
+        }
     }
 }
 
