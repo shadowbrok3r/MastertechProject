@@ -1,5 +1,5 @@
 use eframe::egui::{Button, CentralPanel, ComboBox, FontId, Grid, Id, RichText, ScrollArea, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::schema::{helper_traits::EmployeeHelper, prestashop::{generate_orders_report, get_order_payments, Employee, Order, OrderPayment, OrderState, PayPeriod}, Store, User};
+use database::schema::{helper_traits::EmployeeHelper, prestashop::{generate_orders_report, get_order_payments, Employee, Order, OrderPayment, OrderState, PayPeriod, OrderType}, Store, User};
 use crate::{get_current_user_from_auth, modals::tabs::return_colors, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use chrono::NaiveDateTime;
@@ -378,7 +378,7 @@ impl Koth {
         });
     }
 
-    pub fn current_employee_grid(&mut self, ui: &mut Ui) {
+    pub fn current_employee_grid(&mut self, _ui: &mut Ui) {
     // No-op: replaced by egui_data_table in `ui()` for the "Me" view.
     }
 
@@ -733,11 +733,98 @@ impl Koth {
         let my_payments = self.payments.get(&uid).cloned().unwrap_or_default();
 
         let mut rows: Vec<KothTableData> = Vec::with_capacity(my_orders.len());
-        for (i, order) in my_orders.iter().enumerate() {
+        for order in my_orders.iter() {
             let state = OrderState::state_from_id_str(&order.current_state);
             let date_str = match state { OrderState::AcceptedByOdoo => order.delivery_date.clone(), _ => order.date_upd.clone() };
             let total_paid_num: f64 = order.total_paid.parse::<f64>().unwrap_or(0.0);
             let total_paid_tax_excl_num: f64 = order.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0);
+
+            // Calculate spiffs for this order
+            let mut spiffs_total: f64 = 0.0;
+            let mut has_system_product = false;
+
+            for o in order.associations.order_rows.iter() {
+                let r = o.product_reference.to_lowercase();
+                let qty: i32 = o.product_quantity.parse::<i32>().unwrap_or(1);
+
+                // Track if this order contains a system (laptop/desktop) product
+                if r.starts_with("lap/") || (r.starts_with("case/") && !r.starts_with("case/15") && !r.starts_with("case/17")) {
+                    has_system_product = true;
+                }
+
+                // CPS $10 (exclude cps-plat, sas, wrav)
+                if r.starts_with("sw/cps")
+                    && !r.starts_with("sw/cps-plat")
+                    && !r.starts_with("sw/sas")
+                    && !r.starts_with("sw/wrav")
+                {
+                    spiffs_total += 10.0 * qty as f64;
+                }
+
+                // CPS Plat $25
+                if r.starts_with("sw/cps-plat") {
+                    spiffs_total += 25.0 * qty as f64;
+                }
+
+                // SEB/Year $15
+                if r == "seb/year" {
+                    spiffs_total += 15.0 * qty as f64;
+                }
+
+                // Parts with $2 spiff
+                if r.starts_with("mon/")
+                    || r.starts_with("kb/")
+                    || r.starts_with("mou/")
+                    || r.contains("/dock/")
+                    || r == "dvdrw/usb"
+                    || r.starts_with("case/15")
+                    || r.starts_with("case/17")
+                    || r.starts_with("spkr/")
+                    || r.starts_with("belk/")
+                {
+                    spiffs_total += 2.0 * qty as f64;
+                }
+
+                // Warranty spiffs
+                if r.starts_with("wty/") {
+                    let ru = r.to_uppercase();
+                    // RTR warranty spiffs (R2R)
+                    if ru.contains("/R2R/2YR") { spiffs_total += 3.0 * qty as f64; }
+                    else if ru.contains("/R2R/3YR") { spiffs_total += 6.0 * qty as f64; }
+                    else if ru.contains("/R2R/4YR") { spiffs_total += 9.0 * qty as f64; }
+                    else if ru.contains("/R2R/5YR") { spiffs_total += 12.0 * qty as f64; }
+                    else if ru.contains("/R2R/LIFE") { spiffs_total += 15.0 * qty as f64; }
+
+                    // System warranty spiffs (LAP/DSK CUST)
+                    if ru.contains("/LAP/CUST/2YR") { spiffs_total += 3.0 * qty as f64; }
+                    else if ru.contains("/LAP/CUST/3YR") { spiffs_total += 6.0 * qty as f64; }
+                    else if ru.contains("/LAP/CUST/4YR") { spiffs_total += 9.0 * qty as f64; }
+
+                    if ru.contains("/DSK/CUST/3YR") { spiffs_total += 3.0 * qty as f64; }
+                    else if ru.contains("/DSK/CUST/4YR") { spiffs_total += 6.0 * qty as f64; }
+                    else if ru.contains("/DSK/CUST/5YR") { spiffs_total += 9.0 * qty as f64; }
+                    else if ru.contains("/DSK/CUST/LIFE") { spiffs_total += 12.0 * qty as f64; }
+
+                    // BSD warranty spiffs (only when order type is BSD)
+                    if matches!(OrderType::from_id_str(&order.id_order_type), OrderType::Bsd) {
+                        if ru.contains("/BSD/CUST/2YR") { spiffs_total += 3.0 * qty as f64; }
+                        else if ru.contains("/BSD/CUST/3YR") { spiffs_total += 6.0 * qty as f64; }
+                        else if ru.contains("/BSD/CUST/4YR") { spiffs_total += 9.0 * qty as f64; }
+                        else if ru.contains("/BSD/CUST/5YR") { spiffs_total += 12.0 * qty as f64; }
+                    }
+                }
+            }
+
+            // Base system spiff by order type (only if a system product is present)
+            if has_system_product {
+                match OrderType::from_id_str(&order.id_order_type) {
+                    OrderType::ReadyToRoll => spiffs_total += 30.0,
+                    OrderType::Rci => spiffs_total += 30.0,
+                    OrderType::Bsd => spiffs_total += 50.0,
+                    OrderType::SalesOrder => spiffs_total += 25.0,
+                    OrderType::ServiceOrder => {}
+                }
+            }
 
             let product: String = order.associations.order_rows
                 .iter()
@@ -778,7 +865,6 @@ impl Koth {
                 .unwrap_or_else(|_| String::new());
 
             rows.push(KothTableData {
-                idx: i,
                 order_id: order.id.clone(),
                 date: display_date,
                 order_state: OrderState::from_id_str(&order.current_state).to_string(),
@@ -787,6 +873,7 @@ impl Koth {
                 warranty,
                 total_paid: total_paid_num,
                 total_without_tax: total_paid_tax_excl_num,
+                spiffs: spiffs_total,
             });
         }
         self.koth_table.replace(rows);
