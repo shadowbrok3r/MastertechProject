@@ -1,12 +1,11 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, FilterLiveTasks, Store};
-use displays::tabs::stock::{get_extra_stock_info, get_stock};
-use egui::Color32;
 use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
 use github::get_github_releases;
 use std::sync::atomic::Ordering;
 use log::{error, info};
+use egui::Color32;
 use anyhow::Error;
 use tokio::spawn;
 
@@ -36,10 +35,9 @@ pub mod egui_file_dialog;
 //     "Logs",
 //     "Database Editor",
 //     "Json Viewer",
-//     "Store Stock",
+//     "Inventory",
 //     "SEB Lookup",
 //     "Task Audit",
-//     "Company Stock",
 //     "Customers",
 // ];
 
@@ -105,7 +103,7 @@ impl TabViewer for MastertechContext {
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
-            "Store Stock" => self.shared_ctx.stock_viewer(ui),
+            "Inventory" => self.shared_ctx.stock_tables.ui(ui),
             "Logs" => egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
                 .warn_color(Color32::from_rgb(94, 215, 221)) 
@@ -116,7 +114,6 @@ impl TabViewer for MastertechContext {
                 .enable_category("egui_glow::painter".to_string(), false)
                 .show(ui),
             "Resource Monitor" => self.show_resource_monitor(ui),
-            "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
             "Query Editor" => if let Some(usr) = &self.shared_ctx.current_user {
                 if usr.is_admin() {
@@ -172,36 +169,6 @@ impl TabViewer for MastertechContext {
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &eframe::egui::Response) {
         if response.clicked() {
             match tab.as_str() {
-                "Store Stock" => {
-                    if let Some(usr) = &self.shared_ctx.current_user {
-                        let stock_tx = self.shared_ctx.stock_channel.0.clone();
-                        let store_selection = match usr.get_store() {
-                            Store::RIV => 76,
-                            Store::LTN => 73,
-                            Store::MUR => 74,
-                            Store::AF => 72,
-                            Store::WJ => 78,
-                            Store::ORE => 75,
-                            Store::SAN => 77,
-                        };
-                        spawn(async move {
-                            match get_stock(stock_tx.clone(), store_selection).await{
-                                Ok(_) => info!("get_stock ran ok"),
-                                Err(e) => error!("Error getting Stock: {e:?}")
-                            }
-                        });
-                    }
-                },
-                "Company Stock" => {
-                    let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
-                    spawn(async move {
-
-                        match get_extra_stock_info(ex_stock_tx).await{
-                            Ok(_) => info!("get_extra_stock_info ran ok"),
-                            Err(e) => error!("Error getting Extra Stock info: {e:?}")
-                        }
-                    });
-                },
                 "Completed Tasks" => {
                     // First, make sure there are no completed tasks loaded.
                     // If there no completed tasks, then load them.

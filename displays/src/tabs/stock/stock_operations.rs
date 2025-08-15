@@ -1,6 +1,4 @@
-use crate::tabs::stock_quantities::ExtraInventoryData;
-
-use super::row_viewer::{RawStockData, SerialData, StockData};
+use super::{store_inventory_viewer::ExtraInventoryData, row_viewer::{RawStockData, SerialData, StockData}};
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
 use database::DATABASE;
