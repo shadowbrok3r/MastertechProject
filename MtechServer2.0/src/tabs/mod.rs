@@ -1,17 +1,16 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
-use displays::tabs::stock::{get_extra_stock_info, get_stock};
+
 use eframe::egui::{Color32, ComboBox, Response, Ui, UiKind, WidgetText};
 use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
 use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
 
-pub const TABS: [&str; 12] = [
+pub const TABS: [&str; 11] = [
     "My Tasks",
     "Store Tasks",
     "Completed Tasks",
-    "Store Stock",
-    "Company Stock",
+    "Inventory",
     "Task Audit",
     "Threads",
     "Bug Report",
@@ -32,8 +31,7 @@ impl TabViewer for MtechServerContext {
             "My Tasks" => self.shared_ctx.render_layout(ui, "My Tasks"),
             "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
             "Completed Tasks" => self.shared_ctx.render_layout(ui, "Completed Tasks"),
-            "Store Stock" => self.shared_ctx.stock_viewer(ui),
-            "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
+            "Inventory" => self.shared_ctx.stock_tables.ui(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Threads" => self.shared_ctx.user_chat.ui(ui),
             "Bug Report" => self.shared_ctx.github(ui),
@@ -119,35 +117,6 @@ impl TabViewer for MtechServerContext {
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &Response) {
         if response.clicked() {
             match tab.as_str() {
-                "Store Stock" => {
-                    if self.shared_ctx.serials_table.len() == 0 {
-                        if let Some(usr) = &self.shared_ctx.current_user {
-                            let stock_tx = self.shared_ctx.stock_channel.0.clone();
-                            let store_selection = match usr.get_store() {
-                                Store::RIV => 76,
-                                Store::LTN => 73,
-                                Store::MUR => 74,
-                                Store::AF => 72,
-                                Store::WJ => 78,
-                                Store::ORE => 75,
-                                Store::SAN => 77,
-                            };
-                            spawn_local(async move {
-                                let stock = get_stock(stock_tx.clone(), store_selection).await;
-                                info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                            });
-                        }
-                    }
-                },
-                "Company Stock" => {
-                    if self.shared_ctx.stock_quantity_table.len() == 0 {
-                        let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
-                        spawn_local(async move {
-                            let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-                            info!("Extra Stock {stock_quantities:?}");
-                        });
-                    }
-                },
                 "Completed Tasks" => {
                     // First, make sure there are no completed tasks loaded.
                     // If there no completed tasks, then load them.
