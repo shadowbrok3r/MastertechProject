@@ -1,17 +1,14 @@
-use std::sync::Arc;
-
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
-use eframe::egui::Style;
-use crate::{tabs::stock::{get_extra_stock_info, get_stock}, ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}}};
+use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}};
 use crate::{PlatformSpawner, Spawner};
+use eframe::egui::Style;
+use std::sync::Arc;
 
 pub mod receive_notes;
 pub mod receive_notifications;
 pub mod receive_prestashop;
 pub mod receive_task;
-// pub mod receive_ticket;
 pub mod receive_ui_action;
-pub mod receive_inventory;
 pub mod receive_client;
 pub mod receive_users;
 pub mod admin_notification;
@@ -93,6 +90,7 @@ impl crate::app_state::SharedContext {
             log::info!("listen_notifications: {listen_data:?}");
         });
 
+        self.stock_tables.first_run();
         match decode_style(&user.get_color_scheme()) {
             Ok(color_settings) => {
                 ctx.set_style(color_settings);
@@ -109,19 +107,6 @@ impl crate::app_state::SharedContext {
                 };
             },
         }
-
-        let stock_tx = self.extra_stock_channel.0.clone();
-        PlatformSpawner::spawn(async move {
-            let stock = get_extra_stock_info(stock_tx.clone()).await;
-            log::info!("Stock call: {stock:?}");
-        });
-
-        let stock_tx = self.stock_channel.0.clone();
-        let store_selection = self.store_selection;
-        PlatformSpawner::spawn(async move {
-            let stock = get_stock(stock_tx.clone(), store_selection).await;
-            log::info!("Stock call: {stock:?}");
-        });
 
         ctx.request_repaint();
         
@@ -233,7 +218,7 @@ impl crate::app_state::SharedContext {
         // self.receive_ticket();
         self.receive_notes();
         self.receive_notification();
-        self.receive_inventory();
+        self.stock_tables.receive();
         self.receive_client();
         self.receive_prestashop();
         self.filesystem.receive();

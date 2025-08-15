@@ -1,49 +1,25 @@
 use egui_data_table::viewer::{DecodeErrorBehavior, RowCodec};
-use database::schema::prestashop_schema::PrestashopPayload;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use super::data::{AllEmployeesTableData, KothTableData};
 
 /* -------------------------------------------- Codec ------------------------------------------- */
 pub struct Codec;
 
-impl RowCodec<PrestashopPayload> for Codec {
+/* ------------------------------- KothTableData Codec ------------------------------- */
+impl RowCodec<KothTableData> for Codec {
     type DeserializeError = &'static str;
 
-    fn encode_column(&mut self, src_row: &PrestashopPayload, column: usize, dst: &mut String) {
+    fn encode_column(&mut self, src_row: &KothTableData, column: usize, dst: &mut String) {
         match column {
-            0 => dst.push_str(&src_row.order.id),
-            1 => dst.push_str(&src_row.customer.name),
-            2 => {
-                // Parse the input into a NaiveDateTime
-                let naive_datetime = NaiveDateTime::parse_from_str(
-                    &src_row.order.date_add,
-                    "%Y-%m-%d %H:%M:%S"
-                )
-                .expect("Failed to parse datetime");
-            
-                // Convert to a DateTime with Utc timezone
-                let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive_datetime, Utc);
-                // Format the DateTime into yyyy/mm/dd
-                let formatted_date = datetime.format("%m/%d/%Y").to_string();
-                dst.push_str(&formatted_date);
-            },
-            3 => dst.push_str(&src_row.order.current_state),
-            4 => {
-                let emp = src_row.sales_rep.clone().unwrap_or_default();
-                log::info!("Employee: {emp:?}");
-                let name = format!("{} {}", emp.firstname, emp.lastname);
-                dst.push_str(&name);
-            },
-            5 => {
-                let emp = src_row.split_rep.clone().unwrap_or_default();
-                log::info!("Employee: {emp:?}");
-                let name = format!("{} {}", emp.firstname, emp.lastname);
-                dst.push_str(&name);
-            },
-            6 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
-            7 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
-            8 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
-            9 => dst.push_str("False"),
-            _ => {},
+            0 => dst.push_str(&src_row.order_id),
+            1 => dst.push_str(&src_row.date),
+            2 => dst.push_str(&src_row.order_state),
+            3 => dst.push_str(&src_row.product),
+            4 => dst.push_str(&src_row.payment),
+            5 => dst.push_str(&src_row.warranty),
+            6 => dst.push_str(&format!("{:.2}", src_row.spiffs)),
+            7 => dst.push_str(&format!("{:.2}", src_row.total_paid)),
+            8 => dst.push_str(&format!("{:.2}", src_row.total_without_tax)),
+            _ => {}
         }
     }
 
@@ -51,31 +27,80 @@ impl RowCodec<PrestashopPayload> for Codec {
         &mut self,
         src_data: &str,
         column: usize,
-        dst_row: &mut PrestashopPayload,
+        dst_row: &mut KothTableData,
     ) -> Result<(), DecodeErrorBehavior> {
         match column {
-            0 => dst_row.order.id.replace_range(.., src_data),
-            1 => dst_row.customer.name = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            2 => dst_row.order.date_add = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            3 => dst_row.order.current_state = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            4 => {
-                let dst = &mut dst_row.sales_rep.clone().unwrap_or_default().firstname;
-                *dst = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?
-            },
-            5 => {
-                let dst = &mut dst_row.split_rep.clone().unwrap_or_default().firstname;
-                *dst = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?
-            },
-            6 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            7 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            8 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            9 => {},
-            _ => {},
+            0 => dst_row.order_id = src_data.to_string(),
+            1 => dst_row.date = src_data.to_string(),
+            2 => dst_row.order_state = src_data.to_string(),
+            3 => dst_row.product = src_data.to_string(),
+            4 => dst_row.payment = src_data.to_string(),
+            5 => dst_row.warranty = src_data.to_string(),
+            6 => dst_row.spiffs = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            7 => dst_row.total_paid = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            8 => dst_row.total_without_tax = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => {}
         }
         Ok(())
     }
 
-    fn create_empty_decoded_row(&mut self) -> PrestashopPayload {
-        PrestashopPayload::default()
+    fn create_empty_decoded_row(&mut self) -> KothTableData { KothTableData::default() }
+}
+
+/* --------------------------- AllEmployeesTableData Codec --------------------------- */
+impl RowCodec<AllEmployeesTableData> for Codec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src_row: &AllEmployeesTableData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.employee_name),
+            1 => dst.push_str(&format!("{} / {}", src_row.total_sales, src_row.total_orders)),
+            2 => dst.push_str(&format!("{} / {}", src_row.laptops, src_row.desktops)),
+            3 => dst.push_str(&format!("{:.2}", src_row.finance_ratio)),
+            4 => dst.push_str(&format!("{} / {}", src_row.warranties, src_row.total_sales)),
+            5 => dst.push_str(&format!("{:.2}", src_row.revenue)),
+            6 => dst.push_str(&format!("{:.2}", src_row.spiffs)),
+            _ => {}
+        }
     }
+
+    fn decode_column(
+        &mut self,
+        src_data: &str,
+        column: usize,
+        dst_row: &mut AllEmployeesTableData,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst_row.employee_name = src_data.to_string(),
+            1 => {
+                // format: "sales / orders"
+                let parts: Vec<&str> = src_data.split('/').map(|s| s.trim()).collect();
+                if let Some(s) = parts.get(0) { dst_row.total_sales = s.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?; }
+                if let Some(o) = parts.get(1) { dst_row.total_orders = o.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?; }
+            }
+            2 => {
+                // format: "laptops / desktops"
+                let parts: Vec<&str> = src_data.split('/').map(|s| s.trim()).collect();
+                if let Some(l) = parts.get(0) { dst_row.laptops = l.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?; }
+                if let Some(d) = parts.get(1) { dst_row.desktops = d.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?; }
+            }
+            3 => {
+                // finance ratio as number or with '%'
+                let s = src_data.trim_end_matches('%').trim();
+                dst_row.finance_ratio = s.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?;
+            }
+            4 => {
+                // format: "warranties / total_sales" (total_sales retained from col 1)
+                let parts: Vec<&str> = src_data.split('/').map(|s| s.trim()).collect();
+                if let Some(w) = parts.get(0) { dst_row.warranties = w.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?; }
+                // do not override total_sales here to avoid conflicts
+            }
+            5 => dst_row.revenue = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            6 => dst_row.spiffs = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> AllEmployeesTableData { AllEmployeesTableData::default() }
 }
