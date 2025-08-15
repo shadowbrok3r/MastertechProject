@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, user_chat::UserChat}, tabs::tasks::task_layout::{LayoutConfig, TaskLayout}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -107,15 +107,6 @@ pub struct SharedContext {
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
-    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
-    #[serde(skip)]
-    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
-    #[serde(skip)]
-    pub extra_stock_channel: (
-        Sender<Vec<ExtraInventoryData>>,
-        Receiver<Vec<ExtraInventoryData>>,
-    ),
-    #[serde(skip)]
     pub ai_thread_channel: (Sender<crate::openai::types::ThreadObject>, Receiver<crate::openai::types::ThreadObject>),
     #[serde(skip)]
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
@@ -169,21 +160,6 @@ pub struct SharedContext {
     // Other Components
     pub tur: Tur,
     pub close_modal: Option<String>,
-
-    /// generic data viewer (currently used for inventory tab)
-    #[serde(skip)]
-    pub serials_viewer: SerialsViewer,
-    /// generic data table (currently used for inventory tab)
-    #[serde(skip)]
-    pub serials_table: egui_data_table::DataTable<SerialsData>,
-    pub serial_table_first_run: bool,
-    /// Data viewer for Stock Quantities tab
-    #[serde(skip)]
-    pub stock_quantity_viewer: StockQuantityViewer,
-    pub stock_table_first_run: bool,
-    /// Data for Stock Quantities tab
-    #[serde(skip)]
-    pub stock_quantity_table: DataTable<StockQuantityData>,
     #[serde(skip)]
     pub task_audit_table: TaskAuditViewer,
     #[serde(skip)]
@@ -235,7 +211,9 @@ pub struct SharedContext {
     #[serde(skip)]
     pub koth: Koth,
     #[serde(skip)]
-    pub prestashop_order_form: PrestashopOrderForm
+    pub prestashop_order_form: PrestashopOrderForm,
+    #[serde(skip)]
+    pub stock_tables: StockTable,
 }
 
 impl SharedContext {
@@ -259,18 +237,12 @@ impl SharedContext {
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
-        let serial_channel = <SerialData>::create_unbounded_channel();
-        let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<Style>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         
-        let mut serials_viewer = SerialsViewer::default();
-        serials_viewer.stock_tx = Some(serial_channel.0.clone());
-
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
@@ -321,9 +293,6 @@ impl SharedContext {
             settings_sender, settings_receiver,
             bytes_channel,
             tur_channel,
-            stock_channel,
-            serial_channel,
-            extra_stock_channel,
             ai_thread_channel,
             seb_channel,
             undock_client: HashMap::new(),
@@ -333,18 +302,14 @@ impl SharedContext {
             read_notifications: false,
             new_note: false,
             search_results: None,
+            stock_tables: StockTable::default(),
 
             // Other Components
-            serials_table: egui_data_table::DataTable::<SerialsData>::default(),
-            serials_viewer,
-            stock_quantity_viewer: StockQuantityViewer::default(),
-            stock_quantity_table: DataTable::<StockQuantityData>::default(),
             ai_playground: AiPlayground::default(),
             #[cfg(not(target_arch = "wasm32"))]
             enhanced_ai_playground: crate::tabs::ai_playground::enhanced::EnhancedAiPlayground::default(),
             task_audit_table: TaskAuditViewer::new(),
             resource_mon: ResourceMonitor::default(),
-            
             tur: Tur::default(),
             close_modal: None,
             theme_config,
@@ -358,8 +323,6 @@ impl SharedContext {
             room_id: String::new(),
             user_chat: UserChat::default(),
             pending_store: None,
-            serial_table_first_run: true,
-            stock_table_first_run: true,
         }
     }
 

@@ -133,8 +133,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let mut tree = DockState::new(vec![
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
-        "Company Stock".to_owned(),
-        "Store Stock".to_owned(),
+        "Inventory".to_owned(),
         "Logs".to_owned(),
     ]);
 

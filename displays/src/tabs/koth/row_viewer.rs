@@ -1,7 +1,8 @@
-use crate::tabs::koth::data::KothTableData;
+use egui_data_table::{viewer::{TableColumnConfig, RowCodec}, RowViewer};
 use crate::tabs::task_audit::row_viewer::BASE_URL;
-use eframe::egui::{Color32, Hyperlink, RichText};
-use egui_data_table::{viewer::TableColumnConfig, RowViewer};
+use eframe::egui::{Color32, Hyperlink, OpenUrl, RichText, Widget};
+use crate::tabs::koth::data::KothTableData;
+use super::codec::Codec;
 
 #[derive(Default, serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct KothRowViewer {
@@ -10,9 +11,9 @@ pub struct KothRowViewer {
 }
 
 impl RowViewer<KothTableData> for KothRowViewer {
-    fn num_columns(&mut self) -> usize {
-        9
-    }
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<KothTableData>> { Some(Codec) }
+
+    fn num_columns(&mut self) -> usize { 9 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         match column {
@@ -29,9 +30,9 @@ impl RowViewer<KothTableData> for KothRowViewer {
             3 => " Product".into(),
             4 => " Payment Type".into(),
             5 => " Warranty".into(),
-            6 => " Total Paid".into(),
-            7 => " Total Without Tax".into(),
-            8 => " Spiff".into(),
+            6 => " Spiff".into(),
+            7 => " Total Paid".into(),
+            8 => " Total Without Tax".into(),
             _ => "".into(),
         }
     }
@@ -59,36 +60,67 @@ impl RowViewer<KothTableData> for KothRowViewer {
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &KothTableData, column: usize) {
         match column {
                 0 => {
-                    ui.add(
-                        Hyperlink::from_label_and_url(
-                            RichText::new(row.order_id.clone())
-                                .underline()
-                                .strong()
-                                .color(Color32::LIGHT_RED),
-                            format!("{BASE_URL}{}", row.order_id),
-                        )
-                        .open_in_new_tab(true),
-                    );
+                    Hyperlink::from_label_and_url(
+                        RichText::new(row.order_id.clone())
+                            .underline()
+                            .strong()
+                            .color(Color32::LIGHT_RED),
+                        format!("{BASE_URL}{}", row.order_id),
+                    )
+                    .open_in_new_tab(true)
+                    .ui(ui);
                 }
                 1 => { ui.label(&row.date); }
                 2 => { ui.label(&row.order_state); }
                 3 => { ui.label(&row.product); }
                 4 => { ui.label(&row.payment); }
                 5 => { ui.label(&row.warranty); }
-                6 => { ui.label(format!("$ {:.2}", row.total_paid)); }
-                7 => { ui.label(format!("$ {:.2}", row.total_without_tax)); }
-                8 => { ui.label(format!("$ {:.2}", row.spiffs)); }
+                6 => { ui.label(format!("$ {:.2}", row.spiffs)); }
+                7 => { ui.label(format!("$ {:.2}", row.total_paid)); }
+                8 => { ui.label(format!("$ {:.2}", row.total_without_tax)); }
                 _ => {}
         };
     }
 
     fn show_cell_editor(
         &mut self,
-        _ui: &mut eframe::egui::Ui,
-        _row: &mut KothTableData,
-        _column: usize,
+        ui: &mut eframe::egui::Ui,
+        row: &mut KothTableData,
+        column: usize,
     ) -> Option<eframe::egui::Response> {
-        None
+        match column {
+            0 => Some(
+                Hyperlink::from_label_and_url(
+                    RichText::new(row.order_id.clone())
+                        .underline()
+                        .strong()
+                        .color(Color32::LIGHT_RED),
+                    format!("{BASE_URL}{}", row.order_id),
+                )
+                .open_in_new_tab(true)
+                .ui(ui),
+            ),
+            _ => None
+        }
+    }
+
+    fn on_cell_view_response(
+        &mut self,
+        row: &KothTableData,
+        column: usize,
+        resp: &eframe::egui::Response,
+    ) -> Option<Box<KothTableData>> {
+        match column {
+            0 => {
+                if resp.clicked() {
+                    OpenUrl::new_tab(format!("{BASE_URL}{}", row.order_id));
+                    None
+                } else { None }
+            },
+            _ => { 
+                None 
+            }
+        }
     }
 
     fn set_cell_value(&mut self, src: &KothTableData, dst: &mut KothTableData, _column: usize) {
@@ -109,9 +141,9 @@ impl RowViewer<KothTableData> for KothRowViewer {
             3 => l.product.cmp(&r.product),
             4 => l.payment.cmp(&r.payment),
             5 => l.warranty.cmp(&r.warranty),
-            6 => l.total_paid.partial_cmp(&r.total_paid).unwrap_or(Equal),
-            7 => l.total_without_tax.partial_cmp(&r.total_without_tax).unwrap_or(Equal),
-            8 => l.spiffs.partial_cmp(&r.spiffs).unwrap_or(Equal),
+            6 => l.spiffs.partial_cmp(&r.spiffs).unwrap_or(Equal),
+            7 => l.total_paid.partial_cmp(&r.total_paid).unwrap_or(Equal),
+            8 => l.total_without_tax.partial_cmp(&r.total_without_tax).unwrap_or(Equal),
             _ => Equal,
         }
     }
@@ -123,15 +155,15 @@ impl RowViewer<KothTableData> for KothRowViewer {
     fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> TableColumnConfig {
         let col = TableColumnConfig::auto();
         match column {
-            0 => col.resizable(true).at_least(90.).at_most(120.),
+            0 => col.resizable(true).at_least(75.).at_most(80.),
             1 => col.resizable(true).at_least(130.).at_most(160.),
-            2 => col.resizable(true).at_least(120.).at_most(150.),
+            2 => col.resizable(true).at_least(130.).at_most(150.),
             3 => col.resizable(true).at_least(160.).at_most(260.),
-            4 => col.resizable(true).at_least(120.).at_most(160.),
+            4 => col.resizable(true).at_least(150.).at_most(160.),
             5 => col.resizable(true).at_least(175.).at_most(190.),
-            6 => col.resizable(true).at_least(110.).at_most(130.),
-            7 => col.resizable(true).at_least(150.).at_most(150.),
-            8 => col.resizable(true).at_least(150.).at_most(170.),
+            6 => col.resizable(true).at_least(150.).at_most(170.),
+            7 => col.resizable(true).at_least(110.).at_most(130.),
+            8 => col.resizable(true).at_least(150.).at_most(150.),
             _ => col,
         }
     }

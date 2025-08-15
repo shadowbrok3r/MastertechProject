@@ -2,7 +2,6 @@ pub mod tasks;
 pub mod aging_tasks;
 pub mod task_audit;
 pub mod stock;
-pub mod stock_quantities;
 pub mod ai_playground;
 pub mod resource_monitor;
 pub mod admin_console;
