@@ -149,27 +149,6 @@ impl SalesTracker {
 			});
 		});
 
-		// receive async events
-		self.receive();
-
-		// data table
-		let date_label = match (self.order_state.clone(), self.pulling_all_orders) {
-			(OrderState::AcceptedByOdoo, false) => "Delivery Date",
-			_ => "Date Updated",
-		};
-		self.viewer.date_label = date_label.to_string();
-
-		CentralPanel::default().show_inside(ui, |ui| {
-			ui.group(|ui| {
-				Renderer::new(&mut self.table, &mut self.viewer)
-					.with_style_modify(|s| {
-						s.auto_shrink = [false, false].into();
-						s.single_click_edit_mode = true;
-					})
-					.ui(ui);
-			});
-		});
-
 		// summary footer
 		TopBottomPanel::bottom("SalesBottom").show_inside(ui, |ui| {
 			ui.columns(9, |ui| {
@@ -224,6 +203,27 @@ impl SalesTracker {
 				ui[6].colored_label(ui[6].style().visuals.warn_fg_color, format!("Total W/Tax: $ {:.2}", self.total_w_tax));
 				ui[7].colored_label(ui[7].style().visuals.warn_fg_color, format!("REVENUE: $ {:.2}", self.total));
 				ui[8].label(format!("Spiffs: $ {:.2}", self.total_spiffs));
+			});
+		});
+		
+		// receive async events
+		self.receive();
+
+		// data table
+		let date_label = match (self.order_state.clone(), self.pulling_all_orders) {
+			(OrderState::AcceptedByOdoo, false) => "Delivery Date",
+			_ => "Date Updated",
+		};
+		self.viewer.date_label = date_label.to_string();
+
+		CentralPanel::default().show_inside(ui, |ui| {
+			ui.group(|ui| {
+				Renderer::new(&mut self.table, &mut self.viewer)
+					.with_style_modify(|s| {
+						s.auto_shrink = [false, false].into();
+						s.single_click_edit_mode = true;
+					})
+					.ui(ui);
 			});
 		});
 	}

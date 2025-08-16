@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{TableColumnConfig, RowCodec}, RowViewer};
-use eframe::egui::{Color32, RichText, Hyperlink, OpenUrl, TextEdit, Widget};
+use eframe::egui::{RichText, Hyperlink, OpenUrl, TextEdit, Widget};
 use crossbeam::channel::Sender;
 
 use super::data::SalesTableData;
@@ -56,43 +56,39 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &SalesTableData, column: usize) {
         match column {
-            0 => {
-                Hyperlink::from_label_and_url(
-                    RichText::new(row.order_id.clone())
-                        .underline()
-                        .strong()
-                        .color(Color32::LIGHT_RED),
-                    format!("{BASE_URL}{}", row.order_id),
-                )
-                .open_in_new_tab(true)
-                .ui(ui);
-            }
-            1 => { ui.label(&row.date); }
-            2 => { ui.label(&row.order_state); }
-            3 => { ui.label(&row.product); }
-            4 => { ui.label(&row.payment); }
-            5 => { ui.label(&row.warranty); }
-            6 => { ui.label(format!("$ {:.2}", row.spiffs)); }
-            7 => { ui.label(format!("$ {:.2}", row.total_paid)); }
-            8 => { ui.label(format!("$ {:.2}", row.total_without_tax)); }
-            9 => { ui.label(&row.notes); }
-            _ => {}
-        }
+            0 => Hyperlink::from_label_and_url(
+                RichText::new(row.order_id.clone())
+                    .underline()
+                    .strong()
+                    .color(ui.style().visuals.error_fg_color),
+                format!("{BASE_URL}{}", row.order_id),
+            )
+            .open_in_new_tab(true)
+            .ui(ui),
+            1 => ui.label(&row.date),
+            2 => ui.label(&row.order_state),
+            3 => ui.label(&row.product),
+            4 => ui.label(&row.payment),
+            5 => ui.label(&row.warranty),
+            6 => ui.label(format!("$ {:.2}", row.spiffs)),
+            7 => ui.label(format!("$ {:.2}", row.total_paid)),
+            8 => ui.label(format!("$ {:.2}", row.total_without_tax)),
+            9 => ui.label(&row.notes),
+            _ => ui.label("")
+        };
     }
 
     fn show_cell_editor(&mut self, ui: &mut eframe::egui::Ui, row: &mut SalesTableData, column: usize) -> Option<eframe::egui::Response> {
         match column {
-            0 => Some(
-                Hyperlink::from_label_and_url(
-                    RichText::new(row.order_id.clone())
-                        .underline()
-                        .strong()
-                        .color(Color32::LIGHT_RED),
-                    format!("{BASE_URL}{}", row.order_id),
-                )
-                .open_in_new_tab(true)
-                .ui(ui),
-            ),
+            0 => Some(Hyperlink::from_label_and_url(
+                RichText::new(row.order_id.clone())
+                    .underline()
+                    .strong()
+                    .color(ui.style().visuals.error_fg_color),
+                format!("{BASE_URL}{}", row.order_id),
+            )
+            .open_in_new_tab(true)
+            .ui(ui)),
             9 => {
                 let mut text = row.notes.clone();
                 let resp = TextEdit::singleline(&mut text)

@@ -33,17 +33,20 @@ impl RowViewer<KothTableData> for KothRowViewer {
             6 => " Spiff".into(),
             7 => " Total Paid".into(),
             8 => " Total Without Tax".into(),
-            _ => "".into(),
+            _ => "".into()
         }
     }
 
-    fn is_sortable_column(&mut self, _column: usize) -> bool {
-        true
+    fn is_editable_cell(&mut self, column: usize, _row: usize, _row_value: &KothTableData) -> bool {
+        match column {
+            0 => true,
+            _ => false
+        }    
     }
 
-    fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
-        &self.filter
-    }
+    fn is_sortable_column(&mut self, _column: usize) -> bool { true }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
 
     fn filter_row(&mut self, row: &KothTableData) -> bool {
         let f = self.filter.trim().to_lowercase();
@@ -59,27 +62,27 @@ impl RowViewer<KothTableData> for KothRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &KothTableData, column: usize) {
         match column {
-                0 => {
-                    Hyperlink::from_label_and_url(
-                        RichText::new(row.order_id.clone())
-                            .underline()
-                            .strong()
-                            .color(Color32::LIGHT_RED),
-                        format!("{BASE_URL}{}", row.order_id),
-                    )
-                    .open_in_new_tab(true)
-                    .ui(ui);
-                }
-                1 => { ui.label(&row.date); }
-                2 => { ui.label(&row.order_state); }
-                3 => { ui.label(&row.product); }
-                4 => { ui.label(&row.payment); }
-                5 => { ui.label(&row.warranty); }
-                6 => { ui.label(format!("$ {:.2}", row.spiffs)); }
-                7 => { ui.label(format!("$ {:.2}", row.total_paid)); }
-                8 => { ui.label(format!("$ {:.2}", row.total_without_tax)); }
-                _ => {}
-        };
+            0 => {
+                Hyperlink::from_label_and_url(
+                    RichText::new(row.order_id.clone())
+                        .underline()
+                        .strong()
+                        .color(ui.style().visuals.error_fg_color),
+                    format!("{BASE_URL}{}", row.order_id),
+                )
+                .open_in_new_tab(true)
+                .ui(ui);
+            }
+            1 => { ui.label(&row.date); }
+            2 => { ui.label(&row.order_state); }
+            3 => { ui.label(&row.product); }
+            4 => { ui.label(&row.payment); }
+            5 => { ui.label(&row.warranty); }
+            6 => { ui.label(format!("$ {:.2}", row.spiffs)); }
+            7 => { ui.label(format!("$ {:.2}", row.total_paid)); }
+            8 => { ui.label(format!("$ {:.2}", row.total_without_tax)); }
+            _ => {}
+        }
     }
 
     fn show_cell_editor(
@@ -104,23 +107,13 @@ impl RowViewer<KothTableData> for KothRowViewer {
         }
     }
 
-    fn on_cell_view_response(
-        &mut self,
-        row: &KothTableData,
-        column: usize,
-        resp: &eframe::egui::Response,
-    ) -> Option<Box<KothTableData>> {
-        match column {
-            0 => {
-                if resp.clicked() {
-                    OpenUrl::new_tab(format!("{BASE_URL}{}", row.order_id));
-                    None
-                } else { None }
-            },
-            _ => { 
-                None 
+    fn on_cell_view_response(&mut self, row: &KothTableData, column: usize, resp: &eframe::egui::Response) -> Option<Box<KothTableData>> {
+        if column == 0 {
+            if resp.clicked() && !row.order_id.is_empty() { 
+                OpenUrl::new_tab(format!("{BASE_URL}{}", row.order_id)); 
             }
         }
+        None
     }
 
     fn set_cell_value(&mut self, src: &KothTableData, dst: &mut KothTableData, _column: usize) {
