@@ -2,7 +2,6 @@ use eframe::egui::{
     CentralPanel, Color32, ComboBox, Frame, Key, Margin, RichText, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui
 };
 use crate::{
-    app_state::SharedContext, 
     PlatformSpawner, Spawner,
     tabs::ai_playground::{ChatMessage, ChatThread, SentFrom, ChatMessageType},
 };

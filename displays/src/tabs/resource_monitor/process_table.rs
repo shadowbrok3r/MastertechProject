@@ -1,4 +1,4 @@
-use crate::egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
+use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
 use eframe::egui::{Button, CentralPanel, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::Process;
 use egui_extras::Column;
@@ -16,6 +16,7 @@ use serde::Serialize;
 pub struct ProcessRowViewer {
     filter: String,
     row_protection: bool,
+    #[serde(skip)]
     hotkeys: Vec<(KeyboardShortcut, UiAction)>,
     pub selected: Option<Process>,
     open_hotkeys: bool,
@@ -189,7 +190,11 @@ impl RowViewer<Process> for ProcessRowViewer {
         };
     }
 
-    fn column_render_config(&mut self, column: usize) -> Column {
+    fn column_render_config(
+        &mut self,
+        column: usize,
+        _is_last_visible_column: bool,
+    ) -> Column {
         let col_config = Column::auto();
         match column {
             0 => col_config.resizable(true).at_least(60.).at_most(60.),
