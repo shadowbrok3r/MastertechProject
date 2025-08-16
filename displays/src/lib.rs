@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 
 pub mod virtual_filesystem;
 pub mod channel_manager;
-pub mod egui_data_table;
+// pub mod egui_data_table;
 pub mod markdown_editor;
 pub mod file_viewer;
 pub mod viewports;
@@ -21,7 +21,6 @@ pub mod ui_tools;
 pub mod ui_data;
 pub mod modals;
 pub mod pages;
-pub mod views;
 pub mod chats;
 pub mod tabs;
 pub mod ai;

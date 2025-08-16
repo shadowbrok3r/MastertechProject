@@ -32,7 +32,7 @@ impl LinePlot {
             });
     }
 
-    pub fn lines(&self, colors: &mut HashMap<String, Color32>) -> Vec<Line> {
+    pub fn lines(&'_ self, colors: &mut HashMap<String, Color32>) -> Vec<Line<'_>> {
         // A set of default colors to use
         let default_colors = [
             Color32::RED,

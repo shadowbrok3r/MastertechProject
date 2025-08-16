@@ -23,6 +23,7 @@ impl MasterTechApp {
                         // allow certain tabs to be toggled
                         for tab in &[
                             &"TUR Sheet".to_string(),
+                            &"Sales Tracker".to_string(),
                             &"Scene Editor".to_string(),
                             &"Scripts".to_string(),
                             &"File Browser 📂".to_string(),

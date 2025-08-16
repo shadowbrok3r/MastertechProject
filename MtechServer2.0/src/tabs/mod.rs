@@ -31,6 +31,7 @@ impl TabViewer for MtechServerContext {
             "My Tasks" => self.shared_ctx.render_layout(ui, "My Tasks"),
             "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
             "Completed Tasks" => self.shared_ctx.render_layout(ui, "Completed Tasks"),
+            "Sales Tracker" => self.shared_ctx.sales_tracker.ui(ui),
             "Inventory" => self.shared_ctx.stock_tables.ui(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Threads" => self.shared_ctx.user_chat.ui(ui),
