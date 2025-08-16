@@ -57,7 +57,7 @@ impl MetricPlot {
 
     
 
-    pub fn line(&self, name: &str, color: Color32) -> Line {
+    pub fn line(&'_ self, name: &str, color: Color32) -> Line<'_> {
         // Convert data to PlotPoints (interpolation optional)
         let points: VecDeque<(f32, f32)> = self
             .data

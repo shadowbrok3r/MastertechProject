@@ -1,12 +1,10 @@
 pub mod tasks;
-pub mod aging_tasks;
 pub mod task_audit;
 pub mod stock;
 pub mod ai_playground;
 pub mod resource_monitor;
 pub mod admin_console;
 pub mod script_editor;
-pub mod scene;
 pub mod user_chat;
 pub mod database_viewer;
 pub mod github;
@@ -14,4 +12,4 @@ pub mod raw_queries;
 pub mod koth;
 pub mod presta_order;
 pub mod checkin_form;
-// pub mod odoo_inventory;
+pub mod sales_tracker;

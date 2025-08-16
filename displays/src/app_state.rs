@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, scene::SceneEditor, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -189,7 +189,6 @@ pub struct SharedContext {
     pub associated_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
     pub layout_configs: Option<HashMap<String, LayoutConfig>>,
-    pub scene_editor: SceneEditor,
     pub user_chat: UserChat,
     pub pending_store: Option<Store>,
     pub task_index: HashMap<String, LiveTaskPayload>, // Index by task ID
@@ -214,6 +213,8 @@ pub struct SharedContext {
     pub prestashop_order_form: PrestashopOrderForm,
     #[serde(skip)]
     pub stock_tables: StockTable,
+    #[serde(skip)]
+    pub sales_tracker: SalesTracker,
 }
 
 impl SharedContext {
@@ -271,7 +272,6 @@ impl SharedContext {
             store_users: Vec::new(),
             task_layouts: HashMap::new(),
             store_selection: 76,
-            scene_editor: SceneEditor::default(),
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
             db_tx, db_rx,
@@ -323,6 +323,7 @@ impl SharedContext {
             room_id: String::new(),
             user_chat: UserChat::default(),
             pending_store: None,
+            sales_tracker: SalesTracker::default()
         }
     }
 

@@ -86,7 +86,6 @@ impl TabViewer for MastertechContext {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
-            "Scene Editor" => self.shared_ctx.scene_editor.ui(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
@@ -104,6 +103,7 @@ impl TabViewer for MastertechContext {
             "Downloads" => self.downloads_page(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Inventory" => self.shared_ctx.stock_tables.ui(ui),
+            "Sales Tracker" => self.shared_ctx.sales_tracker.ui(ui),
             "Logs" => egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
                 .warn_color(Color32::from_rgb(94, 215, 221)) 
