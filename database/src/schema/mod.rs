@@ -23,6 +23,7 @@ pub mod odoo;
 pub mod computer;
 pub mod customer;
 pub mod client;
+pub mod sales_tracker;
 
 pub use task::*;
 pub use task_note::*;
@@ -32,6 +33,7 @@ pub use notification::*;
 pub use computer::*;
 pub use customer::*;
 pub use client::*;
+pub use sales_tracker::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";

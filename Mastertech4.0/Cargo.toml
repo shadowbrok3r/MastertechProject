@@ -22,7 +22,7 @@ displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 tui-textarea = { version = "0.7"}
 textwrap = "0.16"
-sysinfo = {version = "0.36.0", features = ["serde", "multithread"]}
+sysinfo = {version = "0.37.0", features = ["serde", "multithread"]}
 futures-util = "0.3"
 walkdir = "2.5"
 pollster = "0.4"
@@ -48,7 +48,7 @@ lazy_static = "1.5.0"
 # planif = "1"
 ratatui-splash-screen = "0.1.4"
 tui-scrollview = "0.5.1"
-tachyonfx = "0.12.0"
+tachyonfx = "0.16.0"
 powershell_script = "1.1.0"
 color-eyre = "0.6.3"
 itertools = "0.14.0"
@@ -58,7 +58,7 @@ arboard = "3"
 tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 # nvme = "0.2.2"
-rmcp = { version = "0.3", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
+rmcp = { version = "0.5.0", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
 xcap = "0.6.0"
 display-info = "0.5.4"
 enigo = { version = "0.5.0", features = ["serde"] }

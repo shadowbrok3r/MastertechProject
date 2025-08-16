@@ -1,13 +1,12 @@
 [workspace]
 resolver = "3"
 members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server2"] 
-#"websocket_server2", "axum_middleware", "websocket_server"
 
 [workspace.dependencies]
 database = { path = "database" }
-eframe = { version="0.32.0", features=["serde",  "default_fonts", "glow"], default-features=false }
+eframe = { version="0.32.1", features=["serde",  "default_fonts", "glow"], default-features=false }
 ratatui = { version = "0.29", features = ["crossterm", "unstable-widget-ref", "serde", "underline-color", "widget-calendar"]  }
-egui_extras = { version = "0.32.0", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
+egui_extras = { version = "0.32.1", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 wasm-cookies = { version= "0.2" }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
 # surrealdb-alpha = {version = "3.0.6", features = ["protocol-ws"]}
@@ -28,7 +27,7 @@ mime_guess = "2"
 crossbeam = "0.8"
 futures = "0.3.31"
 fuzzy-matcher = "0.3"
-rusty-s3 = "0.8.0"
+rusty-s3 = "0.8.1"
 rfd = "0.15"
 regex = "1.11.1"
 async-trait = "0.1"
@@ -40,7 +39,7 @@ gloo-console = "0.3.0"
 wasm-bindgen = "0.2"
 web-time = "1"
 wasm-bindgen-futures = "0.4"
-brotli = "8.0.1"
+brotli = "8.0.2"
 base64 = "0.22"
 tokio = { version = "1.47.0", features = ["full", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } # features = ["now", "wasmbind", "wasm-bindgen", "js-sys"]

@@ -26,6 +26,7 @@ impl MtechServer {
                                 &"My Tasks".to_string(),
                                 &"Store Tasks".to_string(),
                                 &"Completed Tasks".to_string(),
+                                &"Sales Tracker".to_string(),
                                 &"Inventory".to_string(),
                                 &"Task Audit".to_string(),
                                 &"Threads".to_string(),
