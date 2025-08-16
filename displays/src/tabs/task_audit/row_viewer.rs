@@ -50,25 +50,15 @@ impl Default for TaskRowViewer {
 }
 
 impl RowViewer<PrestashopPayload> for TaskRowViewer {
-    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<PrestashopPayload>> {
-        Some(Codec)
-    }
-
-    fn num_columns(&mut self) -> usize {
-        10
-    }
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<PrestashopPayload>> { Some(Codec) }
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
+    fn is_sortable_column(&mut self, _: usize) -> bool { true }
+    fn num_columns(&mut self) -> usize { 10 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "# Missed Calls", "Device", "Model", "Checkin Notes"][column].into()
     }
 
-    fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true, true, true, true, true][column]
-    }
-
-    fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
-        &self.filter
-    }
 
     fn filter_row(&mut self, row: &PrestashopPayload) -> bool {
         row.order.id.contains(&self.filter) 
@@ -87,7 +77,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopPayload, column: usize) {
         let _ = match column {
-            0 => { ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.order.id.clone())); },
+            0 => { ui.colored_label(ui.style().visuals.hyperlink_color, format!(" {}", row.order.id.clone())); },
             1 => { ui.label(format!(" {}", row.customer.name.clone())); },
             2 => {
                 // Parse the input into a NaiveDateTime
@@ -265,9 +255,5 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
         }
     }
 
-    fn new_empty_row(&mut self) -> PrestashopPayload {
-        // Instead of requiring `Default` trait for row data types, the viewer is
-        // responsible of providing default creation method.
-        PrestashopPayload::default()
-    }
+    fn new_empty_row(&mut self) -> PrestashopPayload { PrestashopPayload::default() }
 }
