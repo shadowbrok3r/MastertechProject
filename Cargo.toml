@@ -17,7 +17,7 @@ structdiff = {version = "0.7.3", features = ["rustc_hash"]}
 bincode = { version="2", features = ["serde", "derive"] }
 serde = { version = "1", features = ["derive"] }
 egui_plot = "0.33.0"
-egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", rev = "c2a2960", features = ["persistency"]}
+egui-data-table = { git = "https://github.com/kang-sw/egui-data-table", branch = "master", features = ["persistency"]}
 lazy_static = "1"
 egui_json_tree = { version = "0.13.0", features = ["serde_json"] }
 log="0.4"

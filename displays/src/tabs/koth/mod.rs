@@ -102,6 +102,7 @@ impl Koth {
                     KothSelection::Me => &mut self.koth_viewer.filter,
                     KothSelection::AllEmployees => &mut self.all_viewer.filter,
                 };
+
                 TextEdit::singleline(filter_ref)
                     .desired_width(150.)
                     .hint_text(" Search")
@@ -171,6 +172,8 @@ impl Koth {
                     });
                 }
 
+                ui.label("Pay Period -> ");
+                ui.add_space(5.);
                 ComboBox::new("Koth PayPeriod", "")
                     .selected_text(self.pay_period.as_str())
                     .show_ui(ui, |ui| {
@@ -209,7 +212,10 @@ impl Koth {
                         self.total = 0.0;
                         self.total_w_tax = 0.0;
                         self.total_spiffs = 0.0;
-                        self.orders = HashMap::new();
+                        self.orders.clear();
+                        self.payments.clear();
+                        self.koth_table.clear();
+                        self.all_table.clear();
                         let pay_period = self.pay_period.clone();
                         let state = self.order_state.clone();
                         let id = if let Some(id) = self.user.get_employee_id() {
@@ -243,8 +249,12 @@ impl Koth {
                     self.total = 0.0;
                     self.total_w_tax = 0.0;
                     self.total_spiffs = 0.0;
-                    self.orders = HashMap::new();
-                    
+                    self.orders.clear();
+                    self.payments.clear();
+                    self.employees.clear();
+                    self.koth_table.clear();
+                    self.all_table.clear();
+
                     match self.koth_selection {
                         KothSelection::Me => {
                             let pay_period = self.pay_period.clone();
@@ -294,15 +304,6 @@ impl Koth {
                 }
             });
         });
-
-        // Ensure table rows and aggregated totals are up-to-date before showing summary
-        match self.koth_selection {
-            KothSelection::Me => self.rebuild_koth_rows(),
-            KothSelection::AllEmployees => {
-                self.rebuild_koth_rows_all();
-                self.rebuild_all_employees_rows();
-            }
-        }
 
         if let KothSelection::Me = self.koth_selection {
             TopBottomPanel::bottom("KothBottom")
@@ -1049,10 +1050,13 @@ impl Koth {
                             self.orders.insert(uid.clone(), emp_orders);
                         }
                     }
+                    
+                    self.rebuild_koth_rows_all();
+                    self.rebuild_all_employees_rows();
                 }
             }
         }
-
+        
         if let Ok(payment) = self.order_payment_rx.try_recv() {
             match self.koth_selection {
                 KothSelection::Me => {
@@ -1147,6 +1151,9 @@ impl Koth {
                                 .push(p);
                         }
                     }
+                    
+                    self.rebuild_koth_rows_all();
+                    self.rebuild_all_employees_rows();
                 }
             }
         }
@@ -1179,6 +1186,9 @@ impl Koth {
             });
             
             self.employees.append(&mut employees);
+            self.rebuild_koth_rows_all();
+            self.rebuild_all_employees_rows();
         }
     }
+
 }
