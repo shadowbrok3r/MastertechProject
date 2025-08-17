@@ -87,6 +87,7 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Part Order" => self.special_part_order(ui),
+            "KOTH" => self.shared_ctx.koth.ui(ui),
             "Scripts" => self.scripts(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
             "File Browser 📂" => self.file_browse(ui),
