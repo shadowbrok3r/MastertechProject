@@ -23,6 +23,7 @@ impl MasterTechApp {
                         // allow certain tabs to be toggled
                         for tab in &[
                             &"TUR Sheet".to_string(),
+                            &"KOTH".to_string(),
                             &"Sales Tracker".to_string(),
                             &"Scene Editor".to_string(),
                             &"Scripts".to_string(),
@@ -37,7 +38,6 @@ impl MasterTechApp {
                             &"Bug Tracker".to_string(),
                             &"Websockets".to_string(),
                             &"Admin Console".to_string(),
-                            // &"My Tools".to_string(),
                             &"Inventory".to_string(),
                             &"Task Audit".to_string(),
                             &"Create Prestashop Order".to_string(),
