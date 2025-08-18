@@ -91,12 +91,23 @@ pub struct TaskNotePayload {
 }
 
 impl TaskNotePayload {
+    pub async fn get_all_notes_in_my_store(notes_tx: crossbeam::channel::Sender<Vec<TaskNotePayload>>) -> anyhow::Result<(), anyhow::Error> {
+        let notes: Vec<Self> = DATABASE
+            .query("select * from task_note where task_id.assignee.store == $auth.store && task_id.completed == false PARALLEL")
+            .await?
+            .take(0)?;
+
+        let _ = notes_tx.try_send(notes);
+        
+        Ok(())
+    }
+
     /// Creates a task note record in the system.
     ///
     /// # Returns
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    pub async fn handle_note_creation(&mut self) -> Result<(), anyhow::Error> {
+    pub async fn handle_note_creation(&mut self) -> anyhow::Result<(), anyhow::Error> {
         if self.id_employee.is_none() {
             return Err(anyhow::anyhow!("We need an employee ID to create notes"));
         }

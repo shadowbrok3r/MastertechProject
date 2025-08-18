@@ -35,11 +35,11 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
     let mut downloaded_bytes: u64 = 0;
 
     let response: Value = client
-        .get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases/latest")
+        .get("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/releases/latest")
         .header(ACCEPT, "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header(USER_AGENT, "shadowbrok3r")
-        .bearer_auth(database::DOWNLOAD_TOKEN)
+        // .bearer_auth(database::DOWNLOAD_TOKEN)
         .send()
         .await?
         .json()
@@ -58,7 +58,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 .header(CONTENT_TYPE, "application/octet-stream")
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .header(USER_AGENT, "shadowbrok3r")
-                .bearer_auth(database::DOWNLOAD_TOKEN)
+                // .bearer_auth(database::DOWNLOAD_TOKEN)
                 .send()
                 .await
                 .map_err(|e| {

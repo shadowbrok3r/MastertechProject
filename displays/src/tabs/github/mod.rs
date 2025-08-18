@@ -90,6 +90,9 @@ impl GithubIssue {
                     current_user.get_email()
                 );
 
+                self.github_issue_descript.clear();
+                self.github_issue_title.clear();
+
                 PlatformSpawner::spawn(async move {
                     let client = Client::new();
 
@@ -101,9 +104,6 @@ impl GithubIssue {
                         Err(e) => error!("Error creating issue: {e:?}"),
                     }
                 });
-
-                self.github_issue_title.clear();
-                self.github_issue_descript.clear();
             }
         });
     }
@@ -116,7 +116,7 @@ pub async fn create_new_issue(
 ) -> anyhow::Result<String, anyhow::Error> {
     let params = serde_json::json!({ "title": title, "body": body, "assignees": ["shadowbrok3r"], "labels": ["bug"] });
     let res = client
-        .post("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/issues")
+        .post("https://api.github.com/repos/shadowbrok3r/MastertechProject/issues")
         .bearer_auth(database::ISSUE_TOKEN)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
@@ -244,13 +244,14 @@ fn _bytes_to_megabytes(bytes: u64) -> f64 {
 pub async fn get_github_releases(tx: Sender<Vec<GithubRelease>>) -> Result<(), anyhow::Error> {
     let client = Client::new();
     let response: Vec<GithubRelease> = client.get("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/releases") // /latest
-            .header(ACCEPT, "application/vnd.github+json")
-            .header(HeaderName::from_str("X-GitHub-Api-Version").unwrap(), "2022-11-28")
-            .header(USER_AGENT, "shadowbrok3r")
-            .send()
-            .await?
-            .json()
-            .await?;
+        // .bearer_auth(database::DOWNLOAD_TOKEN)
+        .header(ACCEPT, "application/vnd.github+json")
+        .header(HeaderName::from_str("X-GitHub-Api-Version").unwrap(), "2022-11-28")
+        .header(USER_AGENT, "shadowbrok3r")
+        .send()
+        .await?
+        .json()
+        .await?;
 
     log::info!("response {:?}", response.clone());
     tx.try_send(response.clone())?;
@@ -269,6 +270,7 @@ pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Resul
 
         let resp = client
             .get(&asset_url)
+            .bearer_auth(database::DOWNLOAD_TOKEN)
             .header(ACCEPT, "application/octet-stream")
             .header(CONTENT_TYPE, "application/octet-stream")
             .header(USER_AGENT, "shadowbrok3r")

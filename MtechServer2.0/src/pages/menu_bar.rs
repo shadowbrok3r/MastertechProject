@@ -281,14 +281,58 @@ impl MtechServer {
                                     });
 
                                     if let Some(window) = web_sys::window() {
-                                        let reload = window.location().reload();
-                                        info!("Reloading winodw: {reload:?}");
+                                        // Clear localStorage and sessionStorage immediately
                                         if let Ok(storage) = window.local_storage() {
                                             if let Some(storage) = storage {
                                                 let clear = storage.clear();
-                                                info!("Clearing storage: {clear:?}");
+                                                info!("Clearing localStorage: {clear:?}");
                                             }
                                         }
+                                        if let Ok(storage) = window.session_storage() {
+                                            if let Some(storage) = storage {
+                                                let clear = storage.clear();
+                                                info!("Clearing sessionStorage: {clear:?}");
+                                            }
+                                        }
+
+                                        // Perform async cleanup for CacheStorage and Service Workers, then reload
+                                        // #[cfg(target_arch = "wasm32")]
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            use wasm_bindgen::JsCast;
+                                            use wasm_bindgen_futures::JsFuture;
+
+                                            let win = web_sys::window().expect("window");
+
+                                            // Clear CacheStorage
+                                            if let Ok(caches) = win.caches() {
+                                                if let Ok(keys_js) = JsFuture::from(caches.keys()).await {
+                                                let keys = js_sys::Array::from(&keys_js);
+                                                for key in keys.iter() {
+                                                    if let Some(k) = key.as_string() {
+                                                        let _ = JsFuture::from(caches.delete(&k)).await;
+                                                    }
+                                                }
+                                                }
+                                            }
+
+                                            // Unregister all Service Workers
+                                            let swc = win.navigator().service_worker();
+                                            if let Ok(regs_js) = JsFuture::from(swc.get_registrations()).await {
+                                                let regs = js_sys::Array::from(&regs_js);
+                                                for reg_val in regs.iter() {
+                                                    if let Ok(reg) = reg_val.dyn_into::<web_sys::ServiceWorkerRegistration>() {
+                                                        if let Ok(promise) = reg.unregister() {
+                                                            let _ = JsFuture::from(promise).await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+
+                                            // Finally, force reload to ensure fresh assets
+                                            let reload = win.location().reload();
+                                            info!("Reloading window: {reload:?}");
+                                        });
                                     } else {
                                         info!("No window");
                                     }

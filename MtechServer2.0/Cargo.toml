@@ -21,7 +21,17 @@ path = "src/deser_worker.rs"
 [dependencies]
 zstd = "0.13"
 gloo-worker = "0.5"
-web-sys = { version = "0.3", features = ["Storage", "Window", "Location", "HtmlCanvasElement", "CacheStorage"] }
+web-sys = { version = "0.3", features = [
+	"Storage",
+	"Window",
+	"Location",
+	"HtmlCanvasElement",
+	"CacheStorage",
+	"Navigator",
+	"ServiceWorkerContainer",
+	"ServiceWorkerRegistration"
+] }
+js-sys = "0.3.77"
 displays = { path="../displays", features = ["wasm"]}
 wasm-cookies = { workspace = true }
 egui_logger = {workspace = true }

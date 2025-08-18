@@ -27,10 +27,12 @@ impl crate::app_state::SharedContext {
         let user = user.clone();
         let name = user.get_name();
         log::info!("Getting Initial data: {}", self.store_selection);
+
         if self.filesystem.paths.is_empty() {
             self.filesystem.set_user(user.clone());
             let _ = self.filesystem.request_contents("");
         }
+
         if self.web_console_layout.filesystem.paths.is_empty() {
             self.web_console_layout.filesystem.set_user(user.clone());
             let _ = self.web_console_layout.filesystem.request_contents("");

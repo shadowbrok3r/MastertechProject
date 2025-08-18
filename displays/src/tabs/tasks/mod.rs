@@ -9,7 +9,7 @@ pub mod task_layout;
 pub mod interactable;
 
 impl SharedContext {
-pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
+    pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
         ui.ctx().request_repaint();
         if self.store_users.is_empty() {
             ui.vertical_centered(|ui| {
@@ -48,7 +48,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
             self.task_index.values().cloned().collect::<Vec<LiveTaskPayload>>()
         });
 
-    if page == "My Tasks" {
+        if page == "My Tasks" {
             // Collect tasks for each status and include empty columns so saved order persists
             for status_str in &config.valid_keys {
                 let status = Status::from_str(status_str);
@@ -79,7 +79,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
             }
         }
 
-    // Apply user's saved column order for this page, if any
+        // Apply user's saved column order for this page, if any
         if let Some(user) = self.current_user.as_ref() {
             if let Some(saved) = user.get_page_task_columns(page) {
                 let mut applied: Vec<String> = Vec::new();
@@ -88,7 +88,7 @@ pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
                         applied.push(k.clone());
                     }
                 }
-        for k in ordered_keys.iter() {
+                for k in ordered_keys.iter() {
                     if !applied.contains(k) {
                         applied.push(k.clone());
                     }

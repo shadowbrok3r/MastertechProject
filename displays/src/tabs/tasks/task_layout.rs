@@ -105,6 +105,25 @@ impl TaskLayout {
     pub fn receive(&mut self) {
         if let Ok(mut notes) = self.notes_rx.try_recv() {
             self.notes.append(&mut notes);
+            *new_notes = notes
+            .iter()
+            .filter(|n| 
+                if let Some(id) = &n.task_id {
+                    *id == task.id
+                } else {
+                    false
+                }
+            )
+            .cloned()
+            .collect::<Vec<database::schema::TaskNotePayload>>();
+        }
+    }
+
+    pub fn insert_notes(&mut self, notes: Vec<TaskNotePayload>) {
+        for note in notes.iter() {
+            if self.notes.iter().find(|n| n.id == note.id).is_none() {
+                self.notes.push(note.clone());
+            }
         }
     }
 
@@ -310,6 +329,7 @@ impl TaskLayout {
                                                 action.clone()
                                             }).inner
                                         });
+                                        
                                         if let Some(response) = res {
                                             match response.inner {
                                                 TaskActions::MoveLeft => {

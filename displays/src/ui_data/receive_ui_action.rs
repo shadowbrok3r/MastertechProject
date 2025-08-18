@@ -31,21 +31,6 @@ impl SharedContext {
                             .or_insert(ModalType::TaskModal(task_modal));
                     }
                 }
-                TaskUiActions::CreateTaskModal => {
-                    let create_modal = CreateTaskModal::new(
-                        "Create Task",
-                        self.store_users.clone(),
-                        self.tur_channel.0.clone(),
-                    );
-
-                    if self.opened_modals.get(&create_modal.title).is_some() {
-                        self.opened_modals.remove_entry(&create_modal.title);
-                    } else {
-                        self.opened_modals
-                            .entry(create_modal.title.clone())
-                            .or_insert(ModalType::CreateTaskModal(create_modal));
-                    }
-                }
                 TaskUiActions::OpenChatModal((task_id, notes, service_number)) => {
                     info!("receive_ui_action -> Got Chat action: {:?}", task_id);
 
@@ -58,7 +43,6 @@ impl SharedContext {
                     });
 
                     let chat_modal = ChatView::new(
-                        // notes.to_owned(),
                         self.store_users.clone(),
                         task_id.clone(),
                         service_number
@@ -83,7 +67,21 @@ impl SharedContext {
                             .or_insert(ModalType::ChatView(chat_modal));
                     }
                 }
+                TaskUiActions::CreateTaskModal => {
+                    let create_modal = CreateTaskModal::new(
+                        "Create Task",
+                        self.store_users.clone(),
+                        self.tur_channel.0.clone(),
+                    );
 
+                    if self.opened_modals.get(&create_modal.title).is_some() {
+                        self.opened_modals.remove_entry(&create_modal.title);
+                    } else {
+                        self.opened_modals
+                            .entry(create_modal.title.clone())
+                            .or_insert(ModalType::CreateTaskModal(create_modal));
+                    }
+                }
                 TaskUiActions::OpenViewport(task) => {
                     info!("receive_ui_action -> TaskUiActions::OpenViewport");
                     let modal = TaskModal::new(
