@@ -80,6 +80,7 @@ impl SharedContext {
 
         // Handle batch of associated notes from associated_notes_rx
         if let Ok(notes) = self.associated_notes_rx.try_recv() {
+
             info!("receive_notes -> associated_notes_rx.try_recv() -> Received {} notes", notes.len());
 
             // Initialize layout_configs if needed
@@ -88,7 +89,7 @@ impl SharedContext {
             let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
             let layout_configs = self.layout_configs.as_ref();
 
-            for note in notes {
+            for note in notes.iter() {
                 if let Some(task_id) = &note.task_id {
                     // Update tasks in task_layouts
                     if let Some(layout_configs) = layout_configs {
@@ -98,6 +99,7 @@ impl SharedContext {
                                 continue;
                             };
 
+                            let new_notes = &mut vec![];
                             // Find the task in all task_map entries
                             for (_, task_list) in layout.task_map.iter_mut() {
                                 if let Some(task) = task_list.iter_mut().find(|t| t.id == *task_id) {
@@ -109,22 +111,23 @@ impl SharedContext {
                                         &self.store_users,
                                         &store_selection,
                                     );
-
+                                    
                                     if should_include {
-                                        info!(
+                                        log::debug!(
                                             "receive_notes -> Adding associated note to task {} in layout {} should_include: {should_include}",
                                             task.id, layout_key
                                         );
                                     } else {
                                         // Remove task from this layout if it no longer belongs
                                         task_list.retain(|t| t.id != *task_id);
-                                        info!(
+                                        log::debug!(
                                             "receive_notes -> Removed task {} from layout {} as it no longer belongs",
                                             task_id, layout_key
                                         );
                                     }
                                 }
                             }
+                            layout.insert_notes(new_notes.clone());
                         }
                     }
                 }

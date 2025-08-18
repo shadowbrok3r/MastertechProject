@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -366,6 +366,7 @@ impl SharedContext {
                     log::warn!("No current user; using default statuses");
                     Status::VALUES.to_vec()
                 });
+
             // Add statuses from store_users
             let store_user_statuses = self.store_users
                 .iter()
@@ -505,6 +506,7 @@ impl SharedContext {
                 .iter()
                 .map(|u| u.get_username().to_string())
                 .collect();
+
             if let Some(user) = self.current_user.as_ref() {
                 if let Some(saved) = user.get_page_task_columns("Completed Tasks") {
                     let mut applied: Vec<String> = Vec::new();
@@ -541,7 +543,15 @@ impl SharedContext {
                     update_assignees: true,
                 },
             );
+
             self.layout_configs = Some(layout_configs);
+
+            let new_notes_tx = self.associated_notes_tx.clone();
+            
+            PlatformSpawner::spawn(async move {
+                let get_notes = TaskNotePayload::get_all_notes_in_my_store(new_notes_tx).await;
+                log::info!("get_notes: {get_notes:?}");
+            });
         }
     }
 

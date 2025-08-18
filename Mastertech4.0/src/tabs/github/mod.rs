@@ -188,11 +188,11 @@ pub async fn get_github_releases(
     client: Client,
 ) -> Result<(), Error> {
     let response: Vec<GithubRelease> = client
-        .get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest
+        .get("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/releases") // /latest
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "shadowbrok3r")
-        .bearer_auth(database::DOWNLOAD_TOKEN)
+        // .bearer_auth(database::DOWNLOAD_TOKEN)
         .send()
         .await?
         .json()
@@ -214,7 +214,7 @@ pub async fn download_release(
     if !asset.url.is_empty() {
         let resp = client
             .get(&asset.url)
-            .bearer_auth(database::DOWNLOAD_TOKEN)
+            // .bearer_auth(database::DOWNLOAD_TOKEN)
             .header(ACCEPT, "application/octet-stream")
             .header(CONTENT_TYPE, "application/octet-stream")
             .header(USER_AGENT, "shadowbrok3r")

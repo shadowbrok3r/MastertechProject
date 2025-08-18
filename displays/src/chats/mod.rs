@@ -78,7 +78,6 @@ pub enum ChatEvent {
 
 impl ChatView {
     pub fn new(
-        // messages: Vec<TaskNotePayload>,
         users: Vec<User>, 
         task_id: RecordId,
         service_number: Option<String>

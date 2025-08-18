@@ -31,6 +31,7 @@ impl MasterTechApp {
 
                     let usr = self.context.shared_ctx.current_user.clone();
                     if let Some(user) = usr {
+                        self.context.ticket_data.tech = user.get_username().to_string();
                         self.context.shared_ctx.load_data(ctx, &user);
                     } else {
                         self.context.shared_ctx.first_run = true;
