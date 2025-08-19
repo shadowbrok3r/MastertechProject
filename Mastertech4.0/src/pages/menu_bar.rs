@@ -1,10 +1,10 @@
 
-use database::{schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
-use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
+use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, ProgressBar, RichText, Separator, Stroke, TopBottomPanel, Vec2, Widget};
+use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
-use crate::{app_state::{default_tree}, tabs::github::{get_github_releases, self_updater::run}};
+use crate::{tabs::github::{get_github_releases, self_updater::run}};
+use displays::app_state::{default_tree, AppState, MainPages};
 use crate::app_state::MasterTechApp;
-use displays::{app_state::{AppState, MainPages}, ui_tools::show_notification};
 use std::collections::BTreeSet;
 use log::{error, info};
 use tokio::spawn;
@@ -232,129 +232,12 @@ impl MasterTechApp {
                             });
                     
                             Separator::default().shrink(20.0).ui(ui);
-                            ui.add_space(10.0);
-                            ui.vertical_centered(|ui| {
-                                if ui.button(RichText::new("Show Notifications").heading()).clicked() {
-                                    let notif_tx = self.context.shared_ctx.notification_tx.clone();
-                                    spawn(async move {
-                                        let notifications = get_notifications(notif_tx.clone()).await;
-                                        info!("Get Notifications: {notifications:?}");
-                                    });
-                                }
-                            });
-                    
-                            ui.horizontal_top(|ui| {
-                                let read_button = ui.button(
-                                    RichText::new("Read")
-                                        .color(Color32::from_rgba_premultiplied(42, 222, 192, 60)),
-                                );
-                                ui.add_space(ui.available_width() - 50.0);
-                                let unread_button = ui.button(
-                                    RichText::new("Unread").color(Color32::from_rgb(191, 33, 101)),
-                                );
-                                if read_button.clicked() {
-                                    self.context.read_notifications = true;
-                                }
-                                if unread_button.clicked() {
-                                    self.context.read_notifications = false;
-                                }
-                            });
-
-                            let row_height = 100.;
-                            let total_rows = self.context.shared_ctx.notifications.len();
-                            let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 80.0);
-
-                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                for row in row_range {
-                                    let mut notifications: Vec<Notification> =
-                                        if self.context.shared_ctx.read_notifications {
-                                            self.context
-                                                .shared_ctx
-                                                .notifications
-                                                .iter()
-                                                .filter(|n| n.status == "Read")
-                                                .cloned()
-                                                .collect()
-                                        } else {
-                                            self.context
-                                                .shared_ctx
-                                                .notifications
-                                                .iter()
-                                                .filter(|n| n.status == "Unread")
-                                                .cloned()
-                                                .collect()
-                                        };
-
-                                    if let Some(notification) = notifications.get_mut(row) {
-                                        eframe::egui::Frame::new()
-                                            .fill(ui.style().visuals.extreme_bg_color)
-                                            .corner_radius(eframe::egui::CornerRadius::same(12))
-                                            .inner_margin(Margin::same(10))
-                                            .outer_margin(Margin::same(5))
-                                            .stroke(Stroke::new(
-                                                0.5,
-                                                if notification.status == "Read" {
-                                                    Color32::from_rgba_premultiplied(
-                                                        42, 222, 192, 60,
-                                                    )
-                                                } else {
-                                                    Color32::from_rgb(191, 33, 101)
-                                                },
-                                            ))
-                                            .show(ui, |ui| {
-                                                ui.horizontal_top(|ui| {
-                                                    let w = 250.0;
-                                                    ui.set_width(w);
-                                                    ui.add_space(w / 3.0);
-                                                    ui.colored_label(
-                                                        Color32::from_rgba_premultiplied(
-                                                            42, 222, 192, 60,
-                                                        ),
-                                                        RichText::new(
-                                                            notification.notification_type.clone(),
-                                                        )
-                                                        .font(FontId::proportional(12.0)),
-                                                    );
-                                                    ui.add_space(80.0);
-                                                    let button = Button::new(
-                                                        RichText::new("X")
-                                                            .color(Color32::from_rgb(191, 33, 101)),
-                                                    )
-                                                    .ui(ui);
-                                                    if button.clicked() {
-                                                        let mut notif = notification.clone();
-                                                        if notification.status == "Read" {
-                                                            spawn(async move {
-                                                                notif
-                                                                    .delete_notification()
-                                                                    .await
-                                                                    .unwrap();
-                                                            });
-                                                        } else {
-                                                            notification.status =
-                                                                "Read".to_string();
-                                                            spawn(async move {
-                                                                notif
-                                                                    .mark_notification()
-                                                                    .await
-                                                                    .unwrap();
-                                                            });
-                                                        }
-                                                    }
-                                                });
-                                                show_notification(
-                                                    ui,
-                                                    &notification.notification_description,
-                                                    &inputs,
-                                                    self.context.shared_ctx.ui_actions_tx.clone(),
-                                                    &self.context.shared_ctx.tasks,
-                                                );
-                                            })
-                                            .inner;
-                                    }
-                                }
-                            });
+                            self.context.shared_ctx.notification_center.ui(
+                                ui, 
+                                &inputs, 
+                                self.context.shared_ctx.ui_actions_tx.clone(), 
+                                &self.context.shared_ctx.tasks
+                            );
                         });
                         ui.add_space(1.0);
                         ui.label("Welcome, ");

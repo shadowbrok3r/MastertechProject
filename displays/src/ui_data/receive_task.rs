@@ -4,8 +4,6 @@ use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 impl SharedContext {
     pub fn receive_task(&mut self) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            // log::info!("Received initial task payload with {} tasks", tasks.len());
-
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
 
@@ -79,6 +77,8 @@ impl SharedContext {
                                     // log::info!("Added initial task to layout: {}", layout_key);
                                 }
                             }
+                        
+                            layout.has_run = false;
                         }
                     }
                 }
@@ -90,6 +90,8 @@ impl SharedContext {
                     self.pending_store = None;
                 }
             }
+        
+            
         }
 
         if let Ok(new_task) = self.live_tasks_rx.try_recv() {

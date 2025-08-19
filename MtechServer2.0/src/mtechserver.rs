@@ -13,7 +13,7 @@ impl eframe::App for MtechServer {
         // being received have literally one line in them that i dont want to
         // justify creating a separate file / module for
         self.receive(frame, ctx);
-        self.menu_bar(ctx);
+        self.menu_bar(ctx); // , &mut self.context.open_tabs, &mut self.tree
 
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button

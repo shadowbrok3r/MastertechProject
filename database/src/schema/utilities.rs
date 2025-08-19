@@ -262,7 +262,7 @@ pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<
 #[async_trait]
 pub trait NotificationMod {
     async fn delete_notification(&mut self) -> Result<(), Error>;
-    async fn mark_notification(&mut self) -> Result<(), Error>;
+    async fn mark_notification(&mut self, read: bool) -> Result<(), Error>;
 }
 
 #[async_trait]
@@ -275,10 +275,11 @@ impl NotificationMod for Notification {
         Ok(())
     }
 
-    async fn mark_notification(&mut self) -> Result<(), Error> {
-        DATABASE.set("id", self.id.clone()).await?;
+    async fn mark_notification(&mut self, read: bool) -> Result<(), Error> {
         let query: Option<Record> = DATABASE
-            .query("UPDATE notification SET status = 'Read' WHERE id == $id")
+            .query("UPDATE notification SET status = '$read' WHERE id == $id")
+            .bind(("id", self.id.clone()))
+            .bind(("read", if read { "Read" } else { "Unread" }))
             .await?
             .take(0)?;
         info!("schema/utilities.rs -> Updated notification: {query:?}");

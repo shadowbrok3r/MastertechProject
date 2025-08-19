@@ -346,8 +346,8 @@ impl MtechServer {
 
         // Get User settings from local storage
         if let Some(user) = &self.context.shared_ctx.current_user {
-            if self.context.get_settings {
-                self.context.get_settings = false;
+            if self.context.shared_ctx.get_settings {
+                self.context.shared_ctx.get_settings = false;
                 match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mtechserver()){
                     Ok(tree) => self.tree = tree,
                     Err(e) => log::error!("Could not get UI layout from user: {e:?}: {:#?}", user.get_user_settings().get_ui_layout_mtechserver()),
@@ -359,12 +359,12 @@ impl MtechServer {
         // this bool gets switched via clicking
         // the submit button in the crate::tabs::json_viewer
         // module
-        if self.context.update_settings {
-            self.context.update_settings = false;
-            log::info!("Saving settings: {:?}", self.context.user_settings.clone());
+        if self.context.shared_ctx.update_settings {
+            self.context.shared_ctx.update_settings = false;
+            log::info!("Saving settings: {:?}", self.context.shared_ctx.user_settings.clone());
             frame.storage_mut().unwrap().set_string(
                 "user_settings",
-                serde_json::to_string(&self.context.user_settings).unwrap(),
+                serde_json::to_string(&self.context.shared_ctx.user_settings).unwrap(),
             );
         }
 

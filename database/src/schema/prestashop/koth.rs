@@ -92,6 +92,15 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 // Make the API request
                 filtered_orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params).await?);
 
+                let mut url_params2 = HashMap::new();
+                // Construct query parameters
+                url_params2.insert("output_format", "JSON");
+                url_params2.insert("filter[id_employee_split_rep]", id_employee);
+                url_params2.insert("filter[current_state]", state);
+                url_params2.insert("filter[delivery_date]", &date);
+
+                filtered_orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params2).await?);
+
                 // Move to the next date
                 current_date = current_date + Duration::days(1);
             }
@@ -109,8 +118,18 @@ pub async fn generate_orders_report(pay_period: PayPeriod, state: &str, id_emplo
                 let limit_str = format!("{},{}", start, limit);
                 url_params.insert("limit", &limit_str);
                 
-                let orders = prestashop.request_resources_wasm::<Order>("orders", url_params).await?;
-                
+                let mut orders = prestashop.request_resources_wasm::<Order>("orders", url_params).await?;
+
+                let mut url_params2 = HashMap::new();
+                url_params2.insert("output_format", "JSON");
+                url_params2.insert("filter[id_employee_split_rep]", id_employee);
+                url_params2.insert("filter[current_state]", state);
+                url_params2.insert("sort", "[id_DESC]");
+                let limit_str = format!("{},{}", start, limit);
+                url_params2.insert("limit", &limit_str);
+
+                orders.append(&mut prestashop.request_resources_wasm::<Order>("orders", url_params2).await?);
+
                 if orders.is_empty() {
                     break; // No more orders to fetch
                 }

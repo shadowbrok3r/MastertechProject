@@ -330,14 +330,14 @@ impl Koth {
 
                     let total_laptops = my_orders
                         .iter()
-                        .filter(|o| o.id_order_type != "2")
+                        .filter(|o| OrderType::from_id_str(&o.id_order_type) != OrderType::ServiceOrder)
                         .flat_map(|o| o.associations.order_rows.iter())
                         .filter(|a| a.product_reference.to_lowercase().starts_with("lap/"))
                         .count();
 
                     let total_desktops = my_orders
                         .iter()
-                        .filter(|o| o.id_order_type != "2")
+                        .filter(|o| OrderType::from_id_str(&o.id_order_type) != OrderType::ServiceOrder)
                         .flat_map(|o| o.associations.order_rows.iter())
                         .filter_map(|o| {
                             if !o.product_reference.to_lowercase().starts_with("lap/") 
@@ -556,8 +556,10 @@ impl Koth {
                         || o.product_reference.to_lowercase().starts_with("rci/")
                         || o.product_reference.to_lowercase().starts_with("r2r/")
                         || o.product_reference.to_lowercase().starts_with("rtr/")
-                        && !o.product_reference.to_lowercase().starts_with("case/15")
-                        && !o.product_reference.to_lowercase().starts_with("case/17")
+                        && !( 
+                            o.product_reference.to_lowercase().starts_with("case/15") 
+                            && o.product_reference.to_lowercase().starts_with("case/17") 
+                        )
                     { Some(o.product_reference.clone()) } else { None }
                 })
                 .next()
@@ -748,8 +750,8 @@ impl Koth {
 
     // Build summary rows for All Employees data table (7 columns)
     fn rebuild_all_employees_rows(&mut self) {
-    // Collect and compute metrics per employee using payment-attributed shares (same as Me)
-    let mut rows: Vec<AllEmployeesTableData> = Vec::new();
+        // Collect and compute metrics per employee using payment-attributed shares (same as Me)
+        let mut rows: Vec<AllEmployeesTableData> = Vec::new();
 
         for employee in self.employees.iter() {
             let emp_id = &employee.id;
@@ -773,14 +775,14 @@ impl Koth {
 
             let total_laptops = orders
                 .iter()
-                .filter(|o| o.id_order_type != "2")
+                .filter(|o| OrderType::from_id_str(&o.id_order_type) != OrderType::ServiceOrder)
                 .flat_map(|o| o.associations.order_rows.iter())
                 .filter(|a| a.product_reference.to_lowercase().starts_with("lap/"))
                 .count();
 
             let total_desktops = orders
                 .iter()
-                .filter(|o| o.id_order_type != "2")
+                .filter(|o| OrderType::from_id_str(&o.id_order_type) != OrderType::ServiceOrder)
                 .flat_map(|o| o.associations.order_rows.iter())
                 .filter_map(|o| {
                     if !o.product_reference.to_lowercase().starts_with("lap/")

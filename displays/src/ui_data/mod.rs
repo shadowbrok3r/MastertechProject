@@ -1,4 +1,4 @@
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}};
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::Style;
@@ -109,6 +109,13 @@ impl crate::app_state::SharedContext {
                 };
             },
         }
+
+        let new_notes_tx = self.associated_notes_tx.clone();
+        
+        PlatformSpawner::spawn(async move {
+            let get_notes = TaskNotePayload::get_all_notes_in_my_store(new_notes_tx).await;
+            log::info!("get_notes: {get_notes:?}");
+        });
 
         ctx.request_repaint();
         
@@ -228,6 +235,10 @@ impl crate::app_state::SharedContext {
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
         self.toasts.show(ctx);
+        for (_, layout) in self.task_layouts.iter_mut() {
+            layout.receive();
+        }
+        
         self.task_audit_table.receive(self.store_users.clone(), frame);
 
         if let Ok(releases) = self.github_releases_channel.1.try_recv() {

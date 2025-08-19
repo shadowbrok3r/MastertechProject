@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.5.0"
+version = "4.5.1"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -45,7 +45,6 @@ ring = "0.17.14"
 semver = "1.0.23"
 nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5.0"
-# planif = "1"
 ratatui-splash-screen = "0.1.4"
 tui-scrollview = "0.5.1"
 tachyonfx = "0.16.0"
@@ -58,7 +57,7 @@ arboard = "3"
 tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 # nvme = "0.2.2"
-rmcp = { version = "0.5.0", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
+rmcp = { version = "0.6.0", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
 xcap = "0.6.0"
 display-info = "0.5.4"
 enigo = { version = "0.5.0", features = ["serde"] }
@@ -97,7 +96,6 @@ image-meta = "0.1.4"
 indexmap = { version = "2.10.0", features = ["serde"] }
 throbber-widgets-tui = "0.8.0"
 
-
 [dependencies.egui]
 version = "0.32.0"
 default-features = false
@@ -106,14 +104,6 @@ features = ["rayon", "bytemuck", "log"]
 [dependencies.crossterm]
 version = "0.28.1"
 features = ["event-stream"]
-
-# gfx-hal = { version = "0.9.0", features = ["serde"] }
-# egui_tracing = "0.2.2"
-# portable-pty = "0.8.1"
-# 
-# known-folders 
-# robocopyrs 
-
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = {version = "0.61", features = [
@@ -154,8 +144,6 @@ evtx = "0.8"
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
-# libatasmart = "0.3.1"
-
 
 [dev-dependencies]
 criterion = { version = "0.6", features = ["async_tokio"]}

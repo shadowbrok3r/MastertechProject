@@ -1,7 +1,7 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::{self, DATABASE, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, get_current_user_from_auth, Displayable, TaskUiActions};
-use std::{collections::{BTreeMap, HashMap}, f32};
+use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
 use surrealdb::RecordId;
@@ -25,8 +25,11 @@ pub struct TaskLayout{
     search_results: Option<Vec<LiveTaskPayload>>, // Add search results
     pub column_order: Vec<String>,
     pub page: String,
+    // True once this page has rendered at least once; used to gate expensive refreshes
     #[serde(skip)]
-    _notes_tx: Sender<Vec<TaskNotePayload>>,
+    pub has_run: bool,
+    #[serde(skip)]
+    notes_tx: Sender<Vec<TaskNotePayload>>,
     #[serde(skip)]
     notes_rx: Receiver<Vec<TaskNotePayload>>,
     notes: Vec<TaskNotePayload>,
@@ -56,8 +59,8 @@ pub enum SortField {
 }
 
 impl TaskLayout { 
-    const COL_W: f32 = 450.0; // <- single source of truth
-    const HEADER_H: f32 = 48.0;          // rough pixel height of the header frame
+    const COL_W: f32 = 450.0;
+    const HEADER_H: f32 = 48.0;
     const SPACER_W: f32 = 6.0;
 
     pub fn new(
@@ -67,23 +70,26 @@ impl TaskLayout {
         search_results: Option<Vec<LiveTaskPayload>>,
         page: String,
     ) -> Self {
-        let (_notes_tx, notes_rx) = crossbeam::channel::unbounded();
-
-        let tx = _notes_tx.clone();
+        log::error!("Initializing new task layout");
+        let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
+        
+        let tx = notes_tx.clone();
         let map = task_map.clone();
-        PlatformSpawner::spawn(async move {
-            for task in map.iter().flat_map(|t| t.1.iter()) {
-                let notes_res = task.get_associated_notes().await;
-                match notes_res {
-                    Ok(notes) => { let _ = tx.try_send(notes); },
-                    Err(e) => log::error!("Error getting notes: {e:?}"),
+        if !map.is_empty() {
+            PlatformSpawner::spawn(async move {
+                for task in map.iter().flat_map(|t| t.1.iter()) {
+                    let notes_res = task.get_associated_notes().await;
+                    match notes_res {
+                        Ok(notes) => { let _ = tx.try_send(notes); },
+                        Err(e) => log::error!("Error getting notes: {e:?}"),
+                    }
                 }
-            }
-        });
+            });
+        }
 
         Self {
             notes: vec![],
-            _notes_tx,
+            notes_tx,
             notes_rx,
             task_map, 
             column_order,
@@ -99,23 +105,42 @@ impl TaskLayout {
             new_status: String::new(),
             user: get_current_user_from_auth().unwrap_or_default(),
             search_results,
+            has_run: false,
         }
     }
 
     pub fn receive(&mut self) {
-        if let Ok(mut notes) = self.notes_rx.try_recv() {
-            self.notes.append(&mut notes);
-            *new_notes = notes
-            .iter()
-            .filter(|n| 
-                if let Some(id) = &n.task_id {
-                    *id == task.id
-                } else {
-                    false
+        while let Ok(notes) = self.notes_rx.try_recv() {
+            // Optional: keep only notes for tasks we currently have
+            let valid_task_ids: BTreeSet<_> = self
+                .task_map
+                .values()
+                .flatten()
+                .map(|t| t.id.clone())
+                .collect();
+
+            let mut existing_ids: HashSet<_> = self.notes.iter().map(|n| n.id.clone()).collect();
+
+            self.notes.extend(
+                notes.into_iter().filter(|n| {
+                    // keep if belongs to a known task and not already present
+                    let valid = n.task_id.as_ref().is_some_and(|id| valid_task_ids.contains(id));
+                    valid && existing_ids.insert(n.id.clone())
+                })
+            );
+        }
+        
+        // Only refetch/stream notes after this page has rendered at least once
+        if !self.has_run {
+            log::error!("update_col_names (post-first-render)");
+            let tx = self.notes_tx.clone();
+            // let map = self.task_map.clone();
+            PlatformSpawner::spawn(async move {
+                match TaskNotePayload::get_all_notes_in_my_store(tx.clone()).await {
+                    Ok(_) => log::info!("Got all notes for layout"),
+                    Err(e) => log::error!("Error getting notes for layout: {e:?}"),
                 }
-            )
-            .cloned()
-            .collect::<Vec<database::schema::TaskNotePayload>>();
+            });
         }
     }
 
@@ -549,6 +574,11 @@ impl TaskLayout {
         // Apply any requested column move now that no UI borrows are active
         if let Some((key, dir)) = requested_move.take() {
             if dir < 0 { self.move_column_left(&key); } else { self.move_column_right(&key); }
+        }
+
+        // Mark this page as having rendered at least once so subsequent actions can run
+        if !self.has_run {
+            self.has_run = true;
         }
     }
 }

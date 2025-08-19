@@ -13,6 +13,7 @@ pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;
 pub mod theme_config;
+pub mod notification_center;
 
 const ZSTD_LEVEL: i32 = 9;
 

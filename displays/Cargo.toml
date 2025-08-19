@@ -66,6 +66,14 @@ web-time = { workspace=true, optional = true }
 wasm-bindgen-futures = { workspace=true, optional = true }
 wasm-cookies = { workspace = true}
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]} # "tls"
-
-# [dependencies.zvariant_derive]
-# version = "=5.5.1" 
+web-sys = { version = "0.3", features = [
+	"Storage",
+	"Window",
+	"Location",
+	"HtmlCanvasElement",
+	"CacheStorage",
+	"Navigator",
+	"ServiceWorkerContainer",
+	"ServiceWorkerRegistration"
+] }
+js-sys = "0.3.77"

@@ -397,6 +397,7 @@ impl Store {
             Store::SAN => "SAN",
         }
     }
+    
     pub fn store_email(&self) -> &'static str {
         match *self {
             Store::RIV => "RIV",
