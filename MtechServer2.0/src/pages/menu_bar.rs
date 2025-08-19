@@ -1,8 +1,7 @@
-use database::{schema::{utilities::{get_completed_tasks_for_store, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
-use eframe::egui::{containers::menu::MenuConfig, vec2, Align, Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, Margin, MenuBar, PopupCloseBehavior, ProgressBar, RichText, ScrollArea, Separator, Stroke, TextEdit, TopBottomPanel, UiKind, Widget};
-use displays::{app_state::{AppState, MainPages}, tabs::github::get_github_releases, PlatformSpawner, Spawner}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
-use crate::app_state::{default_tree, MtechServer};
-use displays::ui_tools::show_notification;
+use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
+use eframe::egui::{containers::menu::MenuConfig, vec2, Align, Button, Color32, ComboBox, Context, Frame, Key, Layout, MenuBar, PopupCloseBehavior, ProgressBar, RichText, Separator, Stroke, TextEdit, TopBottomPanel, UiKind, Widget};
+use displays::{app_state::{default_tree, AppState, MainPages}, tabs::{github::get_github_releases, TABS}, PlatformSpawner, Spawner}; // ui_tools::autocomplete::AutoCompleteTextEdit, 
+use crate::app_state::MtechServer;
 use wasm_bindgen_futures::spawn_local;
 use std::collections::BTreeSet;
 use displays::TaskUiActions;
@@ -22,31 +21,14 @@ impl MtechServer {
                         ui.add_space(1.0);
                         ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
                             // allow certain tabs to be toggled
-                            for tab in &[
-                                &"My Tasks".to_string(),
-                                &"Store Tasks".to_string(),
-                                &"Completed Tasks".to_string(),
-                                &"Sales Tracker".to_string(),
-                                &"Inventory".to_string(),
-                                &"Task Audit".to_string(),
-                                &"Threads".to_string(),
-                                &"Bug Report".to_string(),
-                                &"My Tools".to_string(),
-                                &"Logs".to_string(),
-                                &"Admin Console".to_string(),
-                                // &"Ai".to_string(),
-                                &"Database Editor".to_string(),
-                                &"Query Editor".to_string(),
-                                &"KOTH".to_string(),
-                                &"Create Prestashop Order".to_string()
-                            ] {
+                            for tab in TABS {
                                 if ui
-                                    .selectable_label(self.context.open_tabs.contains(*tab), *tab)
+                                    .selectable_label(self.context.open_tabs.contains(tab), tab)
                                     .clicked()
                                 {
                                     if let Some(index) = self.tree.find_tab(&tab.to_string()) {
                                         self.tree.remove_tab(index);
-                                        self.context.open_tabs.remove(*tab);
+                                        self.context.open_tabs.remove(tab);
                                     } else {
                                         self.context.open_tabs.insert(tab.to_string());
                                         self.tree.push_to_focused_leaf(tab.to_string());
@@ -67,21 +49,21 @@ impl MtechServer {
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
 
-                        let result = TextEdit::singleline(&mut self.context.search_input).desired_width(165.0).hint_text(" Search Tasks").ui(ui);
+                        let result = TextEdit::singleline(&mut self.context.shared_ctx.search_input).desired_width(165.0).hint_text(" Search Tasks").ui(ui);
                         ui.add_space(5.);
                         if ui.button("Clear").clicked() {
                             self.context.shared_ctx.search_results = None;
-                            self.context.search_input.clear();
+                            self.context.shared_ctx.search_input.clear();
                         }
                         let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
 
-                        if self.context.search_input.is_empty() && result.has_focus() {
+                        if self.context.shared_ctx.search_input.is_empty() && result.has_focus() {
                             self.context.shared_ctx.search_results = None;
                         }
 
-                        if !self.context.search_input.is_empty() {
+                        if !self.context.shared_ctx.search_input.is_empty() {
                             // info!("Global search: {}", self.context.search_input);
-                            let search = self.context.search_input.clone();
+                            let search = self.context.shared_ctx.search_input.clone();
                             // Perform fuzzy search using FilterTasks
                             let filtered_tasks = self.context.shared_ctx
                                 .task_index
@@ -91,15 +73,15 @@ impl MtechServer {
                                 .filter_by_task_name(inputs.clone(), search.clone());
                             
                             self.context.shared_ctx.search_results = Some(filtered_tasks);
-                        } else if accepted_by_keyboard && self.context.search_input.is_empty() {
+                        } else if accepted_by_keyboard && self.context.shared_ctx.search_input.is_empty() {
                             // Clear search results on Enter with empty input
                             self.context.shared_ctx.search_results = None;
-                            self.context.search_input.clear();
+                            self.context.shared_ctx.search_input.clear();
                             // info!("Cleared global search");
-                        } else if ( result.secondary_clicked() || accepted_by_keyboard )&& !self.context.search_input.is_empty() {
+                        } else if ( result.secondary_clicked() || accepted_by_keyboard )&& !self.context.shared_ctx.search_input.is_empty() {
                             self.context.shared_ctx.search_results = None;
-                            let search = self.context.search_input.clone();
-                            self.context.search_input.clear();
+                            let search = self.context.shared_ctx.search_input.clone();
+                            self.context.shared_ctx.search_input.clear();
                             if let Some(input) = inputs.get(&search) {
                                 let task = self.context.shared_ctx.tasks.iter().find(|&x| {
                                     x.task_name == *input
@@ -117,12 +99,11 @@ impl MtechServer {
                             }
                         }
 
-                        if result.lost_focus() && self.context.search_input.is_empty() {
+                        if result.lost_focus() && self.context.shared_ctx.search_input.is_empty() {
                             self.context.shared_ctx.search_results = None;
                         }
                     });
 
-                    let notif_tx = self.context.shared_ctx.notification_tx.clone();
                     ui.add_space(ui.available_width() / 3.);
                     let txt = RichText::new(format!(
                         "Mastertech Server {}",
@@ -146,21 +127,21 @@ impl MtechServer {
                     }
 
                     while let Ok(res) = self.context.bytes_channel.1.try_recv() {
-                        self.context.total_download_size = res.1 as f32;
+                        self.context.shared_ctx.total_download_size = res.1 as f32;
                         for y in res.0 {
-                            self.context.download_progress += y as f32;
+                            self.context.shared_ctx.download_progress += y as f32;
                         }
                     }
 
-                    if self.context.download_progress == self.context.total_download_size {
-                        self.context.download_progress = 0.0;
-                        self.context.total_download_size = 0.0;
+                    if self.context.shared_ctx.download_progress == self.context.shared_ctx.total_download_size {
+                        self.context.shared_ctx.download_progress = 0.0;
+                        self.context.shared_ctx.total_download_size = 0.0;
                     }
                     
-                    if self.context.download_progress.ne(&0.0) {
+                    if self.context.shared_ctx.download_progress.ne(&0.0) {
                         ui.add_space(30.);
                         ProgressBar::new(
-                            self.context.download_progress / self.context.total_download_size,
+                            self.context.shared_ctx.download_progress / self.context.shared_ctx.total_download_size,
                         )
                         .fill(Color32::from_rgba_premultiplied(50, 10, 50, 65))
                         .show_percentage()
@@ -352,133 +333,12 @@ impl MtechServer {
                             });
 
                             Separator::default().shrink(20.0).ui(ui);
-                            ui.add_space(10.0);
-                            ui.vertical_centered(|ui| {
-                                if self.context.shared_ctx.notifications.is_empty() {
-                                    if ui.button(RichText::new("Show Notifications").heading()).clicked() {
-                                        spawn_local(async move {
-                                            let notifications = get_notifications(notif_tx.clone()).await;
-                                            info!("Get Notifications: {notifications:?}");
-                                        });
-                                    }
-                                }
-                            });
-
-                            ui.horizontal_top(|ui| {
-                                let read_button = ui.button(
-                                    RichText::new("Read")
-                                        .color(Color32::from_rgba_premultiplied(42, 222, 192, 60)),
-                                );
-                                ui.add_space(ui.available_width() - 50.0);
-                                let unread_button = ui.button(
-                                    RichText::new("Unread").color(Color32::from_rgb(191, 33, 101)),
-                                );
-                                if read_button.clicked() {
-                                    self.context.shared_ctx.read_notifications = true;
-                                }
-                                if unread_button.clicked() {
-                                    self.context.shared_ctx.read_notifications = false;
-                                }
-                            });
-                            let row_height = 100.;
-                            let total_rows = self.context.shared_ctx.notifications.len();
-                            let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                            ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 15.0);
-
-                            ui.scope(|ui| {
-                                ui.style_mut().visuals.extreme_bg_color + Color32::from_rgb(30,30,30);
-                                scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                    
-                                    for row in row_range {
-                                        let mut notifications: Vec<Notification> =
-                                            if self.context.shared_ctx.read_notifications {
-                                                self.context
-                                                    .shared_ctx
-                                                    .notifications
-                                                    .iter()
-                                                    .filter(|n| n.status == "Read")
-                                                    .cloned()
-                                                    .collect()
-                                            } else {
-                                                self.context
-                                                    .shared_ctx
-                                                    .notifications
-                                                    .iter()
-                                                    .filter(|n| n.status == "Unread")
-                                                    .cloned()
-                                                    .collect()
-                                            };
-
-                                        if let Some(notification) = notifications.get_mut(row) {
-                                            eframe::egui::Frame::new()
-                                                .fill(ui.style().visuals.extreme_bg_color)
-                                                .corner_radius(eframe::egui::CornerRadius::same(12))
-                                                .inner_margin(Margin::same(10))
-                                                .outer_margin(Margin::same(5))
-                                                .stroke(Stroke::new(
-                                                    0.5,
-                                                    if notification.status == "Read" {
-                                                        Color32::from_rgba_premultiplied(
-                                                            42, 222, 192, 60,
-                                                        )
-                                                    } else {
-                                                        Color32::from_rgb(191, 33, 101)
-                                                    },
-                                                ))
-                                                .show(ui, |ui| {
-                                                    ui.horizontal_top(|ui| {
-                                                        let w = 250.0;
-                                                        ui.set_width(w);
-                                                        ui.add_space(w / 3.0);
-                                                        ui.colored_label(
-                                                            Color32::from_rgba_premultiplied(
-                                                                42, 222, 192, 60,
-                                                            ),
-                                                            RichText::new(
-                                                                notification.notification_type.clone(),
-                                                            )
-                                                            .font(FontId::proportional(12.0)),
-                                                        );
-                                                        ui.add_space(80.0);
-                                                        let button = Button::new(
-                                                            RichText::new("X")
-                                                                .color(Color32::from_rgb(191, 33, 101)),
-                                                        )
-                                                        .ui(ui);
-                                                        if button.clicked() {
-                                                            let mut notif = notification.clone();
-                                                            if notification.status == "Read" {
-                                                                spawn_local(async move {
-                                                                    notif
-                                                                        .delete_notification()
-                                                                        .await
-                                                                        .unwrap();
-                                                                });
-                                                            } else {
-                                                                notification.status =
-                                                                    "Read".to_string();
-                                                                spawn_local(async move {
-                                                                    notif
-                                                                        .mark_notification()
-                                                                        .await
-                                                                        .unwrap();
-                                                                });
-                                                            }
-                                                        }
-                                                    });
-                                                    show_notification(
-                                                        ui,
-                                                        &notification.notification_description,
-                                                        &inputs,
-                                                        self.context.shared_ctx.ui_actions_tx.clone(),
-                                                        &self.context.shared_ctx.tasks,
-                                                    );
-                                                })
-                                                .inner;
-                                        }
-                                    }
-                                });
-                            });
+                            self.context.shared_ctx.notification_center.ui(
+                                ui, 
+                                &inputs, 
+                                self.context.shared_ctx.ui_actions_tx.clone(), 
+                                &self.context.shared_ctx.tasks
+                            );
                         });
 
                         ui.add_space(2.0);
@@ -503,7 +363,7 @@ impl MtechServer {
                                 let tree = default_tree();
                                 if reset_ui.clicked() {
                                     let default_layout = serde_json::to_value(&tree).unwrap();
-                                    self.context.user_settings.set_ui_layout_mtechserver(default_layout.clone());
+                                    self.context.shared_ctx.user_settings.set_ui_layout_mtechserver(default_layout.clone());
                                     usr.set_ui_layout_mtechserver(default_layout.clone());
                                     #[cfg(target_arch = "wasm32")]
                                     {
@@ -541,11 +401,11 @@ impl MtechServer {
                                             Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                         }
                                     });
-                                    self.context.update_settings = true;
+                                    self.context.shared_ctx.update_settings = true;
                                 }
                                 if submit.clicked() {
                                     let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
-                                    self.context.user_settings.set_ui_layout_mtechserver(val.clone());
+                                    self.context.shared_ctx.user_settings.set_ui_layout_mtechserver(val.clone());
                                     usr.set_ui_layout_mtechserver(val.clone());
                                     log::debug!("user_settings: {:#?}", usr.get_user_settings());
                                     #[cfg(target_arch = "wasm32")]
@@ -580,7 +440,7 @@ impl MtechServer {
                                             Err(e) => log::error!("Error updating User Settings: {e:?}"),
                                         }
                                     });
-                                    self.context.update_settings = true;
+                                    self.context.shared_ctx.update_settings = true;
                                 }
                                 if organize.clicked() {
                                     ctx.memory_mut(|mem| mem.reset_areas());

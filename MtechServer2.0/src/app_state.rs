@@ -1,7 +1,6 @@
-use displays::{app_state::SharedContext, channel_manager::ChannelManager};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
+use displays::{app_state::{default_tree_wasm, SharedContext}, channel_manager::ChannelManager};
+use egui_dock::{DockState, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::UserSettings;
 use eframe::CreationContext;
 use std::collections::HashSet;
 use serde::Serialize;
@@ -18,27 +17,12 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     
-    // UI and Application State Fields
-    /// {Widgets / Modals / Ui for portions throughout the app}
-    pub search_input: String,
-
     /// {Open tabs in the UI}
     pub open_tabs: HashSet<String>,
     #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
 
-    // System Data and Settings
-    pub user_settings: UserSettings,
-    pub update_settings: bool,
-    pub get_settings: bool,
-
-    // Miscellaneous Fields
-    /// When downloading mastertech from the website
-    pub total_download_size: f32,
-    /// progress of downloading mastertech
-    pub download_progress: f32,
-
-    // // Webworker Communication
+    // Webworker Communication
     #[serde(skip)]
     pub data_update: std::rc::Rc<
         std::cell::Cell<
@@ -56,7 +40,6 @@ pub struct MtechServerContext {
 
 impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
-        let tree = default_tree();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let data_update = std::rc::Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
@@ -68,7 +51,7 @@ impl MtechServer {
                 ctx.request_repaint();
             })
             .spawn("./webworker.js");
-
+        let tree = default_tree_wasm();
         let shared_ctx = SharedContext::new(cc, tree.0.clone());
         let admin_console_data_helper = AdminConsoleDataHelper::new();
         
@@ -79,21 +62,14 @@ impl MtechServer {
 
             // CHANNEL SENDERS / RECEIVERS
             bytes_channel,
-
-            search_input: String::new(),
             open_tabs: tree.1,
             added_nodes: Vec::new(),
-            total_download_size: 0.0,
-            download_progress: 0.0,
-            user_settings: UserSettings::default(),
-            update_settings: false,
-            get_settings: true,
             admin_console_data_helper,
         };
 
         Self {
-            tree: tree.0,
             context,
+            tree: tree.0
         }
     }
 }
@@ -127,48 +103,6 @@ impl AdminConsoleDataHelper {
 //         bin.to_vec()
 //     }
 // }
-
-pub fn default_tree() -> (DockState<String>, HashSet<String>) {
-    let mut open_tabs = HashSet::new();
-    let mut tree = DockState::new(vec![
-        "Store Tasks".to_owned(),
-        "Completed Tasks".to_owned(),
-        "Inventory".to_owned(),
-        "Logs".to_owned(),
-    ]);
-
-    // let [_a, b] =
-    //     tree.main_surface_mut()
-    //         .split_below(NodeIndex::root(), 0.65, vec!["My Tools".to_owned()]);
-
-    // let [_, _] = tree
-    //     .main_surface_mut()
-    //     .split_right(b, 0.5, vec!["Bug Report".to_owned()]);
-
-    // "Terminal".to_owned(),
-
-    let [_, _] = tree.main_surface_mut().split_below(// .split_left(
-        NodeIndex::root(), // b,
-        0.6,
-        vec![
-            "My Tasks".to_owned(),
-            "Bug Report".to_owned(),
-            "Task Audit".to_owned(),
-        ],
-    );
-
-    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-
-    for node in tree[SurfaceIndex::main()].iter() {
-        if let Node::Leaf(tabs) = node {
-            for tab in &tabs.tabs {
-                open_tabs.insert(tab.clone());
-            }
-        }
-    }
-
-    (tree, open_tabs)
-}
 
 #[cfg(target_arch="wasm32")]
 pub fn check_authentication(db_tx: Sender<anyhow::Result<database::Database, anyhow::Error>>) -> Result<displays::app_state::AppState, anyhow::Error> {

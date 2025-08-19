@@ -1,10 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::app_state::SharedContext;
-use database::{
-    live_data::{handle_live_delete, update_or_insert_anything},
-    schema::LiveTaskPayload,
-};
+use database::schema::LiveTaskPayload;
 use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
 use eframe::egui::{Button, Color32, FontId, Margin, RichText, Ui, Widget};
 use log::info;
@@ -57,7 +54,7 @@ impl SharedContext {
                                 info!("Task name not found");
                             }
                             if notification.user == usr.get_id() {
-                                self.read_notifications = false;
+                                self.notification_center.read_notifications = false;
                                 let toast = &mut self.toasts;
                                 let auth_toast = Toast {
                                     kind: ToastKind::Info,
@@ -73,24 +70,22 @@ impl SharedContext {
                                 toast.add(auth_toast);
                             }
                         }
-                        
-                        update_or_insert_anything(&mut self.notifications, notification.clone()).unwrap_or(())
+                        // Keep NotificationCenter as the single source of truth
+                        self.notification_center.apply_update(notification.clone());
                     }
                 }
                 Action::Update => {
-                    update_or_insert_anything(&mut self.notifications, notification.clone())
-                        .unwrap_or(())
+                    self.notification_center.apply_update(notification.clone());
                 }
                 Action::Delete => {
-                    handle_live_delete(&mut self.notifications, notification.clone())
-                        .unwrap_or(())
+                    self.notification_center.apply_delete(notification.clone());
                 }
                 _ => (),
             };
         }
 
-        if let Ok(notification) = self.notification_rx.try_recv() {
-            self.notifications = notification;
+        if let Ok(notifications) = self.notification_rx.try_recv() {
+            self.notification_center.set_notifications(notifications);
         }
     }
 }

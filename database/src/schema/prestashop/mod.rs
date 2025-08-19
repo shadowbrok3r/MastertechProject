@@ -823,6 +823,7 @@ impl DesktopModel {
     ];
 }
 
+#[derive(PartialEq)]
 pub enum OrderType {
     SalesOrder,
     ServiceOrder,

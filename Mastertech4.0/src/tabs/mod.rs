@@ -43,10 +43,6 @@ pub mod egui_file_dialog;
 
 
 impl MastertechContext {
-    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
-        ui.label("Secret menu... -.-");
-    }
-
     pub fn file_browser_popup(&mut self, ui: &mut Ui) {
         let current_state = self.show_deferred_viewport.load(Ordering::Relaxed);
         let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
@@ -143,7 +139,6 @@ impl TabViewer for MastertechContext {
         _node_index: NodeIndex,
     ) {
         match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
             "Admin Console" => self.websocket_menu(ui),
             "Websockets" => self.websocket_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),

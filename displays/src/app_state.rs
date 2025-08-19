@@ -1,12 +1,13 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, PlatformSpawner, Spawner, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User}, Database};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
-use std::{collections::{BTreeMap, HashMap}, sync::Arc};
+use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
 use surrealdb::{Action, RecordId};
-use egui_dock::DockState;
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use serde::Serialize;
 use anyhow::Error;
+
 
 #[derive(Serialize, Default, Debug, PartialEq)]
 pub enum MainPages {
@@ -112,6 +113,7 @@ pub struct SharedContext {
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     #[serde(skip)]
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
+
     // Notifications and App State
     #[serde(skip)]
     pub notification_tx: Sender<Vec<Notification>>,
@@ -139,11 +141,10 @@ pub struct SharedContext {
 
     #[serde(skip)]
     pub toasts: Toasts,
-    pub notifications: Vec<Notification>,
     
     /// store selection for inventory view
     pub store_selection: u64,
-    pub read_notifications: bool,
+    
     pub new_note: bool,
     /// tracking for which client we want to undock
     /// into a floating UI when we click the undock button
@@ -215,12 +216,22 @@ pub struct SharedContext {
     pub stock_tables: StockTable,
     #[serde(skip)]
     pub sales_tracker: SalesTracker,
+    /// {Widgets / Modals / Ui for portions throughout the app}
+    pub search_input: String,
+    // Miscellaneous Fields
+    pub notification_center: NotificationCenter,
+    /// When downloading mastertech from the website
+    pub total_download_size: f32,
+    /// progress of downloading mastertech
+    pub download_progress: f32,
+    pub user_settings: UserSettings,
+    pub update_settings: bool,
+    pub get_settings: bool,
 }
 
 impl SharedContext {
     pub fn new(cc: &CreationContext<'_>, tree: DockState<String>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
-
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<LiveTaskPayload>>(2);
@@ -248,6 +259,7 @@ impl SharedContext {
         let theme = set_custom_style(&theme_config);
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
+        
 
         Self {
             tree,
@@ -273,7 +285,6 @@ impl SharedContext {
             task_layouts: HashMap::new(),
             store_selection: 76,
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
-            notifications: Vec::new(),
             db_tx, db_rx,
             live_tasks_tx, live_tasks_rx,
             ui_actions_tx, ui_actions_rx,
@@ -299,7 +310,6 @@ impl SharedContext {
             wants_to_undock: false,
             clients: Vec::new(),
             opened_modals: HashMap::new(),
-            read_notifications: false,
             new_note: false,
             search_results: None,
             stock_tables: StockTable::default(),
@@ -323,7 +333,14 @@ impl SharedContext {
             room_id: String::new(),
             user_chat: UserChat::default(),
             pending_store: None,
-            sales_tracker: SalesTracker::default()
+            sales_tracker: SalesTracker::default(),
+            notification_center: NotificationCenter::default(),
+            user_settings: UserSettings::default(),
+            update_settings: false,
+            get_settings: true,
+            search_input: String::new(),
+            total_download_size: 0.0,
+            download_progress: 0.0,
         }
     }
 
@@ -545,13 +562,6 @@ impl SharedContext {
             );
 
             self.layout_configs = Some(layout_configs);
-
-            let new_notes_tx = self.associated_notes_tx.clone();
-            
-            PlatformSpawner::spawn(async move {
-                let get_notes = TaskNotePayload::get_all_notes_in_my_store(new_notes_tx).await;
-                log::info!("get_notes: {get_notes:?}");
-            });
         }
     }
 
@@ -623,4 +633,81 @@ fn setup_custom_fonts(ctx: &Context) {
         .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
+}
+
+pub fn default_tree_wasm() -> (DockState<String>, HashSet<String>) {
+    let mut open_tabs = HashSet::new();
+    let mut tree = DockState::new(vec![
+        "Store Tasks".to_owned(),
+        "Completed Tasks".to_owned(),
+        "Inventory".to_owned(),
+        "Logs".to_owned(),
+    ]);
+
+    let [_, _] = tree.main_surface_mut().split_below(// .split_left(
+        NodeIndex::root(), // b,
+        0.6,
+        vec![
+            "My Tasks".to_owned(),
+            "Bug Report".to_owned(),
+            "Task Audit".to_owned(),
+        ],
+    );
+
+    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+
+    for node in tree[SurfaceIndex::main()].iter() {
+        if let Node::Leaf(tabs) = node {
+            for tab in &tabs.tabs {
+                open_tabs.insert(tab.clone());
+            }
+        }
+    }
+
+    (tree, open_tabs)
+}
+
+pub fn default_tree() -> (DockState<String>, HashSet<String>) {
+    let mut tree = DockState::new(vec![
+        "TUR Sheet".to_owned(),
+        "My Tasks".to_owned(),
+        "Store Tasks".to_owned(),
+        "Completed Tasks".to_owned(),
+        // "Minidump Analysis".to_owned(),
+        "Downloads".to_owned(),
+        "Inventory".to_owned(),
+        "Ai".to_owned(),
+    ]);
+    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+
+    let [_a, _b] = tree.main_surface_mut().split_left(
+        NodeIndex::root(),
+        0.30,
+        vec!["File Browser 📂".to_owned(), "Logs".to_owned()],
+    );
+    let [_a, b] = tree.main_surface_mut().split_below(
+        NodeIndex::root(),
+        0.65,
+        vec!["Websockets".to_owned()],
+    );
+    let [_, _] = tree.main_surface_mut().split_left(
+        b,
+        0.45,
+        vec!["SysInfo".to_owned(), "Bug Tracker".to_owned(), "Resource Monitor".to_owned()],
+    );
+    let [_, _] = tree.main_surface_mut().split_left(
+        b,
+        0.20,
+        vec!["Scripts".to_owned(), "My Tools".to_owned()],
+    );
+
+    let mut open_tabs = HashSet::new();
+    for node in tree[SurfaceIndex::main()].iter() {
+        if let Node::Leaf(leafs)= node {
+            for tab in leafs.tabs.iter() {
+                open_tabs.insert(tab.clone());
+            }
+        }
+    }
+    (tree, open_tabs)
 }

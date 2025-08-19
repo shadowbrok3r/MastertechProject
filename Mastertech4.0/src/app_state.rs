@@ -1,8 +1,8 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
 use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
-use displays::{modals::task_modal::SpecialPartOrder, app_state::SharedContext, channel_manager::ChannelManager, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::task_modal::SpecialPartOrder, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
+use egui_dock::{DockState, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
 use surrealdb::{sql::Uuid, RecordId};
 use chrono::{DateTime, Utc};
@@ -213,47 +213,3 @@ impl MasterTechApp {
     }
 }
 
-pub fn default_tree() -> (DockState<String>, HashSet<String>) {
-    let mut tree = DockState::new(vec![
-        "TUR Sheet".to_owned(),
-        "My Tasks".to_owned(),
-        "Store Tasks".to_owned(),
-        "Completed Tasks".to_owned(),
-        // "Minidump Analysis".to_owned(),
-        "Downloads".to_owned(),
-        "Inventory".to_owned(),
-        "Ai".to_owned(),
-    ]);
-    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-
-    let [_a, _b] = tree.main_surface_mut().split_left(
-        NodeIndex::root(),
-        0.30,
-        vec!["File Browser 📂".to_owned(), "Logs".to_owned()],
-    );
-    let [_a, b] = tree.main_surface_mut().split_below(
-        NodeIndex::root(),
-        0.65,
-        vec!["Websockets".to_owned()],
-    );
-    let [_, _] = tree.main_surface_mut().split_left(
-        b,
-        0.45,
-        vec!["SysInfo".to_owned(), "Bug Tracker".to_owned(), "Resource Monitor".to_owned()],
-    );
-    let [_, _] = tree.main_surface_mut().split_left(
-        b,
-        0.20,
-        vec!["Scripts".to_owned(), "My Tools".to_owned()],
-    );
-
-    let mut open_tabs = HashSet::new();
-    for node in tree[SurfaceIndex::main()].iter() {
-        if let Node::Leaf(leafs)= node {
-            for tab in leafs.tabs.iter() {
-                open_tabs.insert(tab.clone());
-            }
-        }
-    }
-    (tree, open_tabs)
-}
