@@ -2,13 +2,12 @@
 #![allow(unused_must_use)]
 
 pub mod app_state;
-pub mod data;
 pub mod first_run;
 pub mod mtechserver;
-pub mod pages;
 pub mod tabs;
-pub mod webworker;
-pub mod deser_worker;
+pub mod workers;
+
+pub use workers::*;
 
 // pub mod worker;
 // Re-export MtechServer to make it accessible from the crate root

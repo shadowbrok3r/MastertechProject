@@ -11,7 +11,7 @@ use crate::app_state::check_authentication;
 
 impl MtechServer {    
     pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
-        self.context.shared_ctx.first_run = false;
+        self.shared_ctx.first_run = false;
         let current_version = env!("CARGO_PKG_VERSION");
         match serde_json::from_str::<Style>(displays::STYLE) {
             Ok(theme) => {
@@ -29,16 +29,16 @@ impl MtechServer {
                 let chat_threads: HashMap<String, ChatThread> = serde_json::from_str(&chat_history).unwrap_or_default();
                 // info!("chat_threads: {chat_threads:?}");
                 if let Some((nth, _)) = chat_threads.iter().nth(0) {
-                    self.context.shared_ctx.ai_playground.selected_thread = nth.to_string();
+                    self.shared_ctx.ai_playground.selected_thread = nth.to_string();
                 }
-                self.context.shared_ctx.ai_playground.set_threads(chat_threads);
+                self.shared_ctx.ai_playground.set_threads(chat_threads);
             }
 
             // if let Some(service_map) = storage.get_string("service_data") {
             //     match serde_json::from_str::<HashMap<String, PrestashopPayload>>(&service_map) {
             //         Ok(map) => {
             //             for (key, v) in map.iter() {
-            //                 if let Some(k) = self.context.shared_ctx.task_audit_table.service_map.get_mut(key) {
+            //                 if let Some(k) = self.shared_ctx.task_audit_table.service_map.get_mut(key) {
             //                     if !k.iter().contains(&v) {
             //                         log::info!("Order: {v:?}");
             //                         k.push(v.clone());
@@ -50,7 +50,7 @@ impl MtechServer {
             //     }
             // }
 
-            if let Some(user) = self.context.shared_ctx.current_user.as_ref() {
+            if let Some(user) = self.shared_ctx.current_user.as_ref() {
                 ctx.set_style(
                     decode_style(&user.get_color_scheme()
                 )
@@ -87,7 +87,7 @@ impl MtechServer {
                     }
                 }
             } else {
-                let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
+                let custom_style = set_custom_style(&self.shared_ctx.theme_config);
                 ctx.set_style((*custom_style).clone());
             }
             
@@ -98,7 +98,7 @@ impl MtechServer {
                 }
             }
             //     } else {
-            //         if let Some(user) = self.context.shared_ctx.current_user.as_ref() {
+            //         if let Some(user) = self.shared_ctx.current_user.as_ref() {
             //             gloo_console::info!("1 We have a user");
             //             let current_version = env!("CARGO_PKG_VERSION");
             //             let user_version = user.get_version();
@@ -117,7 +117,7 @@ impl MtechServer {
             //         }
             //     }
             // } // else {
-            //     if let Some(user) = self.context.shared_ctx.current_user.as_ref() {
+            //     if let Some(user) = self.shared_ctx.current_user.as_ref() {
             //         gloo_console::info!("2 We have a user");
             //         let user_version = user.get_version();
             //         gloo_console::info!(format!("2 current_version: {current_version}\nuser_version: {user_version}"));
@@ -143,11 +143,11 @@ impl MtechServer {
         }
 
         #[cfg(target_arch="wasm32")]
-        match check_authentication(self.context.shared_ctx.db_tx.clone()) {
+        match check_authentication(self.shared_ctx.db_tx.clone()) {
             Ok(state) => {
                 log::info!("1");
                 if let AppState::NoAuth(reason) = &state {
-                    let toast = &mut self.context.shared_ctx.toasts;
+                    let toast = &mut self.shared_ctx.toasts;
     
                     let error_toast = Toast {
                         kind: ToastKind::Error,
@@ -165,13 +165,13 @@ impl MtechServer {
                         }
                     });
                 }
-                self.context.shared_ctx.app_state_tx.try_send(state);
+                self.shared_ctx.app_state_tx.try_send(state);
             }
             Err(e) => {
                 log::info!("2");
                 log::error!("Error with auth: {e:?}");
-                self.context.shared_ctx.state = AppState::NoAuth(e.to_string());
-                self.context.shared_ctx.current_user = None;
+                self.shared_ctx.state = AppState::NoAuth(e.to_string());
+                self.shared_ctx.current_user = None;
             }
         };
     }
@@ -207,9 +207,9 @@ impl MtechServer {
             gloo_console::info!(format!("No window"));
         }
         let logout_msg = "Logged out".to_string();
-        self.context.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
-        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth(logout_msg));
-        let toast = &mut self.context.shared_ctx.toasts;
+        self.shared_ctx.state = AppState::NoAuth(logout_msg.clone());
+        let _ = self.shared_ctx.app_state_tx.try_send(AppState::NoAuth(logout_msg));
+        let toast = &mut self.shared_ctx.toasts;
 
         let error_toast = Toast {
             kind: ToastKind::Error,
@@ -221,27 +221,116 @@ impl MtechServer {
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         // do some initial setting up
-        if self.context.shared_ctx.first_run { self.first_run(ctx, frame); }
-        self.receive_database(frame, ctx);
-        self.context.shared_ctx.receive_shared(frame, ctx);
+        if self.shared_ctx.first_run { self.first_run(ctx, frame); }
+        
+        self.shared_ctx.receive_shared(frame, ctx);
 
+        
+        // Retrieve our database connection, and 2. Requesting some task data
+        if let Ok(db) = self.shared_ctx.db_rx.try_recv() {
+            ctx.request_repaint();
+            let tx = self.shared_ctx.app_state_tx.clone();
+            match db {
+                Ok(db) => {
+                    log::info!("3");
+                    
+                    if self.shared_ctx.current_user.is_none() && db.user.is_some() {
+                        let login_mut = self.shared_ctx.login_mut();
+                        if login_mut.is_some() {
+                            self.shared_ctx.state = AppState::Authenticated(displays::app_state::MainPages::Tasks);
+                        } else {
+                            log::error!("No login mut");
+                        }
+                        log::info!("10");
+                        self.shared_ctx.current_user = db.user;
+                    } else {
+                        log::info!("11");
+                    }
+
+                    let usr = self.shared_ctx.current_user.clone();
+                    if let Some(user) = usr {
+                        self.shared_ctx.load_data(ctx, &user);
+                        let _ = self.shared_ctx.app_state_tx.try_send(AppState::Authenticated(displays::app_state::MainPages::Tasks));
+                    } else {
+                        self.shared_ctx.first_run = true;
+                        self.first_run(ctx,frame);
+                        log::error!("1");
+                        self.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                    }
+                    
+                    if let Some(token) = db.jwt.clone() {
+                        self
+                        .bridge
+                        .send(
+                            crate::webworker::Input(token.into_insecure_token())
+                        );
+                    } else { log::info!("No token"); }
+                }
+                Err(e) => {
+                    log::info!("6");
+                    if e.to_string().contains("Already connected") {
+                        log::info!("7");
+                        let usr = self.shared_ctx.current_user.clone();
+                        if let Some(user) = usr {
+                            ctx.set_style(decode_style(&user.get_color_scheme()).unwrap_or_default());
+                            self.shared_ctx.load_data(ctx, &user);
+                            let _ = self.shared_ctx.app_state_tx.try_send(AppState::Authenticated(displays::app_state::MainPages::Tasks));
+                            let toast = &mut self.shared_ctx.toasts;
+                            let auth_toast = Toast {
+                                kind: ToastKind::Success,
+                                text: format!("{e:?}").into(),
+                                options: ToastOptions::default()
+                                    .show_progress(true)
+                                    .duration_in_seconds(6.0),
+                            };
+                            toast.add(auth_toast);
+                        } else {
+                            self.shared_ctx.first_run = true;
+                            self.first_run(ctx, frame);
+                            log::error!("1");
+                            self.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                        }
+                    } else {
+                        log::info!("8");
+                        log::info!("{e:?}");
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            wasm_cookies::delete("jwt");
+                            wasm_cookies::delete("user");
+                        }
+                        // eframe::web::storage::local_storage_get(key)
+                        let toast = &mut self.shared_ctx.toasts;
+                        let auth_toast = Toast {
+                            kind: ToastKind::Error,
+                            text: format!("{e:?} \nYou may need to login again").into(),
+                            options: ToastOptions::default()
+                                .show_progress(true)
+                                .duration_in_seconds(6.0),
+                        };
+                        toast.add(auth_toast);
+                        let _ = tx.try_send(AppState::NoAuth("Needs login".to_string()));
+                    }
+                }
+            }
+        }
+    
         // most important part of the whole app.. setting up our styling
         // currently this just sets the style of the app, but in the near
         // future i will be making this the setup to allow user customization
         // to the style of any part of the app
         let theme_res = Window::new("Theme Configuration")
-        .open(&mut self.context.shared_ctx.modify_theme)
+        .open(&mut self.shared_ctx.modify_theme)
         .max_height(600.)
         .min_width(700.)
         .title_bar(true)
         .show(ctx, |ui| {
-            self.context.shared_ctx.theme_config.edit_ui(ui, ctx, self.context.shared_ctx.settings_sender.clone())
+            self.shared_ctx.theme_config.edit_ui(ui, ctx, self.shared_ctx.settings_sender.clone())
         });
         
         if let Some(window_res) = theme_res {
             if let Some(r) = window_res.inner {
                 if r.0 {
-                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                    if let Some(user) = self.shared_ctx.current_user.clone().as_mut() {
                         user.set_color_scheme(encode_style(&r.1.clone()).unwrap_or_default());
                         ctx.set_style(r.1.clone());
                         if let Some(storage) = frame.storage_mut() {
@@ -275,32 +364,32 @@ impl MtechServer {
                             wasm_cookies::set("user", &encoded, &cookie_opts);
                         }
                     }
-                    self.context.shared_ctx.theme = r.1;
-                    self.context.shared_ctx.modify_theme = false;
+                    self.shared_ctx.theme = r.1;
+                    self.shared_ctx.modify_theme = false;
                 }
             }
         }
 
         // Getting responses from our webworker
-        if let Some(items) = self.context.data_update.take() {
-            let tx = self.context.shared_ctx.initial_tasks_tx.clone();
+        if let Some(items) = self.data_update.take() {
+            let tx = self.shared_ctx.initial_tasks_tx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 // log::info!("Got data update from webworker: {:?}", items.len());
                 let _ = tx.try_send(decode_task_payload(&items).unwrap_or_default());
             });
         }
 
-        // if let Some(decompressed_data) = self.context.admin_console_data_helper.deser_data_update.take() {
+        // if let Some(decompressed_data) = self.admin_console_data_helper.deser_data_update.take() {
         //     if let Some(sysinfo) = deserializer::<SystemInformation>(&decompressed_data){
         //         info!("Got sysinfo from admin console");
-        //         self.context.shared_ctx. resource_mon.set_sysinfo(sysinfo);
+        //         self.shared_ctx. resource_mon.set_sysinfo(sysinfo);
         //     }
         // }
 
-        if self.context.shared_ctx.web_console_layout.wants_to_undock {
-            let layout = &mut self.context.shared_ctx.web_console_layout;
+        if self.shared_ctx.web_console_layout.wants_to_undock {
+            let layout = &mut self.shared_ctx.web_console_layout;
             let undock_client = layout.undock_client.clone();
-            for client in self.context.shared_ctx.clients.clone() {
+            for client in self.shared_ctx.clients.clone() {
                 let should_we_undock = if let Some(undock) = undock_client.get(&client.connection_string)
                 {
                     undock
@@ -345,11 +434,11 @@ impl MtechServer {
         }
 
         // Get User settings from local storage
-        if let Some(user) = &self.context.shared_ctx.current_user {
-            if self.context.shared_ctx.get_settings {
-                self.context.shared_ctx.get_settings = false;
+        if let Some(user) = &self.shared_ctx.current_user {
+            if self.shared_ctx.get_settings {
+                self.shared_ctx.get_settings = false;
                 match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mtechserver()){
-                    Ok(tree) => self.tree = tree,
+                    Ok(tree) => self.shared_ctx.tree = tree,
                     Err(e) => log::error!("Could not get UI layout from user: {e:?}: {:#?}", user.get_user_settings().get_ui_layout_mtechserver()),
                 }
             } 
@@ -359,19 +448,19 @@ impl MtechServer {
         // this bool gets switched via clicking
         // the submit button in the crate::tabs::json_viewer
         // module
-        if self.context.shared_ctx.update_settings {
-            self.context.shared_ctx.update_settings = false;
-            log::info!("Saving settings: {:?}", self.context.shared_ctx.user_settings.clone());
+        if self.shared_ctx.update_settings {
+            self.shared_ctx.update_settings = false;
+            log::info!("Saving settings: {:?}", self.shared_ctx.user_settings.clone());
             frame.storage_mut().unwrap().set_string(
                 "user_settings",
-                serde_json::to_string(&self.context.shared_ctx.user_settings).unwrap(),
+                serde_json::to_string(&self.shared_ctx.user_settings).unwrap(),
             );
         }
 
-        if self.context.shared_ctx.ai_playground.save_chats {
-            self.context.shared_ctx.ai_playground.save_chats = false;
-            if let Some(_usr) = &self.context.shared_ctx.current_user {
-                let threads = self.context.shared_ctx.ai_playground.get_threads();
+        if self.shared_ctx.ai_playground.save_chats {
+            self.shared_ctx.ai_playground.save_chats = false;
+            if let Some(_usr) = &self.shared_ctx.current_user {
+                let threads = self.shared_ctx.ai_playground.get_threads();
                 // for (id, thread) in threads {
                     // thread.messages
                 // }

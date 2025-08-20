@@ -27,15 +27,15 @@ impl MtechServer{
             ..Default::default()
         };
 
-        DockArea::new(&mut self.tree)
+        DockArea::new(&mut self.shared_ctx.tree)
             .style(style)
             .show_close_buttons(true)
             .show_add_buttons(true)
             .show_add_popup(true)
             .draggable_tabs(true)
-            .show(ctx, &mut self.context);
+            .show(ctx, &mut self);
 
-        // self.context.added_nodes.drain(..).for_each(|(surface_idx, node_idx)| {
+        // self.added_nodes.drain(..).for_each(|(surface_idx, node_idx)| {
         //     self.tree.
         // });
     }

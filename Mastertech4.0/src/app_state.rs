@@ -120,7 +120,7 @@ impl MasterTechApp {
         // if cfg!(target_os = "windows") { true } else { false };
         
         let mastertech_context = MastertechContext {
-            shared_ctx: SharedContext::new(cc, tree.0.clone()),
+            shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             client_friendly_name: String::new(),

@@ -13,40 +13,40 @@ impl eframe::App for MtechServer {
         // being received have literally one line in them that i dont want to
         // justify creating a separate file / module for
         self.receive(frame, ctx);
-        self.menu_bar(ctx); // , &mut self.context.open_tabs, &mut self.tree
+        self.shared_ctx.menu_bar(ctx); // , &mut self.open_tabs, &mut self.tree
 
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button
         // (which is clicking Mtechserver in the top middle of the page),
         // if session cookie expires (gets checked in the first_run method),
         // if manually logged out, etc
-        match &self.context.shared_ctx.state {
-            AppState::Authenticated(MainPages::Downloads) => self.context.shared_ctx.downloads_page(ctx),
-            AppState::Authenticated(MainPages::UserPreferences) => self.context.shared_ctx.account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
-            AppState::Authenticated(_) => self.main_page(ctx),
-            AppState::CreateAccount => self.context.shared_ctx.signup_page(
+        match &self.shared_ctx.state {
+            AppState::Authenticated(MainPages::Downloads) => self.shared_ctx.downloads_page(ctx),
+            AppState::Authenticated(MainPages::UserPreferences) => self.shared_ctx.account_settings_page(ctx, self.shared_ctx.app_state_tx.clone()),
+            AppState::Authenticated(_) => self.shared_ctx.main_page(ctx),
+            AppState::CreateAccount => self.shared_ctx.signup_page(
                 ctx,
-                self.context.shared_ctx.db_tx.clone(),
-                self.context.shared_ctx.app_state_tx.clone(),
+                self.shared_ctx.db_tx.clone(),
+                self.shared_ctx.app_state_tx.clone(),
             ),
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
-                    let usr = self.context.shared_ctx.current_user.clone();
+                    let usr = self.shared_ctx.current_user.clone();
                     if let Some(user) = usr {
-                        self.context.shared_ctx.load_data(ctx, &user);
-                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                        self.shared_ctx.load_data(ctx, &user);
+                        let _ = self.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
-                        self.context.shared_ctx.first_run = true;
+                        self.shared_ctx.first_run = true;
                         self.first_run(ctx, frame);
                         log::error!("1");
-                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                        self.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
                 } else {
-                    self.context.shared_ctx.login_page(
+                    self.shared_ctx.login_page(
                         ctx,
-                        self.context.shared_ctx.db_tx.clone(),
-                        self.context.shared_ctx.app_state_tx.clone(),
+                        self.shared_ctx.db_tx.clone(),
+                        self.shared_ctx.app_state_tx.clone(),
                     )
                 }
             }

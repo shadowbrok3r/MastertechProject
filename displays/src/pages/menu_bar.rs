@@ -1,12 +1,9 @@
-use std::collections::HashSet;
-
 use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, TABS}, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
-
 impl SharedContext {
-    pub fn menu_bar(&mut self, ctx: &Context, open_tabs: &mut HashSet<String>, tree: &mut egui_dock::DockState<String>) {
+    pub fn menu_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             MenuBar::new()
             .config(
@@ -21,15 +18,15 @@ impl SharedContext {
                             // allow certain tabs to be toggled
                             for tab in TABS {
                                 if ui
-                                    .selectable_label(open_tabs.contains(tab), tab)
+                                    .selectable_label(self.open_tabs.contains(tab), tab)
                                     .clicked()
                                 {
-                                    if let Some(index) = tree.find_tab(&tab.to_string()) {
-                                        tree.remove_tab(index);
-                                        open_tabs.remove(tab);
+                                    if let Some(index) = self.tree.find_tab(&tab.to_string()) {
+                                        self.tree.remove_tab(index);
+                                        self.open_tabs.remove(tab);
                                     } else {
-                                        open_tabs.insert(tab.to_string());
-                                        tree.push_to_focused_leaf(tab.to_string());
+                                        self.open_tabs.insert(tab.to_string());
+                                        self.tree.push_to_focused_leaf(tab.to_string());
                                     }
                                     ui.close_kind(UiKind::Menu);
                                 }
@@ -264,8 +261,8 @@ impl SharedContext {
                                         // Perform async cleanup for CacheStorage and Service Workers, then reload
                                         
                                         PlatformSpawner::spawn(async move {
-                                            use wasm_bindgen::JsCast;
                                             use wasm_bindgen_futures::JsFuture;
+                                            use js_sys::wasm_bindgen::JsCast;
 
                                             let win = web_sys::window().expect("window");
 
@@ -343,7 +340,7 @@ impl SharedContext {
                                 };
 
                                 if reset_ui.clicked() {
-                                    let default_layout = serde_json::to_value(&tree).unwrap();
+                                    let default_layout = serde_json::to_value(&self.tree).unwrap();
                                     self.user_settings.set_ui_layout_mtechserver(default_layout.clone());
                                     user.set_ui_layout_mtechserver(default_layout.clone());
                                     #[cfg(target_arch = "wasm32")]
@@ -373,8 +370,8 @@ impl SharedContext {
                                         wasm_cookies::set("user", &encoded, &cookie_opts);
                                     }
                                     
-                                    *tree = new_tree.0;
-                                    *open_tabs = new_tree.1;
+                                    self.tree = new_tree.0;
+                                    self.open_tabs = new_tree.1;
                                     let mut user = user.clone();
                                     PlatformSpawner::spawn(async move {
                                         match user.save_mtechserver_ui_layout(default_layout.clone()).await {
@@ -386,7 +383,7 @@ impl SharedContext {
                                 }
                                 
                                 if submit.clicked() {
-                                    let val = serde_json::to_value(tree.clone()).unwrap_or_default();
+                                    let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
                                     self.user_settings.set_ui_layout_mtechserver(val.clone());
                                     user.set_ui_layout_mtechserver(val.clone());
                                     log::debug!("user_settings: {:#?}", user.get_user_settings());
