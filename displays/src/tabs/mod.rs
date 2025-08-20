@@ -98,36 +98,42 @@ impl Tabs {
     }
 
     pub fn from_str(tab: &str) -> Self {
-        match tab {
-            "My Tasks" => Self::Shared(SharedTabs::MyTasks),
-            "Store Tasks" => Self::Shared(SharedTabs::StoreTasks),
-            "Completed Tasks" => Self::Shared(SharedTabs::CompletedTasks),
-            "Database Editor" => Self::Shared(SharedTabs::DatabaseEditor),
-            "KOTH" => Self::Shared(SharedTabs::Koth),
-            "My Tools" => Self::Shared(SharedTabs::MyTools),
-            "Task Audit" => Self::Shared(SharedTabs::TaskAudit),
-            "Inventory" => Self::Shared(SharedTabs::Inventory),
-            "Sales Tracker" => Self::Shared(SharedTabs::SalesTracker),
-            "Logs" => Self::Shared(SharedTabs::Logs),
-            "Resource Monitor" => Self::Shared(SharedTabs::ResourceMonitor),
-            "Admin Console" => Self::Shared(SharedTabs::AdminConsole),
-            "Query Editor" => Self::Shared(SharedTabs::QueryEditor),
-            "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
-            "Threads" => Self::Shared(SharedTabs::Threads),
-            "Bug Tracker" => Self::Shared(SharedTabs::BugReport),
-
-            "TUR Sheet" => Self::Mastertech(MastertechTabs::TurSheet),
-            "Part Order" => Self::Mastertech(MastertechTabs::PartOrder),
-            "Scripts" => Self::Mastertech(MastertechTabs::Scripts),
-            "File Browser 📂" => Self::Mastertech(MastertechTabs::FileBrowser),
-            "SysInfo" => Self::Mastertech(MastertechTabs::SysInfo),
-            "Minidump Analysis" => Self::Mastertech(MastertechTabs::MinidumpAnalysis),
-            "QC ☑️" => Self::Mastertech(MastertechTabs::Qc),
-            "Ai" => Self::Mastertech(MastertechTabs::Ai),
-            "Websockets" => Self::Mastertech(MastertechTabs::Websockets),
-            "Downloads" => Self::Mastertech(MastertechTabs::Downloads),
-            &_ => Self::Mastertech(MastertechTabs::Ai),
+        if cfg!(target_arch="wasm32") {
+            match tab {
+                "My Tasks" => Self::Shared(SharedTabs::MyTasks),
+                "Store Tasks" => Self::Shared(SharedTabs::StoreTasks),
+                "Completed Tasks" => Self::Shared(SharedTabs::CompletedTasks),
+                "Database Editor" => Self::Shared(SharedTabs::DatabaseEditor),
+                "KOTH" => Self::Shared(SharedTabs::Koth),
+                "My Tools" => Self::Shared(SharedTabs::MyTools),
+                "Task Audit" => Self::Shared(SharedTabs::TaskAudit),
+                "Inventory" => Self::Shared(SharedTabs::Inventory),
+                "Sales Tracker" => Self::Shared(SharedTabs::SalesTracker),
+                "Logs" => Self::Shared(SharedTabs::Logs),
+                "Resource Monitor" => Self::Shared(SharedTabs::ResourceMonitor),
+                "Admin Console" => Self::Shared(SharedTabs::AdminConsole),
+                "Query Editor" => Self::Shared(SharedTabs::QueryEditor),
+                "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
+                "Threads" => Self::Shared(SharedTabs::Threads),
+                "Bug Tracker" => Self::Shared(SharedTabs::BugReport),
+                &_ => Self::Shared(SharedTabs::MyTasks),
+            }
+        } else {
+            match tab {
+                "TUR Sheet" => Self::Mastertech(MastertechTabs::TurSheet),
+                "Part Order" => Self::Mastertech(MastertechTabs::PartOrder),
+                "Scripts" => Self::Mastertech(MastertechTabs::Scripts),
+                "File Browser 📂" => Self::Mastertech(MastertechTabs::FileBrowser),
+                "SysInfo" => Self::Mastertech(MastertechTabs::SysInfo),
+                "Minidump Analysis" => Self::Mastertech(MastertechTabs::MinidumpAnalysis),
+                "QC ☑️" => Self::Mastertech(MastertechTabs::Qc),
+                "Ai" => Self::Mastertech(MastertechTabs::Ai),
+                "Websockets" => Self::Mastertech(MastertechTabs::Websockets),
+                "Downloads" => Self::Mastertech(MastertechTabs::Downloads),
+                &_ => Self::Shared(SharedTabs::MyTasks),
+            }
         }
+
     }
 }
 
