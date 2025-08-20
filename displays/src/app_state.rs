@@ -227,10 +227,20 @@ pub struct SharedContext {
     pub user_settings: UserSettings,
     pub update_settings: bool,
     pub get_settings: bool,
+    /// {Open tabs in the UI}
+    pub open_tabs: HashSet<String>,
+    #[serde(skip)]
+    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
+    /// Tabs requested to be added from TabViewer::add_popup; applied after DockArea::show
+    #[serde(skip)]
+    pub pending_tab_adds: Vec<(SurfaceIndex, NodeIndex, String)>,
+    /// Tabs requested to be removed from TabViewer::add_popup; applied after DockArea::show
+    #[serde(skip)]
+    pub pending_tab_removes: Vec<String>,
 }
 
 impl SharedContext {
-    pub fn new(cc: &CreationContext<'_>, tree: DockState<String>) -> Self {
+    pub fn new(cc: &CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
@@ -261,8 +271,14 @@ impl SharedContext {
         let filesystem = FileSystem::new();
         
 
+        let tree = if cfg!(target_arch="wasm32") {
+            default_tree_wasm()
+        } else {
+            default_tree()
+        };
+
         Self {
-            tree,
+            tree: tree.0,
             prestashop_order_form: PrestashopOrderForm::new(),
             koth: Koth::default(),
             first_run: true,
@@ -341,6 +357,10 @@ impl SharedContext {
             search_input: String::new(),
             total_download_size: 0.0,
             download_progress: 0.0,
+            open_tabs: tree.1,
+            added_nodes: Vec::new(),
+            pending_tab_adds: Vec::new(),
+            pending_tab_removes: Vec::new(),
         }
     }
 

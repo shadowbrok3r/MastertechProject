@@ -5,18 +5,18 @@ edition = "2024"
 
 # [[bin]]
 # name = "mtechserver"
-# path = "src/mtechserver.rs"
+# path = "src/workers/mtechserver.rs"
 
 [lib]
 crate-type = ["cdylib"]
 
 [[bin]]
 name = "webworker"
-path = "src/webworker.rs"
+path = "src/workers/webworker.rs"
 
 [[bin]]
 name = "deser_worker"
-path = "src/deser_worker.rs"
+path = "src/workers/deser_worker.rs"
 
 [dependencies]
 zstd = "0.13"

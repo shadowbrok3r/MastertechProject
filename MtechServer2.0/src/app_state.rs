@@ -1,26 +1,15 @@
-use displays::{app_state::{default_tree_wasm, SharedContext}, channel_manager::ChannelManager};
-use egui_dock::{DockState, NodeIndex, SurfaceIndex};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager};
 use crossbeam::channel::{Receiver, Sender};
 use eframe::CreationContext;
-use std::collections::HashSet;
 use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct MtechServer {
-    pub context: MtechServerContext,
-    pub tree: DockState<String>,
-}
-
-#[derive(Serialize)]
-pub struct MtechServerContext {
     pub shared_ctx: SharedContext,
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     
-    /// {Open tabs in the UI}
-    pub open_tabs: HashSet<String>,
-    #[serde(skip)]
-    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
+
 
     // Webworker Communication
     #[serde(skip)]
@@ -44,32 +33,24 @@ impl MtechServer {
         let data_update = std::rc::Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
         let ctx = cc.egui_ctx.clone();
-
         let bridge = <crate::webworker::WebWorker as gloo_worker::Spawnable>::spawner()
             .callback(move |response| {
                 sender.set(Some(response.tasks));
                 ctx.request_repaint();
             })
             .spawn("./webworker.js");
-        let tree = default_tree_wasm();
-        let shared_ctx = SharedContext::new(cc, tree.0.clone());
+        // let tree = default_tree_wasm();
         let admin_console_data_helper = AdminConsoleDataHelper::new();
         
-        let context = MtechServerContext {
-            shared_ctx,
+        Self {
+            shared_ctx: SharedContext::new(cc),
             bridge,
             data_update,
 
             // CHANNEL SENDERS / RECEIVERS
             bytes_channel,
-            open_tabs: tree.1,
-            added_nodes: Vec::new(),
-            admin_console_data_helper,
-        };
 
-        Self {
-            context,
-            tree: tree.0
+            admin_console_data_helper,
         }
     }
 }

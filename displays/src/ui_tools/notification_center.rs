@@ -30,8 +30,7 @@ impl NotificationCenter {
         });
 
         // Search input under the Show Notifications button
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Search").monospace());
+        ui.vertical_centered(|ui| {
             let edit = TextEdit::singleline(&mut self.search_query)
                 .hint_text("Search notifications...")
                 .desired_width(ui.available_width() - 120.0);
@@ -67,7 +66,7 @@ impl NotificationCenter {
             })
             .collect();
 
-        ui.horizontal_top(|ui| {
+        ui.horizontal(|ui| {
             // Left: Read button
             let read_button = Button::new(RichText::new("Read").color(Color32::from_rgba_premultiplied(42, 222, 192, 60)))
                 .stroke(ui.style().visuals.noninteractive().fg_stroke)
@@ -76,7 +75,7 @@ impl NotificationCenter {
                 self.read_notifications = true;
             }
 
-            ui.add_space(8.0);
+            ui.add_space(ui.available_width()/3.0);
 
             // Middle: Mark All toggle for the currently filtered set
             let all_label = if self.read_notifications { "Mark All Unread" } else { "Mark All Read" };
