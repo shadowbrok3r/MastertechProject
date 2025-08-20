@@ -12,6 +12,7 @@ pub mod receive_ui_action;
 pub mod receive_client;
 pub mod receive_users;
 pub mod admin_notification;
+// pub mod receive_database;
 
 impl crate::app_state::SharedContext {
     pub fn load_data(&mut self, ctx: &eframe::egui::Context, user: &User) {
