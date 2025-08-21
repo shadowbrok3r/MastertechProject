@@ -63,6 +63,9 @@ pub enum UserAuthorization {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
     color_scheme: Option<Bytes>,
+    /// Color scheme serialized egui::Style for desktop/egui environments
+    /// Mobile specific color scheme allowing different palette (e.g. Dioxus / CSS usage)
+    mobile_color_scheme: Option<Bytes>,
     ui_layout: UiLayout
 }
 
@@ -219,6 +222,15 @@ impl User {
         }
     }
 
+    /// Returns the stored mobile (web/dioxus) color scheme bytes if any
+    pub fn get_mobile_color_scheme(&self) -> Vec<u8> {
+        if let Some(bytes) = self.user_settings.mobile_color_scheme.clone() {
+            bytes.to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn get_minio_secret_key(&self) -> Option<String> {
         self.minio_secret_key.clone()
     }
@@ -249,6 +261,12 @@ impl User {
 
     pub fn set_color_scheme(&mut self, color_scheme: Vec<u8>) -> &mut Self {
         self.user_settings.color_scheme = Some(color_scheme.into());
+        self
+    }
+
+    /// Sets the mobile (web/dioxus) color scheme bytes.
+    pub fn set_mobile_color_scheme(&mut self, color_scheme: Vec<u8>) -> &mut Self {
+        self.user_settings.mobile_color_scheme = Some(color_scheme.into());
         self
     }
 
@@ -486,6 +504,20 @@ impl User {
             Err(e) => log::error!("Error updating User Settings: {e:?}"),
         };
 
+        Ok(())
+    }
+
+    /// Update just the mobile color scheme (serialized egui::Style bytes) in the database
+    pub async fn update_mobile_color_scheme(color_scheme: Bytes) -> anyhow::Result<(), anyhow::Error> {
+        log::info!("mobile_color_scheme BYTES: {color_scheme:?}");
+        match DATABASE  
+            .query("UPDATE $auth.id SET user_settings.mobile_color_scheme = $color_scheme")
+            .bind(("color_scheme", color_scheme))
+            .await 
+        {
+            Ok(res) => log::info!("update_mobile_color_scheme -> Res: {res:?}"),
+            Err(e) => log::error!("update_mobile_color_scheme -> Error updating User Settings: {e:?}"),
+        };
         Ok(())
     }
 

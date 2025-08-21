@@ -1,0 +1,96 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "dx-check-mastertech-mobile",
+			"type": "shell",
+			"command": "dx",
+			"args": [
+				"check"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "dx-serve-mastertech-mobile",
+			"type": "shell",
+			"command": "dx",
+			"args": [
+				"serve",
+				"--hot-reload"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "dx-check-mastertech-mobile-pkg",
+			"type": "shell",
+			"command": "dx",
+			"args": [
+				"check",
+				"--package",
+				"mastertech-mobile"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "dx-serve-mastertech-mobile-pkg",
+			"type": "shell",
+			"command": "dx",
+			"args": [
+				"serve",
+				"--package",
+				"mastertech-mobile",
+				"--hot-reload",
+				"true"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "dx-serve-mastertech-mobile-desktop",
+			"type": "shell",
+			"command": "dx",
+			"args": [
+				"serve",
+				"--package",
+				"mastertech-mobile",
+				"--hot-reload",
+				"true",
+				"--platform",
+				"desktop"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "Run mastertech-mobile dev",
+			"type": "shell",
+			"command": "cargo run -p mastertech-mobile",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run mastertech-mobile app",
+			"type": "shell",
+			"command": "cargo run -p mastertech-mobile",
+			"args": [],
+			"isBackground": true,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		}
+	]
+}
