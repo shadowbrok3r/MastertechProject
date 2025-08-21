@@ -617,6 +617,85 @@ impl ThemeConfig {
     }
 }
 
+impl ThemeConfig {
+    /// Create a ThemeConfig instance from an egui::Style (best-effort mapping)
+    pub fn from_style(style: &Style) -> Self {
+        // Map the visual sections into our ThemeConfig fields. Some fields may not have a 1:1 mapping; we approximate.
+        let visuals = &style.visuals;
+        let widgets = &visuals.widgets;
+        Self {
+            background_color: visuals.window_fill,
+            foreground_color: visuals.override_text_color.unwrap_or(Color32::WHITE),
+            widget_bg_fill: widgets.noninteractive.bg_fill,
+            widget_weak_bg_fill: widgets.noninteractive.weak_bg_fill,
+            widget_bg_stroke_color: widgets.noninteractive.bg_stroke.color,
+            widget_fg_stroke_color: widgets.noninteractive.fg_stroke.color,
+            hovered_bg_fill: widgets.hovered.bg_fill,
+            hovered_weak_bg_fill: widgets.hovered.weak_bg_fill,
+            hovered_bg_stroke_color: widgets.hovered.bg_stroke.color,
+            hovered_fg_stroke_color: widgets.hovered.fg_stroke.color,
+            active_bg_fill: widgets.active.bg_fill,
+            active_weak_bg_fill: widgets.active.weak_bg_fill,
+            active_bg_stroke_color: widgets.active.bg_stroke.color,
+            active_fg_stroke_color: widgets.active.fg_stroke.color,
+            open_bg_fill: widgets.open.bg_fill,
+            open_weak_bg_fill: widgets.open.weak_bg_fill,
+            open_bg_stroke_color: widgets.open.bg_stroke.color,
+            open_fg_stroke_color: widgets.open.fg_stroke.color,
+            selection_bg_fill: visuals.selection.bg_fill,
+            selection_stroke_color: visuals.selection.stroke.color,
+            faint_bg_color: visuals.faint_bg_color,
+            extreme_bg_color: visuals.extreme_bg_color,
+            code_bg_color: visuals.code_bg_color,
+            border_color: visuals.window_stroke.color,
+            text_color: visuals.override_text_color.unwrap_or(Color32::WHITE),
+            error_color: visuals.error_fg_color,
+            warn_color: visuals.warn_fg_color,
+            link_color: visuals.hyperlink_color,
+            window_stroke_color: visuals.window_stroke.color,
+            rounding: visuals.window_corner_radius,
+            font: style.override_font_id.clone().map(|f| f.family).unwrap_or(FontFamily::Proportional),
+            font_size: style.override_font_id.clone().map(|f| f.size).unwrap_or(12.0),
+            preset_style: PresetStyles::Custom,
+        }
+    }
+
+    /// Convert this ThemeConfig back into an egui::Style applying mapped fields.
+    pub fn to_style(&self) -> Style {
+        let mut style = Style::default();
+        let visuals = &mut style.visuals;
+        // Non-widget
+        visuals.window_fill = self.background_color;
+        visuals.faint_bg_color = self.faint_bg_color;
+        visuals.extreme_bg_color = self.extreme_bg_color;
+        visuals.code_bg_color = self.code_bg_color;
+        visuals.override_text_color = Some(self.text_color);
+        visuals.warn_fg_color = self.warn_color;
+        visuals.error_fg_color = self.error_color;
+        visuals.hyperlink_color = self.link_color;
+        visuals.window_stroke.color = self.window_stroke_color;
+        visuals.window_corner_radius = self.rounding;
+        visuals.selection.bg_fill = self.selection_bg_fill;
+        visuals.selection.stroke.color = self.selection_stroke_color;
+
+        // Widgets mapping
+        let assign = |wv: &mut WidgetVisuals, src_bg_fill: Color32, src_weak_bg_fill: Color32, stroke: Color32, fg_stroke: Color32| {
+            wv.bg_fill = src_bg_fill;
+            wv.weak_bg_fill = src_weak_bg_fill;
+            wv.bg_stroke.color = stroke;
+            wv.fg_stroke.color = fg_stroke;
+        };
+        assign(&mut visuals.widgets.noninteractive, self.widget_bg_fill, self.widget_weak_bg_fill, self.widget_bg_stroke_color, self.widget_fg_stroke_color);
+        assign(&mut visuals.widgets.hovered, self.hovered_bg_fill, self.hovered_weak_bg_fill, self.hovered_bg_stroke_color, self.hovered_fg_stroke_color);
+        assign(&mut visuals.widgets.active, self.active_bg_fill, self.active_weak_bg_fill, self.active_bg_stroke_color, self.active_fg_stroke_color);
+        assign(&mut visuals.widgets.open, self.open_bg_fill, self.open_weak_bg_fill, self.open_bg_stroke_color, self.open_fg_stroke_color);
+
+        // Font override
+        style.override_font_id = Some(FontId { family: self.font.clone(), size: self.font_size });
+        style
+    }
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub enum PresetStyles {
     CarlDark,
@@ -815,6 +894,64 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
 
             Arc::new(custom_style)
         },
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// CSS Variable Export
+// -------------------------------------------------------------------------------------------------
+// This extra impl block adds a helper to turn the ThemeConfig into a bundle of CSS custom properties
+// so the Dioxus/mobile (and web) targets can share a single canonical theme definition with the egui
+// desktop target. The resulting string is meant to be injected into a <style> tag once per login or
+// whenever the user saves new theme preferences.
+impl ThemeConfig {
+    /// Generate a `:root { ... }` block of CSS variables representing this theme.
+    /// Variable prefix: `--mtk-` ("MasterTech") to reduce collision risk.
+    pub fn to_css_variables(&self) -> String {
+        fn color_to_rgba(c: Color32) -> String {
+            let [r, g, b, a] = c.to_srgba_unmultiplied();
+            format!("rgba({},{},{},{:.3})", r, g, b, a as f32 / 255.0)
+        }
+        use std::fmt::Write as _;
+
+        let mut out = String::from(":root{\n");
+        macro_rules! var { ($name:literal,$val:expr) => {{ let _ = write!(out, "  --mtk-{}:{};\n", $name, $val); }}; }
+
+        var!("background-color", color_to_rgba(self.background_color));
+        var!("foreground-color", color_to_rgba(self.foreground_color));
+        var!("widget-bg-fill", color_to_rgba(self.widget_bg_fill));
+        var!("widget-weak-bg-fill", color_to_rgba(self.widget_weak_bg_fill));
+        var!("widget-bg-stroke-color", color_to_rgba(self.widget_bg_stroke_color));
+        var!("widget-fg-stroke-color", color_to_rgba(self.widget_fg_stroke_color));
+        var!("hovered-bg-fill", color_to_rgba(self.hovered_bg_fill));
+        var!("hovered-weak-bg-fill", color_to_rgba(self.hovered_weak_bg_fill));
+        var!("hovered-bg-stroke-color", color_to_rgba(self.hovered_bg_stroke_color));
+        var!("hovered-fg-stroke-color", color_to_rgba(self.hovered_fg_stroke_color));
+        var!("active-bg-fill", color_to_rgba(self.active_bg_fill));
+        var!("active-weak-bg-fill", color_to_rgba(self.active_weak_bg_fill));
+        var!("active-bg-stroke-color", color_to_rgba(self.active_bg_stroke_color));
+        var!("active-fg-stroke-color", color_to_rgba(self.active_fg_stroke_color));
+        var!("open-bg-fill", color_to_rgba(self.open_bg_fill));
+        var!("open-weak-bg-fill", color_to_rgba(self.open_weak_bg_fill));
+        var!("open-bg-stroke-color", color_to_rgba(self.open_bg_stroke_color));
+        var!("open-fg-stroke-color", color_to_rgba(self.open_fg_stroke_color));
+        var!("selection-bg-fill", color_to_rgba(self.selection_bg_fill));
+        var!("selection-stroke-color", color_to_rgba(self.selection_stroke_color));
+        var!("faint-bg-color", color_to_rgba(self.faint_bg_color));
+        var!("extreme-bg-color", color_to_rgba(self.extreme_bg_color));
+        var!("code-bg-color", color_to_rgba(self.code_bg_color));
+        var!("border-color", color_to_rgba(self.border_color));
+        var!("text-color", color_to_rgba(self.text_color));
+        var!("error-color", color_to_rgba(self.error_color));
+        var!("warn-color", color_to_rgba(self.warn_color));
+        var!("link-color", color_to_rgba(self.link_color));
+        var!("window-stroke-color", color_to_rgba(self.window_stroke_color));
+        // Numeric values
+        var!("font-size", format!("{:.2}px", self.font_size));
+        // CornerRadius is a uniform value in our usage (same for all corners via .ne)
+        var!("rounding", format!("{:.2}px", self.rounding.ne));
+        out.push_str("}\n");
+        out
     }
 }
 

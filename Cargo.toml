@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server2"] 
+members = [ "database" , "displays", "Mastertech4.0", "MtechServer2.0", "websocket_server2", "MastertechMobile"] 
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -61,6 +61,16 @@ panic = "unwind"
 debug = false
 opt-level = 3
 codegen-units = 1
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
 
 # tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
 # socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }
