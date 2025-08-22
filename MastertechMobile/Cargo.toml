@@ -17,7 +17,7 @@ surrealdb.workspace = true
 database.workspace = true
 crossbeam-channel = "0.5"
 futures-timer = "3"
-dirs = "5"
+dirs = "6.0.0"
 
 [features]
 default = ["mobile"]

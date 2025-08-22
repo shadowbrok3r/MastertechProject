@@ -2,7 +2,9 @@ use dioxus::prelude::*;
 use chrono::Utc;
 use crossbeam_channel::unbounded;
 use database::live_data::{listen_data, handle_live_data};
-use database::schema::{LiveTaskPayload, User, Priority, Status};
+use database::schema::{LiveTaskPayload, User, Priority, Status, TicketData, ComputerData, CustomerData};
+use database::schema::utilities::get_prestashop_payload;
+use database::schema::prestashop_schema::PrestashopPayload;
 use database::schema::task::filter::FilterLiveTasks; // fuzzy helper trait
 use crate::services::tasks::{
     fetch_incomplete_tasks, fetch_completed_tasks,
@@ -83,7 +85,8 @@ pub fn TaskBoard(props: TaskBoardProps) -> Element {
     // Modals & selection
     let show_task_modal = use_signal(|| false);
     let selected_task = use_signal(|| Option::<LiveTaskPayload>::None);
-    let show_create_modal = use_signal(|| false);
+    // Mutable because we set it directly in handlers
+    let mut show_create_modal = use_signal(|| false);
     {
         let trigger = props.create_task_trigger;
         let mut show = show_create_modal.to_owned();
@@ -125,6 +128,12 @@ pub fn TaskBoard(props: TaskBoardProps) -> Element {
     let users_for_modals: Vec<User> = users_ok.clone().unwrap_or_default();
     rsx! {
         div { class: "h-screen w-screen overflow-hidden bg-[#0b0b0f] text-slate-200 scrollbar-dark flex flex-col", 
+            // Header / toolbar
+            div { class: "flex items-center gap-3 px-4 h-12 border-b border-[#2a2c5d]/60 bg-[#0f0f14]",
+                h1 { class: "text-sm font-semibold tracking-wide", {props.page.clone()} }
+                button { class: "ml-auto text-xs px-3 py-1 rounded border border-[#2a2c5d]/70 hover:bg-[#1e1a2a]/60 transition-colors", onclick: move |_| show_create_modal.set(true), "+ New" }
+                button { class: "text-xs px-3 py-1 rounded border border-[#2a2c5d]/70 hover:bg-[#1e1a2a]/60", onclick: move |_| { let mut all=all_tasks.to_owned(); spawn(async move { if let Ok(list)=fetch_incomplete_tasks().await { all.set(list); } }); }, "Refresh" }
+            }
             div { class: "flex-1 overflow-x-auto overflow-y-hidden", {board_content} }
             if let Some(e)=last_err() { div { class: "fixed bottom-3 right-3 bg-red-900/80 text-red-100 px-3 py-2 rounded shadow", {e} } }
         }
@@ -267,28 +276,113 @@ fn NotesPanel(props: NotesPanelProps) -> Element {
 // =========================
 // Task & Create Modals
 // =========================
+// =========================
+// Tabbed Task Modal (mirrors egui multi-page concept)
+// =========================
+#[derive(Clone, PartialEq)]
+enum TaskModalTab { TicketInfo, ComputerInfo, SoftwareInfo, Notes }
+
+impl TaskModalTab { fn label(&self) -> &'static str { match self { TaskModalTab::TicketInfo=>"Ticket", TaskModalTab::ComputerInfo=>"Computer", TaskModalTab::SoftwareInfo=>"Software", TaskModalTab::Notes=>"Notes" } } }
+
 #[derive(Props, PartialEq, Clone)]
 struct TaskModalProps { show: Signal<bool>, task: LiveTaskPayload, users: Vec<User>, #[props(default)] on_change: Option<Callback<LiveTaskPayload>> }
 
 #[component]
 fn TaskModal(props: TaskModalProps) -> Element {
+    // Core editable signals
+    let mut tab = use_signal(|| TaskModalTab::TicketInfo);
     let mut name = use_signal(|| props.task.task_name.clone());
     let mut desc = use_signal(|| props.task.task_description.clone());
     let mut status = use_signal(|| props.task.status.as_str().to_string());
-    let mut assignee = use_signal(|| props.users.iter().find(|u| u.get_id() == props.task.assignee).map(|u| u.get_username().to_string()).unwrap_or_else(|| "Unassigned".into()));
+    let mut assignee = use_signal(|| props.users.iter().find(|u| u.get_id()==props.task.assignee).map(|u| u.get_username().to_string()).unwrap_or_else(|| "Unassigned".into()));
+
+    // Loaded associated data
+    let ticket_sig = use_signal(|| Option::<TicketData>::None);
+    let computer_sig = use_signal(|| Option::<ComputerData>::None);
+    let customer_sig = use_signal(|| Option::<CustomerData>::None);
+
+    // Fetch associated objects once
+    {
+        let task_id_outer = props.task.id.clone();
+        let mut t_sig = ticket_sig.to_owned();
+        let mut c_sig = computer_sig.to_owned();
+        let mut cust_sig = customer_sig.to_owned();
+        use_effect(move || {
+            let task_id_clone = task_id_outer.clone();
+            spawn(async move {
+                if let Ok(t) = TicketData::get_associated_ticket(task_id_clone.clone()).await { t_sig.set(Some(t)); }
+                if let Ok(c) = ComputerData::get_associated_computer(task_id_clone.clone()).await { c_sig.set(Some(c)); }
+                if let Ok(cu) = CustomerData::get_associated_customer(task_id_clone.clone()).await { cust_sig.set(Some(cu)); }
+            });
+        });
+    }
+
     let users = props.users.clone();
     let t_for_status = props.task.clone();
     let t_for_assign = props.task.clone();
-    rsx! { crate::components::dialog::Dialog { show_modal: props.show, wrap_class: Some("w-[96%] max-w-xl".into()),
-        div { class: "text-slate-200 space-y-3",
-            h2 { class: "text-lg font-semibold", "Edit Task" }
-            input { class: "w-full bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", value: name(), oninput: move |e| name.set(e.value()) }
-            textarea { class: "w-full bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", rows: 4, value: desc(), oninput: move |e| desc.set(e.value()) }
-            div { class: "flex gap-2",
-                select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 text-slate-200", value: status(), oninput: move |e| { status.set(e.value()); let t=t_for_status.clone(); let cb=props.on_change.clone(); let st=Status::from_str(&e.value()); spawn(async move { if update_status(&t, st.clone()).await.is_ok() { if let Some(cb)=cb { let mut u=t.clone(); u.status=st; cb.call(u);} } }); }, option { value: "Todo", "Todo" } option { value: "In Repair", "In Repair" } option { value: "QC", "QC" } option { value: "Sales", "Sales" } option { value: "Complete", "Complete" } }
-                select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 text-slate-200", value: assignee(), oninput: move |e| { if let Some(u)=users.iter().find(|u| u.get_username()==e.value()) { let t=t_for_assign.clone(); let id=u.get_id(); let id2=id.clone(); let cb=props.on_change.clone(); spawn(async move { if update_assignee(&t,id).await.is_ok() { if let Some(cb)=cb { let mut u2=t.clone(); u2.assignee=id2; cb.call(u2);} } }); assignee.set(e.value()); } }, option { value: assignee(), selected: true, {assignee()} } for u in users.iter().filter(|u| u.is_active()) { option { value: u.get_username(), {u.get_username()} } } }
+
+    // Shared update closure
+    let save_changes = {
+        use std::rc::Rc;
+        let mut show = props.show.to_owned();
+        let cb = props.on_change.clone();
+        let orig = props.task.clone();
+        Rc::new(move |new_name:String, new_desc:String| {
+            let orig_cloned = orig.clone();
+            let cb2 = cb.clone();
+            let mut show2 = show.to_owned();
+            spawn(async move {
+                let mut task = orig_cloned.clone();
+                if new_name!=task.task_name { let _ = task.update_task_name(new_name.clone()).await; task.task_name=new_name; }
+                if new_desc!=task.task_description { task.task_description=new_desc.clone(); let _ = task.update_task_description().await; }
+                if let Some(cb)=cb2 { cb.call(task.clone()); }
+                show2.set(false);
+            });
+        })
+    };
+
+    // Render tab content
+    let ticket_view: Element = rsx! { div { class: "space-y-3", 
+        div { class: "grid grid-cols-2 gap-2 text-xs", 
+            if let Some(t) = ticket_sig() { 
+                div { class: "col-span-1 opacity-70", "Service #" } div { class: "col-span-1", {t.service_number.clone()} }
+                div { class: "col-span-1 opacity-70", "Sales Rep" } div { class: "col-span-1", {t.sales_rep.clone()} }
+            } else { div { class: "text-xs opacity-60", "No ticket loaded" } }
+        }
+        textarea { class: "w-full bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", rows: 4, value: desc(), oninput: move |e| desc.set(e.value()) }
+    } };
+
+    let computer_view: Element = rsx! { div { class: "space-y-2 text-xs", 
+        match computer_sig() { Some(c) => rsx!{ div { class: "grid grid-cols-2 gap-x-3 gap-y-1", 
+            div { class: "opacity-60", "Hostname" } div { {c.hostname.clone()} }
+            div { class: "opacity-60", "CPU" } div { {c.cpu.clone()} }
+            div { class: "opacity-60", "GPU" } div { {c.gpu.clone()} }
+            div { class: "opacity-60", "RAM" } div { {c.ram.clone()} }
+        } }, None => rsx!{ div { class: "opacity-60", "No computer info" } } }
+    } };
+
+    let software_view: Element = rsx! { div { class: "space-y-2 text-xs", match computer_sig() { Some(c) => rsx!{ if !c.current_antivirus.is_empty() { div { class: "font-semibold text-xs", "Antivirus" } ul { class: "list-disc ml-4 space-y-1", for av in c.current_antivirus.iter() { li { {av.clone()} } } } } else { div { class: "opacity-60", "No software data" } } }, None => rsx!{ div { class: "opacity-60", "No software data" } } } } };
+
+    let notes_view: Element = rsx! { NotesPanel { task: props.task.clone() } };
+
+    rsx! { crate::components::dialog::Dialog { show_modal: props.show, wrap_class: Some("w-[97%] max-w-4xl".into()),
+        div { class: "text-slate-200 space-y-4",
+            // Header row
+            div { class: "flex items-center gap-3", 
+                input { class: "flex-1 bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", value: name(), oninput: move |e| name.set(e.value()) }
+                select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 text-xs", value: status(), oninput: move |e| { status.set(e.value()); let t=t_for_status.clone(); let cb=props.on_change.clone(); let st=Status::from_str(&e.value()); spawn(async move { if update_status(&t, st.clone()).await.is_ok() { if let Some(cb)=cb { let mut u=t.clone(); u.status=st; cb.call(u);} } }); }, option { value: "Todo", "Todo" } option { value: "In Repair", "In Repair" } option { value: "QC", "QC" } option { value: "Sales", "Sales" } option { value: "Complete", "Complete" } }
+                select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 text-xs", value: assignee(), oninput: move |e| { if let Some(u)=users.iter().find(|u| u.get_username()==e.value()) { let t=t_for_assign.clone(); let id=u.get_id(); let id2=id.clone(); let cb=props.on_change.clone(); spawn(async move { if update_assignee(&t,id).await.is_ok() { if let Some(cb)=cb { let mut u2=t.clone(); u2.assignee=id2; cb.call(u2);} } }); assignee.set(e.value()); } }, option { value: assignee(), selected: true, {assignee()} } for u in users.iter().filter(|u| u.is_active()) { option { value: u.get_username(), {u.get_username()} } } }
             }
-            div { class: "text-right", button { class: "px-3 py-1 rounded border border-[#2a2c5d]/60 hover:bg-[#1e1a2a]/50", onclick: move |_| { let mut task = props.task.clone(); let new_name=name(); let new_desc=desc(); let cb=props.on_change.clone(); let mut show=props.show.to_owned(); spawn(async move { let _ = task.update_task_name(new_name).await; task.task_description = new_desc; let _ = task.update_task_description().await; if let Some(cb)=cb { cb.call(task.clone()); } show.set(false); }); }, "Save" } }
+            // Tabs
+            div { class: "flex gap-2 border-b border-[#2a2c5d]/60 text-xs",
+                // Ticket Tab
+                { let current = tab(); rsx!{ button { class: format!("px-3 py-1 rounded-t border border-b-0 {}", if current==TaskModalTab::TicketInfo { "bg-[#1b1d28] border-[#2a2c5d]" } else { "border-transparent hover:bg-[#1b1d28]/40" }), onclick: move |_| tab.set(TaskModalTab::TicketInfo), "Ticket" } } }
+                { let current = tab(); rsx!{ button { class: format!("px-3 py-1 rounded-t border border-b-0 {}", if current==TaskModalTab::ComputerInfo { "bg-[#1b1d28] border-[#2a2c5d]" } else { "border-transparent hover:bg-[#1b1d28]/40" }), onclick: move |_| tab.set(TaskModalTab::ComputerInfo), "Computer" } } }
+                { let current = tab(); rsx!{ button { class: format!("px-3 py-1 rounded-t border border-b-0 {}", if current==TaskModalTab::SoftwareInfo { "bg-[#1b1d28] border-[#2a2c5d]" } else { "border-transparent hover:bg-[#1b1d28]/40" }), onclick: move |_| tab.set(TaskModalTab::SoftwareInfo), "Software" } } }
+                { let current = tab(); rsx!{ button { class: format!("px-3 py-1 rounded-t border border-b-0 {}", if current==TaskModalTab::Notes { "bg-[#1b1d28] border-[#2a2c5d]" } else { "border-transparent hover:bg-[#1b1d28]/40" }), onclick: move |_| tab.set(TaskModalTab::Notes), "Notes" } } }
+            }
+            div { class: "min-h-[240px] text-sm", match tab() { TaskModalTab::TicketInfo => ticket_view, TaskModalTab::ComputerInfo => computer_view, TaskModalTab::SoftwareInfo => software_view, TaskModalTab::Notes => notes_view } }
+            div { class: "text-right", button { class: "px-3 py-1 rounded border border-[#2a2c5d]/60 hover:bg-[#1e1a2a]/50 text-xs", onclick: move |_| { (save_changes.clone())(name(), desc()); }, "Save & Close" } }
         }
     } }
 }
@@ -298,27 +392,58 @@ struct CreateTaskModalProps { show: Signal<bool>, users: Vec<User>, #[props(defa
 
 #[component]
 fn CreateTaskModal(props: CreateTaskModalProps) -> Element {
+    // Basic fields
+    let mut service = use_signal(|| String::new());
     let mut name = use_signal(|| String::new());
     let mut desc = use_signal(|| String::new());
-    let mut service = use_signal(|| String::new());
     let mut prio = use_signal(|| "Normal".to_string());
     let mut assignee = use_signal(|| props.users.first().map(|u| u.get_username().to_string()).unwrap_or_default());
+    let mut due = use_signal(|| {
+        let now = Utc::now().date_naive();
+        now.format("%Y-%m-%d").to_string()
+    });
+    // TUR / Prestashop payload
+    let tur_payload = use_signal(|| Option::<PrestashopPayload>::None);
+    let mut pulling = use_signal(|| false);
+
+    // Auto-fill task name from payload (CustomerData.name is already combined)
+    {
+        let mut nm = name.to_owned();
+        let service_sig = service.to_owned();
+        use_effect(move || { if let Some(p)=tur_payload() { if nm().is_empty() { nm.set(format!("{} - {}", p.customer.name, service_sig())); } } });
+    }
+
     let users = props.users.clone();
-    rsx! { crate::components::dialog::Dialog { show_modal: props.show, wrap_class: Some("w-[96%] max-w-xl".into()),
-        div { class: "text-slate-200 space-y-3",
-            h2 { class: "text-lg font-semibold", "Create Task" }
+    let can_submit = move || !name().trim().is_empty() && !desc().trim().is_empty() && !assignee().trim().is_empty();
+
+    rsx! { crate::components::dialog::Dialog { show_modal: props.show, wrap_class: Some("w-[98%] max-w-2xl".into()),
+        div { class: "text-slate-200 space-y-4 text-sm",
+            div { class: "flex items-center gap-2", input { class: "flex-1 bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", placeholder: "Service #", value: service(), oninput: move |e| service.set(e.value()) }
+                button { class: "px-3 py-1 rounded border border-[#2a2c5d]/60 disabled:opacity-40", disabled: pulling(), onclick: move |_| { if service().trim().is_empty() { return; } pulling.set(true); let svc = service(); let mut tp = tur_payload.to_owned(); spawn(async move { let res = get_prestashop_payload(&svc).await; if let Ok(p) = res { tp.set(Some(p)); } pulling.set(false); }); }, { if pulling() { "Loading..." } else { "Pull Order" } } }
+            }
+            if let Some(p)=tur_payload() { div { class: "grid grid-cols-3 gap-x-4 gap-y-1 text-xs bg-[#111216] p-3 rounded border border-[#2a2c5d]/40", 
+                div { class: "col-span-1 opacity-60", "Customer" } div { class: "col-span-2", {p.customer.name.clone()} }
+                div { class: "col-span-1 opacity-60", "Email" } div { class: "col-span-2 break-all", {p.customer.email.clone()} }
+                div { class: "col-span-1 opacity-60", "Order ID" } div { class: "col-span-2", {p.order.id.clone()} }
+                div { class: "col-span-1 opacity-60", "Address" } div { class: "col-span-2", {format!("{} {} {}", p.address.address1, p.address.city, p.address.postcode)} }
+                if let Some(rep)=p.sales_rep.clone() { div { class: "col-span-1 opacity-60", "Rep" } div { class: "col-span-2", {format!("{} {}", rep.firstname, rep.lastname)} } }
+            } }
             input { class: "w-full bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", placeholder: "Task name", value: name(), oninput: move |e| name.set(e.value()) }
             textarea { class: "w-full bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", rows: 4, placeholder: "Description", value: desc(), oninput: move |e| desc.set(e.value()) }
-            input { class: "w-full bg-[#111216] rounded px-3 py-2 border border-[#2a2c5d]/60", placeholder: "Service number (optional)", value: service(), oninput: move |e| service.set(e.value()) }
-            div { class: "flex gap-2",
-                select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 text-slate-200", value: prio(), oninput: move |e| prio.set(e.value()), for p in Priority::VALUES { option { value: p.as_str(), {p.as_str()} } } }
-                select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 text-slate-200", value: assignee(), oninput: move |e| assignee.set(e.value()), for u in users.iter().filter(|u| u.is_active()) { option { value: u.get_username(), {u.get_username()} } } }
+            div { class: "grid grid-cols-3 gap-2", 
+                div { class: "flex flex-col gap-1", label { class: "text-[10px] uppercase tracking-wide opacity-70", "Priority" } select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60", value: prio(), oninput: move |e| prio.set(e.value()), for p in Priority::VALUES { option { value: p.as_str(), {p.as_str()} } } } }
+                div { class: "flex flex-col gap-1", label { class: "text-[10px] uppercase tracking-wide opacity-70", "Assignee" } select { class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60", value: assignee(), oninput: move |e| assignee.set(e.value()), for u in users.iter().filter(|u| u.is_active()) { option { value: u.get_username(), {u.get_username()} } } } }
+                div { class: "flex flex-col gap-1", label { class: "text-[10px] uppercase tracking-wide opacity-70", "Due Date" } input { r#type: "date", class: "bg-[#111216] rounded px-2 py-1 border border-[#2a2c5d]/60 w-full", value: due(), oninput: move |e| due.set(e.value()) } }
             }
-            div { class: "text-right", button { class: "px-3 py-1 rounded border border-[#2a2c5d]/60 hover:bg-[#1e1a2a]/50", onclick: move |_| {
-                let payload = NewTaskInput { task_name: name(), task_description: desc(), service_number: if service().trim().is_empty() { None } else { Some(service()) }, priority: parse_priority(&prio()), assignee_username: assignee() };
+            div { class: "text-right", button { class: "px-4 py-1 rounded border border-[#2a2c5d]/60 hover:bg-[#1e1a2a]/50 disabled:opacity-40", disabled: !can_submit(), onclick: move |_| {
+                if !can_submit() { return; }
+                let svc_opt = if service().trim().is_empty() { None } else { Some(service()) };
+                let payload = NewTaskInput { task_name: name(), task_description: desc(), service_number: svc_opt, priority: parse_priority(&prio()), assignee_username: assignee() };
                 let cb = props.on_created.clone(); let mut show = props.show.to_owned();
-                spawn(async move { if let Ok(created) = create_task_simple(payload).await { if let Some(cb)=cb { cb.call(created.clone()); } } show.set(false); });
-            }, "Create" } }
+                spawn(async move { if let Ok(mut created) = create_task_simple(payload).await { // if we pulled order & want full create (emulating egui) just best-effort
+                        if let Some(cb)=cb { cb.call(created.clone()); }
+                    } show.set(false); });
+            }, "Create Task" } }
         }
     } }
 }
