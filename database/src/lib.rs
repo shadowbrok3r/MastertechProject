@@ -251,6 +251,26 @@ impl Database {
     }
 }
 
+pub fn get_current_user_from_auth() -> Option<User> {
+    if let Ok(current_user) = CURRENT_USER_INFO.try_lock() {
+        log::debug!("WE HAVE A USER FROM GLOBAL STATE");
+        current_user.clone()
+    } else {
+        log::warn!("NONE");
+        None
+    }
+}
+
+pub fn get_database_users()  -> Vec<User>{
+    if let Ok(users) = STORE_USERS.try_lock() {
+        log::debug!("WE HAVE STORE USERS FROM GLOBAL STATE");
+        users.clone()
+    } else {
+        log::warn!("NONE");
+        vec![]
+    }
+}
+
 pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
     if cfg!(debug_assertions) {
         let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;

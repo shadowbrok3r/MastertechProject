@@ -10,7 +10,7 @@ use chrono::Utc;
 /// Fetch all tasks that are not completed
 pub async fn fetch_incomplete_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
     let tasks: Vec<LiveTaskPayload> = DATABASE
-        .query("SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS false PARALLEL")
+        .query("SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS false PARALLEL")
         .await?
         .take(0)?;
     Ok(tasks)
@@ -19,7 +19,7 @@ pub async fn fetch_incomplete_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
 /// Fetch all tasks that are completed
 pub async fn fetch_completed_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
     let tasks: Vec<LiveTaskPayload> = DATABASE
-        .query("SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS true PARALLEL")
+        .query("SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS true PARALLEL")
         .await?
         .take(0)?;
     Ok(tasks)
