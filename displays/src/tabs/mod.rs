@@ -60,6 +60,7 @@ pub enum SharedTabs {
 impl Tabs {
     pub fn as_str(&self) -> &str {
         match self {
+            #[cfg(not(target_arch="wasm32"))]
             Tabs::Mastertech(mastertech_tabs) => {
                 match mastertech_tabs {
                     MastertechTabs::TurSheet => "Tur Sheet",
@@ -98,40 +99,44 @@ impl Tabs {
     }
 
     pub fn from_str(tab: &str) -> Self {
-        if cfg!(target_arch="wasm32") {
-            match tab {
-                "My Tasks" => Self::Shared(SharedTabs::MyTasks),
-                "Store Tasks" => Self::Shared(SharedTabs::StoreTasks),
-                "Completed Tasks" => Self::Shared(SharedTabs::CompletedTasks),
-                "Database Editor" => Self::Shared(SharedTabs::DatabaseEditor),
-                "KOTH" => Self::Shared(SharedTabs::Koth),
-                "My Tools" => Self::Shared(SharedTabs::MyTools),
-                "Task Audit" => Self::Shared(SharedTabs::TaskAudit),
-                "Inventory" => Self::Shared(SharedTabs::Inventory),
-                "Sales Tracker" => Self::Shared(SharedTabs::SalesTracker),
-                "Logs" => Self::Shared(SharedTabs::Logs),
-                "Resource Monitor" => Self::Shared(SharedTabs::ResourceMonitor),
-                "Admin Console" => Self::Shared(SharedTabs::AdminConsole),
-                "Query Editor" => Self::Shared(SharedTabs::QueryEditor),
-                "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
-                "Threads" => Self::Shared(SharedTabs::Threads),
-                "Bug Tracker" => Self::Shared(SharedTabs::BugReport),
-                &_ => Self::Shared(SharedTabs::MyTasks),
-            }
-        } else {
-            match tab {
-                "TUR Sheet" => Self::Mastertech(MastertechTabs::TurSheet),
-                "Part Order" => Self::Mastertech(MastertechTabs::PartOrder),
-                "Scripts" => Self::Mastertech(MastertechTabs::Scripts),
-                "File Browser 📂" => Self::Mastertech(MastertechTabs::FileBrowser),
-                "SysInfo" => Self::Mastertech(MastertechTabs::SysInfo),
-                "Minidump Analysis" => Self::Mastertech(MastertechTabs::MinidumpAnalysis),
-                "QC ☑️" => Self::Mastertech(MastertechTabs::Qc),
-                "Ai" => Self::Mastertech(MastertechTabs::Ai),
-                "Websockets" => Self::Mastertech(MastertechTabs::Websockets),
-                "Downloads" => Self::Mastertech(MastertechTabs::Downloads),
-                &_ => Self::Shared(SharedTabs::MyTasks),
-            }
+        match tab {
+            "My Tasks" => Self::Shared(SharedTabs::MyTasks),
+            "Store Tasks" => Self::Shared(SharedTabs::StoreTasks),
+            "Completed Tasks" => Self::Shared(SharedTabs::CompletedTasks),
+            "Database Editor" => Self::Shared(SharedTabs::DatabaseEditor),
+            "KOTH" => Self::Shared(SharedTabs::Koth),
+            "My Tools" => Self::Shared(SharedTabs::MyTools),
+            "Task Audit" => Self::Shared(SharedTabs::TaskAudit),
+            "Inventory" => Self::Shared(SharedTabs::Inventory),
+            "Sales Tracker" => Self::Shared(SharedTabs::SalesTracker),
+            "Logs" => Self::Shared(SharedTabs::Logs),
+            "Resource Monitor" => Self::Shared(SharedTabs::ResourceMonitor),
+            "Admin Console" => Self::Shared(SharedTabs::AdminConsole),
+            "Query Editor" => Self::Shared(SharedTabs::QueryEditor),
+            "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
+            "Threads" => Self::Shared(SharedTabs::Threads),
+            "Bug Tracker" => Self::Shared(SharedTabs::BugReport),
+            #[cfg(not(target_arch="wasm32"))]
+            "TUR Sheet" => Self::Mastertech(MastertechTabs::TurSheet),
+            #[cfg(not(target_arch="wasm32"))]
+            "Part Order" => Self::Mastertech(MastertechTabs::PartOrder),
+            #[cfg(not(target_arch="wasm32"))]
+            "Scripts" => Self::Mastertech(MastertechTabs::Scripts),
+            #[cfg(not(target_arch="wasm32"))]
+            "File Browser 📂" => Self::Mastertech(MastertechTabs::FileBrowser),
+            #[cfg(not(target_arch="wasm32"))]
+            "SysInfo" => Self::Mastertech(MastertechTabs::SysInfo),
+            #[cfg(not(target_arch="wasm32"))]
+            "Minidump Analysis" => Self::Mastertech(MastertechTabs::MinidumpAnalysis),
+            #[cfg(not(target_arch="wasm32"))]
+            "QC ☑️" => Self::Mastertech(MastertechTabs::Qc),
+            #[cfg(not(target_arch="wasm32"))]
+            "Ai" => Self::Mastertech(MastertechTabs::Ai),
+            #[cfg(not(target_arch="wasm32"))]
+            "Websockets" => Self::Mastertech(MastertechTabs::Websockets),
+            #[cfg(not(target_arch="wasm32"))]
+            "Downloads" => Self::Mastertech(MastertechTabs::Downloads),
+            &_ => Self::Shared(SharedTabs::MyTasks),
         }
 
     }
