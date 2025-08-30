@@ -639,7 +639,7 @@ impl Koth {
                 let r = o.product_reference.to_lowercase();
                 let qty: i32 = o.product_quantity.parse::<i32>().unwrap_or(1);
 
-                if r.starts_with("lap/") || (r.starts_with("case/") && !r.starts_with("case/15") && !r.starts_with("case/17")) {
+                if r.starts_with("lap/") || (r.starts_with("case/") || r.starts_with("bsd/") && (!r.starts_with("case/15") && !r.starts_with("case/17"))) {
                     has_system_product = true;
                 }
 
