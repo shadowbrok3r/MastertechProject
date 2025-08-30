@@ -84,7 +84,7 @@ impl<K: Clone + Debug + 'static> Shader for Unique<K> {
     }
 
     fn cell_selection(&self) -> Option<CellFilter> {
-        self.fx.cell_filter()
+        self.fx.cell_filter().cloned()
     }
 
     fn reset(&mut self) {
@@ -92,6 +92,6 @@ impl<K: Clone + Debug + 'static> Shader for Unique<K> {
     }
     
     fn filter(&mut self, filter: CellFilter) {
-        filter.selector(self.area().unwrap_or_default());
+        filter.predicate(self.area().unwrap_or_default());
     }
 }
