@@ -47,7 +47,7 @@ nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5.0"
 ratatui-splash-screen = "0.1.4"
 tui-scrollview = "0.5.1"
-tachyonfx = "0.17.0"
+tachyonfx = "0.18.0"
 powershell_script = "1.1.0"
 color-eyre = "0.6.3"
 itertools = "0.14.0"
@@ -60,7 +60,7 @@ strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 rmcp = { version = "0.6.0", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
 xcap = "0.7.0"
 display-info = "0.5.4"
-enigo = { version = "0.5.0", features = ["serde"] }
+enigo = { version = "0.6.1", features = ["serde"] }
 self-replace = "1.5.0"
 zstd = "0.13.3"
 humansize = "2"
@@ -106,7 +106,7 @@ version = "0.28.1"
 features = ["event-stream"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = {version = "0.61", features = [
+windows = {version = "0.62.0", features = [
     "Win32_System",
     "Win32",
     "Win32_System_Com",
@@ -128,8 +128,8 @@ windows = {version = "0.61", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties"
 ]}
-windows-registry = "0.5"
-windows-core = "0.61"
+windows-registry = "0.6.0"
+windows-core = "0.62.0"
 windows_x86_64_msvc = "0.53"
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 memmap2 = "0.9"
