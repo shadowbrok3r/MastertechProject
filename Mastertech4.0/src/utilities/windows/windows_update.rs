@@ -1,5 +1,4 @@
 use crossbeam::channel::Sender;
-use windows_core::*;
 use windows::{
     core::{
         implement, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
@@ -397,7 +396,7 @@ pub fn reboot_system() -> Result<()> {
         // EWX_FORCE forces all running applications to close.
         if let Err(e) = ExitWindowsEx(EWX_REBOOT | EWX_FORCE, Shutdown::SHUTDOWN_REASON(0)) {
             log::info!("{e:?}");
-            return Err(Error::from_win32());
+            return Err(windows_core::Error::new(e.code(), e.message()));
         }
     }
     Ok(())
