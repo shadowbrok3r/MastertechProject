@@ -47,7 +47,7 @@ async-openai-wasm = { version = "0.29.0" }
 async-openai = { version = "0.29" }
 # egui_colors = "0.9.0"
 itertools = "0.14"
-rmcp = { version = "0.6", features = ["server", "client", "transport-async-rw"] }
+rmcp = { version = "0.6.4", features = ["server", "client", "transport-async-rw"] }
 
 [profile.dev]
 debug = true

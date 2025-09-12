@@ -1,5 +1,5 @@
 use rmcp::{
-    handler::server::{tool::{Parameters, ToolRouter}, ServerHandler},
+    handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
     model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
 };
@@ -121,6 +121,10 @@ fn default_shell() -> Option<ShellType> { Some(ShellType::Cmd) }
 #[derive(Clone)]
 pub struct DiagnosticToolProvider {
     tool_router: ToolRouter<Self>,
+}
+
+impl Default for DiagnosticToolProvider {
+    fn default() -> Self { Self { tool_router: Self::tool_router() } }
 }
 
 impl DiagnosticToolProvider {
