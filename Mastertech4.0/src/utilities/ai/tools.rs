@@ -1,4 +1,4 @@
-use rmcp::{handler::server::{tool::{Parameters, ToolRouter}, ServerHandler}, model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo}, schemars, tool, tool_handler, tool_router};
+use rmcp::{handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler}, model::{CallToolResult, Content, ErrorCode, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo}, schemars, tool, tool_handler, tool_router};
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use anyhow::{anyhow, Context}; 
 use base64::Engine;
