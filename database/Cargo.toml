@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
-xml = "0.8.20"
+xml = "1"
 # surrealdb-alpha ={ workspace = true }
 surrealdb = { workspace=true }
 serde_json = { workspace=true }

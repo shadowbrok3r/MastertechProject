@@ -3,7 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use tachyonfx::{ref_count, Duration, Effect, IntoEffect, RefCount, Shader, SimpleRng};
+use tachyonfx::{ref_count, Duration, Effect, IntoEffect, RefCount, SimpleRng};
 
 /// A stage that manages a collection of terminal UI effects, including uniquely
 /// identified effects that can be replaced/cancelled by new effects with the same ID.

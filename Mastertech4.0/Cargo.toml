@@ -47,7 +47,7 @@ nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5.0"
 ratatui-splash-screen = "0.1.4"
 tui-scrollview = "0.5.1"
-tachyonfx = "0.18.0"
+tachyonfx = "0.19"
 powershell_script = "1.1.0"
 color-eyre = "0.6.3"
 itertools = "0.14.0"
@@ -57,7 +57,7 @@ arboard = "3"
 tempfile = "3.19"
 strum = { version = "0.27.1", features = ["strum_macros", "derive"] }
 # nvme = "0.2.2"
-rmcp = { version = "0.7.0", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
+rmcp = { version = "0.8", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
 xcap = "0.7.0"
 display-info = "0.5.4"
 enigo = { version = "0.6.1", features = ["serde"] }

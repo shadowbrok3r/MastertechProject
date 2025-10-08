@@ -302,7 +302,7 @@ impl TerminalWebsocketClient {
                 // Send to persistent shell if available, otherwise use the old method
                 if let Some(shell) = &mut self.persistent_shell {
                     let shell_cmd = cmd.clone();
-                    let shell_ptr = shell as *mut PersistentShell;
+                    let _shell_ptr = shell as *mut PersistentShell;
                     // Use a more direct approach to avoid lifetime issues
                     if let Err(e) = shell.send_command(shell_cmd).await {
                         log::error!("Failed to send interactive input to persistent shell: {}", e);
