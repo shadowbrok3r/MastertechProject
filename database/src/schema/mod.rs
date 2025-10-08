@@ -206,12 +206,6 @@ pub struct HardwareTests {
     pub ram_test: String,
 }
 
-#[derive(Deserialize)]
-struct CommandRequest {
-    _client_id: String,
-    _command: String,
-}
-
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct GetKeysResponse {
     pub webroot_key: String,

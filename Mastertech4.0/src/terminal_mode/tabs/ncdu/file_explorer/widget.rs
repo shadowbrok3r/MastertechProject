@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use humansize::{format_size, BINARY};
 use ratatui::{
@@ -593,7 +594,7 @@ impl Theme {
     /// Returns the generated top titles of the theme.
     #[inline]
     #[must_use]
-    pub fn title_top(&self, file_explorer: &FileExplorer) -> Vec<Line> {
+    pub fn title_top(&'_ self, file_explorer: &FileExplorer) -> Vec<Line<'_>> {
         self.title_top
             .iter()
             .map(|title_top| title_top(file_explorer))
@@ -603,7 +604,7 @@ impl Theme {
     /// Returns the generated bottom titles of the theme.
     #[inline]
     #[must_use]
-    pub fn title_bottom(&self, file_explorer: &FileExplorer) -> Vec<Line> {
+    pub fn title_bottom(&'_ self, file_explorer: &FileExplorer) -> Vec<Line<'_>> {
         self.title_bottom
             .iter()
             .map(|title_bottom| title_bottom(file_explorer))

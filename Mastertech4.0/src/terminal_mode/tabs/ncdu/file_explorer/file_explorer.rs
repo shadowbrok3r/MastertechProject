@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{fs::FileType, io::Result, path::PathBuf};
 use ratatui::widgets::WidgetRef;
 use super::{input::Input, widget::{Renderer, SizeCache}, Theme};

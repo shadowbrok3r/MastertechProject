@@ -138,7 +138,7 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
         // Swallow everything up to the next special character:
         let line_end = text[skip..]
             .find('\n')
-            .map_or_else(|| text.len(), |i| (skip + i + 1));
+            .map_or_else(|| text.len(), |i| skip + i + 1);
         // i think i need to handle the @ completely separate from the rest of the special chars...
         let end = text[skip..]
             .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '@'][..])

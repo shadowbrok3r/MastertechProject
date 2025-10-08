@@ -6,8 +6,6 @@ pub trait IndexResolver<T: Clone> {
 }
 
 #[derive(Clone, Debug)]
-pub struct PingPongCycle;
-#[derive(Clone, Debug)]
 pub struct RepeatingCycle;
 
 
@@ -15,20 +13,6 @@ pub struct RepeatingCycle;
 pub struct ColorCycle<T: IndexResolver<Color>> {
     colors: Vec<Color>,
     _marker: std::marker::PhantomData<T>,
-}
-
-impl IndexResolver<Color> for PingPongCycle {
-    fn resolve(idx: usize, data: &[Color]) -> &Color {
-        let dbl_idx = idx % (2 * data.len());
-        let final_index = if dbl_idx < data.len() {
-            dbl_idx
-        } else {
-            2 * data.len() - 1 - dbl_idx
-        };
-
-        data.get(final_index)
-            .expect("ColorCycle: index out of bounds")
-    }
 }
 
 impl IndexResolver<Color> for RepeatingCycle {
