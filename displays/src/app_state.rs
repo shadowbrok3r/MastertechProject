@@ -237,6 +237,9 @@ pub struct SharedContext {
     /// Tabs requested to be removed from TabViewer::add_popup; applied after DockArea::show
     #[serde(skip)]
     pub pending_tab_removes: Vec<String>,
+    /// Tab name to activate after DockArea draws to avoid mutating a stale DockState
+    #[serde(skip)]
+    pub pending_activate_tab: Option<String>,
 }
 
 impl SharedContext {
@@ -361,6 +364,7 @@ impl SharedContext {
             added_nodes: Vec::new(),
             pending_tab_adds: Vec::new(),
             pending_tab_removes: Vec::new(),
+            pending_activate_tab: None,
         }
     }
 

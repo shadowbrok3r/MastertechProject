@@ -183,7 +183,7 @@ impl FileViewer {
                     self.theme.type_color(TokenType::Comment(true)),
                 ),
             );
-            ui.fonts(|f| f.layout_job(layout_job))
+            ui.fonts_mut(|f| f.layout_job(layout_job))
         };
 
         ui.add(
@@ -213,7 +213,7 @@ impl FileViewer {
                     .show(h, |ui| {
                         let mut layouter = |ui: &eframe::egui::Ui, buf: &dyn eframe::egui::TextBuffer, _wrap_width: f32| {
                             let layout_job = highlight(ui.ctx(), self, buf.as_str());
-                            ui.fonts(|f| f.layout_job(layout_job))
+                            ui.fonts_mut(|f| f.layout_job(layout_job))
                         };
                         let output = eframe::egui::TextEdit::multiline(text)
                             .id_source(&self.id)

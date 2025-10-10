@@ -1281,7 +1281,7 @@ impl FileDialog {
             .interactable(true)
             .fixed_pos(egui::Pos2::ZERO)
             .show(ctx, |ui| {
-                let screen_rect = ctx.input(|i| i.screen_rect);
+                let screen_rect = ctx.input(|i| i.content_rect());
 
                 ui.allocate_response(screen_rect.size(), egui::Sense::click());
 
@@ -2657,7 +2657,9 @@ impl FileDialog {
 
     /// Calculates the width of a single char.
     fn calc_char_width(ui: &egui::Ui, char: char) -> f32 {
-        ui.fonts(|f| f.glyph_width(&egui::TextStyle::Body.resolve(ui.style()), char))
+        ui.fonts_mut(|f| 
+            f.glyph_width(&egui::TextStyle::Body.resolve(ui.style()), char)
+        )
     }
 
     /// Calculates the width of the specified text using the current font configuration.

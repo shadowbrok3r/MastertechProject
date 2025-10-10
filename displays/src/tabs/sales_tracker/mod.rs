@@ -8,7 +8,7 @@ use database::schema::{
 	sales_tracker::{get_sales_notes_for_user, upsert_sales_note, SalesNote},
 	User,
 };
-use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
 use egui_data_table::{DataTable, Renderer};
 
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
@@ -219,11 +219,12 @@ impl SalesTracker {
 		CentralPanel::default().show_inside(ui, |ui| {
 			ui.group(|ui| {
 				Renderer::new(&mut self.table, &mut self.viewer)
-					.with_style_modify(|s| {
-						s.auto_shrink = [false, false].into();
-						s.single_click_edit_mode = true;
-					})
-					.ui(ui);
+                    .with_style_modify(|s| {
+                        s.scroll_bar_visibility = eframe::egui::scroll_area::ScrollBarVisibility::AlwaysVisible;
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                    })
+                    .ui(ui);
 			});
 		});
 	}

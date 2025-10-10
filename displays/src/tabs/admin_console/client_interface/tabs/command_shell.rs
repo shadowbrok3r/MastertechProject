@@ -79,7 +79,7 @@ impl WebSocketClient {
                     "bash".into()
                 );
                 layout_job.wrap.max_width = ui.available_width()/1.1;
-                ui.fonts(|f| f.layout_job(layout_job))
+                ui.fonts_mut(|f| f.layout_job(layout_job))
             };
 
             ui.add_space(3.);

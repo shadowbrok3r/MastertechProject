@@ -85,8 +85,8 @@ impl Widget for &mut RataguiBackend {
             self.blinking_fast = true;
         }
 
-        let char_width = ui.fonts(|f| f.glyph_width(&self.regular_font, ' '));
-        let char_height = ui.fonts(|f| f.row_height(&self.regular_font));
+        let char_width = ui.fonts_mut(|f| f.glyph_width(&self.regular_font, ' '));
+        let char_height = ui.fonts_mut(|f| f.row_height(&self.regular_font));
         let available_size = ui.available_size();
         let available_chars_width = (available_size.x / char_width).max(1.0) as u16;
         let available_chars_height = (available_size.y / char_height).max(1.0) as u16;
@@ -274,11 +274,14 @@ impl RataguiBackend {
         self.buffer.content != new_buffer.content
     }
     
-    pub fn get_font_width(&self, fontiki: &Fonts) -> f32 {
+    pub fn get_font_width(&self, fonts: &mut Fonts) -> f32 {
         let fid = self.regular_font.clone();
-        let widik = fontiki.glyph_width(&fid, ' ');
-        // println!("widik is {:#?}",widik);
-        widik
+        // let width = fonts.glyph_width(&fid, ' ');
+        let mut view = fonts.with_pixels_per_point(1.0);
+
+        let width = view.glyph_width(&fid, ' ');
+        // println!("widik is {:#?}",width);
+        width
     }
 
     pub fn rat_to_egui_color(rat_col: &ratatui::style::Color, is_a_fg: bool) -> Color32 {
@@ -317,7 +320,7 @@ impl RataguiBackend {
 
 
     fn build_row_job(&self, ui: &Ui, y: u16, width: u16) -> LayoutJob {
-        let char_height = ui.fonts(|f| f.row_height(&self.regular_font));
+        let char_height = ui.fonts_mut(|f| f.row_height(&self.regular_font));
         let singular_wrapping = TextWrapping {
             max_width: f32::INFINITY,
             max_rows: 1,

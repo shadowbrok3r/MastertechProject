@@ -131,12 +131,15 @@ impl OpenAiMcpSession {
             ),
         };
 
-        let text_cfg = TextConfig { format: TextResponseFormat::JsonSchema(ResponseFormatJsonSchema {
-            name: "command_completions".into(),
-            description: Some("Structured command completions".into()),
-            schema: Some(schema_value),
-            strict: Some(true),
-        })};
+        let text_cfg = TextConfig { 
+            format: TextResponseFormat::JsonSchema(ResponseFormatJsonSchema {
+                name: "command_completions".into(),
+                description: Some("Structured command completions".into()),
+                schema: Some(schema_value),
+                strict: Some(true),
+            }),
+            verbosity: None
+        };
 
         // Build request body (Responses API) with streaming enabled
         let request_body = CreateResponse {

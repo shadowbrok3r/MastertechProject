@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Spinner, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -189,6 +189,11 @@ impl StockTable {
                             &mut self.stock_quantity_table,
                             &mut self.stock_quantity_viewer,
                         )
+                        .with_style_modify(|s| {
+                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                            s.single_click_edit_mode = true;
+                            s.auto_shrink = [false, false].into();
+                        })
                         .ui(ui);
                     }
                 },
@@ -203,9 +208,11 @@ impl StockTable {
                             &mut self.inventory_serials_table, 
                             &mut self.inventory_serials_viewer
                         ).with_style_modify(|s| {
+                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
                             s.single_click_edit_mode = true;
                             s.auto_shrink = [false, false].into();
-                        }).ui(ui);
+                        })
+                        .ui(ui);
                     }
                 },
             }

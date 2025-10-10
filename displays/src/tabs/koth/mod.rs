@@ -1,5 +1,5 @@
 use database::schema::{helper_traits::EmployeeHelper, prestashop::{generate_orders_report, get_order_payments, Employee, Order, OrderPayment, OrderState, PayPeriod, OrderType}, Store, User};
-use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use egui_data_table::{DataTable, Renderer};
 use crossbeam::channel::{Receiver, Sender};
@@ -406,19 +406,21 @@ impl Koth {
 
                         Renderer::new(&mut self.koth_table, &mut self.koth_viewer)
                         .with_style_modify(|s| {
-                            s.auto_shrink = [false, false].into();
+                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
                             s.single_click_edit_mode = true;
+                            s.auto_shrink = [false, false].into();
                         })
                         .ui(ui);
                     }
                     KothSelection::AllEmployees => {
                         // Show the summary table with the specific 7 columns
                         Renderer::new(&mut self.all_table, &mut self.all_viewer)
-                            .with_style_modify(|s| {
-                                s.auto_shrink = [false, false].into();
-                                s.single_click_edit_mode = true;
-                            })
-                            .ui(ui);
+                        .with_style_modify(|s| {
+                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                            s.single_click_edit_mode = true;
+                            s.auto_shrink = [false, false].into();
+                        })
+                        .ui(ui);
                     }
                 }
             });

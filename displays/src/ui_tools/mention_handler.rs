@@ -40,7 +40,7 @@ impl Widget for MentionHandler {
         let mut layouter = |ui: &Ui, easymark: &dyn eframe::egui::TextBuffer, wrap_width: f32| {
             let mut layout_job = self.highlighter.highlight(ui.style(), easymark.as_str());
             layout_job.wrap.max_width = wrap_width;
-            ui.fonts(|f| f.layout_job(layout_job))
+            ui.fonts_mut(|f| f.layout_job(layout_job))
         };
     
         let text_response = ui.add(

@@ -31,13 +31,9 @@ pub struct StockQuantityViewer {
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
 impl RowViewer<StockQuantityData> for StockQuantityViewer {
-    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<StockQuantityData>> {
-        Some(Codec)
-    }
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<StockQuantityData>> { Some(Codec) }
 
-    fn num_columns(&mut self) -> usize {
-        5
-    }
+    fn num_columns(&mut self) -> usize { 5 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         [
@@ -50,13 +46,11 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
             .into()
     }
 
-    fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true][column]
-    }
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &StockQuantityData) -> bool { false }
 
-    fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
-        &self.filter
-    }
+    fn is_sortable_column(&mut self, column: usize) -> bool { [true, true, true, true, true][column] }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
 
     fn filter_row(&mut self, row: &StockQuantityData) -> bool {
         let filter = &self.filter.to_uppercase();
@@ -65,6 +59,10 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &StockQuantityData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
         let _ = match column {
             0 => {
                 ui.horizontal_centered(|ui| {

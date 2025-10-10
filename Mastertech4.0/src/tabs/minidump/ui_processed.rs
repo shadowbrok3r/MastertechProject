@@ -1,5 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
+use std::arch::x86_64;
+
 use crate::tabs::minidump::{frame_signature, MiniDumpApp, Tab, frame_source, listing, threadname};
 use super::processor::ProcessingStatus;
 use eframe::egui;
@@ -326,8 +328,7 @@ impl MiniDumpApp {
         let col4_width = widths[3];
         let col5_width = widths[4];
 
-        let (col1, col2, col3, col4, col5, row_height) = {
-            let fonts = ctx.fonts(|x| x.clone());
+        let (col1, col2, col3, col4, col5, row_height) = ctx.fonts_mut(|fonts| {
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
@@ -376,7 +377,7 @@ impl MiniDumpApp {
                 .max(col5.rect.height())
                 + 6.0;
             (col1, col2, col3, col4, col5, row_height)
-        };
+        });
 
         body.row(row_height, |mut row| {
             row.col(|ui| {
@@ -424,8 +425,7 @@ impl MiniDumpApp {
         let col3_width = widths[2];
         let col4_width = widths[3];
         let col5_width = widths[4];
-        let (col1, col2, col3, col4, col5, row_height) = {
-            let fonts = ctx.fonts(|x|x.clone());
+        let (col1, col2, col3, col4, col5, row_height) = ctx.fonts_mut(|fonts| {
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
@@ -470,8 +470,7 @@ impl MiniDumpApp {
                 .max(col5.rect.height())
                 + 6.0;
             (col1, col2, col3, col4, col5, row_height)
-        };
-
+        });
         body.row(row_height, |mut row| {
             row.col(|ui| {
                 ui.centered_and_justified(|ui| {

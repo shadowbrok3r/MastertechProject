@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
-use eframe::egui::{Button, CentralPanel, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget, scroll_area};
 use database::schema::Process;
 use egui_extras::Column;
 use serde::Serialize;
@@ -131,7 +131,13 @@ impl ProcessTableViewer {
             ScrollArea::horizontal()
                 .auto_shrink(false)
                 .show(ui, |ui| 
-                    Renderer::new(&mut self.process_table, &mut self.process_viewer).ui(ui)
+                    Renderer::new(&mut self.process_table, &mut self.process_viewer)                    
+                    .with_style_modify(|s| {
+                        s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                    })
+                    .ui(ui)
                 );
             
         });  

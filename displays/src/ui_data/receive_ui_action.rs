@@ -1,6 +1,6 @@
 use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use crate::{PlatformSpawner, Spawner};
+// removed unused PlatformSpawner/Spawner imports after refactor
 use database::schema::TaskNotePayload;
 use crate::app_state::SharedContext;
 use crate::viewports::ViewportData;
@@ -33,20 +33,18 @@ impl SharedContext {
                 }
                 TaskUiActions::OpenChatModal((task_id, notes, service_number)) => {
                     info!("receive_ui_action -> Got Chat action: {:?}", task_id);
-
-                    let payload = (task_id.clone(), notes.clone(), service_number.clone());
-                    PlatformSpawner::spawn(async move {
-                        match get_or_insert_notes(payload).await {
-                            Ok(_) => info!("receive_ui_action -> get_or_insert_notes ran ok"),
-                            Err(e) => log::error!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
-                        }
-                    });
-
-                    let chat_modal = ChatView::new(
+                    // Construct chat view, seed with any provided notes, and kick off a refresh
+                    let mut chat_modal = ChatView::new(
                         self.store_users.clone(),
                         task_id.clone(),
                         service_number
                     );
+                    if !notes.is_empty() {
+                        // Seed initial notes so the UI displays immediately
+                        chat_modal.set_notes(notes.clone());
+                    }
+                    // Also fetch fresh notes in the background to ensure sync with Prestashop/DB
+                    chat_modal.refresh_notes();
                     
                     let task = self
                         .tasks

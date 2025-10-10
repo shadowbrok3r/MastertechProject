@@ -58,6 +58,13 @@ impl crate::app_state::SharedContext {
             }
         }
 
+        // Apply any pending tab activation now that we have the latest DockState
+        if let Some(name) = self.pending_activate_tab.take() {
+            if let Some((surface_index, node_index, tab_index)) = tree.find_tab(&name) {
+                tree.set_active_tab((surface_index, node_index, tab_index));
+            }
+        }
+
         self.tree = tree;
 
     }

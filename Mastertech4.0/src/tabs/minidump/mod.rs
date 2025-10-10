@@ -348,7 +348,7 @@ pub fn listing(
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center))
-            .column(Column::initial(120.0).at_least(40.0)) //Size::initial(120.0).at_least(40.0))
+            .column(Column::initial(120.0).at_least(40.0)) // Size::initial(120.0).at_least(40.0))
             .column(Column::remainder().at_least(60.0)) // Size::remainder().at_least(60.0))
             .resizable(true)
             .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
@@ -357,13 +357,12 @@ pub fn listing(
                 let col1_width = widths[0];
                 let col2_width = widths[1];
                 for (lhs, rhs) in items {
-                    let (col1, col2, row_height) = {
-                        let fonts = ctx.fonts(|x| x.clone());
+                    let (col1, col2, row_height) = ctx.fonts_mut(|fonts| {
                         let col1 = fonts.layout(lhs, body_font.clone(), Color32::WHITE, col1_width);
                         let col2 = fonts.layout(rhs, mono_font.clone(), Color32::WHITE, col2_width);
                         let row_height = col1.rect.height().max(col2.rect.height()) + 6.0;
                         (col1, col2, row_height)
-                    };
+                    });
                     body.row(row_height, |mut row| {
                         row.col(|ui| {
                             ui.label(col1);
