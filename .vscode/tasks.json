@@ -91,6 +91,21 @@
 				"$rustc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "cargo check displays",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"-p",
+				"displays"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
 		}
 	]
 }

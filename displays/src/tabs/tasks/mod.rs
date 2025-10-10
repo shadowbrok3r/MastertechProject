@@ -97,105 +97,104 @@ impl SharedContext {
             }
         }
 
-        // If task_map is empty and search_results exist, try switching to a page with matching tasks
-        if map.is_empty() && self.search_results.is_some() {
-            let other_pages = ["My Tasks", "Store Tasks", "Completed Tasks"]
-                .iter()
-                .filter(|&&p| p != page)
-                .collect::<Vec<_>>();
-            for &target_page in &other_pages {
-                let target_config = layout_configs.get(*target_page).expect("Layout config not found");
+        // When searching, render the best-matching page's layout ephemerally in this tab
+        if self.search_results.is_some() {
+            // Helper to build the map for a target page and return (map, ordered_keys, total_count)
+            let mut build_for_page = |target_page: &str| -> (BTreeMap<String, Vec<LiveTaskPayload>>, Vec<String>, usize) {
                 let mut target_map = BTreeMap::new();
                 let mut target_ordered_keys = Vec::new();
-                if *target_page == "My Tasks" {
-                    let mut temp_entries = Vec::new();
-                    for status_str in &target_config.valid_keys {
-                        let status = Status::from_str(status_str);
-                        
-                        let filtered = tasks_to_filter
-                            .clone()
-                            .filter_by_status(&status)
-                            .filter_by_assignee(&current_user)
-                            .into_iter()
-                            .filter(|task| !task.completed)
-                            .collect::<Vec<LiveTaskPayload>>();
-
-                        if !filtered.is_empty() {
-                            temp_entries.push((status_str.clone(), filtered));
+                if target_page == "My Tasks" {
+                    let mut temp_entries: Vec<(String, Vec<LiveTaskPayload>)> = Vec::new();
+                    if let Some(cfg) = layout_configs.get(target_page) {
+                        for status_str in &cfg.valid_keys {
+                            let status = Status::from_str(status_str);
+                            let filtered = tasks_to_filter
+                                .clone()
+                                .filter_by_status(&status)
+                                .filter_by_assignee(&current_user)
+                                .into_iter()
+                                .filter(|task| !task.completed)
+                                .collect::<Vec<LiveTaskPayload>>();
+                            if !filtered.is_empty() {
+                                temp_entries.push((status_str.clone(), filtered));
+                            }
                         }
                     }
-                    // Sort entries for target page
-                    temp_entries.sort_by(|(a, _), (b, _)| {
-                        match (a.as_str(), b.as_str()) {
-                            ("Todo", _) => std::cmp::Ordering::Less,
-                            (_, "Todo") => std::cmp::Ordering::Greater,
-                            ("In Repair", _) => std::cmp::Ordering::Less,
-                            (_, "In Repair") => std::cmp::Ordering::Greater,
-                            _ => a.cmp(b),
-                        }
+                    temp_entries.sort_by(|(a, _), (b, _)| match (a.as_str(), b.as_str()) {
+                        ("Todo", _) => std::cmp::Ordering::Less,
+                        (_, "Todo") => std::cmp::Ordering::Greater,
+                        ("In Repair", _) => std::cmp::Ordering::Less,
+                        (_, "In Repair") => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
                     });
                     for (status_str, filtered) in temp_entries {
-                        target_map.insert(status_str.clone(), filtered);
-                        target_ordered_keys.push(status_str);
+                        target_ordered_keys.push(status_str.clone());
+                        target_map.insert(status_str, filtered);
                     }
                 } else {
                     for user in self.store_users.iter() {
                         let filtered = tasks_to_filter
                             .clone()
                             .filter_by_assignee(user)
-                            .filter_by_completion(*target_page == "Completed Tasks")
+                            .filter_by_completion(target_page == "Completed Tasks")
                             .filter_by_store(user, &store_selection);
                         if !filtered.is_empty() {
                             let username = user.get_username().to_string();
-                            target_map.insert(username.clone(), filtered);
-                            target_ordered_keys.push(username);
+                            target_ordered_keys.push(username.clone());
+                            target_map.insert(username, filtered);
                         }
                     }
                 }
-                if !target_map.is_empty() {
-                    // Found a page with matching tasks; switch to it
-                    if let Some((surface_index, node_index, tab_index)) = self.tree.find_tab(&target_page.to_string()) {
-                        self.tree.set_active_tab((surface_index, node_index, tab_index));
-                        // log::debug!("Switched to page {} with matching tasks", target_page);
-                        // Update the current page to render the target page
-                        let target_config = layout_configs.get(*target_page).expect("Layout config not found");
-                        // Build initial order and then apply user's saved order if present
-                        // Apply user's saved order to target_ordered_keys if any
-                        if let Some(user) = self.current_user.as_ref() {
-                            if let Some(saved) = user.get_page_task_columns(target_page) {
-                                let mut applied: Vec<String> = Vec::new();
-                                for k in saved.iter() {
-                                    if target_map.contains_key(k) && !applied.contains(k) { applied.push(k.clone()); }
-                                }
-                                for k in target_ordered_keys.iter() {
-                                    if !applied.contains(k) { applied.push(k.clone()); }
-                                }
-                                target_ordered_keys = applied;
-                            }
-                        }
+                let total_count: usize = target_map.values().map(|v| v.len()).sum();
+                (target_map, target_ordered_keys, total_count)
+            };
 
-                        let mut new_layout = TaskLayout::new(
-                            target_map,
-                            target_ordered_keys,
-                            self.store_users.clone(),
-                            self.search_results.clone(),
-                            target_page.to_string(),
-                        ); 
-                        
-                        if target_config.update_assignees {
-                            new_layout.update_assignees(self.store_users.clone());
-                        }
-                        self.task_layouts.insert(target_page.to_string(), new_layout);
-                        if let Some(layout) = self.task_layouts.get_mut(*target_page) {
-                            layout.layout_cols(ui, self.ui_actions_tx.clone());
-                        }
-                        return;
-                    } else {
-                        log::warn!("Tab {} not found in tree", target_page);
-                    }
+            // Compute best page by precedence order
+            let pages = ["My Tasks", "Store Tasks", "Completed Tasks"];
+            let mut best_page: Option<(&str, BTreeMap<String, Vec<LiveTaskPayload>>, Vec<String>)> = None;
+            let mut best_count = 0usize;
+            for p in pages.iter() {
+                let (p_map, p_order, p_count) = build_for_page(p);
+                if p_count > 0 && (best_page.is_none() || p_count > best_count) {
+                    best_count = p_count;
+                    best_page = Some((p, p_map, p_order));
                 }
             }
-            log::debug!("No other page has matching tasks; staying on {}", page);
+
+            if let Some((best, target_map, mut target_ordered_keys)) = best_page {
+                // If the best page is the current page, continue with the normal path below
+                if best != page {
+                    // Apply user's saved order to target_ordered_keys if any (for the best page)
+                    if let Some(user) = self.current_user.as_ref() {
+                        if let Some(saved) = user.get_page_task_columns(best) {
+                            let mut applied: Vec<String> = Vec::new();
+                            for k in saved.iter() {
+                                if target_map.contains_key(k) && !applied.contains(k) { applied.push(k.clone()); }
+                            }
+                            for k in target_ordered_keys.iter() {
+                                if !applied.contains(k) { applied.push(k.clone()); }
+                            }
+                            target_ordered_keys = applied;
+                        }
+                    }
+
+                    // Ephemeral render of the best-page layout inside the current tab
+                    let mut temp_layout = TaskLayout::new(
+                        target_map,
+                        target_ordered_keys,
+                        self.store_users.clone(),
+                        self.search_results.clone(),
+                        best.to_string(),
+                    );
+                    if let Some(cfg) = layout_configs.get(best) {
+                        if cfg.update_assignees {
+                            temp_layout.update_assignees(self.store_users.clone());
+                        }
+                    }
+                    temp_layout.layout_cols(ui, self.ui_actions_tx.clone());
+                    return;
+                }
+            }
         }
 
         // Update or create layout

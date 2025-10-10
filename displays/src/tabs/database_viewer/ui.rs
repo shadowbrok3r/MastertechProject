@@ -1,5 +1,5 @@
 use database::schema::User;
-use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui};
+use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, scroll_area};
 use egui_data_table::{egui::Widget, Renderer};
 use super::{row_viewer::DatabaseTableSelection, DatabaseEditor};
 
@@ -89,9 +89,9 @@ impl DatabaseEditor {
                 Renderer::new(table, &mut self.database_viewer)
                     // .with_table_row_height(80.)
                     .with_style_modify(|s| {
+                        s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
                         s.single_click_edit_mode = true;
                         s.auto_shrink = [false, false].into();
-                        
                     })
                     .ui(ui);
             }

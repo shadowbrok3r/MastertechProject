@@ -132,7 +132,9 @@ impl ChatView {
             .collect();
 
         // Process new notes, adding only non-duplicates
-        for note in notes {
+        for mut note in notes {
+            // Make sure seeded notes are tied to this chat's task
+            note.set_task_id(&self.task_id);
             if seen_ids.insert(note.id.to_string()) {
                 // Add to edit_text (overwrites if ID exists, but seen_ids ensures it’s new)
                 self.edit_text.insert(note.id.to_string(), note.clone());

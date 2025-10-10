@@ -4,7 +4,6 @@ use egui_extras::Column as TableColumnConfig;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
-use log::info;
 
 const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 
@@ -63,13 +62,9 @@ pub struct SerialsViewer {
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
 impl RowViewer<SerialsData> for SerialsViewer {
-    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<SerialsData>> {
-        Some(Codec)
-    }
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<SerialsData>> { Some(Codec) }
 
-    fn num_columns(&mut self) -> usize {
-        5
-    }
+    fn num_columns(&mut self) -> usize { 5 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         ["Item Code", "Serial Number", "Order", "Location", "     "][column].into()
@@ -79,9 +74,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
         [true, true, true, true, true][column]
     }
 
-    fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
-        &self.filter
-    }
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
 
     fn filter_row(&mut self, row: &SerialsData) -> bool {
         let filter = &self.filter.to_uppercase();
@@ -162,7 +155,11 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     } else {
                         Color32::from_rgb(51, 255, 189)
                     };
-                    Button::new(RichText::new(&row.2).color(color)).ui(ui)
+                    let res = Button::new(RichText::new(&row.2).color(color)).ui(ui);
+                    if &row.2 != "Not Attached" || &row.2 != "S/N Info ⮫" && res.clicked() {
+                        OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
+                    }
+                    res
                 })
                 .inner
             }
@@ -188,20 +185,23 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     None
                 } else {
                     let url = row.2.clone();
-                    Some(
-                        Hyperlink::from_label_and_url(
-                            format!(" {}", row.2.clone()), 
-                            format!("{BASE_URL}{}", last_n(&url, 7))
-                        )
-                        .open_in_new_tab(true)
-                        .ui(ui)
+                    if Hyperlink::from_label_and_url(
+                        format!(" {}", row.2.clone()), 
+                        format!("{BASE_URL}{}", last_n(&url, 7))
                     )
+                    .open_in_new_tab(true)
+                    .ui(ui)
+                    .clicked() {
+                        OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
+                    }
+                    None
                 }
             },
             3 => Some(ui.label(format!("{}", row.3))),
             _ => None
         }
     }
+    
     fn on_cell_view_response(
         &mut self,
         row: &SerialsData,
@@ -222,7 +222,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
     }
 
     fn set_cell_value(&mut self, src: &SerialsData, dst: &mut SerialsData, column: usize) {
-        info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
+        // info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
         match column {
             0 => dst.0 = src.0.clone(),
             1 => dst.1 = src.1.clone(),
@@ -281,6 +281,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
         }
     }
 
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &SerialsData) -> bool { false }
 }
 
 fn last_n(s: &str, n: usize) -> &str {

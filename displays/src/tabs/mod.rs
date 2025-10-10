@@ -246,7 +246,7 @@ impl SharedContext {
 impl egui_dock::TabViewer for SharedContext {
     type Tab = String;
 
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+    fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "My Tasks" => self.render_layout(ui, "My Tasks"),
             "Store Tasks" => self.render_layout(ui, "Store Tasks"),

@@ -37,12 +37,7 @@ impl RowViewer<KothTableData> for KothRowViewer {
         }
     }
 
-    fn is_editable_cell(&mut self, column: usize, _row: usize, _row_value: &KothTableData) -> bool {
-        match column {
-            0 => true,
-            _ => false
-        }    
-    }
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &KothTableData) -> bool { false }
 
     fn is_sortable_column(&mut self, _column: usize) -> bool { true }
 
@@ -61,6 +56,9 @@ impl RowViewer<KothTableData> for KothRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &KothTableData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
         match column {
             0 => {
                 Hyperlink::from_label_and_url(

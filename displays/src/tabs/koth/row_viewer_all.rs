@@ -34,6 +34,9 @@ impl RowViewer<AllEmployeesTableData> for AllEmployeesRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &AllEmployeesTableData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
         match column {
             0 => { ui.label(&row.employee_name); }
             1 => { ui.vertical_centered(|ui| ui.label(format!("{} / {}", row.total_sales, row.total_orders))); }

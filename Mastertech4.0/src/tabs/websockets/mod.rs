@@ -537,7 +537,7 @@ impl WebConsoleFrontend {
                                             let mut layout_job: eframe::egui::text::LayoutJob =
                                                 highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), buf.as_str(), "bash".into()); // || "zsh".into()
                                             layout_job.wrap.max_width = wrap_width;
-                                            ui.fonts(|f| f.layout_job(layout_job))
+                                            ui.fonts_mut(|f| f.layout_job(layout_job))
                                         };
                                         TextEdit::singleline(&mut txt.text())
                                             .id_salt(Id::new(format!("{item:?}-{count:?}")))
@@ -593,7 +593,7 @@ impl WebConsoleFrontend {
                 let mut layout_job =
                     highlight(ui.ctx(), ui.style(), &theme, buf.as_str(), "bash".into()); // || "zsh".into()
                 layout_job.wrap.max_width = wrap_width;
-                ui.fonts(|f| f.layout_job(layout_job))
+                ui.fonts_mut(|f| f.layout_job(layout_job))
             };
 
             let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send Message").layouter(&mut layouter).ui(ui);

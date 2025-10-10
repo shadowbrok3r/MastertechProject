@@ -35,8 +35,31 @@ impl MtechServer{
             .draggable_tabs(true)
             .show(ctx, &mut self);
 
-        // self.added_nodes.drain(..).for_each(|(surface_idx, node_idx)| {
-        //     self.tree.
-        // });
+        // Apply any pending add/remove requests queued from TabViewer/logic
+        if !self.shared_ctx.pending_tab_removes.is_empty() || !self.shared_ctx.pending_tab_adds.is_empty() {
+            // First remove tabs
+            for name in self.shared_ctx.pending_tab_removes.drain(..) {
+                if let Some(index) = self.shared_ctx.tree.find_tab(&name) {
+                    self.shared_ctx.tree.remove_tab(index);
+                }
+                self.shared_ctx.open_tabs.remove(&name);
+            }
+            // Then add tabs to requested surface/node if provided, otherwise to focused leaf
+            for (surface, node, name) in self.shared_ctx.pending_tab_adds.drain(..) {
+                // Focus the target location before pushing
+                self.shared_ctx.tree.set_focused_node_and_surface((surface, node));
+                self.shared_ctx.tree.push_to_focused_leaf(name.clone());
+                self.shared_ctx.open_tabs.insert(name);
+            }
+        }
+
+        // Apply any pending tab activation now
+        if let Some(name) = self.shared_ctx.pending_activate_tab.take() {
+            if let Some((surface_index, node_index, tab_index)) = self.shared_ctx.tree.find_tab(&name) {
+                self.shared_ctx.tree.set_active_tab((surface_index, node_index, tab_index));
+            } else {
+                log::warn!("(wasm) Pending activate tab '{}' not found after render", name);
+            }
+        }
     }
 }

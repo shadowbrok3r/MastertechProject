@@ -8,6 +8,10 @@ use surrealdb::RecordId;
 use serde::Deserialize;
 use serde::Serialize;
 use chrono::Utc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// Global guard to ensure expensive, store-wide notes fetch is only triggered once
+static NOTES_FETCH_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize)]
 pub struct TaskLayout{
@@ -132,15 +136,22 @@ impl TaskLayout {
         
         // Only refetch/stream notes after this page has rendered at least once
         if !self.has_run {
-            log::error!("update_col_names (post-first-render)");
-            let tx = self.notes_tx.clone();
-            // let map = self.task_map.clone();
-            PlatformSpawner::spawn(async move {
-                match TaskNotePayload::get_all_notes_in_my_store(tx.clone()).await {
-                    Ok(_) => log::info!("Got all notes for layout"),
-                    Err(e) => log::error!("Error getting notes for layout: {e:?}"),
-                }
-            });
+            log::info!("TaskLayout first receive call (post-first-render)");
+            // Ensure global fetch runs only once across all TaskLayout instances
+            if NOTES_FETCH_STARTED
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                let tx = self.notes_tx.clone();
+                PlatformSpawner::spawn(async move {
+                    match TaskNotePayload::get_all_notes_in_my_store(tx.clone()).await {
+                        Ok(_) => log::info!("Got all notes for layout"),
+                        Err(e) => log::error!("Error getting notes for layout: {e:?}"),
+                    }
+                });
+            } else {
+                log::info!("Skipping global notes fetch; already started once");
+            }
         }
     }
 
