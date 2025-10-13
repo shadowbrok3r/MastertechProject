@@ -1,4 +1,4 @@
-use database::schema::{helper_traits::parse_email_user, CarboniteResponse, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
+use database::schema::{CarboniteResponse, DriveData, TASK_TABLE, TICKET_TABLE, TaskNotePayload, helper_traits::parse_email_user, prestashop::OrderType};
 use crate::{app_state::SharedContext, modals::ModalType, PlatformSpawner, Spawner};
 use log::info;
 
@@ -9,6 +9,7 @@ impl SharedContext {
 
             info!("SharedContext -> receive_prestashop -> {:?}", self.tur.data.clone());
             let customer = &mut self.tur.customer_data;
+            let computer = &mut self.tur.computer_data;
             let ticket = &mut self.tur.ticket_data;
             let task = &mut self.tur.task_data;
             let task_notes = &mut self.tur.task_notes;
@@ -43,6 +44,37 @@ impl SharedContext {
                     task_id: Some(task.id.clone()),
                     ..msg.clone()
                 });
+            }
+
+            
+            if OrderType::from_id_str(&data.order.order_type) == OrderType::SalesOrder {
+                for details in data.order.associations.order_rows.iter() {
+                    match details.product_name.to_lowercase().as_str() {
+                        "cpu/" => { computer.cpu = details.product_name.clone(); }
+                        "ddr" => { computer.ram = details.product_name.clone(); }
+                        "gpu/" => { computer.gpu = details.product_name.clone(); }
+                        "m.2/" | "ssd/" => { 
+                            computer.add_disk(DriveData {
+                                drive_letter: details.product_name.clone(),
+                                drive_type: "SSD".to_string(),
+                                total_size: details.product_name.split('/').last().unwrap_or("").to_string(),
+                                space_left: "".to_string(),
+                            });
+                        }
+                        "hdd/" => { 
+                            computer.add_disk(DriveData {
+                                drive_letter: details.product_name.clone(),
+                                drive_type: "HDD".to_string(),
+                                total_size: details.product_name.split('/').last().unwrap_or("").to_string(),
+                                space_left: "".to_string(),
+                            });
+                        }
+                        "mb/" => { computer.motherboard_name = details.product_name.clone(); }
+                        "lap/" => { computer.ram = details.product_name.clone(); }
+                        "sw/win11" => { computer.operating_system = "Windows 11".to_string(); }
+                        _ => {}
+                    }
+                }
             }
 
             customer.id = data.customer.id.clone();
