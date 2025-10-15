@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "MtechServer2.0"]
+members = [ "database" , "displays", "Mastertech4.0"]
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -29,7 +29,7 @@ futures = "0.3.31"
 fuzzy-matcher = "0.3"
 rusty-s3 = "0.8.1"
 rfd = "0.15"
-regex = "1.11"
+regex = "1.12"
 async-trait = "0.1"
 once_cell = "1"
 simplelog = "0.12.2"
@@ -41,7 +41,7 @@ web-time = "1"
 wasm-bindgen-futures = "0.4.54"
 brotli = "8.0.2"
 base64 = "0.22"
-tokio = { version = "1.47.0", features = ["full", "tracing"] }
+tokio = { version = "1.48.0", features = ["full", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } # features = ["now", "wasmbind", "wasm-bindgen", "js-sys"]
 async-openai-wasm = { version = "0.29" }
 async-openai = { version = "0.29" }
@@ -54,23 +54,23 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
-# codegen-units = 1
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
+codegen-units = 1
 
-[profile.wasm-dev]
-inherits = "dev"
-opt-level = 1
+# [profile.wasm-dev]
+# inherits = "dev"
+# opt-level = 1
 
-[profile.server-dev]
-inherits = "dev"
+# [profile.server-dev]
+# inherits = "dev"
 
-[profile.android-dev]
-inherits = "dev"
+# [profile.android-dev]
+# inherits = "dev"
 
 # tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
 # socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }

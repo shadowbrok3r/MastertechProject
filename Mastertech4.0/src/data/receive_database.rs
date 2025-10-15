@@ -55,6 +55,7 @@ impl MasterTechApp {
                                 options: ToastOptions::default()
                                     .show_progress(true)
                                     .duration_in_seconds(6.0),
+                                ..Default::default()
                             };
                             toast.add(auth_toast);
                         } else {
@@ -74,6 +75,7 @@ impl MasterTechApp {
                             options: ToastOptions::default()
                                 .show_progress(true)
                                 .duration_in_seconds(6.0),
+                            ..Default::default()
                         };
                         toast.add(auth_toast);
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Needs login".to_string()));

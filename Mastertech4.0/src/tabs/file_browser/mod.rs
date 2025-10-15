@@ -678,6 +678,7 @@ impl FileBrowser {
                 options: ToastOptions::default()
                     .show_progress(true)
                     .duration_in_seconds(6.0),
+                ..Default::default()
             };
             self.toasts.add(copy_toast);
 
@@ -734,6 +735,7 @@ impl FileBrowser {
                     options: ToastOptions::default()
                         .show_progress(true)
                         .duration_in_seconds(6.0),
+                    ..Default::default()
                 };
                 self.toasts.add(paste_toast);
             }

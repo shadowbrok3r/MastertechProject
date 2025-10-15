@@ -1,5 +1,5 @@
 use database::schema::{LiveTaskPayload, Store};
-use crate::{app_state::SharedContext, modals::ModalType, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::{app_state::SharedContext, modals::ModalType, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use log::info;
 use surrealdb::Action;
 
@@ -70,6 +70,7 @@ impl SharedContext {
                                 options: ToastOptions::default()
                                     .show_progress(true)
                                     .duration_in_seconds(6.0),
+                                style: ToastStyle::default(),
                             };
                             self.toasts.add(toast);
                         }
