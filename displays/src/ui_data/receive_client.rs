@@ -1,5 +1,5 @@
 use database::{live_data::{handle_live_delete, update_or_insert_anything}, schema::ConnectedClient};
-use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use eframe::egui::{Color32, RichText};
 use std::collections::BTreeMap;
 use surrealdb::Action;
@@ -44,6 +44,7 @@ impl SharedContext {
                         kind: ToastKind::Success,
                         text: txt.into(),
                         options: toast_opts,
+                        style: ToastStyle::default(),
                     };
 
                     toast.add(client_connected_toast);

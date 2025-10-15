@@ -1,5 +1,5 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
-use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions}};
+use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::Style;
 use std::sync::Arc;
@@ -127,6 +127,7 @@ impl crate::app_state::SharedContext {
             options: ToastOptions::default()
                 .show_progress(true)
                 .duration_in_seconds(6.0),
+            style: ToastStyle::default(),
         };
         toast.add(auth_toast);
     }
@@ -143,6 +144,7 @@ impl crate::app_state::SharedContext {
                     options: crate::ui_tools::toasts::ToastOptions::default()
                         .show_progress(true)
                         .duration_in_seconds(6.0),
+                    style: ToastStyle::default(),
                 };
                 toast.add(error_toast);
             }

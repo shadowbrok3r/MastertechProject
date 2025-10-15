@@ -461,7 +461,8 @@ impl MastertechContext {
                         text: "You are not logged in".into(),
                         options: ToastOptions::default()
                             .show_progress(true)
-                            .duration_in_seconds(6.0)
+                            .duration_in_seconds(6.0),
+                        ..Default::default()
                     };
                     toast.add(error_toast);
                 }

@@ -1,85 +1,9 @@
-//! This crate provides a convenient interface for showing toast notifications with
-//! the [egui](https://github.com/emilk/egui) library.
-//!
-//! For a complete example, see <https://github.com/urholaukkarinen/egui-toast/tree/main/demo>.
-//!
-//! # Usage
-//!
-//! To get started, create a `Toasts` instance in your rendering code and specify the anchor position and
-//! direction for the notifications. Toast notifications will show up starting from the specified
-//! anchor position and stack up in the specified direction.
-//! ```
-//! # use std::time::Duration;
-//! use Align2;
-//! # use egui_toast::{Toasts, ToastKind, ToastOptions, Toast};
-//! # egui_toast::__run_test_ui(|ui, ctx| {
-//! let mut toasts = Toasts::new()
-//!     .anchor(Align2::LEFT_TOP, (10.0, 10.0))
-//!     .direction(Direction::TopDown);
-//!
-//! toasts.add(Toast {
-//!     text: "Hello, World".into(),
-//!     kind: ToastKind::Info,
-//!     options: ToastOptions::default()
-//!         .duration_in_seconds(3.0)
-//!         .show_progress(true)
-//!         .show_icon(true)
-//! });
-
-//!
-//! // Show all toasts
-//! toasts.show(ctx);
-//! # })
-//! ```
-//!
-//! Look of the notifications can be fully customized by specifying a custom rendering function for a specific toast kind
-//! with [`Toasts::custom_contents`]. [`ToastKind::Custom`] can be used if the default kinds are not sufficient.
-//!
-//! ```
-//! # use std::time::Duration;
-//! # use std::sync::Arc;
-//! # use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
-//! # egui_toast::__run_test_ui(|ui, ctx| {
-//! const MY_CUSTOM_TOAST: u32 = 0;
-//!
-//! fn custom_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
-//!     Frame::window(ui.style()).show(ui, |ui| {
-//!         ui.label(toast.text.clone());
-//!     }).response
-//! }
-//!
-//! let mut toasts = Toasts::new()
-//!     .custom_contents(MY_CUSTOM_TOAST, custom_toast_contents);
-//!
-//! // Add a custom toast that never expires
-//! toasts.add(Toast {
-//!     text: "Hello, World".into(),
-//!     kind: ToastKind::Custom(MY_CUSTOM_TOAST),
-//!     options: ToastOptions::default(),
-//! });
-//!
-//! # })
-//! ```
-//!
-#![deny(clippy::all)]
-
-// pub use toast::*;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use eframe::egui::{CentralPanel, WidgetText};
-
 use eframe::egui::epaint::RectShape;
-use eframe::egui::{
-    Align2, Area, Color32, Context, Direction, Frame, Id, Order, Pos2, Response, RichText,
-    Shape, Stroke, Ui,
-};
-
-pub const INFO_COLOR: Color32 = Color32::from_rgb(0, 155, 255);
-pub const WARNING_COLOR: Color32 = Color32::from_rgb(255, 212, 0);
-pub const ERROR_COLOR: Color32 = Color32::from_rgb(255, 32, 0);
-pub const SUCCESS_COLOR: Color32 = Color32::from_rgb(0, 255, 32);
+use eframe::egui::{Align2, Area, Context, Direction, Frame, Id, Order, Pos2, Response, CornerRadius, Shape, Stroke, Ui, StrokeKind};
+use eframe::egui::{Color32, WidgetText};
 
 pub type ToastContents = dyn Fn(&mut Ui, &mut Toast) -> Response + Send + Sync;
 
@@ -110,6 +34,17 @@ impl Default for Toasts {
 impl Toasts {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a new [`Toasts`] instance with a custom id
+    ///
+    /// This can be useful if you want to have multiple toast groups
+    /// in the same UI.
+    pub fn with_id(id: Id) -> Self {
+        Self {
+            id,
+            ..Default::default()
+        }
     }
 
     /// Position where the toasts show up.
@@ -225,21 +160,19 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         .stroke(Stroke::NONE)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let (icon, color) = match toast.kind {
-                    ToastKind::Warning => ("⚠", WARNING_COLOR),
-                    ToastKind::Error => ("❗", ERROR_COLOR),
-                    ToastKind::Success => ("✔", SUCCESS_COLOR),
-                    _ => ("ℹ", INFO_COLOR),
-                };
-
                 let a = |ui: &mut Ui, toast: &mut Toast| {
                     if toast.options.show_icon {
-                        ui.label(RichText::new(icon).color(color));
+                        ui.label(match toast.kind {
+                            ToastKind::Warning => toast.style.warning_icon.clone(),
+                            ToastKind::Error => toast.style.error_icon.clone(),
+                            ToastKind::Success => toast.style.success_icon.clone(),
+                            _ => toast.style.info_icon.clone(),
+                        });
                     }
                 };
                 let b = |ui: &mut Ui, toast: &mut Toast| ui.label(toast.text.clone());
                 let c = |ui: &mut Ui, toast: &mut Toast| {
-                    if ui.button("🗙").clicked() {
+                    if ui.button(toast.style.close_button_text.clone()).clicked() {
                         toast.close();
                     }
                 };
@@ -268,7 +201,7 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
         response.rect,
         frame.corner_radius,
         ui.visuals().window_stroke,
-        eframe::egui::StrokeKind::Outside
+        StrokeKind::Inside
     ));
     ui.painter().add(frame_shape);
 
@@ -276,7 +209,7 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
 }
 
 fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast) {
-    let rounding = eframe::egui::CornerRadius {
+    let rounding = CornerRadius {
         nw: 0,
         ne: 0,
         ..ui.visuals().window_corner_radius
@@ -292,28 +225,9 @@ fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast) {
     );
 }
 
-pub fn __run_test_ui(mut add_contents: impl FnMut(&mut Ui, &Context)) {
-    let ctx = Context::default();
-    let _ = ctx.run(Default::default(), |ctx| {
-        CentralPanel::default().show(ctx, |ui| {
-            add_contents(ui, ctx);
-        });
-    });
-}
-
-pub fn __run_test_ui_with_toasts(mut add_contents: impl FnMut(&mut Ui, &mut Toasts)) {
-    let ctx = Context::default();
-    let _ = ctx.run(Default::default(), |ctx| {
-        CentralPanel::default().show(ctx, |ui| {
-            let mut toasts = Toasts::new();
-            add_contents(ui, &mut toasts);
-        });
-    });
-}
-
-
-#[derive(Debug, Copy, Clone, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Default, Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub enum ToastKind {
+    #[default]
     Info,
     Warning,
     Error,
@@ -327,21 +241,67 @@ impl From<u32> for ToastKind {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Toast {
     pub kind: ToastKind,
     pub text: WidgetText,
     pub options: ToastOptions,
+    pub style: ToastStyle,
 }
 
 impl Toast {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn kind(mut self, kind: ToastKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn text(mut self, text: impl Into<WidgetText>) -> Self {
+        self.text = text.into();
+        self
+    }
+
+    pub fn options(mut self, options: ToastOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    pub fn style(mut self, style: ToastStyle) -> Self {
+        self.style = style;
+        self
+    }
+
     /// Close the toast immediately
     pub fn close(&mut self) {
         self.options.ttl_sec = 0.0;
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
+pub struct ToastStyle {
+    pub info_icon: WidgetText,
+    pub warning_icon: WidgetText,
+    pub error_icon: WidgetText,
+    pub success_icon: WidgetText,
+    pub close_button_text: WidgetText,
+}
+
+impl Default for ToastStyle {
+    fn default() -> Self {
+        Self {
+            info_icon: WidgetText::from("ℹ").color(Color32::from_rgb(0, 155, 255)),
+            warning_icon: WidgetText::from("⚠").color(Color32::from_rgb(255, 212, 0)),
+            error_icon: WidgetText::from("❗").color(Color32::from_rgb(255, 32, 0)),
+            success_icon: WidgetText::from("✔").color(Color32::from_rgb(0, 255, 32)),
+            close_button_text: WidgetText::from("🗙"),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct ToastOptions {
     /// Whether the toast should include an icon.
     pub show_icon: bool,

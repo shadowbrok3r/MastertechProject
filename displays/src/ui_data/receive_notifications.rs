@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::app_state::SharedContext;
+use crate::{app_state::SharedContext, ui_tools::toasts::ToastStyle};
 use database::schema::LiveTaskPayload;
 use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
 use eframe::egui::{Button, Color32, FontId, Margin, RichText, Ui, Widget};
@@ -66,6 +66,7 @@ impl SharedContext {
                                     .font(FontId::proportional(15.))
                                     .into(),
                                     options: ToastOptions::default().duration(None),
+                                    style: ToastStyle::default(),
                                 };
                                 toast.add(auth_toast);
                             }

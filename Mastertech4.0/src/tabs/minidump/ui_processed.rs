@@ -1,7 +1,4 @@
 #![allow(clippy::too_many_arguments)]
-
-use std::arch::x86_64;
-
 use crate::tabs::minidump::{frame_signature, MiniDumpApp, Tab, frame_source, listing, threadname};
 use super::processor::ProcessingStatus;
 use eframe::egui;
