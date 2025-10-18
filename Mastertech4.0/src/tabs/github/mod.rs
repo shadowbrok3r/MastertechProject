@@ -28,8 +28,7 @@ impl MastertechContext {
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
         ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
         ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
         ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
         ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
@@ -188,11 +187,11 @@ pub async fn get_github_releases(
     client: Client,
 ) -> Result<(), Error> {
     let response: Vec<GithubRelease> = client
-        .get("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/releases") // /latest
+        .get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "shadowbrok3r")
-        // .bearer_auth(database::DOWNLOAD_TOKEN)
+        .bearer_auth(database::DOWNLOAD_TOKEN)
         .send()
         .await?
         .json()

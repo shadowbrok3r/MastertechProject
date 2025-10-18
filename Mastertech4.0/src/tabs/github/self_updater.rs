@@ -58,7 +58,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 .header(CONTENT_TYPE, "application/octet-stream")
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .header(USER_AGENT, "shadowbrok3r")
-                // .bearer_auth(database::DOWNLOAD_TOKEN)
+                .bearer_auth(database::DOWNLOAD_TOKEN)
                 .send()
                 .await
                 .map_err(|e| {

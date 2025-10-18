@@ -78,7 +78,6 @@ pub async fn get_qcs() -> anyhow::Result<Vec<Qc>, anyhow::Error> {
     Ok(qcs)
 }
 
-
 pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_tasks");
 
@@ -114,7 +113,6 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
 
     Ok(())
 }
-
 
 pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_completed_tasks");
@@ -724,33 +722,42 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         .request_resources_wasm("customer_threads", query.clone())
         .await?;
 
+    log::info!("CUSTOMER THREADS LEN: {}", customer_threads.len());
+    
     let mut customer_messages: Vec<CustomerMessage> = Vec::new();
     let mut task_notes: Vec<TaskNotePayload> = Vec::new();
 
     if !customer_threads.is_empty() {
         for thread in customer_threads.iter() {
-            for msg in thread.associations.customer_messages.iter() {
-                let msg: CustomerMessage =  api_call
-                    .request_subresources_by_id_wasm(
-                        "customer_messages",
-                        "customer_message",
-                        msg.id.as_str(),
-                    )
-                    .await?;
+            if &thread.id != ""  && !thread.associations.customer_messages.is_empty() {
+                for msg in thread.associations.customer_messages.iter() {
+                    log::info!("Pulling Customer messages");
+                    let msg: CustomerMessage =  api_call
+                        .request_subresources_by_id_wasm(
+                            "customer_messages",
+                            "customer_message",
+                            msg.id.as_str(),
+                        )
+                        .await?;
 
-                match msg.into_task_note(order_number).await {
-                    Ok(task_note) => task_notes.push(task_note),
-                    Err(e) => log::error!("Error converting cust msg into task note: {e:?}"),
+                    match msg.into_task_note(order_number).await {
+                        Ok(task_note) => task_notes.push(task_note),
+                        Err(e) => log::error!("Error converting cust msg into task note: {e:?}"),
+                    }
+
+                    customer_messages.push(msg)
                 }
-
-                customer_messages.push(msg)
             }
         }
     }
 
+    log::info!("Pulling order: {order_number}");
+
     let order: Order = api_call
         .request_subresources_by_id_wasm("orders", "order", order_number)
         .await?;
+
+    log::info!("Pulled order");
 
     if order.id_customer.is_empty() {
         info!("schema/utilities.rs -> Order is likely gonna fuKKKK");
