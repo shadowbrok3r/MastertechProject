@@ -13,15 +13,11 @@ use mime_guess::from_path;
 use database::STORAGE_URL;
 use surrealdb::sql::Uuid;
 use rfd::FileHandle;
-// use regex::Regex;
 use bytes::Bytes;
 use std::iter;
 use log::info;
 #[cfg(feature="tokio")]
 use std::path::PathBuf;
-
-
-
 
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
@@ -40,7 +36,7 @@ impl S3Fetcher {
             STORAGE_URL.parse::<reqwest::Url>().unwrap(),
             rusty_s3::UrlStyle::Path,
             bucket_name.to_lowercase(),
-            "us-west"
+            database::REGION
         ).unwrap();
         
         let credentials = Credentials::new(access_key.to_string(), secret_key.to_string());
@@ -757,11 +753,10 @@ impl FileSystem {
         let access_key = self.user.get_minio_access_key().unwrap_or_default();
         let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
         PlatformSpawner::spawn(async move {
             let result = Self::perform_upload(
-                &parsed.clone(),
+                &name.clone(),
                 &access_key.clone(),
                 &secret_key.clone(),
                 path.clone(),
@@ -778,7 +773,6 @@ impl FileSystem {
         let _access_key = self.user.get_minio_access_key().unwrap_or_default();
         let _secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        let _parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         // tokio::spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
@@ -797,10 +791,9 @@ impl FileSystem {
         let access_key = self.user.get_minio_access_key().unwrap_or_default();
         let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         PlatformSpawner::spawn(async move {
             let result = Self::perform_download(
-                &parsed.clone(),
+                &name.clone(),
                 &access_key,
                 &secret_key,
                 tx.clone(),
@@ -819,12 +812,10 @@ impl FileSystem {
         let access_key = self.user.get_minio_access_key().unwrap_or_default();
         let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
-
         PlatformSpawner::spawn(async move {
             let result = Self::preview_file(
                 tx.clone(),
-                &parsed.clone(),
+                &name.clone(),
                 &access_key,
                 &secret_key,
                 &path
@@ -845,7 +836,7 @@ impl FileSystem {
         let parsed = name.split_once('@').unwrap_or_default().0.to_string();
     
         PlatformSpawner::spawn(async move {
-            let region = "us-west";
+            let region = database::REGION;
             let bucket = Bucket::new(
                 STORAGE_URL.to_string().parse::<Url>().unwrap(), 
                 rusty_s3::UrlStyle::Path, 
@@ -891,7 +882,7 @@ impl FileSystem {
     ) -> Result<(), Error> {
 
         let name = name.clone();
-        let region = "us-west";
+        let region = database::REGION;
         let client = Client::new();
         let credentials = Credentials::new(access_key, secret_key);
         let mut bytes: Bytes = Bytes::new();
@@ -973,7 +964,6 @@ impl FileSystem {
         let access_key = self.user.get_minio_access_key().unwrap_or_default();
         let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
 
         let new_name = if file_name.contains(' ') {
@@ -984,7 +974,7 @@ impl FileSystem {
 
         PlatformSpawner::spawn(async move {
             let result = Self::perform_upload_script(
-                &parsed.clone(),
+                &name.clone(),
                 &access_key.clone(),
                 &secret_key.clone(),
                 bytes,
@@ -1005,7 +995,7 @@ impl FileSystem {
     ) -> Result<(), Error> {
         let path = format!("Scripts/{file_name}");
         let name = name.clone();
-        let region = "us-west";
+        let region = database::REGION;
         let client = Client::new();
         let credentials = Credentials::new(access_key, secret_key);
 
@@ -1100,14 +1090,14 @@ impl FileSystem {
         path: &String,
     ) -> Result<String, Error> { // Return the downloaded content as a String
         let name = name.clone();
-        let region = "us-west";
+        let region = database::REGION;
         let bucket = Bucket::new(
             STORAGE_URL.to_string().parse::<Url>()?, 
             rusty_s3::UrlStyle::Path, 
             name, 
             region,
         )?;
-    
+        log::error!("BUCKET: {bucket:?}");
         let credentials = Credentials::new(access_key, secret_key);
     
         // Create the GET request action
@@ -1166,7 +1156,7 @@ impl FileSystem {
         task: impl Future<Output = Option<FileHandle>>
     ) -> Result<(), Error> {
         let name = name.clone();
-        let region = "us-west";
+        let region = database::REGION;
         let bucket = Bucket::new(
             STORAGE_URL.to_string().parse::<Url>()?, 
             rusty_s3::UrlStyle::Path, name, region

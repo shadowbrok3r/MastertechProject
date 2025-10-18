@@ -14,7 +14,8 @@ const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
-pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
+pub const REGION: &str = "us-east-1";
+pub const DB_URL: &str = "surrealdb.master-tech.app";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
 pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
@@ -26,7 +27,7 @@ pub const ISSUE_TOKEN: &str = "github_pat_11AEB2KMA0Pg2ZtYBR0Qbz_vwGB2xBqNXWK0hE
 pub const DOWNLOAD_TOKEN: &str = "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";
 
 
-// The static variable holding the currently logged-in user (if any)
+// The static variable holding the currently logged-in user
 // Wrapped in Mutex for safe interior mutability
 // Wrapped in Lazy for easy static initialization
 pub static CURRENT_USER_INFO: Lazy<std::sync::Mutex<Option<User>>> = Lazy::new(|| {
