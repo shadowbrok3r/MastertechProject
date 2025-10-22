@@ -137,8 +137,7 @@ impl OpenAiMcpSession {
                 description: Some("Structured command completions".into()),
                 schema: Some(schema_value),
                 strict: Some(true),
-            }),
-            verbosity: None
+            })
         };
 
         // Build request body (Responses API) with streaming enabled

@@ -1,9 +1,14 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
-use unicode_width::UnicodeWidthStr;
-use crate::{terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::{checklist::TodoItem, script_categories::{format_size, get_directory_size}}, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
+use crate::{terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
-use std::path::Path;
+use unicode_width::UnicodeWidthStr;
+
+#[cfg(target_os="windows")]
+use {
+    crate::terminal_mode::tabs::scripts::script_categories::{format_size, get_directory_size},
+    std::path::Path
+};
 
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -1177,19 +1182,22 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             log::info!("Current Category: {:?}\nCurrent Item: {:?}", current_category, current_item);
                         }
                     } else {
-                        self.log_message("POPUP OPEN");
-                        let custom_path = self.custom_path_field.get_text()[0].clone();
-                        if !custom_path.is_empty() {
-                            self.log_message(format!("CUSTOM PATH: {:?}", custom_path));
-                            let tx = self.path_size_tx.clone();
-                            std::thread::spawn(move || {
-                                let dir_size = get_directory_size(Path::new(&custom_path));
-                                let _ = tx.try_send(vec![(custom_path, format_size(dir_size))]);
-                            });
-
-                            if let Ok(mut input) = self.custom_path_field.input.try_borrow_mut() {
-                                input.select_all();
-                                input.cut();
+                        #[cfg(target_os="windows")]
+                        {
+                            self.log_message("POPUP OPEN");
+                            let custom_path = self.custom_path_field.get_text()[0].clone();
+                            if !custom_path.is_empty() {
+                                self.log_message(format!("CUSTOM PATH: {:?}", custom_path));
+                                let tx = self.path_size_tx.clone();
+                                std::thread::spawn(move || {
+                                    let dir_size = get_directory_size(Path::new(&custom_path));
+                                    let _ = tx.try_send(vec![(custom_path, format_size(dir_size))]);
+                                });
+    
+                                if let Ok(mut input) = self.custom_path_field.input.try_borrow_mut() {
+                                    input.select_all();
+                                    input.cut();
+                                }
                             }
                         }
                     }
