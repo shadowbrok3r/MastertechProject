@@ -106,6 +106,8 @@ impl MasterTechApp {
                 }
             }
 
+            // break out all of the computer stuff and make a function to take an OrderAssociation,
+            // and parse 'ComputerData' out of it
             *computer = ComputerData {
                 device_name: Some(device.device_name),
                 device_mfg: Some(device.device_mfg),
