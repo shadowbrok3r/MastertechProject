@@ -5,7 +5,7 @@ members = [ "database" , "displays", "Mastertech4.0"]
 [workspace.dependencies]
 database = { path = "database" }
 eframe = { version="0.33", features=["serde",  "default_fonts", "glow"], default-features=false }
-ratatui = { version = "0.29", features = ["crossterm", "unstable-widget-ref", "serde", "underline-color", "widget-calendar"]  }
+ratatui = { git = "https://github.com/ratatui/ratatui", tag = "ratatui-v0.30.0-beta.0", features = ["crossterm", "unstable-widget-ref", "serde", "underline-color", "widget-calendar"]  }
 egui_extras = { version = "0.33", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 wasm-cookies = { version= "0.2" }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
@@ -43,8 +43,8 @@ brotli = "8.0.2"
 base64 = "0.22"
 tokio = { version = "1.48.0", features = ["full", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } # features = ["now", "wasmbind", "wasm-bindgen", "js-sys"]
-async-openai-wasm = { version = "0.29" }
-async-openai = { version = "0.29" }
+async-openai-wasm = { version = "0.30.1" }
+async-openai = { version = "0.30.1" }
 # egui_colors = "0.9.0"
 itertools = "0.14"
 rmcp = { version = "0.8", features = ["server", "client", "transport-async-rw"] }

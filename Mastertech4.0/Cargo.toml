@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.6.1"
+version = "4.6.2"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2025"
-ProductVersion = "4.6.1"
+ProductVersion = "4.6.2"
 FileDescription = "Mastertech"
 
 [features]
@@ -47,11 +47,11 @@ nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5.0"
 ratatui-splash-screen = "0.1.4"
 tui-scrollview = "0.5.1"
-tachyonfx = "0.19"
+tachyonfx = "0.20.1"
 powershell_script = "1.1.0"
 color-eyre = "0.6.3"
 itertools = "0.14.0"
-unicode-width = "=0.2.0"
+unicode-width = "0.2.2"
 tui-logger = "0.17"
 arboard = "3"
 tempfile = "3.19"
@@ -94,7 +94,7 @@ dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
 indexmap = { version = "2.10.0", features = ["serde"] }
-throbber-widgets-tui = "0.8.0"
+throbber-widgets-tui = "0.9.0"
 
 [dependencies.egui]
 version = "0.33.0"
@@ -102,7 +102,7 @@ default-features = false
 features = ["rayon", "bytemuck"]
 
 [dependencies.crossterm]
-version = "0.28.1"
+version = "0.29.0"
 features = ["event-stream"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -138,7 +138,7 @@ minidump = { version = "0.26.0" }
 minidump-common = { version = "0.26.0" }
 minidump-processor = { version = "0.26.0", features = ["http"] }
 minidump-unwind = "0.26.0"
-wmi = "0.17.0"
+wmi = "0.18.0"
 evtx = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
