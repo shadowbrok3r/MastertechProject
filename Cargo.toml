@@ -10,7 +10,7 @@ egui_extras = { version = "0.33", features = ["datepicker", "syntect", "serde", 
 wasm-cookies = { version= "0.2" }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
 # surrealdb-alpha = {version = "3.0.6", features = ["protocol-ws"]}
-surrealdb = { version = "2.3", features = ["protocol-ws"] } 
+surrealdb = { version = "2.4.0", features = ["protocol-ws"] } 
 egui_logger = { git = "https://github.com/shadowbrok3r/egui_logger" }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = ["serde"] } # 
 structdiff = {version = "0.7", features = ["rustc_hash"]}
@@ -28,26 +28,26 @@ crossbeam = "0.8"
 futures = "0.3.31"
 fuzzy-matcher = "0.3"
 rusty-s3 = "0.8.1"
-rfd = "0.15"
+rfd = "0.16.0"
 regex = "1.12"
 async-trait = "0.1"
 once_cell = "1"
 simplelog = "0.12.2"
-bytes = "1.10"
+bytes = "1.11.0"
 gloo-console = "0.3.0"
 # egui_struct = "0.4"
-wasm-bindgen = "0.2.104"
+wasm-bindgen = "0.2.106"
 web-time = "1"
-wasm-bindgen-futures = "0.4.54"
+wasm-bindgen-futures = "0.4.56"
 brotli = "8.0.2"
 base64 = "0.22"
 tokio = { version = "1.48.0", features = ["full", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } # features = ["now", "wasmbind", "wasm-bindgen", "js-sys"]
-async-openai-wasm = { version = "0.30.1" }
-async-openai = { version = "0.30.1" }
+async-openai-wasm = { version = "0.29.5" }
+async-openai = { version = "0.29.5" } # , features = ["response-types"] }
 # egui_colors = "0.9.0"
 itertools = "0.14"
-rmcp = { version = "0.8", features = ["server", "client", "transport-async-rw"] }
+rmcp = { version = "0.9", features = ["server", "client", "transport-async-rw"] }
 
 [profile.dev]
 debug = true

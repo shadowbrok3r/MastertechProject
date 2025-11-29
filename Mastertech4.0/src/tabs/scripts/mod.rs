@@ -21,7 +21,7 @@ use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 pub struct SasAsset;
 
 #[cfg(target_os = "windows")]
-use wmi::{COMLibrary, WMIConnection, WMIError};
+use wmi::{WMIConnection, WMIError};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -369,8 +369,7 @@ pub struct Antivirus {
 pub fn query_antivirus() -> anyhow::Result<Vec<Antivirus>, WMIError> {
     // Initialize the COM Library
 
-    let com_con = COMLibrary::new()?;
-    let wmi_con = WMIConnection::new(com_con.into())?;
+    let wmi_con = WMIConnection::new()?;
 
     // Perform a WMI query
     let results: Vec<Antivirus> = wmi_con.raw_query("SELECT * FROM Win32_OperatingSystem")?; // ("SELECT displayName, productState FROM AntiVirusProduct")?;
