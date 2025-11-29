@@ -408,7 +408,7 @@ impl RataguiBackend {
 }
 
 impl Backend for RataguiBackend {
-    // type Error = Error;
+    type Error = std::io::Error;
 
     fn draw<'a, I>(&mut self, content: I) -> std::io::Result<()>
     where
