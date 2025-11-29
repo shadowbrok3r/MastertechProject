@@ -1,4 +1,4 @@
-use crate::{utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use checklist::{Category, Status, TodoItem, TodoList};
@@ -86,10 +86,10 @@ pub struct ScriptsTab<'a> {
     current_script: RefCell<Option<(Category, String)>>, 
     is_popup_open: RefCell<bool>,
     // destination_directory: String,
-    data_transfer_progress_tx: Sender<(f64, f64)>,
-    data_transfer_progress_rx: Receiver<(f64, f64)>,
-    total_bytes_read: f64,
-    total_byes_written: f64,
+    data_transfer_progress_tx: Sender<RobocopyMessage>,
+    data_transfer_progress_rx: Receiver<RobocopyMessage>,
+    /// Tracks active robocopy processes by PID
+    active_robocopy_processes: RefCell<HashMap<u32, RobocopyProgress>>,
     source_directories: Vec<(String, String)>,
     
     has_scrolled_manually: RefCell<bool>,
@@ -243,8 +243,7 @@ impl<'a> ScriptsTab<'a> {
             path_size_rx,
             data_transfer_progress_tx, 
             data_transfer_progress_rx, 
-            total_bytes_read: 0.0,
-            total_byes_written: 0.0,
+            active_robocopy_processes: RefCell::new(HashMap::new()),
             progress_tx, progress_rx,
 
             checklists,
@@ -349,23 +348,17 @@ impl<'a> ScriptsTab<'a> {
         }
 
 
-        if let Ok((total_read, total_written)) = self.data_transfer_progress_rx.try_recv() {
-            if self.total_bytes_read != total_read {
-                self.total_bytes_read = total_read;
+        // Handle robocopy progress messages
+        while let Ok(msg) = self.data_transfer_progress_rx.try_recv() {
+            match msg {
+                RobocopyMessage::Progress(progress) => {
+                    self.active_robocopy_processes.borrow_mut().insert(progress.pid, progress);
+                }
+                RobocopyMessage::Complete(pid) => {
+                    self.active_robocopy_processes.borrow_mut().remove(&pid);
+                    self.log_message(format!("Robocopy process {} completed", pid));
+                }
             }
-            if self.total_byes_written != total_written {
-                self.total_byes_written = total_written;
-            }
-
-            // let out = String::from_utf8(data_transfer_progress);
-            // match out {
-            //     Ok(output) => {
-            //         // Replace tabs with 4 spaces
-            //         let cleaned_output = output.trim_ascii().replace("\t", "    ");
-            //         self.log_message(cleaned_output);
-            //     },
-            //     Err(e) => self.log_message(format!("FromUTF8 Err: {e:?}")),
-            // }
         }
 
         #[cfg(target_os="windows")]

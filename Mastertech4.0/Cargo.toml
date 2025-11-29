@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.6.2"
+version = "4.6.3"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2025"
-ProductVersion = "4.6.2"
+ProductVersion = "4.6.3"
 FileDescription = "Mastertech"
 
 [features]
@@ -20,7 +20,6 @@ inline = []
 eframe = { version="0.33", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
-tui-textarea = { version = "0.7"}
 textwrap = "0.16"
 sysinfo = {version = "0.37.2", features = ["serde", "multithread"]}
 futures-util = "0.3"
@@ -45,9 +44,6 @@ ring = "0.17.14"
 semver = "1"
 nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5"
-ratatui-splash-screen = "0.1.4"
-tui-scrollview = "0.5"
-tachyonfx = "0.20"
 powershell_script = "1.1.0"
 color-eyre = "0.6"
 itertools = "0.14.0"
@@ -70,6 +66,10 @@ dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
 indexmap = { version = "2.10.0", features = ["serde"] }
+tui-textarea = { version = "0.7" }
+ratatui-splash-screen = "0.1.4"
+tui-scrollview = "0.5"
+tachyonfx = "0.20"
 throbber-widgets-tui = "0.9.0"
 
 # surrealdb-alpha ={ workspace = true }
@@ -102,11 +102,11 @@ default-features = false
 features = ["rayon", "bytemuck"]
 
 [dependencies.crossterm]
-version = "0.29.0"
+version = "0.28.1"
 features = ["event-stream"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = {version = "0.62.0", features = [
+windows = {version = "0.62", features = [
     "Win32_System",
     "Win32",
     "Win32_System_Com",
@@ -128,16 +128,16 @@ windows = {version = "0.62.0", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties"
 ]}
-windows-registry = "0.6.0"
-windows-core = "0.62.0"
+windows-registry = "0.6"
+windows-core = "0.62"
 windows_x86_64_msvc = "0.53"
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 memmap2 = "0.9"
 breakpad-symbols = { version = "0.26.0" }
-minidump = { version = "0.26.0" }
-minidump-common = { version = "0.26.0" }
-minidump-processor = { version = "0.26.0", features = ["http"] }
-minidump-unwind = "0.26.0"
+minidump = { version = "0.26" }
+minidump-common = { version = "0.26" }
+minidump-processor = { version = "0.26", features = ["http"] }
+minidump-unwind = "0.26"
 wmi = "0.18.0"
 evtx = "0.8"
 
@@ -155,7 +155,7 @@ harness = false
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "3.0.0"
-embed-resource = "3.0.1"
+embed-resource = "3.0.6"
 winres = "0.1"
 # embed-manifest = "1.4.0"
 

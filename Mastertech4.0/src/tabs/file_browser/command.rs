@@ -187,10 +187,50 @@ impl FileBrowser{
 
 }
 
+/// Progress update for a single robocopy process
+#[derive(Debug, Clone)]
+pub struct RobocopyProgress {
+    pub pid: u32,
+    pub source: String,
+    pub destination: String,
+    pub bytes_read: f64,
+    pub bytes_written: f64,
+    pub is_complete: bool,
+}
+
+/// Message type for robocopy progress channel
+#[derive(Debug, Clone)]
+pub enum RobocopyMessage {
+    /// Progress update with (pid, bytes_read_mb, bytes_written_mb)
+    Progress(RobocopyProgress),
+    /// Process completed
+    Complete(u32),
+}
+
+/// Directories to exclude from robocopy transfers (junction points, system folders, etc.)
+const ROBOCOPY_EXCLUDED_DIRS: &[&str] = &[
+    "Default",
+    "Default User", 
+    "All Users",
+    "Application Data",
+    "Local Settings",
+    "NetHood",
+    "PrintHood",
+    "Recent",
+    "SendTo",
+    "Start Menu",
+    "Templates",
+    "Cookies",
+    "My Documents",  // Junction point
+    "My Music",      // Junction point
+    "My Pictures",   // Junction point
+    "My Videos",     // Junction point
+];
+
 pub async fn run_robocopy(
     source: &PathBuf, 
     destination: &PathBuf,
-    tx: Sender<(f64, f64)>
+    tx: Sender<RobocopyMessage>
 ) -> anyhow::Result<(), anyhow::Error> {
     if !source.exists() && !destination.exists() {
         return Err(
@@ -203,22 +243,33 @@ pub async fn run_robocopy(
     }
 
     let source_user_name = source.file_name().clone().unwrap_or_default();
-    let backup_folder = destination.join("Desktop").join("UsersBackup").join(source_user_name);
-    let log_location = destination.join("Desktop").join(format!("Robocopy-{}.txt", Utc::now().date_naive().format("%Y-%m-%d")));
+    let source_folder_name = source_user_name.to_string_lossy();
+    let backup_folder = destination.join("Desktop").join("UsersBackup").join(&*source_folder_name);
+    
+    // Create unique log file name with source folder and timestamp
+    let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S");
+    let log_filename = format!("Robocopy-{}-{}.txt", source_folder_name, timestamp);
+    let log_location = destination.join("Desktop").join(log_filename);
     let log_arg = format!("/LOG:{}", log_location.display());
+    
     std::fs::create_dir_all(&backup_folder)?;
 
+    let source_display = source.display().to_string();
+    let dest_display = backup_folder.display().to_string();
+
     log::info!(
-        "Source: {:?} Dest: {:?}source_user_name: {:?}\nbackup_folder: {:?}",
+        "Source: {:?} Dest: {:?} source_user_name: {:?}\nbackup_folder: {:?}\nlog_location: {:?}",
         source, 
         destination,
         source_user_name,
         backup_folder,
+        log_location,
     );
 
-    let process = tokio::process::Command::new("robocopy")
-        .arg(source)
-        .arg(backup_folder)
+    // Build the robocopy command with excluded directories
+    let mut cmd = tokio::process::Command::new("robocopy");
+    cmd.arg(source)
+        .arg(&backup_folder)
         .arg("*.*")
         .arg("/S")
         .arg("/E")
@@ -229,63 +280,78 @@ pub async fn run_robocopy(
         .arg("/ZB")
         .arg("/bytes")
         .arg("/np")
-        .arg(log_arg)
+        .arg(&log_arg)
         .arg(format!("/MT:{}", sysinfo::System::physical_core_count().unwrap_or(4)))
+        // Exclude junction points and reparse points to avoid infinite loops
+        .arg("/XJ")
+        // Exclude system/hidden directories that cause issues
+        .arg("/XD");
+    
+    // Add all excluded directories
+    for excluded_dir in ROBOCOPY_EXCLUDED_DIRS {
+        cmd.arg(excluded_dir);
+    }
+    
+    let mut process = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Create a Tokio stream for stdout
-    // let stdout = process.stdout.take().expect("Failed to get stdout");
-    // Create a Tokio stream for stderr
-    // let stderr = process.stderr.take().expect("Failed to get stderr");
-    let pid = process.id();
-    // let mut stdout_reader = BufReader::new(stdout).lines();
-    // let mut stderr_reader = BufReader::new(stderr).lines();
+    let pid = process.id().unwrap_or(0);
     
-    // let tx_clone = tx.clone();
+    // Spawn a task to monitor the process and send progress updates
     tokio::spawn(async move {
-        // while let Some(line) = stderr_reader.next_line().await? {
-        //     tx_clone.try_send(line.into_bytes()).ok();
-        // }
-        let sys = sysinfo::System::new_with_specifics(
+        let mut sys = sysinfo::System::new_with_specifics(
             RefreshKind::default().with_processes(
                 ProcessRefreshKind::default().with_disk_usage()
             )
         );
 
-        // let output = process.t().await?;
-
-        if let Some(pid) = pid {
-            if let Some(process_info) = sys.process(Pid::from_u32(pid)) {
-                let total_read = process_info.disk_usage().total_read_bytes;
-                let total_written = process_info.disk_usage().total_written_bytes;
-                // let x = process_info.
-                let total_read_mb = total_read as f64 / 1_048_576.0;
-                let total_written_mb = total_written as f64 / 1_048_576.0;
-                tx.try_send((total_read_mb, total_written_mb)).ok();
-                tokio::time::sleep(Duration::from_secs_f32(0.1)).await;
+        // Continuously monitor while process is running
+        loop {
+            // Check if process is still running
+            match process.try_wait() {
+                Ok(Some(_status)) => {
+                    // Process has completed
+                    let _ = tx.try_send(RobocopyMessage::Complete(pid));
+                    break;
+                }
+                Ok(None) => {
+                    // Process is still running, send progress update
+                    sys.refresh_processes(
+                        sysinfo::ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+                        false
+                    );
+                    
+                    if let Some(process_info) = sys.process(Pid::from_u32(pid)) {
+                        let disk_usage = process_info.disk_usage();
+                        let bytes_read = disk_usage.read_bytes as f64 / 1_048_576.0; // MB/s (since last refresh)
+                        let bytes_written = disk_usage.written_bytes as f64 / 1_048_576.0;
+                        
+                        let progress = RobocopyProgress {
+                            pid,
+                            source: source_display.clone(),
+                            destination: dest_display.clone(),
+                            bytes_read,
+                            bytes_written,
+                            is_complete: false,
+                        };
+                        
+                        let _ = tx.try_send(RobocopyMessage::Progress(progress));
+                    }
+                    
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => {
+                    log::error!("Error checking robocopy process status: {:?}", e);
+                    let _ = tx.try_send(RobocopyMessage::Complete(pid));
+                    break;
+                }
             }
         }
+        
         Ok::<(), anyhow::Error>(())
     });
-
-    // let tx_clone = tx.clone();
-    // tokio::spawn(async move {
-    //     while let Some(line) = stdout_reader.next_line().await? {
-    //         tx_clone.try_send(line.into_bytes()).ok();
-    //     }
-    //     Ok::<(), anyhow::Error>(())
-    // });
-
-    // let output = process.wait_with_output().await?;
-    // info!("robocopy -> output: {:?}", output);
-
-    // let tx_clone = tx.clone();
-    // if !output.status.success() {
-    //     info!("robocopy -> output status not successful");
-    //     tx_clone.try_send(output.stderr).ok();
-    // }
 
     Ok(())
 }

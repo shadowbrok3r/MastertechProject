@@ -236,14 +236,14 @@ pub fn read_folder(mut path: PathBuf, depth: usize, read_dirs_only: bool) -> Vec
                 .map(|name| {
                     let name_str = name.to_string_lossy().to_lowercase();
                     name_str.contains("default") 
-                    || name_str == "all users" 
+                    || name_str == "all users"
                     || name_str == "application data"
-                    || name_str == "local settings" 
-                    || name_str == "nethood" 
-                    || name_str == "printhood" 
-                    || name_str == "recent items" 
-                    || name_str == "sendto" 
-                    || name_str == "start menu" 
+                    || name_str == "local settings"
+                    || name_str == "nethood"
+                    || name_str == "printhood"
+                    || name_str == "recent items"
+                    || name_str == "sendto"
+                    || name_str == "start menu"
                     || name_str == "templates"
                 })
                 .unwrap_or(false);

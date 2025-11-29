@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
-use crate::{terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
+use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
 use unicode_width::UnicodeWidthStr;
@@ -724,17 +724,62 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .label("Scanning Directories..")
                 .throbber_set(throbber_widgets_tui::VERTICAL_BLOCK);
             f.render_widget(throbber, button_grid[8].shrink(0, 1));
-        } else if !self.loading && self.total_bytes_read > 0.0 && self.total_byes_written > 0.0 {
-            let disk_usage = format!("Total Read {:.2} MB/s", self.total_bytes_read);
-            let throbber = throbber_widgets_tui::Throbber::default()
-                .label(disk_usage)
-                .throbber_set(throbber_widgets_tui::BRAILLE_EIGHT);
-            f.render_widget(throbber, button_grid[8].shrink(0, 1));
-            let disk_written = format!("Total Written {:.2} MB/s", self.total_byes_written);
-            let throbber = throbber_widgets_tui::Throbber::default()
-                .label(disk_written)
-                .throbber_set(throbber_widgets_tui::BRAILLE_EIGHT);
-            f.render_widget(throbber, button_grid[9].shrink(0, 1));
+        } else {
+            // Display active robocopy processes
+            let active_processes = self.active_robocopy_processes.borrow();
+            if !active_processes.is_empty() {
+                // Create a list of active transfers to display
+                let mut transfer_lines: Vec<Line> = Vec::new();
+                for (pid, progress) in active_processes.iter() {
+                    // Extract just the folder name from source for brevity
+                    let source_name = std::path::Path::new(&progress.source)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&progress.source);
+                    
+                    let line = Line::from(vec![
+                        Span::styled(
+                            format!("[{}] ", pid),
+                            Style::default().fg(CATPPUCCIN.mauve)
+                        ),
+                        Span::styled(
+                            format!("{}: ", source_name),
+                            Style::default().fg(CATPPUCCIN.blue)
+                        ),
+                        Span::styled(
+                            format!("R:{:.1} MB/s ", progress.bytes_read),
+                            Style::default().fg(CATPPUCCIN.green)
+                        ),
+                        Span::styled(
+                            format!("W:{:.1} MB/s", progress.bytes_written),
+                            Style::default().fg(CATPPUCCIN.peach)
+                        ),
+                    ]);
+                    transfer_lines.push(line);
+                }
+                
+                let transfer_count = active_processes.len();
+                drop(active_processes); // Release borrow before rendering
+                
+                let transfer_block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(format!(" Active Transfers ({}) ", transfer_count))
+                    .border_style(Style::new().fg(CATPPUCCIN.sky));
+                
+                let transfer_list = Paragraph::new(transfer_lines)
+                    .block(transfer_block)
+                    .wrap(Wrap { trim: false });
+                
+                // Use button_grid[8] and button_grid[9] combined for the transfer display
+                let combined_area = Rect::new(
+                    button_grid[8].x,
+                    button_grid[8].y,
+                    button_grid[8].width,
+                    button_grid[8].height + button_grid[9].height,
+                );
+                f.render_widget(transfer_list, combined_area.shrink(0, 1));
+            }
         }
 
         f.render_widget(&self.run_btn, button_grid[10].shrink(4, 1));
