@@ -57,22 +57,47 @@ impl SharedContext {
                 }
             }
 
-            // Show toast for new notes on current user's tasks
-            if action == Action::Create {
-                if let (Some(id), Some(user)) = (note.task_id.clone(), &self.current_user) {
-                    if let Some(task) = self.tasks.iter().find(|task| {
-                        task.id == id && task.assignee == user.get_id() && !task.completed
-                    }) {
-                        if note.user != user.get_id().clone() {
-                            let toast = Toast {
-                                kind: ToastKind::Success,
-                                text: format!("New Message for {}", task.task_name).into(),
-                                options: ToastOptions::default()
-                                    .show_progress(true)
-                                    .duration_in_seconds(6.0),
-                                style: ToastStyle::default(),
-                            };
-                            self.toasts.add(toast);
+            // Show toast for new notes - notify all users who have previously commented on this task
+            if action == Action::Create || action == Action::Update {
+                if let (Some(task_id), Some(current_user)) = (note.task_id.clone(), &self.current_user) {
+                    // Find the task to get task info
+                    if let Some(task) = self.tasks.iter().find(|t| t.id == task_id && !t.completed) {
+                        let current_user_id = current_user.get_id();
+                        let note_author_id = note.user.clone();
+                        
+                        // Check if the note is from someone else
+                        if note_author_id != current_user_id {
+                            // Check if current user is the assignee
+                            let is_assignee = task.assignee == current_user_id;
+                            
+                            // Check if current user has commented by looking at opened modals
+                            let has_commented = self.opened_modals.iter().any(|(_, modal)| {
+                                match modal {
+                                    ModalType::TaskModal(task_modal) => {
+                                        task_modal.task.id == task_id &&
+                                        task_modal.chat_view.messages.iter().any(|m| m.user == current_user_id)
+                                    }
+                                    ModalType::ChatView(chat_view) => {
+                                        chat_view.task_id == task_id &&
+                                        chat_view.messages.iter().any(|m| m.user == current_user_id)
+                                    }
+                                    _ => false
+                                }
+                            });
+                            
+                            // Show toast if user is assignee OR has previously commented
+                            if is_assignee || has_commented {
+                                let action_text = if action == Action::Create { "New" } else { "Updated" };
+                                let toast = Toast {
+                                    kind: ToastKind::Success,
+                                    text: format!("{} message for {}", action_text, task.task_name).into(),
+                                    options: ToastOptions::default()
+                                        .show_progress(true)
+                                        .duration_in_seconds(6.0),
+                                    style: ToastStyle::default(),
+                                };
+                                self.toasts.add(toast);
+                            }
                         }
                     }
                 }
