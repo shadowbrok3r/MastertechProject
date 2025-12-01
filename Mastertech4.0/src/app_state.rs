@@ -1,5 +1,5 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
-use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
+use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
 use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::task_modal::SpecialPartOrder, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
@@ -84,7 +84,7 @@ pub struct MastertechContext {
     pub computer_data_rx: Receiver<ComputerData>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
-    pub scripts: Scripts,
+    pub scripts_tab: EguiScriptsTab,
     pub progress: (f32, f32),
     pub special_part_order: SpecialPartOrder,
     pub toolbox: FileSystem,
@@ -191,7 +191,7 @@ impl MasterTechApp {
             github_issue_title: Default::default(),
             github_issue_descript: Default::default(),
             github_issue_user: Default::default(),
-            scripts: Default::default(),
+            scripts_tab: EguiScriptsTab::new(),
             progress: (0.0, 0.0),
             special_part_order: Default::default(),
             github_releases: Default::default(),

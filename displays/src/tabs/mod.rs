@@ -10,6 +10,7 @@ pub mod ai_playground;
 pub mod resource_monitor;
 pub mod admin_console;
 pub mod script_editor;
+pub mod scripts;
 pub mod user_chat;
 pub mod database_viewer;
 pub mod github;
