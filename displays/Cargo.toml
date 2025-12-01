@@ -9,63 +9,62 @@ tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
+structdiff = { version = "0.7.1", features = ["rustc_hash"] }
 reqwest = { version = "0.12", features = ["stream", "json"] }
-structdiff = {version = "0.7.1", features = ["rustc_hash"]}
-rpc-router = "0.1"
-schemars = "1"
-derivative = "2"
-zstd = "0.13"
-tap = "1"
 compact_str = { version = "0.9.0", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
+rpc-router = "0.1"
+derivative = "2"
+schemars = "1"
+zstd = "0.13"
+tap = "1"
 
 # surrealdb-alpha ={ workspace = true }
+egui-data-table = { workspace = true }
+egui_json_tree = { workspace = true }
+egui_logger = { workspace = true }
+fuzzy-matcher = { workspace=true }
+async-trait = { workspace = true }
+egui_plot = { workspace = true }
+egui_extras = { workspace=true }
+itertools = { workspace = true }
+serde_json = { workspace=true }
+mime_guess = { workspace=true }
+crossbeam = { workspace=true }
 surrealdb = { workspace=true }
 egui_dock = { workspace=true }
-egui-data-table = { workspace = true }
-egui_logger = { workspace = true }
-base64 = { workspace=true }
-egui_json_tree = { workspace = true }
-egui_plot = { workspace = true }
-web-time = { workspace=true }
-bincode = { workspace=true } 
-anyhow = { workspace=true }
+once_cell = { workspace=true }
 database = { workspace=true }
-eframe = { workspace=true }
-log = { workspace=true }
-serde = { workspace=true }
-fuzzy-matcher = { workspace=true }
-egui_extras = { workspace=true }
-chrono = { workspace=true }
-serde_json = { workspace=true }
-crossbeam = { workspace=true }
-mime_guess = { workspace=true }
+web-time = { workspace=true }
 futures = { workspace=true }
+bincode = { workspace=true } 
+brotli = { workspace=true }
+anyhow = { workspace=true }
+eframe = { workspace=true }
+base64 = { workspace=true }
+chrono = { workspace=true }
+serde = { workspace=true }
 bytes = { workspace=true }
 regex = { workspace=true }
-async-trait = { workspace = true }
-once_cell = { workspace=true }
 rfd = { workspace = true }
-itertools = { workspace = true }
-brotli = { workspace=true }
+log = { workspace=true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace=true, optional = true }
-ratatui = { workspace = true }
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}
+tokio = { workspace = true, optional = true }
 async-openai = { workspace = true }
-rusty-s3 = { workspace=true }
-rmcp = { workspace = true }
-ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}# "tls"
+ratatui = { workspace = true }
 dotenv = { version = "0.15" }
-# tokio-tungstenite = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
+rusty-s3 = { workspace = true }
+rmcp = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-async-openai-wasm = { workspace = true }
-rusty-s3 = { workspace=true, features = ["wasm_bindgen"]}
-web-time = { workspace=true, optional = true }
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}
+rusty-s3 = { workspace = true, features = ["wasm_bindgen"]}
 wasm-bindgen-futures = { workspace=true, optional = true }
+web-time = { workspace=true, optional = true }
+async-openai-wasm = { workspace = true }
 wasm-cookies = { workspace = true}
-ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]} # "tls"
 web-sys = { version = "0.3", features = [
 	"Storage",
 	"Window",
