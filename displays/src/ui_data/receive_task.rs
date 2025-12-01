@@ -90,8 +90,6 @@ impl SharedContext {
                     self.pending_store = None;
                 }
             }
-        
-            
         }
 
         if let Ok(new_task) = self.live_tasks_rx.try_recv() {

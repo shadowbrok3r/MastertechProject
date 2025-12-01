@@ -12,6 +12,14 @@ LegalCopyright = "Copyright © 2025"
 ProductVersion = "4.6.3"
 FileDescription = "Mastertech"
 
+[package.metadata]
+icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
+resources = ["src/assets/**/*png", "src/assets/**/*ico"]
+
+[[bench]]
+name = "file_copy_benchmark"
+harness = false
+
 [features]
 default = [ "inline" ]
 inline = []
@@ -38,7 +46,7 @@ rust-embed="8.4"
 clap = { version = "4.5", features = ["derive"] }
 sha2 = { version = "0.10", features = ["std"] }
 linked-hash-map = "0.5"
-ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]} # , 
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
 hex = "0.4.3"
 ring = "0.17.14"
 semver = "1"
@@ -141,26 +149,17 @@ minidump-unwind = "0.26"
 wmi = "0.18.0"
 evtx = "0.8"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-openssl-sys = "0.9"
-
-[dev-dependencies]
-criterion = { version = "0.7.0", features = ["async_tokio"]}
-
-[[bench]]
-name = "file_copy_benchmark"
-harness = false
-
-
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "3.0.0"
 embed-resource = "3.0.6"
 winres = "0.1"
 # embed-manifest = "1.4.0"
 
-[package.metadata]
-icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
-resources = ["src/assets/**/*png", "src/assets/**/*ico"]
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = "0.9"
+
+[dev-dependencies]
+criterion = { version = "0.7.0", features = ["async_tokio"]}
 
 

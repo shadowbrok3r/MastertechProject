@@ -163,6 +163,10 @@ impl TaskLayout {
         }
     }
 
+    pub fn get_notes(&self, task_id: &RecordId) -> Vec<TaskNotePayload> {
+        self.notes.iter().filter(|n| n.task_id == Some(task_id.clone())).cloned().collect()
+    }
+
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         // If no current order, accept the provided order as-is (lets saved order win)
         if self.column_order.is_empty() {

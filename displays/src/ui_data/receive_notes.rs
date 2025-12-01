@@ -1,7 +1,7 @@
-use database::schema::{LiveTaskPayload, Store};
 use crate::{app_state::SharedContext, modals::ModalType, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
-use log::info;
+use database::schema::{LiveTaskPayload, Store};
 use surrealdb::Action;
+use log::info;
 
 impl SharedContext {
     pub fn receive_notes(&mut self) {
@@ -14,8 +14,6 @@ impl SharedContext {
 
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
-
-
 
             // Update modals
             for (_title, modal) in self.opened_modals.iter_mut() {
@@ -70,20 +68,7 @@ impl SharedContext {
                             // Check if current user is the assignee
                             let is_assignee = task.assignee == current_user_id;
                             
-                            // Check if current user has commented by looking at opened modals
-                            let has_commented = self.opened_modals.iter().any(|(_, modal)| {
-                                match modal {
-                                    ModalType::TaskModal(task_modal) => {
-                                        task_modal.task.id == task_id &&
-                                        task_modal.chat_view.messages.iter().any(|m| m.user == current_user_id)
-                                    }
-                                    ModalType::ChatView(chat_view) => {
-                                        chat_view.task_id == task_id &&
-                                        chat_view.messages.iter().any(|m| m.user == current_user_id)
-                                    }
-                                    _ => false
-                                }
-                            });
+                            let has_commented = self.task_layouts.iter().any(|(_, layout)| layout.get_notes(&task_id).iter().any(|n| n.user == current_user_id));
                             
                             // Show toast if user is assignee OR has previously commented
                             if is_assignee || has_commented {
