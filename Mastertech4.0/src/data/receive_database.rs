@@ -3,7 +3,7 @@ use crate::{app_state::MasterTechApp, utilities::save_encrypted_user_data};
 use eframe::egui::Context;
 
 impl MasterTechApp {
-    pub fn receive_database(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+    pub fn receive_database(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.shared_ctx.db_rx.try_recv() {
             ctx.request_repaint();
@@ -35,7 +35,7 @@ impl MasterTechApp {
                         self.context.shared_ctx.load_data(ctx, &user);
                     } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run(ctx, frame);
+                        self.first_run(ctx);
                         log::error!("2");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
@@ -60,7 +60,7 @@ impl MasterTechApp {
                             toast.add(auth_toast);
                         } else {
                             self.context.shared_ctx.first_run = true;
-                            self.first_run(ctx, frame);
+                            self.first_run(ctx);
                             log::error!("2");
                             self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                         }

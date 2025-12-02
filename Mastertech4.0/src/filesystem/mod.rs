@@ -1,9 +1,10 @@
 use database::schema::{ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE};
+use system_info::generate_client_id;
 use surrealdb::RecordId;
 use sysinfo::System;
-use system_info::generate_client_id;
 
 pub mod system_info;
+pub mod oa_serial;
 pub mod machine;
 
 // Wrap the Nvml instance in lazy_static

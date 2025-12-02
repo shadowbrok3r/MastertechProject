@@ -1,9 +1,9 @@
+use crate::utilities::scripts::{check_power_options, AntiVirusProduct, InstalledProgram, ScheduledTask};
+use crate::terminal_mode::tabs::script_categories::check_windows_activation;
+use crate::utilities::windows::antivirus::check_antivirus;
 use crate::terminal_mode::tabs::checklist::Category;
 use crate::terminal_mode::tabs::scripts::Reporter;
-use crate::terminal_mode::tabs::script_categories::check_windows_activation;
 use crate::terminal_mode::tabs::ScriptsTab;
-use crate::utilities::scripts::{check_power_options, AntiVirusProduct, InstalledProgram, ScheduledTask};
-use crate::utilities::windows::antivirus::check_antivirus;
 
 impl <'a> ScriptsTab <'a> {
     pub fn handle_informational(&mut self, item_text: &str, category: &Category) {

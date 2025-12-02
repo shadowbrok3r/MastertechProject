@@ -24,6 +24,7 @@ pub mod computer;
 pub mod customer;
 pub mod client;
 pub mod sales_tracker;
+pub mod everest;
 
 pub use task::*;
 pub use task_note::*;
@@ -34,6 +35,7 @@ pub use computer::*;
 pub use customer::*;
 pub use client::*;
 pub use sales_tracker::*;
+pub use everest::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";

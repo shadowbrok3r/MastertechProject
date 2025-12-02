@@ -549,6 +549,7 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
 
         Ok(self.clone())
     }
+
     async fn get_customer_threads(&mut self, service_number: &str, prestashop_api: &Prestashop) -> Result<(), Error> {
         if !self.customer_threads.is_empty() {
             let mut query = HashMap::new();
@@ -560,6 +561,7 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
         }
         Ok(())
     }
+
     async fn get_customer_messages(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
         for thread in self.customer_threads.iter() {
             for msg in thread.associations.customer_messages.iter() {
@@ -575,10 +577,12 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
         }
         Ok(())
     }
+    
     async fn get_order(&mut self, service_number: &str, prestashop_api: &Prestashop) -> Result<(), Error> {
         self.order = prestashop_api.request_subresources_by_id_wasm("orders", "order", service_number).await?;
         Ok(())
     }
+
     async fn get_employee(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
         let sales_rep: Option<Employee> = if !self.order.id_employee_sales_rep.eq("checkinshelf") && !self.order.id_employee_sales_rep.eq("0") {
             //|| order.id_employee_sales_rep.len() != 0{
@@ -616,6 +620,7 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
 
         Ok(())
     }
+    
     async fn get_customer(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
         let cust: prestashop_schema::Customer = if self.order.id_employee_sales_rep.eq("0") {
             let mut cust = prestashop_schema::Customer::default();

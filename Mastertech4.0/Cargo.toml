@@ -150,8 +150,9 @@ wmi = "0.18.0"
 evtx = "0.8"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-static_vcruntime = "3.0.0"
-embed-resource = "3.0.6"
+dotenvy = { workspace=true }
+static_vcruntime = "3"
+embed-resource = "3"
 winres = "0.1"
 # embed-manifest = "1.4.0"
 

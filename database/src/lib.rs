@@ -10,22 +10,24 @@ pub mod schema;
 
 pub use platform::PlatformSpawner;
 
-const USER_SCOPE: &str = "user";
-const DB: &str = "MastertechDB";
-const NS: &str = "Mastertech";
-pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
-pub const REGION: &str = "us-east-1";
-pub const DB_URL: &str = "surrealdb.master-tech.app";
-pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
-pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
-pub const WS_CLIENT_URL_LOCAL: &str = "ws://localhost:8081/websocket?role=client";
-pub const WS_MASTER_URL_LOCAL: &str = "ws://localhost:8081/websocket?role=master";
-pub const WS_CLIENT_URL: &str = "wss://socket.master-tech.app/websocket?role=client";
-pub const WS_MASTER_URL: &str = "wss://socket.master-tech.app/websocket?role=master";
-pub const ISSUE_TOKEN: &str = "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";
-pub const DOWNLOAD_TOKEN: &str = "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";
 
+const USER_SCOPE: &str = env!("USER_SCOPE");
+const DB: &str = env!("DB");
+const NS: &str = env!("NS");
+pub const SCAFFOLD_USER: &str = env!("SCAFFOLD_USER");
+pub const SCAFFOLD_PASS: &str = env!("SCAFFOLD_PASS");
+pub const DB_URL: &str = env!("DB_URL");
+pub const STORAGE_URL: &str = env!("STORAGE_URL");
+pub const REGION: &str = env!("REGION");
+pub const DB_URL_DEV: &str = env!("DB_URL_DEV");
+pub const DB_URL_LOCAL: &str = env!("DB_URL_LOCAL");
+pub const WS_CLIENT_URL_LOCAL: &str = env!("WS_CLIENT_URL_LOCAL");
+pub const WS_MASTER_URL_LOCAL: &str = env!("WS_MASTER_URL_LOCAL");
+pub const WS_CLIENT_URL: &str = env!("WS_CLIENT_URL");
+pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
+pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
+pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 
 // The static variable holding the currently logged-in user
 // Wrapped in Mutex for safe interior mutability

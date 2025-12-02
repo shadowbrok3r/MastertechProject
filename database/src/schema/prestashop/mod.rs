@@ -224,33 +224,33 @@ impl<'a> Prestashop<'a> {
         Ok(x)
     }
 
-    pub async fn request_resources<T>(
-        &self,
-        resource_name: &str,
-        url_params: HashMap<&str, &str>,
-    ) -> anyhow::Result<Vec<T>, anyhow::Error>
-    where
-        T: for<'de> Deserialize<'de> + std::fmt::Debug,
-    {
-        info!(
-            "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
-            self.query_args(resource_name, url_params.clone())
-        );
+    // pub async fn request_resources<T>(
+    //     &self,
+    //     resource_name: &str,
+    //     url_params: HashMap<&str, &str>,
+    // ) -> anyhow::Result<Vec<T>, anyhow::Error>
+    // where
+    //     T: for<'de> Deserialize<'de> + std::fmt::Debug,
+    // {
+    //     info!(
+    //         "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
+    //         self.query_args(resource_name, url_params.clone())
+    //     );
 
-        let response: Value = self
-            .client
-            .get(self.query_args(resource_name, url_params))
-            .send()
-            .await?
-            .json()
-            .await?;
+    //     let response: Value = self
+    //         .client
+    //         .get(self.query_args(resource_name, url_params))
+    //         .send()
+    //         .await?
+    //         .json()
+    //         .await?;
 
-        info!("prestashop_schema -> response: {:#?}", response);
-        let x: Vec<T> = from_value(response[resource_name].clone())?;
-        info!("prestashop_schema -> x: {x:#?}");
+    //     info!("prestashop_schema -> response: {:#?}", response);
+    //     let x: Vec<T> = from_value(response[resource_name].clone())?;
+    //     info!("prestashop_schema -> x: {x:#?}");
 
-        Ok(x)
-    }
+    //     Ok(x)
+    // }
 
     pub async fn request_resources_wasm<T>(
         &self,
@@ -606,6 +606,15 @@ pub struct OrderDetails {
     pub id_order: Option<String>,
 }
 
+// #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+// struct OrderSerialsResponse {
+//     order_serials: Vec<OrderSerialEntry>,
+// }
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct OrderSerialEntry {
+    pub id_order: String,
+}
 
 #[derive(Serialize, Debug, Default, PartialEq)]
 pub struct Resources {
