@@ -1,6 +1,5 @@
 use crate::{
-    schema::{prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days, LiveTaskPayload, TaskPayload, TicketPayload},
-    DATABASE,
+    DATABASE, schema::{LiveTaskPayload, TaskPayload, TicketPayload, helper_traits::PrestashopPayloadHelper, prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days}
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -111,6 +110,38 @@ pub async fn get_services_by_status(
     log::info!("Missed orders: {:#?}", missed_orders);
 
     Ok(missed_orders)
+}
+
+pub async fn get_order_info_from_serial(serial: &str) -> anyhow::Result<crate::schema::prestashop::PrestashopPayload, anyhow::Error> {
+    match get_order_from_prestashop_payload(serial).await {
+        Ok(order) => Ok(order),
+        Err(e) => {
+            log::error!("Everest fallback failed: {e:?}");
+            match crate::schema::everest::request_everest(&serial).await {
+                Ok(ev) => { 
+                    log::info!("Everest info: {ev}"); 
+                    Ok(crate::schema::prestashop::PrestashopPayload::default())
+                },
+                Err(e2) => Err(anyhow::anyhow!("Everest fallback failed: {e2:?}")),
+            }
+        },
+    }
+}
+
+pub async fn get_order_from_prestashop_payload(serial: &str) -> anyhow::Result<crate::schema::prestashop::PrestashopPayload, anyhow::Error> {
+    let api_call = Prestashop::default();
+    let mut query: HashMap<&str, &str> = HashMap::new();
+    query.insert("filter[serial_number]", serial);
+    query.insert("output_format", "JSON");
+    let order_serials: Vec<crate::schema::prestashop::OrderSerialEntry> = api_call.request_resources_wasm("order_serial", query.clone()).await?;
+    let id_order = order_serials
+        .get(0)
+        .ok_or_else(|| anyhow::anyhow!("No id_order found"))?
+        .id_order
+        .clone();
+
+    let payload = crate::schema::prestashop::PrestashopPayload::default().get_prestashop_payload(&id_order).await?;
+    Ok(payload)
 }
 
 #[async_trait]

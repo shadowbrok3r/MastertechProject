@@ -132,8 +132,8 @@ pub fn category_display_name(category: &ScriptCategory) -> &'static str {
 pub fn category_icon(category: &ScriptCategory) -> &'static str {
     match category {
         ScriptCategory::Tuneup => "🔧",
-        ScriptCategory::Informational => "ℹ️",
-        ScriptCategory::JunkwareRemoval => "🗑️",
+        ScriptCategory::Informational => "ℹ",
+        ScriptCategory::JunkwareRemoval => "🗑",
         ScriptCategory::UserScripts(_) => "📜",
         ScriptCategory::Custom(_) => "⚙️",
     }

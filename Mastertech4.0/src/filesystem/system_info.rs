@@ -1,4 +1,4 @@
-use database::schema::{ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE};
+use database::schema::{COMPUTER_TABLE, ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, get_data::get_order_info_from_serial};
 use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use std::{collections::HashMap, env, str, sync::Arc, time::Duration};
 use sysinfo::{Components, Disks, Motherboard, Networks, Product, System};
@@ -38,6 +38,23 @@ impl ComputerInfo for ComputerData {
         // info!("GPU: {gpu_info:?}");
         sys.refresh_all();
         
+        // // 2) Retrieve OA-style serial and convert to 13-digit
+        // let raw_serial = super::oa_serial::get_oa_style_serial()?;
+
+        // // Strictly require a 13-digit parsed serial
+        // let serial13 = super::oa_serial::to_oa3_13digit(&raw_serial)?;
+
+
+        // // 3) Lookup customer info from PrestaShop API, with Everest fallback,
+        // //    then final manual order-id prompt.
+        // let mut customer_string: Option<database::schema::prestashop::PrestashopPayload> = match get_order_info_from_serial(&serial13.clone()).await {
+        //     Ok(prestashop_payload) => Some(prestashop_payload),
+        //     Err(e) => {
+        //         log::error!("Couldnt find Order Info for {serial13}: {e:?}");
+        //         None
+        //     }
+        // };
+
         let motherboard = Motherboard::new();
         let motherboard_name = &mut String::new();
         let motherboard_serial = &mut String::new();
@@ -348,7 +365,7 @@ impl ComputerInfo for ComputerData {
                         }
                         Err(e) => {
                             // Log error but don't fail the task
-                            eprintln!("Error checking {}: {}", antivirus, e);
+                            log::error!("Error checking {}: {}", antivirus, e);
                             (antivirus_mapping.get(antivirus).unwrap_or(&antivirus).to_string(), None)
                         }
                     };
@@ -371,7 +388,7 @@ impl ComputerInfo for ComputerData {
         // Wait for all tasks to complete
         for task in tasks {
             if let Err(e) = task.await {
-                eprintln!("Task error: {}", e);
+                log::error!("Task error: {}", e);
             }
         }
 

@@ -1,15 +1,14 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
-use eframe::{egui::Context, Frame};
 use database::schema::GetKeysResponse;
+use eframe::egui::{Context, Style};
 use surrealdb::RecordId;
 use std::sync::Arc;
 use tokio::spawn;
-use egui::Style;
 
 impl MasterTechApp {
-    pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
+    pub fn first_run(&mut self, ctx: &Context) {
         self.context.shared_ctx.first_run = false;
         // let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         match serde_json::from_str::<Style>(displays::STYLE) {
@@ -20,47 +19,12 @@ impl MasterTechApp {
             Err(e) => log::error!("Error setting theme: {e:?}")
         };
 
-        #[cfg(target_os = "windows")]
-        {
-            use crate::filesystem::system_info::ComputerInfo;
-            if self.context.computer_data.cpu.is_empty() {
-                let specs_tx = self.context.computer_data_tx.clone();
-                let current_antivirus_tx = self.context.current_antivirus_tx.clone();
-                tokio::spawn(async move {
-                    match database::schema::ComputerData::default().get_computer_data().await {
-                        Ok(data) => { let _ = specs_tx.try_send(data); }
-                        Err(e) => log::error!("Error getting specs: {e:?}"),
-                    }
-                    let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
-                    log::error!("installed_antivirus: {installed_antivirus:?}");
-                    let _ = current_antivirus_tx.try_send(installed_antivirus);
-                });
-            }
-        }
-
-        if let Some(storage) = frame.storage() {
-            self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
-            self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
-            self.context.customer_data = storage.get_string("customer_data").map_or(CustomerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
-            self.context.seb_info = storage.get_string("seb_info").map_or(vec![], |f| serde_json::from_str(&f).unwrap_or_default());
-        }
-        
-        let github_tx = self.context.github_releases_channel.0.clone();
-        let client = self.context.client.clone();
-        let tx = self.context.shared_ctx.db_tx.clone();
-
-        spawn(async move {
-            match get_github_releases(github_tx, client).await {
-                Ok(_) => log::info!("get_github_releases ran ok"),
-                Err(e) => log::error!("Error getting github releases: {e:?}"),
-            }
-        });
-
         match load_encrypted_user_data(HASH) {
             Some(login) => {
                 if cfg!(debug_assertions) {
                     log::error!("loaded data: {login:?}");
                 }
+                let tx = self.context.shared_ctx.db_tx.clone();
                 spawn(async move {
                     let db = Database::new(login.username, login.password, None).await;
                     match tx.try_send(db) {
@@ -84,10 +48,11 @@ impl MasterTechApp {
                 let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::NoAuth("Needs Login".to_string()));
             }
         }
+
     }
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
-        if self.context.shared_ctx.first_run { self.first_run(ctx, frame); }
+        if self.context.shared_ctx.first_run { self.first_run(ctx); }
         self.context.shared_ctx.receive_shared(frame, ctx);
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
@@ -129,6 +94,40 @@ impl MasterTechApp {
                     Ok(tree) => self.tree = tree,
                     Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    use crate::filesystem::system_info::ComputerInfo;
+                    if self.context.computer_data.cpu.is_empty() {
+                        let specs_tx = self.context.computer_data_tx.clone();
+                        let current_antivirus_tx = self.context.current_antivirus_tx.clone();
+                        tokio::spawn(async move {
+                            match database::schema::ComputerData::default().get_computer_data().await {
+                                Ok(data) => { let _ = specs_tx.try_send(data); }
+                                Err(e) => log::error!("Error getting specs: {e:?}"),
+                            }
+                            let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
+                            log::error!("installed_antivirus: {installed_antivirus:?}");
+                            let _ = current_antivirus_tx.try_send(installed_antivirus);
+                        });
+                    }
+                }
+        
+                if let Some(storage) = frame.storage() {
+                    self.context.ticket_data = storage.get_string("ticket_data").map_or(TicketData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+                    self.context.task_data = storage.get_string("task_data").map_or(LiveTaskPayload::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+                    self.context.customer_data = storage.get_string("customer_data").map_or(CustomerData::default(), |f| serde_json::from_str(&f).unwrap_or_default());
+                    self.context.seb_info = storage.get_string("seb_info").map_or(vec![], |f| serde_json::from_str(&f).unwrap_or_default());
+                }
+                
+                let github_tx = self.context.github_releases_channel.0.clone();
+                let client = self.context.client.clone();
+        
+                spawn(async move {
+                    match get_github_releases(github_tx, client).await {
+                        Ok(_) => log::info!("get_github_releases ran ok"),
+                        Err(e) => log::error!("Error getting github releases: {e:?}"),
+                    }
+                });
             } 
         }
         

@@ -26,6 +26,9 @@ rfd = { workspace = true }
 log = { workspace=true }
 fuzzy-matcher = { workspace=true }
 
+[build-dependencies]
+dotenvy = { workspace=true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }
 
