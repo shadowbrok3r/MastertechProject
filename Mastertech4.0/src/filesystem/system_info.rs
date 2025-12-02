@@ -38,7 +38,7 @@ impl ComputerInfo for ComputerData {
         // info!("GPU: {gpu_info:?}");
         sys.refresh_all();
         
-        // // 2) Retrieve OA-style serial and convert to 13-digit
+        // 2) Retrieve OA-style serial and convert to 13-digit
         // let raw_serial = super::oa_serial::get_oa_style_serial()?;
 
         // // Strictly require a 13-digit parsed serial
