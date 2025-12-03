@@ -4,7 +4,7 @@ use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use checklist::{Category, Status, TodoItem, TodoList};
 use displays::virtual_filesystem::FileSystem;
 use crossbeam::channel::{Receiver, Sender};
-use tui_scrollview::ScrollViewState;
+use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
 use render::{Report, Reporter};
 use database::schema::Node;
 use reqwest::Client;

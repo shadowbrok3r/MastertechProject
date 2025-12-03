@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use ratatui::{
-    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Style}, text::Line, widgets:: WidgetRef
+    buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Style}, text::Line, widgets::{Widget, WidgetRef}
 };
 use tachyonfx::{CellFilter, Effect};
 use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE}};
@@ -266,5 +266,13 @@ impl <'a> WidgetRef for Button<'a> {
 
         let fx_duration = tachyonfx::Duration::from_millis(16);
         self.effect_stage.borrow_mut().process_effects(fx_duration, buf, area);
+    }
+}
+
+// In ratatui 0.30, f.render_widget requires Widget trait, not just WidgetRef
+// Implement Widget for &Button to allow f.render_widget(&button, area)
+impl<'a> Widget for &Button<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        self.render_ref(area, buf);
     }
 }

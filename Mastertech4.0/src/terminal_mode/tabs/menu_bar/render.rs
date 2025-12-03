@@ -1,5 +1,5 @@
 use database::schema::User;
-use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, WidgetRef, Wrap}, Frame};
+use ratatui::{crossterm::event::MouseEvent, layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, Widget, WidgetRef, Wrap}, Frame};
 
 use crate::{filesystem::get_client_hash, terminal_mode::{styling::CATPPUCCIN, widgets::{ButtonType, HandleWidget, ShrinkArea}}};
 
@@ -53,7 +53,7 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
             let client = get_client_hash();
             *title = client.connection_string.clone();
         } else {
-            Paragraph::new(format!("{}", &**title))
+            let para = Paragraph::new(format!("{}", &**title))
                 .block(
                     Block::default()
                         .title_alignment(ratatui::layout::Alignment::Center)
@@ -62,14 +62,14 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                         .title(user.get_name())
                 )
                 .right_aligned()
-                .wrap(Wrap{ trim: false})
-                .render_ref(row[8], f.buffer_mut());
+                .wrap(Wrap{ trim: false});
+            (&para).render(row[8], f.buffer_mut());
         }
 
         let state = &self.connection_state;
         let color = if state.0 { CATPPUCCIN.green } else { CATPPUCCIN.maroon };
         if state.0 {
-            Paragraph::new(format!("Server Msg: {}", state.1))
+            let para = Paragraph::new(format!("Server Msg: {}", state.1))
             .block(
                 Block::default()
                     .title_alignment(ratatui::layout::Alignment::Center)
@@ -78,8 +78,8 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
                     .title(format!("Connected: {}", state.0))
             )
             .right_aligned()
-            .wrap(Wrap{ trim: false})
-            .render_ref(row[9], f.buffer_mut());
+            .wrap(Wrap{ trim: false});
+            (&para).render(row[9], f.buffer_mut());
         } else {
             self.connect_ws_btn.render_ref(row[9].shrink(3, 1), f.buffer_mut());
         }

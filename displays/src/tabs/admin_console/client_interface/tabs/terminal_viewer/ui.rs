@@ -42,7 +42,7 @@ impl RemoteTerminal {
             self.latest_frame_index = frame_index;
             self.buffer_count += 1;
             needs_repaint = true;
-            log::info!(
+            log::debug!(
                 "Received pre-processed buffer: frame_index={}, area={:?}",
                 frame_index,
                 self.terminal.backend().buffer().area
@@ -62,7 +62,7 @@ impl RemoteTerminal {
             })
             .expect("Failed to draw terminal frame");
         let draw_duration = draw_start.elapsed();
-        log::info!("Draw duration: {:?}", draw_duration);
+        log::debug!("Draw duration: {:?}", draw_duration);
 
         eframe::egui::CentralPanel::default().show_inside(ui, |ui| {
             let render_start = Instant::now();
@@ -71,9 +71,9 @@ impl RemoteTerminal {
             let since_last_repaint = self.last_repaint.elapsed();
 
             if since_last_repaint >= Duration::from_millis(16) {
-                log::info!("Frame Count: {}", self.frame_count);
-                log::info!("Time since last repaint: {:?}", since_last_repaint);
-                log::info!("Render duration: {:?}", render_duration);
+                log::debug!("Frame Count: {}", self.frame_count);
+                log::debug!("Time since last repaint: {:?}", since_last_repaint);
+                log::debug!("Render duration: {:?}", render_duration);
                 self.last_repaint = Instant::now();
             }
         });
@@ -83,7 +83,7 @@ impl RemoteTerminal {
         }
 
         if self.last_log.elapsed() >= Duration::from_secs(1) {
-            log::info!(
+            log::debug!(
                 "Performance: buffer_count={}, frame_count={}, last_draw_duration={:?}",
                 self.buffer_count,
                 self.frame_count - self.last_log_frame_count,

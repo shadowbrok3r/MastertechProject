@@ -1,5 +1,4 @@
 use ratatui::prelude::Color;
-// use ratatui_core::
 use tachyonfx::Interpolatable;
 
 pub trait IndexResolver<T: Clone> {

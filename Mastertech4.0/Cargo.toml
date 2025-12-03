@@ -28,8 +28,21 @@ inline = []
 eframe = { version="0.33", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
-textwrap = "0.16"
+ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
 sysinfo = {version = "0.37.2", features = ["serde", "multithread"]}
+quick-xml = { version="0.38.4", features = ["serialize"] }
+tracing = { version = "0.1", features = ["log"] }
+clap = { version = "4.5", features = ["derive"] }
+sha2 = { version = "0.10", features = ["std"] }
+nvml-wrapper = { version = "0.11.0", features = ["serde"] }
+strum = { version = "0.27", features = ["strum_macros", "derive"] }
+rmcp = { version = "0.10", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
+enigo = { version = "0.6.1", features = ["serde"] }
+indexmap = { version = "2.10.0", features = ["serde"] }
+tachyonfx = { git = "https://github.com/shadowbrok3r/tachyonfx" }
+tui-logger = { git = "https://github.com/shadowbrok3r/tui-logger" }
+rayon = "1"
+textwrap = "0.16"
 futures-util = "0.3"
 walkdir = "2.5"
 pollster = "0.4"
@@ -37,34 +50,22 @@ image = "0.25"
 egui_file = "0.24.0"
 num-format = "0.4"
 fs_extra = "1.3"
-rayon = "1"
-quick-xml = { version="0.38.4", features = ["serialize"] }
 num-traits = "0.2"
-tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = "0.3"
-rust-embed="8.4"
-clap = { version = "4.5", features = ["derive"] }
-sha2 = { version = "0.10", features = ["std"] }
+rust-embed = "8.4"
 linked-hash-map = "0.5"
-ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
 hex = "0.4.3"
 ring = "0.17.14"
 semver = "1"
-nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 lazy_static = "1.5"
 powershell_script = "1.1.0"
 color-eyre = "0.6"
 itertools = "0.14.0"
 unicode-width = "0.2.0"
-tui-logger = "0.17"
 arboard = "3"
 tempfile = "3.19"
-strum = { version = "0.27", features = ["strum_macros", "derive"] }
-# nvme = "0.2.2"
-rmcp = { version = "0.9", features = ["server", "transport-sse-server", "transport-io", "schemars"]}
 xcap = "0.7"
 display-info = "0.5"
-enigo = { version = "0.6.1", features = ["serde"] }
 self-replace = "1.5.0"
 zstd = "0.13.3"
 humansize = "2"
@@ -73,24 +74,19 @@ env_logger = "*"
 dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
-indexmap = { version = "2.10.0", features = ["serde"] }
-tui-textarea = { version = "0.7" }
-ratatui-splash-screen = "0.1.4"
-tui-scrollview = "0.5"
-tachyonfx = "0.20"
-throbber-widgets-tui = "0.9.0"
-
+# nvme = "0.2.2"
 # surrealdb-alpha ={ workspace = true }
+
 surrealdb = { workspace=true }
-egui_logger = {workspace = true }
 ratatui = { workspace = true }
+egui_logger = {workspace = true }
+egui_extras = { workspace=true }
+egui_dock = { workspace=true }
 database = { workspace=true }
 tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }
 log  = { workspace=true }
-egui_extras = { workspace=true }
-egui_dock = { workspace=true }
 anyhow = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
@@ -110,7 +106,7 @@ default-features = false
 features = ["rayon", "bytemuck"]
 
 [dependencies.crossterm]
-version = "0.28.1"
+version = "0.29"
 features = ["event-stream"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -136,21 +132,21 @@ windows = {version = "0.62", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties"
 ]}
+winapi = { version = "0.3", features = ["processthreadsapi"] }
+minidump-processor = { version = "0.26", features = ["http"] }
+breakpad-symbols = { version = "0.26.0" }
+minidump-common = { version = "0.26" }
+minidump = { version = "0.26" }
+memmap2 = "0.9"
+windows_x86_64_msvc = "0.53"
+minidump-unwind = "0.26"
 windows-registry = "0.6"
 windows-core = "0.62"
-windows_x86_64_msvc = "0.53"
-winapi = { version = "0.3", features = ["processthreadsapi"] }
-memmap2 = "0.9"
-breakpad-symbols = { version = "0.26.0" }
-minidump = { version = "0.26" }
-minidump-common = { version = "0.26" }
-minidump-processor = { version = "0.26", features = ["http"] }
-minidump-unwind = "0.26"
 wmi = "0.18.0"
 evtx = "0.8"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-dotenvy = { workspace=true }
+dotenvy = { workspace = true }
 static_vcruntime = "3"
 embed-resource = "3"
 winres = "0.1"
@@ -161,6 +157,6 @@ openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
 
 [dev-dependencies]
-criterion = { version = "0.7.0", features = ["async_tokio"]}
+criterion = { version = "0.8.0", features = ["async_tokio"]}
 
 

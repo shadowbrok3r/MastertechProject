@@ -3,7 +3,7 @@ use tabs::{logger::Logger, login::LoginTab, menu_bar::Tab, service_form::Service
 use systems::{communication_system::Message, data_system::DataSystem, notification_system::Notification, render_system::RenderSystem, widget_render_system::WidgetRenderer};
 use std::{cell::RefCell, io, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use events::{action_handler::{get_event_receiver, EventManager}, EventHandler};
-use ratatui_splash_screen::{SplashConfig, SplashScreen};
+use widgets::splash_screen::{SplashConfig, SplashScreen};
 use websockets::TerminalWebsocketClient;
 use crossbeam::channel::unbounded;
 use context::TerminalContext;
@@ -158,7 +158,10 @@ impl Default for TerminalApp <'_>{
 }
 
 impl <'a>TerminalApp<'a> {
-    async fn ui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<(), anyhow::Error> {
+    async fn ui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<(), anyhow::Error> 
+    where 
+        <B as Backend>::Error: Send + Sync + 'static
+    {
         let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
         let send_interval = Duration::from_millis(30); // Changed: ~3 FPS interval
         let can_start = &mut false;

@@ -7,6 +7,10 @@ pub mod json_viewer;
 pub mod button;
 pub mod input_field;
 pub mod autocomplete_input;
+pub mod splash_screen;
+pub mod tui_scroll_view;
+pub mod throbber_widgets_tui;
+pub mod tui_textarea;
 // pub mod calendar;
 
 pub const SHORTCUT_SET: Set = Set {

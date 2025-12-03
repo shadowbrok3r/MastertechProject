@@ -108,13 +108,13 @@ impl <'a>HandleWidget<'a> for Logger {
         false
     }
     
-    fn handle_mouse_event(&self, mouse_event: &crossterm::event::MouseEvent) { 
+    fn handle_mouse_event(&self, mouse_event: &ratatui::crossterm::event::MouseEvent) { 
         let mut states = self.states.borrow_mut();
         let Some(state) = states.get_mut(self.selected_tab) else {return;};
 
         match mouse_event.kind {
-            crossterm::event::MouseEventKind::ScrollUp => state.transition(TuiWidgetEvent::PrevPageKey),
-            crossterm::event::MouseEventKind::ScrollDown => state.transition(TuiWidgetEvent::NextPageKey),
+            ratatui::crossterm::event::MouseEventKind::ScrollUp => state.transition(TuiWidgetEvent::PrevPageKey),
+            ratatui::crossterm::event::MouseEventKind::ScrollDown => state.transition(TuiWidgetEvent::NextPageKey),
             _ => {}
         }
     }

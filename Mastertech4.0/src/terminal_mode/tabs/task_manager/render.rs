@@ -1,11 +1,11 @@
 
-use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Modifier, Style, Stylize}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, WidgetRef}, Frame};
+use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout, Margin, Rect}, prelude::Backend, style::{Modifier, Style, Stylize}, widgets::{canvas::{Canvas, Line}, Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, StatefulWidget, Table, TableState, Widget, WidgetRef, FrameExt}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::HandleWidget};
 use std::{collections::HashMap, time::Instant};
 use super::SysinfoTab;
 
 impl SysinfoTab {
-    fn draw_cpu_chart(&mut self, current_time: f64, lower_bound: f64) -> impl WidgetRef {
+    fn draw_cpu_chart(&mut self, current_time: f64, lower_bound: f64) -> impl Widget {
         // Get CPU samples in the current window.
         let cpu_points: Vec<(f64, f64)> = self.cpu_history
             .iter()
@@ -48,7 +48,7 @@ impl SysinfoTab {
         cpu_canvas
     }
     
-    fn draw_mem_chart(&mut self, current_time: f64, lower_bound: f64) -> impl WidgetRef {
+    fn draw_mem_chart(&mut self, current_time: f64, lower_bound: f64) -> impl Widget {
         let mem_points: Vec<(f64, f64)> = self.mem_history
             .iter()
             .filter(|s| s.time >= lower_bound)
@@ -89,7 +89,7 @@ impl SysinfoTab {
         mem_canvas
     }
     
-    fn draw_gpu_chart(&mut self, current_time: f64, lower_bound: f64) -> impl WidgetRef {
+    fn draw_gpu_chart(&mut self, current_time: f64, lower_bound: f64) -> impl Widget {
         let gpu_points: Vec<(f64, f64)> = self.gpu_history
             .iter()
             .filter(|s| s.time >= lower_bound)
@@ -235,7 +235,7 @@ impl SysinfoTab {
                 }
             });
 
-        f.render_widget_ref(temp_canvas, area);
+        f.render_widget(temp_canvas, area);
     }
     
     fn draw_process_table(&mut self) -> impl StatefulWidget<State = TableState> + use<> {
@@ -280,7 +280,7 @@ impl SysinfoTab {
         table
     }
 
-    fn draw_sysinfo_summary(&mut self) -> impl WidgetRef {
+    fn draw_sysinfo_summary(&mut self) -> impl Widget {
         // let disks: Vec<Disk> = serde_json::from_str(&self.system.disks).unwrap_or_default();
 
         let mut details_text = format!(
@@ -363,9 +363,9 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
         };
 
         
-        f.render_widget_ref(self.draw_cpu_chart(current_time, lower_bound), left_grid[0]);
-        f.render_widget_ref(self.draw_mem_chart(current_time, lower_bound), left_grid[1]);
-        f.render_widget_ref(self.draw_gpu_chart(current_time, lower_bound), right_grid[0]);
+        f.render_widget(self.draw_cpu_chart(current_time, lower_bound), left_grid[0]);
+        f.render_widget(self.draw_mem_chart(current_time, lower_bound), left_grid[1]);
+        f.render_widget(self.draw_gpu_chart(current_time, lower_bound), right_grid[0]);
         self.draw_temp_chart(current_time, lower_bound, f, right_grid[1]);
 
         // --- Bottom Half: Textual Info & Process List ---
@@ -385,8 +385,8 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
             .add_modifier(Modifier::BOLD)
             .title("System Details");
 
-        f.render_widget_ref(details_block, bottom_chunks[0]);
-        f.render_widget_ref(self.draw_sysinfo_summary(), inner_rect(bottom_chunks[0], 1));
+        f.render_widget(details_block, bottom_chunks[0]);
+        f.render_widget(self.draw_sysinfo_summary(), inner_rect(bottom_chunks[0], 1));
 
         // Right column: Process List Panel.
         f.render_stateful_widget(self.draw_process_table(), bottom_chunks[1], &mut self.process_table_state);

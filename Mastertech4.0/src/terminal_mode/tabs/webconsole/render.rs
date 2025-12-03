@@ -1,5 +1,5 @@
 use displays::remote_viewer::ratagui::TerminalEvent;
-use ratatui::{layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, WidgetRef}, Frame};
+use ratatui::{layout::{Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::Stylize, widgets::{Block, Paragraph, Widget, WidgetRef}, Frame};
 use crate::terminal_mode::{data::LocalTermEvent, styling::CATPPUCCIN, widgets::{ButtonType, ShrinkArea}};
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 use super::{PageState, WebconsoleTab};
@@ -13,7 +13,7 @@ impl <'a> WebconsoleTab <'a> {
                 let placeholder = Paragraph::new("Select a client to view remote terminal")
                     .block(Block::default().bg(CATPPUCCIN.base))
                     .centered();
-                placeholder.render_ref(area, f.buffer_mut());
+                (&placeholder).render(area, f.buffer_mut());
             },
             PageState::RemoteTerminal(_connection_string) => {
                 // Poll buffer_rx for new frames
@@ -101,7 +101,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
             let para = Paragraph::new("Clients")
                 .block(Block::default().bg(CATPPUCCIN.base))
                 .centered();
-            para.render_ref(left_side_chunks[0], f.buffer_mut());
+            (&para).render(left_side_chunks[0], f.buffer_mut());
 
             // Create grid layout for buttons
             let button_count = 1 + self.ws_clients.len(); // 1 for Get Clients, plus one per client
@@ -129,7 +129,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for WebconsoleTab<'a> {
         let mouse_position = Position::new(c, r);
 
         match mouse_event.kind {
-            crossterm::event::MouseEventKind::Down(_) => {
+            ratatui::crossterm::event::MouseEventKind::Down(_) => {
                 if let (Some(_), PageState::RemoteTerminal(_)) = (&self.remote_buffer, &self.page_state) {
                     // let event = TerminalEvent::MouseClick { x: c, y: r };
                     // let _ = self.event_tx.try_send(event);

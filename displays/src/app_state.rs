@@ -628,13 +628,26 @@ fn setup_custom_fonts(ctx: &Context) {
             FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/UbuntuMonoNerdFont-Regular.ttf"))
         ),
     ); 
-    
+
+    fonts.font_data.insert(
+        "CascadiaMono".to_owned(),
+        std::sync::Arc::new(
+            FontData::from_static(include_bytes!("../../Mastertech4.0/src/assets/fonts/CascadiaMono.ttf"))
+        ),
+    ); 
+
     // Put my font first (highest priority):
     fonts
         .families
         .get_mut(&FontFamily::Monospace)
         .unwrap()
         .insert(0, "UbuntuMonoNerdFont".to_owned()); // "Monaspace"
+
+    fonts
+        .families
+        .get_mut(&FontFamily::Monospace)
+        .unwrap()
+        .insert(1, "CascadiaMono".to_owned()); // "Monaspace"
 
     fonts.font_data.insert(
         "Regular".to_owned(),

@@ -6,7 +6,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, HighlightSpacing, List, ListState, StatefulWidgetRef, WidgetRef},
+    widgets::{Block, Borders, HighlightSpacing, List, ListState, StatefulWidget, StatefulWidgetRef, WidgetRef},
 };
 use rayon::prelude::*;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -50,7 +50,8 @@ impl WidgetRef for Renderer<'_> {
             for t in theme.title_bottom(explorer) { block = block.title_bottom(t); }
             list = list.block(block);
         }
-        StatefulWidgetRef::render_ref(&list, area, buf, &mut state);
+        // In ratatui 0.30, use StatefulWidget::render instead of StatefulWidgetRef::render_ref
+        StatefulWidget::render(list, area, buf, &mut state);
     }
 }
 
