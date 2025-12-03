@@ -136,6 +136,7 @@ impl TaskLayout {
         
         // Only refetch/stream notes after this page has rendered at least once
         if !self.has_run {
+            self.has_run = true;
             log::info!("TaskLayout first receive call (post-first-render)");
             // Ensure global fetch runs only once across all TaskLayout instances
             if NOTES_FETCH_STARTED

@@ -1,4 +1,4 @@
-use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
+use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{ToastStyle, Toast, ToastKind, ToastOptions}}};
 use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
 use eframe::{egui::{Color32, Context, Margin, Stroke, Style, Vec2, Window}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
@@ -147,11 +147,14 @@ impl MtechServer {
             Ok(state) => {
                 log::info!("1");
                 if let AppState::NoAuth(reason) = &state {
+                    use displays::ui_tools::toasts::ToastStyle;
+
                     let toast = &mut self.shared_ctx.toasts;
     
                     let error_toast = Toast {
                         kind: ToastKind::Error,
                         text: format!("Message from Database: {reason}").into(),
+                        style: ToastStyle::default(),
                         options: ToastOptions::default()
                             .show_progress(true)
                             .duration_in_seconds(6.0),
@@ -213,6 +216,7 @@ impl MtechServer {
 
         let error_toast = Toast {
             kind: ToastKind::Error,
+            style: ToastStyle::default(),
             text: format!("Detected older crate version").into(),
             options: ToastOptions::default().show_progress(true).duration_in_seconds(10.0),
         };
@@ -277,6 +281,7 @@ impl MtechServer {
                             let _ = self.shared_ctx.app_state_tx.try_send(AppState::Authenticated(displays::app_state::MainPages::Tasks));
                             let toast = &mut self.shared_ctx.toasts;
                             let auth_toast = Toast {
+                                style: ToastStyle::default(),
                                 kind: ToastKind::Success,
                                 text: format!("{e:?}").into(),
                                 options: ToastOptions::default()
@@ -301,6 +306,7 @@ impl MtechServer {
                         // eframe::web::storage::local_storage_get(key)
                         let toast = &mut self.shared_ctx.toasts;
                         let auth_toast = Toast {
+                            style: ToastStyle::default(),
                             kind: ToastKind::Error,
                             text: format!("{e:?} \nYou may need to login again").into(),
                             options: ToastOptions::default()
