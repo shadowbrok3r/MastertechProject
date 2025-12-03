@@ -1,4 +1,4 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, WidgetRef, Wrap}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, WidgetRef, Wrap}, Frame};
 use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
@@ -62,7 +62,7 @@ impl<'a> ScriptsTab<'a> {
         let h_scroll_area = main_content[1];
         let inner_area = main_content[0];
 
-        block.render_ref(outer_area, f.buffer_mut());
+        (&block).render(outer_area, f.buffer_mut());
         // Check if robocopy logs exist
         let has_robocopy_logs = !self.robocopy_reports.borrow().is_empty();
 
@@ -143,7 +143,7 @@ impl<'a> ScriptsTab<'a> {
             .scroll((0, scroll_x)) // Only horizontal scroll here
             .alignment(Alignment::Left);
 
-        f.render_widget_ref(log_widget, inner_area);
+        f.render_widget(log_widget, inner_area);
 
         // Vertical Scrollbar
         if log_lines > visible_height {
@@ -369,7 +369,7 @@ impl<'a> ScriptsTab<'a> {
             f.render_widget(button, col_chunks[col].shrink(1, 0));
         }
 
-        self.custom_path_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
+        f.render_widget(&self.custom_path_field, content_chunks[4].shrink(1, 0));
         // self.custom_destination_field.render_ref(content_chunks[4].shrink(1, 0), f.buffer_mut());
 
     }
@@ -628,7 +628,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             .block(Block::default().bg(CATPPUCCIN.base))
             .centered();
 
-        para.render_ref(left_side_chunks[0], f.buffer_mut());
+        (&para).render(left_side_chunks[0], f.buffer_mut());
 
         // Create grid layout for buttons
         let button_grid = Layout::default()
@@ -648,7 +648,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         f.render_widget(&self.tuneup_btn, button_grid[0].shrink(4, 1));
         f.render_widget(&self.informational_btn, button_grid[1].shrink(4, 1));
         f.render_widget(&self.user_scripts_btn, button_grid[2].shrink(4, 1));
-        self.service_number_field.render_ref(button_grid[3].shrink(4, 1), f.buffer_mut());
+        f.render_widget(&self.service_number_field, button_grid[3].shrink(4, 1));
 
         let current_script = self.current_script.borrow().clone();
         let script_name = &mut String::new();
@@ -720,9 +720,9 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
         
         if self.loading {
-            let throbber = throbber_widgets_tui::Throbber::default()
+            let throbber = crate::terminal_mode::widgets::throbber_widgets_tui::Throbber::default()
                 .label("Scanning Directories..")
-                .throbber_set(throbber_widgets_tui::VERTICAL_BLOCK);
+                .throbber_set(crate::terminal_mode::widgets::throbber_widgets_tui::VERTICAL_BLOCK);
             f.render_widget(throbber, button_grid[8].shrink(0, 1));
         } else {
             // Display active robocopy processes

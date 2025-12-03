@@ -2,7 +2,7 @@ use crate::terminal_mode::{context::TerminalContext, events::action_handler::Wid
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
 use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
 use ratatui::{layout::Rect, style::Style};
-use tui_scrollview::ScrollViewState;
+use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
 use reqwest::Client;
 
 pub mod action_handler;

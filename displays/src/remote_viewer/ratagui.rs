@@ -177,10 +177,10 @@ impl RataguiBackend {
             cursor: false,
             font_size: 16,
             pos: (0, 0).into(),
-            regular_font: FontId::new(16.0, FontFamily::Monospace),
-            bold_font: FontId::new(16.0, FontFamily::Monospace),
-            italic_font: FontId::new(16.0, FontFamily::Monospace),
-            bolditalic_font: FontId::new(16.0, FontFamily::Monospace),
+            regular_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
+            bold_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
+            italic_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
+            bolditalic_font: FontId::new(12.0, FontFamily::Name("CascadiaMono".into())),
             timestamp: Default::default(),
             blinking_slow: false,
             blinking_fast: false,
@@ -408,7 +408,7 @@ impl RataguiBackend {
 }
 
 impl Backend for RataguiBackend {
-    // type Error = std::io::Error;
+    type Error = std::io::Error;
 
     fn draw<'a, I>(&mut self, content: I) -> std::io::Result<()>
     where

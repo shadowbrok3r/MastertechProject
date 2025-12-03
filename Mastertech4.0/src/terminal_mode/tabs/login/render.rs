@@ -1,4 +1,4 @@
-use ratatui::{layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, WidgetRef}, Frame};
+use ratatui::{layout::{Constraint, Direction, Layout, Rect}, prelude::Backend, widgets::{Block, Borders, Widget, WidgetRef}, Frame};
 use crate::{terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, ShrinkArea, SHORTCUT_SET}}};
 use displays::pages::login_page::Login;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
@@ -14,7 +14,7 @@ impl<'a> crate::terminal_mode::widgets::HandleWidget<'a> for LoginTab<'a> {
             .border_set(SHORTCUT_SET)
             .title(format!("Login"));
 
-        block.render_ref(area, f.buffer_mut());
+        (&block).render(area, f.buffer_mut());
 
         let rows = Layout::default()
             .direction(Direction::Vertical)

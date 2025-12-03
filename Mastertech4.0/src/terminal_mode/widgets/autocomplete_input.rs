@@ -13,7 +13,7 @@ use crate::terminal_mode::{
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use crossbeam::channel::Sender;
-use tui_textarea::{CursorMove, TextArea};
+use super::tui_textarea::{CursorMove, TextArea};
 use std::cell::RefCell;
 
 /// AutoCompleteInput: An input field with popup autocomplete suggestions

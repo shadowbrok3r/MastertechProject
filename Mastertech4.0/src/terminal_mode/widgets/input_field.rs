@@ -2,7 +2,7 @@ use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout:
 use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
-use tui_textarea::{CursorMove, TextArea};
+use super::tui_textarea::{CursorMove, TextArea};
 use std::{cell::RefCell, rc::Rc};
 use crossbeam::channel::Sender;
 use textwrap::refill;
@@ -325,5 +325,13 @@ impl <'a> WidgetRef for InputField <'a> {
             input.set_block(block);
             input.render(area, buf);
         }
+    }
+}
+
+// In ratatui 0.30, f.render_widget requires Widget trait, not just WidgetRef
+// Implement Widget for &InputField to allow f.render_widget(&input_field, area)
+impl<'a> Widget for &InputField<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        self.render_ref(area, buf);
     }
 }

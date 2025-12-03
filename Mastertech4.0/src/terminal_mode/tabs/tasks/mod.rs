@@ -1,7 +1,7 @@
 use crate::terminal_mode::context::TerminalContext;
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::{LiveTaskPayload, User};
-use tui_scrollview::ScrollViewState;
+use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
 use ratatui::widgets::TableState;
 use reqwest::Client;
 

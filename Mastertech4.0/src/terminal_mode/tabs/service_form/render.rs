@@ -1,6 +1,6 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, WidgetRef}, Frame};
 use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
-use tui_scrollview::ScrollView;
+use crate::terminal_mode::widgets::tui_scroll_view::ScrollView;
 use super::ServiceFormTab;
 
 // Define a virtual height for the service form content.

@@ -74,7 +74,7 @@ impl TaskLayout {
         search_results: Option<Vec<LiveTaskPayload>>,
         page: String,
     ) -> Self {
-        log::error!("Initializing new task layout");
+        log::debug!("Initializing new task layout");
         let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
         
         let tx = notes_tx.clone();
