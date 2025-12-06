@@ -5,6 +5,8 @@ permissions:
 
 on:
   push:
+    branches:
+      - '**'
     tags:
       - '4.*'
   pull_request:
@@ -17,6 +19,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: self-hosted
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
       - uses: taiki-e/create-gh-release-action@v1.9.1
@@ -33,8 +36,8 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            bin: MasterTech         # ← crate binary name
-            artifact: Mastertech-linux  # ← renamed file for upload
+            bin: MasterTech
+            artifact: Mastertech-linux
             runs_on: self-hosted
           - target: x86_64-pc-windows-msvc
             os: windows-latest
@@ -78,6 +81,7 @@ jobs:
   trunk:
     name: Build WASM frontend (Trunk)
     runs-on: self-hosted
+    # No 'needs' and no 'if', so this runs on EVERY push
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
@@ -93,18 +97,13 @@ jobs:
         with:
           prefix-key: "v1-mastertech"
           shared-key: "wasm"
-          # specific cache setting for workspace member
           workspaces: "MtechServer2.0 -> target" 
 
       - name: Download and Install Trunk
-        # Ensure this version matches what you use locally. 
-        # If possible, use the same version defined in your Dockerfile if it installs Trunk.
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
       
       - name: Build with Trunk
         working-directory: ./MtechServer2.0
-        # Trunk will automatically look up the directory tree, find the 
-        # root .cargo/config.toml, and apply the atomic/wasm flags.
         run: ../trunk build --release --config Trunk.toml
 
   docker:
@@ -133,7 +132,6 @@ jobs:
           push: true
           tags: shadowbrok3r/mtechserver:beta
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
-
   # deploy:
   #   name: Deploy to Kubernetes
   #   needs: docker
