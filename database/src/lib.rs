@@ -256,20 +256,20 @@ impl Database {
 
 pub fn get_current_user_from_auth() -> Option<User> {
     if let Ok(current_user) = CURRENT_USER_INFO.try_lock() {
-        log::debug!("WE HAVE A USER FROM GLOBAL STATE");
+        log::trace!("get_current_user_from_auth: user retrieved from global state");
         current_user.clone()
     } else {
-        log::warn!("NONE");
+        log::warn!("get_current_user_from_auth: failed to acquire lock");
         None
     }
 }
 
-pub fn get_database_users()  -> Vec<User>{
+pub fn get_database_users() -> Vec<User> {
     if let Ok(users) = STORE_USERS.try_lock() {
-        log::debug!("WE HAVE STORE USERS FROM GLOBAL STATE");
+        log::trace!("get_database_users: users retrieved from global state");
         users.clone()
     } else {
-        log::warn!("NONE");
+        log::warn!("get_database_users: failed to acquire lock");
         vec![]
     }
 }

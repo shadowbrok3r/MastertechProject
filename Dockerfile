@@ -1,28 +1,39 @@
-FROM --platform=$BUILDPLATFORM rust:latest 
+FROM --platform=$BUILDPLATFORM rustlang/rust:nightly 
+# rust:latest 
 # 
 # rustlang/rust:nightly
 WORKDIR /
 RUN rustup target add wasm32-unknown-unknown
 RUN rustup target add wasm32-wasip1
-RUN rustup update
+RUN rustup component add rust-src
+# RUN rustup update
 # RUN rustup toolchain install nightly-x86_64-unknown-linux-gnu
+# RUN rustup default nightly
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
 COPY .cargo .cargo
+# NEED TO GET RID OF THIS, ONLY TEMPORARY FOR TESTING
+COPY .env .env 
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
 # COPY rust-toolchain.toml rust-toolchain.toml
-ENV RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg getrandom_backend=\"wasm_js\""
+
 RUN mv trunk MtechServer2.0/trunk
 WORKDIR /MtechServer2.0
 ENTRYPOINT [ "/MtechServer2.0/trunk" ]
 CMD [ "serve", "--release" ]
 
 
-
+# Option 1 : Build locally, use pre-built dist folder
+#   trunk build --release
+#   docker build -f MtechServer2.0/Dockerfile.prod -t mtechserver .
+#
+# Option 2: Build in container (slower, but works for CI/CD)
+#   docker build -t mtechserver .
+#
 
 
 

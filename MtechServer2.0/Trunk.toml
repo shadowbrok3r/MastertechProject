@@ -11,8 +11,8 @@ release = false
 dist = "./dist"
 # The public URL from which assets are to be served.
 public_url = "/"
-# Whether to include hash values in the output file names.
-# filehash = false
+# Include hash values in output file names for cache busting
+filehash = true
 # pattern_script = ''' '''
 minify = "always"
 [serve]
@@ -20,22 +20,24 @@ minify = "always"
 addresses = ["0.0.0.0"]
 # The port to serve on.
 port = 8080
+# Disable auto-reload in production
+no_autoreload = false
 
-[tools] # Default wasm-opt version to download.
+# Headers for WASM SharedArrayBuffer support and cache control
+[serve.headers]
+# Required for WASM threads (SharedArrayBuffer)
+Cross-Origin-Embedder-Policy = "require-corp"
+Cross-Origin-Opener-Policy = "same-origin"
+# Prevent caching of HTML (so users get new file hashes)
+Cache-Control = "no-cache, no-store, must-revalidate"
+Pragma = "no-cache"
+
+[tools]
+# Default wasm-opt version to download.
 wasm_opt = "version_125"
 
 # [hooks] 
 # post-build = "build.ps1"
-
-# [serve.headers]
-# see ./assets/_headers for more documentation
-# "cross-origin-embedder-policy"= "require-corp"
-# "cross-origin-opener-policy"= "same-origin"
-# "cross-origin-resource-policy"= "same-site"
-# Disable auto-reload of the web app.
-# no_autoreload = false
-# Additional headers set for responses.
-# headers = {} #{ "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }
 # [[proxy]]
 # backend = "https://pclaptops.mojo11.com/api/"
 # rewrite = "/api/"

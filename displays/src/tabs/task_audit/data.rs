@@ -357,7 +357,7 @@ impl TaskRowViewer {
             task.clone().into(), 
             task.clone().task_note, 
             false
-        ).await?;
+        ).await;
 
         Ok(value)
     }

@@ -17,7 +17,7 @@
     <link
       data-trunk
       rel="rust"
-      data-wasm-opt="4"
+      data-wasm-opt="z"
       data-type="main"
       data-target-name="mtechserver"
       data-integrity="none"
@@ -36,7 +36,7 @@
       rel="rust"
       href="Cargo.toml"
       data-integrity="none"
-      data-wasm-opt="4"
+      data-wasm-opt="z"
       data-bin="webworker"
       data-type="worker"
       data-wasm-opt-params="--enable-bulk-memory" 
@@ -51,7 +51,7 @@
       rel="rust"
       href="Cargo.toml"
       data-integrity="none"
-      data-wasm-opt="4"
+      data-wasm-opt="z"
       data-bin="deser_worker"
       data-type="worker"
       data-wasm-opt-params="--enable-bulk-memory" 
@@ -176,13 +176,54 @@
     <!--   import "./worker_loader.js"; -->
     <!--   console.log("Main Wasm and thread pool initialized."); -->
     <!-- </script> -->
-    <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
-    <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
+    <!--Register Service Worker with automatic update handling -->
     <script>
-      // We disable caching during development so that we always view the latest version.
+      // Service worker registration with update handling
       if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
-        window.addEventListener("load", function () {
-          navigator.serviceWorker.register("sw.js");
+        window.addEventListener("load", async function () {
+          try {
+            const registration = await navigator.serviceWorker.register("sw.js", {
+              updateViaCache: 'none' // Always check for SW updates
+            });
+            
+            console.log("[App] Service Worker registered");
+            
+            // Check for updates periodically (every 5 minutes)
+            setInterval(() => {
+              registration.update();
+            }, 5 * 60 * 1000);
+            
+            // Handle new service worker waiting to activate
+            registration.addEventListener('updatefound', () => {
+              const newWorker = registration.installing;
+              console.log("[App] New Service Worker found, installing...");
+              
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  // New content available, prompt user to reload
+                  console.log("[App] New version available!");
+                  
+                  // Auto-reload for seamless updates (or show a toast/banner)
+                  if (confirm("A new version is available! Click OK to update.")) {
+                    newWorker.postMessage('skipWaiting');
+                    window.location.reload();
+                  }
+                }
+              });
+            });
+            
+            // Reload when new SW takes control
+            let refreshing = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              if (!refreshing) {
+                refreshing = true;
+                window.location.reload();
+              }
+            });
+            
+          } catch (error) {
+            console.error("[App] Service Worker registration failed:", error);
+          }
         });
       }
     </script>

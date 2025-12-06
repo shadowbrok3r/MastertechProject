@@ -632,7 +632,7 @@ fn setup_custom_fonts(ctx: &Context) {
     fonts.font_data.insert(
         "CascadiaMono".to_owned(),
         std::sync::Arc::new(
-            FontData::from_static(include_bytes!("../../Mastertech4.0/src/assets/fonts/CascadiaMono.ttf"))
+            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/CascadiaMono.ttf"))
         ),
     ); 
 

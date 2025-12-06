@@ -78,48 +78,33 @@ jobs:
   trunk:
     name: Build WASM frontend (Trunk)
     runs-on: self-hosted
-    env:
-      RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=getrandom_backend="wasm_js"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Patch workspace for MasterTech build
-        run: |
-          cat Cargo.toml
-          # Ensure MasterTech is in the workspace
-          sed -i '/members =/ s/\]/, "MasterTech"\]/' Cargo.toml
-          # Remove MtechServer2.0 from the workspace
-          sed -i -E 's/"MtechServer2\.0",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
-          cat Cargo.toml
-
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: nightly
           target: wasm32-unknown-unknown
           override: true
+          components: rust-src 
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-mastertech"
           shared-key: "wasm"
+          # specific cache setting for workspace member
+          workspaces: "MtechServer2.0 -> target" 
 
       - name: Download and Install Trunk
+        # Ensure this version matches what you use locally. 
+        # If possible, use the same version defined in your Dockerfile if it installs Trunk.
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
       
-      - name: Patch workspace for Trunk build
-        run: |
-          cat Cargo.toml
-          # Ensure MtechServer2.0 is in the workspace
-          sed -i '/members =/ s/\]/, "MtechServer2.0"\]/' Cargo.toml
-          # Remove MasterTech from the workspace
-          sed -i -E 's/"MasterTech",?\s*//g; s/\[\s*,/\[/; s/,\s*\]/]/; s/"\s*"/", "/g' Cargo.toml
-          cat Cargo.toml
-        shell: bash
-
       - name: Build with Trunk
         working-directory: ./MtechServer2.0
+        # Trunk will automatically look up the directory tree, find the 
+        # root .cargo/config.toml, and apply the atomic/wasm flags.
         run: ../trunk build --release --config Trunk.toml
 
   docker:

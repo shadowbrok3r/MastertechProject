@@ -36,6 +36,7 @@ pub use customer::*;
 pub use client::*;
 pub use sales_tracker::*;
 pub use everest::*;
+pub use utilities::TaskCreationResult;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
