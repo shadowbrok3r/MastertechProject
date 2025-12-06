@@ -12,14 +12,11 @@ RUN rustup component add rust-src
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
 COPY .cargo .cargo
-# NEED TO GET RID OF THIS, ONLY TEMPORARY FOR TESTING
-COPY .env .env 
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
-# COPY rust-toolchain.toml rust-toolchain.toml
 
 RUN mv trunk MtechServer2.0/trunk
 WORKDIR /MtechServer2.0
@@ -62,4 +59,5 @@ CMD [ "serve", "--release" ]
 # 
 # FROM scratch
 # ENTRYPOINT [ "mtechserver-bb39a05226a8fb4c_bg.wasm" ]
+
 # COPY --link --from=build dist/mtechserver-bb39a05226a8fb4c_bg.wasm /mtechserver-bb39a05226a8fb4c_bg.wasmd
