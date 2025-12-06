@@ -1,5 +1,5 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TicketData, User},DATABASE};
-use crate::{get_current_user_from_auth, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User},DATABASE};
+use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
@@ -322,6 +322,7 @@ impl CreateTaskModal {
                 }
 
                 let task = payload.task_data.clone();
+                let toast_tx = get_toast_sender();
                 PlatformSpawner::spawn(async move {
                     if !payload.ticket_data.service_number.is_empty() {
 
@@ -344,6 +345,30 @@ impl CreateTaskModal {
                         ).await;
                         info!("create_task_result: {create_task_result:?}");
 
+                        // Send toast based on result
+                        match create_task_result {
+                            TaskCreationResult::Created { service_number } => {
+                                let _ = toast_tx.try_send(ToastMessage::Success(
+                                    format!("Task created for service #{service_number}")
+                                ));
+                            },
+                            TaskCreationResult::AlreadyExists { service_number } => {
+                                let _ = toast_tx.try_send(ToastMessage::Warning(
+                                    format!("Task already exists for service #{service_number}")
+                                ));
+                            },
+                            TaskCreationResult::Updated { service_number } => {
+                                let _ = toast_tx.try_send(ToastMessage::Info(
+                                    format!("Task updated for service #{service_number}")
+                                ));
+                            },
+                            TaskCreationResult::Error { message } => {
+                                let _ = toast_tx.try_send(ToastMessage::Error(
+                                    format!("Error creating task: {message}")
+                                ));
+                            },
+                        }
+
                     } else {
                         info!("Creating Regular Task");
                         match User::query_user_from_email(assignee).await {
@@ -359,11 +384,24 @@ impl CreateTaskModal {
                                 match query {
                                     Ok(mut res) => {
                                         let _: Option<RecordId> = res.take(0).unwrap_or_default();
+                                        let _ = toast_tx.try_send(ToastMessage::Success(
+                                            "Task created successfully".to_string()
+                                        ));
                                     },
-                                    Err(e) => error!("Error creating task: {e:?}")
+                                    Err(e) => {
+                                        error!("Error creating task: {e:?}");
+                                        let _ = toast_tx.try_send(ToastMessage::Error(
+                                            format!("Error creating task: {e}")
+                                        ));
+                                    }
                                 }
                             }
-                            Err(e) => error!("Error getting user: {e:?}"),
+                            Err(e) => {
+                                error!("Error getting user: {e:?}");
+                                let _ = toast_tx.try_send(ToastMessage::Error(
+                                    format!("Error getting user: {e}")
+                                ));
+                            },
                         }
                     }
                 });

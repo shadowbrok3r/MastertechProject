@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::{self, DATABASE, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
-use crate::{PlatformSpawner, Spawner, get_current_user_from_auth, Displayable, TaskUiActions};
+use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
@@ -73,8 +73,9 @@ impl TaskLayout {
         assignees: Vec<User>,
         search_results: Option<Vec<LiveTaskPayload>>,
         page: String,
+        current_user: User,
     ) -> Self {
-        log::debug!("Initializing new task layout");
+        // log::debug!("Initializing new task layout");
         let (notes_tx, notes_rx) = crossbeam::channel::unbounded();
         
         let tx = notes_tx.clone();
@@ -107,7 +108,7 @@ impl TaskLayout {
             last_sort_field: None,
             loading: false,
             new_status: String::new(),
-            user: get_current_user_from_auth().unwrap_or_default(),
+            user: current_user,
             search_results,
             has_run: false,
         }

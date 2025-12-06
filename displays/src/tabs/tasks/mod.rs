@@ -185,6 +185,7 @@ impl SharedContext {
                         self.store_users.clone(),
                         self.search_results.clone(),
                         best.to_string(),
+                        current_user.clone(),
                     );
                     if let Some(cfg) = layout_configs.get(best) {
                         if cfg.update_assignees {
@@ -205,6 +206,7 @@ impl SharedContext {
                 self.store_users.clone(),
                 self.search_results.clone(),
                 page.to_string(),
+                current_user.clone(),
             );
             // Try to load and apply user's saved order for this page
             if let Some(user) = self.current_user.as_ref() {

@@ -1,6 +1,6 @@
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
-use crate::{PlatformSpawner, Spawner};
+use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::Style;
 use std::sync::Arc;
 
@@ -237,6 +237,26 @@ impl crate::app_state::SharedContext {
         self.filesystem.receive();
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
+        
+        // Process toast messages from async contexts
+        let toast_rx = get_toast_receiver();
+        while let Ok(msg) = toast_rx.try_recv() {
+            let (kind, text) = match msg {
+                ToastMessage::Success(text) => (ToastKind::Success, text),
+                ToastMessage::Error(text) => (ToastKind::Error, text),
+                ToastMessage::Warning(text) => (ToastKind::Warning, text),
+                ToastMessage::Info(text) => (ToastKind::Info, text),
+            };
+            self.toasts.add(Toast {
+                kind,
+                text: text.into(),
+                options: ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(6.0),
+                style: ToastStyle::default(),
+            });
+        }
+        
         self.toasts.show(ctx);
         for (_, layout) in self.task_layouts.iter_mut() {
             layout.receive();

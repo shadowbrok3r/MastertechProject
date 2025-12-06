@@ -11,6 +11,19 @@ use surrealdb::RecordId;
 use web_time::Instant;
 use regex::Regex;
 
+/// Result type for task creation operations
+#[derive(Debug, Clone)]
+pub enum TaskCreationResult {
+    /// Task was created successfully
+    Created { service_number: String },
+    /// Task already exists with this service number
+    AlreadyExists { service_number: String },
+    /// Task was updated (same ID found)
+    Updated { service_number: String },
+    /// An error occurred during creation
+    Error { message: String },
+}
+
 pub trait LiveUpdate {
     fn handle_live_create(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>;
     fn handle_live_update(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>;
@@ -318,9 +331,15 @@ pub async fn create_full_task_payload(
     mut task_data: LiveTaskPayload,
     mut task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
-) -> anyhow::Result<(), anyhow::Error> {
+) -> TaskCreationResult {
     info!("schema/utilities.rs -> Send_Payload");
-    let queried_salesman = User::query_user_from_email(ticket_data.salesman.clone()).await.unwrap_or_default();
+    let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
+        Ok(user) => user,
+        Err(e) => {
+            warn!("Could not query salesman, using default: {e:?}");
+            User::default()
+        }
+    };
     let _queried_tech = User::query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
     
     
@@ -344,7 +363,7 @@ pub async fn create_full_task_payload(
     // }
 
     info!("schema/utilities.rs -> cust_record: {customer_data:?}");
-    let update_customer: Result<Option<Record>, surrealdb::Error> = DATABASE
+    let update_customer: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
         .upsert(customer_id.clone())
         .content(customer_data.clone())
         .await;
@@ -370,63 +389,96 @@ pub async fn create_full_task_payload(
     }
 
     if send_specs {
-        let create_computer_record: Option<Record> = DATABASE
+        let create_computer_record: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
             .upsert(computer_id)
             .content(computer_data)
-            .await?;
-        info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
+            .await;
+        match create_computer_record {
+            Ok(record) => info!("schema/utilities.rs -> create_computer_record: {record:?}"),
+            Err(e) => return TaskCreationResult::Error { message: format!("Failed to create computer record: {e}") },
+        }
     }
 
     info!("schema/utilities.rs -> ticket record: {ticket_data:?}");
-    let service_ticket_record: Option<Record> = DATABASE
+    let service_ticket_record: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
         .upsert(ticket_id)
         .content(ticket_data)
-        .await?;
-    info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
+        .await;
+    match service_ticket_record {
+        Ok(record) => info!("schema/utilities.rs -> service_ticket_record: {record:?}"),
+        Err(e) => return TaskCreationResult::Error { message: format!("Failed to create service ticket: {e}") },
+    }
 
     info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
 
     
-    let check_task_record: Vec<LiveTaskPayload> = DATABASE
+    let check_task_query: std::result::Result<surrealdb::Response, surrealdb::Error> = DATABASE
         .query("SELECT * FROM task WHERE service_number == $service_number")
         .bind(("service_number", service_number.clone()))
-        .await?
-        .take(0)?;
+        .await;
+
+    let check_task_record: Vec<LiveTaskPayload> = match check_task_query {
+        Ok(mut response) => response.take(0).unwrap_or_default(),
+        Err(e) => return TaskCreationResult::Error { message: format!("Failed to check for existing task: {e}") },
+    };
 
     info!("schema/utilities.rs -> check_task_record: {check_task_record:?}");
 
-    if !check_task_record.is_empty() {
+    let result = if !check_task_record.is_empty() {
+        // Task already exists with this service number
+        let mut updated = false;
         for task in check_task_record.iter() {
             if task.id == task_data.id {
-                let upsert_task_record: Option<Record> = DATABASE
+                // Same task ID - this is an update
+                let upsert_result: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
                     .update(task.id.clone())
                     .content(LiveTaskPayload {
                         id: task.id.clone(),
                         ..task_data.clone()
-                    }).await?;
+                    }).await;
 
-                for note in task_notes.iter_mut() {
-                    if note.task_id == Some(task_data.id.clone()) && note.task_id != Some(task.id.clone()) {
-                        note.task_id = Some(task.id.clone());
-                    }
+                match upsert_result {
+                    Ok(record) => {
+                        for note in task_notes.iter_mut() {
+                            if note.task_id == Some(task_data.id.clone()) && note.task_id != Some(task.id.clone()) {
+                                note.task_id = Some(task.id.clone());
+                            }
+                        }
+                        info!("schema/utilities.rs -> upsert_task_record: {record:?}");
+                        updated = true;
+                    },
+                    Err(e) => return TaskCreationResult::Error { message: format!("Failed to update task: {e}") },
                 }
-                info!("schema/utilities.rs -> upsert_task_record: {upsert_task_record:?}");
             }
-
-        } 
+        }
+        
+        if updated {
+            TaskCreationResult::Updated { service_number: service_number.clone() }
+        } else {
+            // Task exists but with a different ID - this is a duplicate
+            TaskCreationResult::AlreadyExists { service_number: service_number.clone() }
+        }
     } else {
-        let create_task_record: Option<Record> = DATABASE
+        // No existing task - create new one
+        let create_result: std::result::Result<Option<Record>, surrealdb::Error> = DATABASE
             .create(TASK_TABLE)
-            .content(task_data).await?;
-        info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
-    }
+            .content(task_data).await;
+        match create_result {
+            Ok(record) => {
+                info!("schema/utilities.rs -> create_task_record: {record:?}");
+                TaskCreationResult::Created { service_number: service_number.clone() }
+            },
+            Err(e) => return TaskCreationResult::Error { message: format!("Failed to create task: {e}") },
+        }
+    };
 
+    // Process notes regardless of task creation result (notes might already exist, that's fine)
     for mut note in task_notes {
         let res = note.handle_note_creation().await;
         info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
     }
 
-    Ok(())
+    result
 }
 
 impl PrestashopPayload {}

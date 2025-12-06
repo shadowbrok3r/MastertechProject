@@ -1,0 +1,45 @@
+# Production Dockerfile - uses trunk serve
+# This compiles in the container (slower build, but simpler)
+# 
+# To use pre-built dist instead, mount your local dist folder:
+#   podman run -v ./dist:/MtechServer2.0/dist:ro -p 8080:8080 mtechserver
+
+FROM rust:latest
+
+WORKDIR /
+
+# Install dependencies
+RUN rustup target add wasm32-unknown-unknown && \
+    rustup target add wasm32-wasip1 && \
+    rustup update && \
+    apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl && \
+    update-ca-certificates
+
+# Download trunk
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf- && \
+    mv trunk /usr/local/bin/
+
+# Copy source files
+COPY .cargo .cargo
+COPY Cargo.toml Cargo.toml
+COPY MtechServer2.0 MtechServer2.0
+COPY displays displays
+COPY database database
+
+# Set build flags for WASM with threads support (must match .cargo/config.toml)
+ENV RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
+    -C link-arg=--shared-memory \
+    -C link-arg=--max-memory=1073741824 \
+    -C link-arg=--import-memory \
+    -C link-arg=--export=__wasm_init_tls \
+    -C link-arg=--export=__tls_size \
+    -C link-arg=--export=__tls_align \
+    -C link-arg=--export=__tls_base \
+    --cfg getrandom_backend=\"wasm_js\""
+
+WORKDIR /MtechServer2.0
+
+EXPOSE 8080
+
+ENTRYPOINT ["trunk"]
+CMD ["serve", "--release", "--address", "0.0.0.0"]
