@@ -44,7 +44,23 @@ jobs:
             bin: MasterTech
             artifact: Mastertech.exe
             runs_on: windows-latest
-
+    env:
+      SCAFFOLD_USER: ${{ secrets.SCAFFOLD_USER }}
+      SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
+      DB_URL: ${{ secrets.DB_URL }}
+      DOWNLOAD_TOKEN: ${{ secrets.DOWNLOAD_TOKEN }}
+      ISSUE_TOKEN: ${{ secrets.ISSUE_TOKEN }}
+      STORAGE_URL: ${{ secrets.STORAGE_URL }}
+      REGION: ${{ secrets.REGION }}
+      DB_URL_DEV: ${{ secrets.DB_URL_DEV }}
+      DB_URL_LOCAL: ${{ secrets.DB_URL_LOCAL }}
+      WS_CLIENT_URL_LOCAL: ${{ secrets.WS_CLIENT_URL_LOCAL }}
+      WS_MASTER_URL_LOCAL: ${{ secrets.WS_MASTER_URL_LOCAL }}
+      WS_CLIENT_URL: ${{ secrets.WS_CLIENT_URL }}
+      WS_MASTER_URL: ${{ secrets.WS_MASTER_URL }}
+      USER_SCOPE: ${{ secrets.USER_SCOPE }}
+      DB: ${{ secrets.DB }}
+      NS: ${{ secrets.NS }}
     runs-on: ${{ matrix.runs_on }}
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +97,23 @@ jobs:
   trunk:
     name: Build WASM frontend (Trunk)
     runs-on: self-hosted
-    # No 'needs' and no 'if', so this runs on EVERY push
+    env:
+      SCAFFOLD_USER: ${{ secrets.SCAFFOLD_USER }}
+      SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
+      DB_URL: ${{ secrets.DB_URL }}
+      DOWNLOAD_TOKEN: ${{ secrets.DOWNLOAD_TOKEN }}
+      ISSUE_TOKEN: ${{ secrets.ISSUE_TOKEN }}
+      STORAGE_URL: ${{ secrets.STORAGE_URL }}
+      REGION: ${{ secrets.REGION }}
+      DB_URL_DEV: ${{ secrets.DB_URL_DEV }}
+      DB_URL_LOCAL: ${{ secrets.DB_URL_LOCAL }}
+      WS_CLIENT_URL_LOCAL: ${{ secrets.WS_CLIENT_URL_LOCAL }}
+      WS_MASTER_URL_LOCAL: ${{ secrets.WS_MASTER_URL_LOCAL }}
+      WS_CLIENT_URL: ${{ secrets.WS_CLIENT_URL }}
+      WS_MASTER_URL: ${{ secrets.WS_MASTER_URL }}
+      USER_SCOPE: ${{ secrets.USER_SCOPE }}
+      DB: ${{ secrets.DB }}
+      NS: ${{ secrets.NS }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
