@@ -1,0 +1,25 @@
+[package]
+name = "done_shelf_audit"
+version = "0.1.0"
+edition = "2024"
+description = "Cron job for auditing done-shelf services without notes"
+
+[[bin]]
+name = "done_shelf_audit"
+path = "src/main.rs"
+
+[dependencies]
+database = { path = "../database" }
+surrealdb = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+simplelog = { workspace = true }
+dotenvy = { workspace = true }
+
+[build-dependencies]
+dotenvy = { workspace = true }
+
