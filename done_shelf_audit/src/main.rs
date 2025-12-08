@@ -9,36 +9,20 @@
 use anyhow::{Context, Result};
 use chrono::{Duration, NaiveDateTime, Utc};
 use database::{
-    init_database,
-    schema::{
-        helper_traits::EmployeeHelper,
-        prestashop_schema::{CustomerThread, Employee, Prestashop},
-        utilities::create_full_task_payload,
-        ComputerData, LiveTaskPayload, Priority, Store, TaskNotePayload,
-        TicketData, User, TASK_TABLE, TICKET_TABLE,
-    },
-    DATABASE,
+    DATABASE, init_database, schema::{
+        ComputerData, LiveTaskPayload, Priority, Store, TASK_TABLE, TICKET_TABLE, TaskNotePayload, TicketData, User, helper_traits::EmployeeHelper, prestashop::{Order, OrderType}, prestashop_schema::{CustomerThread, Employee, Prestashop, PrestashopOrderType}, utilities::create_full_task_payload
+    }
 };
 use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
 use simplelog::{ColorChoice, Config, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use surrealdb::RecordId;
 
-/// Status code for done-shelf in Prestashop
-const DONE_SHELF_STATUS: &str = "40";
-
 /// Minimum days on done-shelf before flagging
 const MIN_DAYS_ON_SHELF: i64 = 1;
 
-/// Order with date information for filtering
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct OrderWithDate {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub date_add: String,
-}
+/// The target assignee for audit tasks
+const AUDIT_ASSIGNEE_ID: &str = "jm9a7l3v32gsiccr7pgw";
 
 
 #[tokio::main]
@@ -59,18 +43,18 @@ async fn main() -> Result<()> {
     // Run the audit
     let results = run_audit().await?;
 
-    info!("Done Shelf Audit complete. Created {} tasks.", results);
+    info!("Done Shelf Audit complete. Processed {} tasks (created or updated).", results);
 
     Ok(())
 }
 
 async fn run_audit() -> Result<usize> {
-    let mut tasks_created = 0;
+    let mut tasks_processed = 0;
     
     // Get the assignee user
     let assignee: Option<User> = DATABASE
         .query("SELECT * FROM user WHERE id == $id")
-        .bind(("id", RecordId::from(("user", "jm9a7l3v32gsiccr7pgw"))))
+        .bind(("id", RecordId::from(("user", AUDIT_ASSIGNEE_ID))))
         .await?
         .take(0)?;
 
@@ -78,29 +62,30 @@ async fn run_audit() -> Result<usize> {
     info!("Tasks will be assigned to: {}", assignee.get_username());
 
     // Process each store using the Store enum
-    for store in Store::VALUES {
-        info!("Processing store {}...", store.as_str());
-        
-        match process_store(store, &assignee).await {
-            Ok(count) => {
-                tasks_created += count;
-                info!("Store {}: created {} tasks", store.as_str(), count);
-            }
-            Err(e) => {
-                error!("Error processing store {}: {:?}", store.as_str(), e);
-            }
+    // for store in Store::VALUES {
+    let store = Store::RIV;
+    info!("Processing store {}...", store.as_str());
+    
+    match process_store(store, &assignee).await {
+        Ok(count) => {
+            tasks_processed += count;
+            info!("Store {}: processed {} tasks", store.as_str(), count);
+        }
+        Err(e) => {
+            error!("Error processing store {}: {:?}", store.as_str(), e);
         }
     }
+    // }
 
-    Ok(tasks_created)
+    Ok(tasks_processed)
 }
 
 async fn process_store(store: Store, assignee: &User) -> Result<usize> {
-    let mut tasks_created = 0;
+    let mut tasks_processed = 0;
 
-    // Get all done-shelf services for this store with date info
+    // Get all done-shelf ServiceOrder's for this store
     let orders = get_done_shelf_orders(store).await?;
-    info!("Found {} orders on done-shelf for store {}", orders.len(), store.as_str());
+    info!("Found {} service orders on done-shelf for store {}", orders.len(), store.as_str());
 
     for order in orders {
         // Check if order has been on done-shelf for more than MIN_DAYS_ON_SHELF
@@ -108,49 +93,55 @@ async fn process_store(store: Store, assignee: &User) -> Result<usize> {
             continue;
         }
 
-        // Check if order has any notes
+        // Check if order has any notes - we only want orders with ZERO notes
         if has_notes(&order.id).await? {
             continue;
         }
 
         // Check if task already exists
-        if task_exists(&order.id).await? {
-            info!("Task already exists for order {}, skipping", order.id);
-            continue;
-        }
-
-        // Create task for this order
-        match create_audit_task(&order.id, assignee).await {
-            Ok(_) => {
-                tasks_created += 1;
-                info!("Created audit task for order {}", order.id);
+        if let Some(existing_task) = get_existing_task(&order.id).await? {
+            // Update existing task: reassign and set due date to today
+            match update_existing_task(&existing_task).await {
+                Ok(_) => {
+                    tasks_processed += 1;
+                    info!("Updated existing task for order {}", order.id);
+                }
+                Err(e) => {
+                    error!("Failed to update task for order {}: {:?}", order.id, e);
+                }
             }
-            Err(e) => {
-                error!("Failed to create task for order {}: {:?}", order.id, e);
+        } else {
+            // Create new task for this order
+            match create_audit_task(&order.id, assignee).await {
+                Ok(_) => {
+                    tasks_processed += 1;
+                    info!("Created audit task for order {}", order.id);
+                }
+                Err(e) => {
+                    error!("Failed to create task for order {}: {:?}", order.id, e);
+                }
             }
         }
     }
 
-    Ok(tasks_created)
+    Ok(tasks_processed)
 }
 
-async fn get_done_shelf_orders(store: Store) -> Result<Vec<OrderWithDate>> {
-    let mut api = Prestashop::default();
-    api.display = "[id,date_add]";
-    
+async fn get_done_shelf_orders(store: Store) -> Result<Vec<Order>> {
+    let api = Prestashop::default();
     let store_id = store.into_store_id().to_string();
+    let order_type = OrderType::ServiceOrder.to_id().to_string();
     
     let mut query: HashMap<&str, &str> = HashMap::new();
-    query.insert("filter[current_state]", DONE_SHELF_STATUS);
-    query.insert("filter[id_order_type]", "2");
+    query.insert("filter[current_state]", PrestashopOrderType::DoneShelf.id());
+    query.insert("filter[id_order_type]", &order_type);
     query.insert("filter[id_store]", &store_id);
     query.insert("output_format", "JSON");
     query.insert("sort", "[id_DESC]");
 
-    let orders: Vec<OrderWithDate> = api
+    let orders: Vec<Order> = api
         .request_resources_wasm("orders", query)
-        .await
-        .context("Failed to fetch done-shelf orders")?;
+        .await?;
 
     Ok(orders)
 }
@@ -178,7 +169,7 @@ async fn has_notes(order_id: &str) -> Result<bool> {
     query.insert("output_format", "JSON");
 
     let threads: Vec<CustomerThread> = api
-        .request_resources_wasm("customer_threads", query)
+        .request_subresources_by_id("customer_threads", query)
         .await
         .unwrap_or_default();
 
@@ -197,21 +188,36 @@ async fn has_notes(order_id: &str) -> Result<bool> {
     // Also check our database for task notes
     let db_notes: Vec<TaskNotePayload> = DATABASE
         .query("SELECT * FROM task_note WHERE service_number == $service_number")
-        .bind(("service_number", order_id))
+        .bind(("service_number", order_id.to_string()))
         .await?
         .take(0)?;
 
     Ok(!db_notes.is_empty())
 }
 
-async fn task_exists(service_number: &str) -> Result<bool> {
-    let existing: Vec<LiveTaskPayload> = DATABASE
+async fn get_existing_task(service_number: &str) -> Result<Option<LiveTaskPayload>> {
+    let existing: Option<LiveTaskPayload> = DATABASE
         .query("SELECT * FROM task WHERE service_number == $service_number")
-        .bind(("service_number", service_number))
+        .bind(("service_number", service_number.to_string()))
         .await?
         .take(0)?;
 
-    Ok(!existing.is_empty())
+    Ok(existing)
+}
+
+async fn update_existing_task(task: &LiveTaskPayload) -> Result<()> {
+    let assignee_id = RecordId::from(("user", AUDIT_ASSIGNEE_ID));
+    let today: surrealdb::sql::Datetime = Utc::now().into();
+    
+    DATABASE
+        .query("UPDATE $task_id SET assignee = $assignee, due_date = $due_date")
+        .bind(("task_id", task.id.clone()))
+        .bind(("assignee", assignee_id))
+        .bind(("due_date", today))
+        .await?;
+
+    info!("Updated existing task {} - reassigned and due date set to today", task.id);
+    Ok(())
 }
 
 async fn create_audit_task(order_id: &str, assignee: &User) -> Result<()> {
