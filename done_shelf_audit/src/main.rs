@@ -249,13 +249,15 @@ async fn create_audit_task(order_id: &str, assignee: &User) -> Result<()> {
 
     let task_data = LiveTaskPayload {
         id: RecordId::from((TASK_TABLE, order_id.to_string())),
-        task_name,
+        task_name: task_name.clone(),
         service_number: Some(order_id.to_string()),
         service_ticket: Some(ticket_data.id.clone()),
         assignee: assignee.get_id(),
         priority: Priority::Normal,
         due_date: Utc::now().into(),
         completed: false,
+        task_description: task_name,
+        status: database::schema::Status::Todo,
         ..Default::default()
     };
 
