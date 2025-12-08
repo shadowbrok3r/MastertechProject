@@ -14,6 +14,7 @@ RUN update-ca-certificates
 COPY .cargo .cargo
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
+COPY .env .env
 COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
