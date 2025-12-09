@@ -1,16 +1,29 @@
 //! Done Shelf Audit
 //! 
-//! A cron job that audits services on the done-shelf (status 40) that:
-//! - Have no notes/customer messages
-//! - Have been on done-shelf for more than one day
+//! A CLI tool for auditing services and tasks:
+//! - Done shelf services with no notes
+//! - In-repair services with no notes  
+//! - Overdue tasks
 //! 
-//! For each matching service, it creates a task assigned to a specific user.
+//! For each matching item, it creates/updates a task assigned to a specific user.
 
 use anyhow::{Context, Result};
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Utc, Weekday};
+use clap::Parser;
 use database::{
     DATABASE, init_database, schema::{
-        ComputerData, LiveTaskPayload, Priority, Store, TASK_TABLE, TICKET_TABLE, TaskNotePayload, TicketData, User, helper_traits::EmployeeHelper, prestashop::{Order, OrderType}, prestashop_schema::{CustomerThread, Employee, Prestashop, PrestashopOrderType}, utilities::create_full_task_payload
+        helper_traits::PrestashopPayloadHelper,
+        ComputerData, LiveTaskPayload, Priority, 
+        Store, TASK_TABLE, TASK_NOTE_TABLE, TICKET_TABLE, TaskNotePayload, 
+        TicketData, 
+        User,
+        prestashop::{Order, OrderType, OrderState, PrestashopPayload}, 
+        prestashop_schema::{
+            CustomerThread,
+            Prestashop, 
+            PrestashopOrderType
+        }, 
+        utilities::create_full_task_payload
     }
 };
 use log::{error, info, warn};
@@ -18,12 +31,47 @@ use simplelog::{ColorChoice, Config, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use surrealdb::RecordId;
 
-/// Minimum days on done-shelf before flagging
+/// Minimum days on done-shelf/in-repair before flagging
 const MIN_DAYS_ON_SHELF: i64 = 1;
 
-/// The target assignee for audit tasks
-const AUDIT_ASSIGNEE_ID: &str = "jm9a7l3v32gsiccr7pgw";
+/// Minimum days overdue for task audit
+const MIN_DAYS_TASK_OVERDUE: i64 = 3;
 
+/// The audit assignee email
+const AUDIT_ASSIGNEE_EMAIL: &str = "logan.lees@pclaptops.com";
+
+#[derive(Parser, Debug)]
+#[command(name = "done_shelf_audit")]
+#[command(about = "Audit services and tasks for follow-up", long_about = None)]
+struct Args {
+    /// Audit done-shelf services (status 40) with no notes
+    #[arg(long, short = 'd')]
+    done: bool,
+
+    /// Audit in-repair services with no notes
+    #[arg(long, short = 'r')]
+    repair: bool,
+
+    /// Audit both done-shelf and in-repair services
+    #[arg(long, short = 'b')]
+    both: bool,
+
+    /// Audit overdue tasks (due date > 3 days ago)
+    #[arg(long, short = 't')]
+    tasks: bool,
+
+    /// Run all audits (done-shelf, in-repair, and overdue tasks)
+    #[arg(long, short = 'a')]
+    all: bool,
+
+    /// Only process a specific store (e.g., RIV, AF, LTN, MUR, ORE, SAN, WJ)
+    #[arg(long, short = 's')]
+    store: Option<String>,
+
+    /// Dry run - don't actually create/update tasks, just log what would happen
+    #[arg(long)]
+    dry_run: bool,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,61 +83,136 @@ async fn main() -> Result<()> {
         ColorChoice::Auto,
     )?;
 
-    info!("Starting Done Shelf Audit...");
+    let args = Args::parse();
+
+    // Validate that at least one audit type is selected
+    if !args.done && !args.repair && !args.both && !args.tasks && !args.all {
+        eprintln!("Error: Please specify at least one audit type.");
+        eprintln!("Use --help for usage information.");
+        eprintln!("\nExamples:");
+        eprintln!("  done_shelf_audit --done          # Audit done-shelf services");
+        eprintln!("  done_shelf_audit --repair        # Audit in-repair services");
+        eprintln!("  done_shelf_audit --both          # Audit both done-shelf and in-repair");
+        eprintln!("  done_shelf_audit --tasks         # Audit overdue tasks");
+        eprintln!("  done_shelf_audit --all           # Run all audits");
+        eprintln!("  done_shelf_audit --both -s RIV   # Audit both for Riverside store only");
+        std::process::exit(1);
+    }
+
+    info!("Starting Audit Tool...");
+    if args.dry_run {
+        info!("🔸 DRY RUN MODE - No changes will be made");
+    }
 
     // Connect to database
     init_database().await?;
 
-    // Run the audit
-    let results = run_audit().await?;
+    // Get and validate the assignee user
+    let assignee = get_audit_assignee().await?;
+    info!("Tasks will be assigned to: {} ({})", assignee.get_name(), assignee.get_username());
 
-    info!("Done Shelf Audit complete. Processed {} tasks (created or updated).", results);
+    // Determine which stores to process
+    let stores = if let Some(store_str) = &args.store {
+        match store_str.to_uppercase().as_str() {
+            "RIV" => vec![Store::RIV],
+            "AF" => vec![Store::AF],
+            "LTN" => vec![Store::LTN],
+            "MUR" => vec![Store::MUR],
+            "ORE" => vec![Store::ORE],
+            "SAN" => vec![Store::SAN],
+            "WJ" => vec![Store::WJ],
+            _ => {
+                error!("Unknown store: {}. Valid stores: RIV, AF, LTN, MUR, ORE, SAN, WJ", store_str);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        vec![Store::RIV]
+    };
+
+    let mut total_processed = 0;
+
+    // Determine which audits to run
+    let run_done = args.done || args.both || args.all;
+    let run_repair = args.repair || args.both || args.all;
+    let run_tasks = args.tasks || args.all;
+
+    // Run service audits (done-shelf and/or in-repair)
+    if run_done || run_repair {
+        for store in &stores {
+            info!("Processing store {}...", store.as_str());
+            
+            match run_service_audit(*store, &assignee, run_done, run_repair, args.dry_run).await {
+                Ok(count) => {
+                    total_processed += count;
+                    info!("Store {}: processed {} services", store.as_str(), count);
+                }
+                Err(e) => {
+                    error!("Error processing store {}: {:?}", store.as_str(), e);
+                }
+            }
+        }
+    }
+
+    // Run task audit
+    if run_tasks {
+        info!("Running task audit for overdue tasks...");
+        match run_task_audit(&assignee, args.dry_run).await {
+            Ok(count) => {
+                total_processed += count;
+                info!("Task audit: processed {} overdue tasks", count);
+            }
+            Err(e) => {
+                error!("Error in task audit: {:?}", e);
+            }
+        }
+    }
+
+    info!("Audit complete. Total processed: {}", total_processed);
 
     Ok(())
 }
 
-async fn run_audit() -> Result<usize> {
-    let mut tasks_processed = 0;
-    
-    // Get the assignee user
+/// Get the audit assignee user, ensuring they exist
+async fn get_audit_assignee() -> Result<User> {
     let assignee: Option<User> = DATABASE
-        .query("SELECT * FROM user WHERE id == $id")
-        .bind(("id", RecordId::from(("user", AUDIT_ASSIGNEE_ID))))
+        .query("SELECT * FROM user WHERE email == $email")
+        .bind(("email", AUDIT_ASSIGNEE_EMAIL.to_string()))
         .await?
         .take(0)?;
 
-    let assignee = assignee.context("Could not find assignee user")?;
-    info!("Tasks will be assigned to: {}", assignee.get_username());
-
-    // Process each store using the Store enum
-    // for store in Store::VALUES {
-    let store = Store::RIV;
-    info!("Processing store {}...", store.as_str());
-    
-    match process_store(store, &assignee).await {
-        Ok(count) => {
-            tasks_processed += count;
-            info!("Store {}: processed {} tasks", store.as_str(), count);
-        }
-        Err(e) => {
-            error!("Error processing store {}: {:?}", store.as_str(), e);
-        }
-    }
-    // }
-
-    Ok(tasks_processed)
+    assignee.context(format!(
+        "Could not find audit assignee user with email: {}. Please ensure this user exists in the database.",
+        AUDIT_ASSIGNEE_EMAIL
+    ))
 }
 
-async fn process_store(store: Store, assignee: &User) -> Result<usize> {
+/// Run service audit (done-shelf and/or in-repair)
+async fn run_service_audit(
+    store: Store, 
+    assignee: &User, 
+    include_done: bool, 
+    include_repair: bool,
+    dry_run: bool
+) -> Result<usize> {
     let mut tasks_processed = 0;
+    let mut orders = Vec::new();
 
-    // Get all done-shelf ServiceOrder's for this store
-    let orders = get_done_shelf_orders(store).await?;
-    info!("Found {} service orders on done-shelf for store {}", orders.len(), store.as_str());
+    if include_done {
+        let done_shelf_orders = get_done_shelf_orders(store).await?;
+        info!("Found {} done-shelf orders for store {}", done_shelf_orders.len(), store.as_str());
+        orders.extend(done_shelf_orders);
+    }
+
+    if include_repair {
+        let in_repair_orders = get_in_repair_orders(store).await?;
+        info!("Found {} in-repair orders for store {}", in_repair_orders.len(), store.as_str());
+        orders.extend(in_repair_orders);
+    }
 
     for order in orders {
-        // Check if order has been on done-shelf for more than MIN_DAYS_ON_SHELF
-        if !is_old_enough(&order.date_add) {
+        // Check if order has been on shelf for more than MIN_DAYS_ON_SHELF
+        if !is_old_enough(&order.date_add, MIN_DAYS_ON_SHELF) {
             continue;
         }
 
@@ -98,33 +221,134 @@ async fn process_store(store: Store, assignee: &User) -> Result<usize> {
             continue;
         }
 
+        // Validate that assignee exists before proceeding
+        if get_user_by_id(&assignee.get_id()).await?.is_none() {
+            error!("Assignee user no longer exists! Aborting.");
+            return Err(anyhow::anyhow!("Assignee user does not exist"));
+        }
+
         // Check if task already exists
         if let Some(existing_task) = get_existing_task(&order.id).await? {
-            // Update existing task: reassign and set due date to today
-            match update_existing_task(&existing_task).await {
-                Ok(_) => {
-                    tasks_processed += 1;
-                    info!("Updated existing task for order {}", order.id);
-                }
-                Err(e) => {
-                    error!("Failed to update task for order {}: {:?}", order.id, e);
+            if dry_run {
+                info!("[DRY RUN] Would update existing task for order {}", order.id);
+                tasks_processed += 1;
+            } else {
+                match update_existing_task(&existing_task, &order.id, &order.date_add, assignee, AuditType::Service).await {
+                    Ok(_) => {
+                        tasks_processed += 1;
+                        info!("Updated existing task for order {}", order.id);
+                    }
+                    Err(e) => {
+                        error!("Failed to update task for order {}: {:?}", order.id, e);
+                    }
                 }
             }
         } else {
-            // Create new task for this order
-            match create_audit_task(&order.id, assignee).await {
-                Ok(_) => {
-                    tasks_processed += 1;
-                    info!("Created audit task for order {}", order.id);
-                }
-                Err(e) => {
-                    error!("Failed to create task for order {}: {:?}", order.id, e);
+            if dry_run {
+                info!("[DRY RUN] Would create new task for order {}", order.id);
+                tasks_processed += 1;
+            } else {
+                match create_audit_task(&order.id, &order.date_add, assignee).await {
+                    Ok(_) => {
+                        tasks_processed += 1;
+                        info!("Created audit task for order {}", order.id);
+                    }
+                    Err(e) => {
+                        error!("Failed to create task for order {}: {:?}", order.id, e);
+                    }
                 }
             }
         }
     }
 
     Ok(tasks_processed)
+}
+
+/// Run task audit for overdue tasks
+async fn run_task_audit(assignee: &User, dry_run: bool) -> Result<usize> {
+    let mut tasks_processed = 0;
+
+    // Get all incomplete tasks with due dates more than 3 days ago
+    // Exclude tasks already assigned to the audit user
+    let overdue_tasks: Vec<LiveTaskPayload> = DATABASE
+        .query("SELECT * FROM task WHERE completed == false AND due_date < $cutoff_date AND assignee != $audit_user")
+        .bind(("cutoff_date", Utc::now() - Duration::days(MIN_DAYS_TASK_OVERDUE)))
+        .bind(("audit_user", assignee.get_id()))
+        .await?
+        .take(0)?;
+
+    info!("Found {} overdue tasks (> {} days)", overdue_tasks.len(), MIN_DAYS_TASK_OVERDUE);
+
+    for task in overdue_tasks {
+        // Validate that assignee exists before proceeding
+        if get_user_by_id(&assignee.get_id()).await?.is_none() {
+            error!("Assignee user no longer exists! Aborting.");
+            return Err(anyhow::anyhow!("Assignee user does not exist"));
+        }
+
+        // Get task's due date as string for description building
+        let due_date_str = task.due_date.to_string();
+
+        if dry_run {
+            info!("[DRY RUN] Would reassign overdue task {} (service: {:?})", task.id, task.service_number);
+            tasks_processed += 1;
+        } else {
+            // Check if this task has an associated service order
+            let audit_type = if let Some(ref service_number) = task.service_number {
+                // Check if the order is AcceptedByOdoo
+                if let Ok(Some(order_state)) = get_order_state(service_number).await {
+                    if order_state == OrderState::AcceptedByOdoo {
+                        AuditType::TaskAcceptedByOdoo
+                    } else {
+                        AuditType::Task
+                    }
+                } else {
+                    AuditType::Task
+                }
+            } else {
+                AuditType::Task
+            };
+
+            match update_existing_task(&task, task.service_number.as_deref().unwrap_or("N/A"), &due_date_str, assignee, audit_type).await {
+                Ok(_) => {
+                    tasks_processed += 1;
+                    info!("Reassigned overdue task {} to audit user", task.id);
+                }
+                Err(e) => {
+                    error!("Failed to reassign task {}: {:?}", task.id, e);
+                }
+            }
+        }
+    }
+
+    Ok(tasks_processed)
+}
+
+/// Get the order state for a service number
+async fn get_order_state(service_number: &str) -> Result<Option<OrderState>> {
+    let api = Prestashop::default();
+    
+    let mut query: HashMap<&str, &str> = HashMap::new();
+    query.insert("filter[id]", service_number);
+    query.insert("output_format", "JSON");
+
+    let orders: Vec<Order> = api
+        .request_resources_wasm("orders", query)
+        .await
+        .unwrap_or_default();
+
+    if let Some(order) = orders.first() {
+        Ok(Some(OrderState::state_from_id_str(&order.current_state)))
+    } else {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum AuditType {
+    Service,
+    Task,
+    TaskAcceptedByOdoo,
 }
 
 async fn get_done_shelf_orders(store: Store) -> Result<Vec<Order>> {
@@ -146,18 +370,161 @@ async fn get_done_shelf_orders(store: Store) -> Result<Vec<Order>> {
     Ok(orders)
 }
 
-fn is_old_enough(date_str: &str) -> bool {
+async fn get_in_repair_orders(store: Store) -> Result<Vec<Order>> {
+    let api = Prestashop::default();
+    let store_id = store.into_store_id().to_string();
+    let order_type = OrderType::ServiceOrder.to_id().to_string();
+    
+    let mut query: HashMap<&str, &str> = HashMap::new();
+    query.insert("filter[current_state]", PrestashopOrderType::InRepair.id());
+    query.insert("filter[id_order_type]", &order_type);
+    query.insert("filter[id_store]", &store_id);
+    query.insert("output_format", "JSON");
+    query.insert("sort", "[id_DESC]");
+
+    let orders: Vec<Order> = api
+        .request_resources_wasm("orders", query)
+        .await?;
+
+    Ok(orders)
+}
+
+fn is_old_enough(date_str: &str, min_days: i64) -> bool {
     match NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
         Ok(order_date) => {
-            let now = Utc::now().naive_utc();
-            let age = now.signed_duration_since(order_date);
-            age > Duration::days(MIN_DAYS_ON_SHELF)
+            let business_days = count_business_days_since(order_date.date());
+            business_days > min_days
         }
         Err(e) => {
             warn!("Failed to parse date {}: {}", date_str, e);
             false
         }
     }
+}
+
+/// Count business days (excluding Sundays) since a given date
+fn count_business_days_since(start_date: NaiveDate) -> i64 {
+    let today = Utc::now().naive_utc().date();
+    let mut count = 0i64;
+    let mut current = start_date;
+    
+    while current < today {
+        current += Duration::days(1);
+        // Exclude Sundays
+        if current.weekday() != Weekday::Sun {
+            count += 1;
+        }
+    }
+    
+    count
+}
+
+/// Get all the dates where calls were missed (excluding Sundays)
+fn get_missed_call_days(date_str: &str) -> Vec<String> {
+    let mut missed_days = Vec::new();
+    
+    if let Ok(order_date) = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
+        let today = Utc::now().naive_utc().date();
+        let mut current = order_date.date();
+        
+        while current < today {
+            current += Duration::days(1);
+            // Exclude Sundays
+            if current.weekday() != Weekday::Sun {
+                missed_days.push(current.format("%A, %B %d").to_string());
+            }
+        }
+    }
+    
+    missed_days
+}
+
+/// Get the number of business days overdue (excluding Sundays)
+fn get_days_overdue(date_str: &str) -> i64 {
+    if let Ok(order_date) = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
+        count_business_days_since(order_date.date())
+    } else {
+        0
+    }
+}
+
+/// Fetch a user by their RecordId
+async fn get_user_by_id(user_id: &RecordId) -> Result<Option<User>> {
+    let user: Option<User> = DATABASE
+        .query("SELECT * FROM user WHERE id == $id")
+        .bind(("id", user_id.clone()))
+        .await?
+        .take(0)?;
+    
+    Ok(user)
+}
+
+/// Build the audit description for services
+fn build_service_audit_description(
+    order_id: &str,
+    date_str: &str,
+    previous_assignee: Option<&str>,
+    sales_rep: Option<&str>,
+) -> String {
+    let days_overdue = get_days_overdue(date_str);
+    let missed_days = get_missed_call_days(date_str);
+    
+    let mut description = String::new();
+    
+    description.push_str(&format!("🔴 AUDIT - Service #{}\n\n", order_id));
+    description.push_str("📋 REASON: No notes/customer contact after being on Done Shelf\n\n");
+    
+    if let Some(sales) = sales_rep {
+        if !sales.is_empty() {
+            description.push_str(&format!("🏷️ SALES REP: {}\n\n", sales));
+        }
+    }
+    
+    if let Some(prev_assignee) = previous_assignee {
+        description.push_str(&format!("👤 PREVIOUS ASSIGNEE: {}\n\n", prev_assignee));
+    }
+    
+    description.push_str(&format!("⏰ DAYS OVERDUE: {} business day(s)\n\n", days_overdue));
+    
+    if !missed_days.is_empty() {
+        description.push_str("📅 MISSED CALL DAYS:\n");
+        for day in &missed_days {
+            description.push_str(&format!("  • {}\n", day));
+        }
+    }
+    
+    description
+}
+
+/// Build the audit description for overdue tasks
+fn build_task_audit_description(
+    task_id: &RecordId,
+    service_number: Option<&str>,
+    previous_assignee: Option<&str>,
+    days_overdue: i64,
+    recommend_complete: bool,
+) -> String {
+    let mut description = String::new();
+    
+    description.push_str(&format!("🔴 TASK AUDIT - {}\n\n", task_id));
+    
+    if let Some(svc) = service_number {
+        description.push_str(&format!("📄 SERVICE: #{}\n\n", svc));
+    }
+    
+    description.push_str("📋 REASON: Task overdue - no progress for extended period\n\n");
+    
+    if let Some(prev_assignee) = previous_assignee {
+        description.push_str(&format!("👤 PREVIOUS ASSIGNEE: {}\n\n", prev_assignee));
+    }
+    
+    description.push_str(&format!("⏰ DAYS OVERDUE: {} day(s)\n\n", days_overdue));
+    
+    if recommend_complete {
+        description.push_str("✅ RECOMMENDATION: Service is marked as 'Accepted By Odoo' - consider completing this task.\n\n");
+    }
+    
+    description
 }
 
 async fn has_notes(order_id: &str) -> Result<bool> {
@@ -169,7 +536,7 @@ async fn has_notes(order_id: &str) -> Result<bool> {
     query.insert("output_format", "JSON");
 
     let threads: Vec<CustomerThread> = api
-        .request_subresources_by_id("customer_threads", query)
+        .request_resources_wasm("customer_threads", query)
         .await
         .unwrap_or_default();
 
@@ -205,37 +572,99 @@ async fn get_existing_task(service_number: &str) -> Result<Option<LiveTaskPayloa
     Ok(existing)
 }
 
-async fn update_existing_task(task: &LiveTaskPayload) -> Result<()> {
-    let assignee_id = RecordId::from(("user", AUDIT_ASSIGNEE_ID));
+async fn update_existing_task(
+    task: &LiveTaskPayload, 
+    order_id: &str, 
+    date_str: &str, 
+    assignee: &User,
+    audit_type: AuditType,
+) -> Result<()> {
     let today: surrealdb::sql::Datetime = Utc::now().into();
     
+    // Get the previous assignee's username
+    let previous_assignee_username = if let Some(prev_user) = get_user_by_id(&task.assignee).await? {
+        prev_user.get_username().to_string()
+    } else {
+        "Unknown".to_string()
+    };
+    
+    // Validate the new assignee exists
+    let audit_user = get_user_by_id(&assignee.get_id()).await?
+        .context("Audit assignee user does not exist")?;
+    
+    let audit_user_id = audit_user.get_id();
+    
+    // Build the appropriate audit description based on type
+    let audit_description = match audit_type {
+        AuditType::Service => {
+            build_service_audit_description(order_id, date_str, Some(&previous_assignee_username), None)
+        }
+        AuditType::Task | AuditType::TaskAcceptedByOdoo => {
+            let days_overdue = get_days_overdue(date_str);
+            build_task_audit_description(
+                &task.id,
+                task.service_number.as_deref(),
+                Some(&previous_assignee_username),
+                days_overdue,
+                audit_type == AuditType::TaskAcceptedByOdoo,
+            )
+        }
+    };
+    
+    // Update the task
     DATABASE
         .query("UPDATE $task_id SET assignee = $assignee, due_date = $due_date")
         .bind(("task_id", task.id.clone()))
-        .bind(("assignee", assignee_id))
+        .bind(("assignee", audit_user_id.clone()))
         .bind(("due_date", today))
         .await?;
 
-    info!("Updated existing task {} - reassigned and due date set to today", task.id);
+    // Create a private task note explaining the reassignment
+    let mut task_note = TaskNotePayload {
+        id: RecordId::from((TASK_NOTE_TABLE, surrealdb::sql::Id::rand().to_string())),
+        task_id: Some(task.id.clone()),
+        created_at: Utc::now().into(),
+        note: audit_description,
+        username: audit_user.get_username().to_string(),
+        id_customer_thread: None,
+        id_customer_message: None,
+        id_employee: audit_user.get_employee_id().map(|id| id.to_string()),
+        user: audit_user_id,
+        service_number: task.service_number.clone(),
+        private: true, // Private note - won't go to Prestashop
+    };
+    
+    task_note.create_task_note_in_db().await?;
+
+    info!("Updated task {} - reassigned from {} and private audit note created", task.id, previous_assignee_username);
     Ok(())
 }
 
-async fn create_audit_task(order_id: &str, assignee: &User) -> Result<()> {
+async fn create_audit_task(order_id: &str, date_str: &str, assignee: &User) -> Result<()> {
+    // Validate assignee exists before creating task
+    let validated_assignee = get_user_by_id(&assignee.get_id()).await?
+        .context("Assignee user does not exist")?;
+
     // Get the full prestashop payload for this order
-    let payload = Employee::to_prestashop_payload(order_id)
+    let payload: PrestashopPayload = PrestashopPayload::default().get_prestashop_payload(order_id)
         .await
         .context("Failed to get prestashop payload")?;
 
     // Extract data from the payload
     let customer_data = payload.customer.clone();
     let order = &payload.order;
+    
+    // Get sales rep name if available
+    let sales_rep_name = payload.sales_rep.as_ref().map(|emp| {
+        format!("{} {}", emp.firstname, emp.lastname)
+    });
 
     // Create ticket data
     let ticket_data = TicketData {
         id: RecordId::from((TICKET_TABLE, order_id.to_string())),
         service_number: order_id.to_string(),
         salesman: String::new(),
-        sales_rep: String::new(),
+        sales_rep: sales_rep_name.clone().unwrap_or_default(),
         tech: String::new(),
         checkin_rep: String::new(),
         terms: order.payment.clone(),
@@ -247,7 +676,15 @@ async fn create_audit_task(order_id: &str, assignee: &User) -> Result<()> {
         ..Default::default()
     };
 
-    // Create task data with audit note
+    // Build the audit description including sales rep
+    let audit_description = build_service_audit_description(
+        order_id, 
+        date_str, 
+        None, 
+        sales_rep_name.as_deref()
+    );
+
+    // Create task data with audit description
     let task_name = format!(
         "[AUDIT] No Notes - {} - {}",
         customer_data.name, order_id
@@ -255,14 +692,14 @@ async fn create_audit_task(order_id: &str, assignee: &User) -> Result<()> {
 
     let task_data = LiveTaskPayload {
         id: RecordId::from((TASK_TABLE, order_id.to_string())),
-        task_name: task_name.clone(),
+        task_name,
         service_number: Some(order_id.to_string()),
         service_ticket: Some(ticket_data.id.clone()),
-        assignee: assignee.get_id(),
+        assignee: validated_assignee.get_id(),
         priority: Priority::Normal,
         due_date: Utc::now().into(),
         completed: false,
-        task_description: task_name,
+        task_description: audit_description,
         status: database::schema::Status::Todo,
         ..Default::default()
     };
@@ -298,4 +735,3 @@ async fn create_audit_task(order_id: &str, assignee: &User) -> Result<()> {
         }
     }
 }
-
