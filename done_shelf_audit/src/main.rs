@@ -64,13 +64,135 @@ struct Args {
     #[arg(long, short = 'a')]
     all: bool,
 
-    /// Only process a specific store (e.g., RIV, AF, LTN, MUR, ORE, SAN, WJ)
+    /// Process a specific store (e.g., RIV, AF, LTN, MUR, ORE, SAN, WJ). Defaults to RIV.
     #[arg(long, short = 's')]
     store: Option<String>,
 
-    /// Dry run - don't actually create/update tasks, just log what would happen
+    /// Dry run - don't actually create/update tasks, just show what would happen
     #[arg(long)]
     dry_run: bool,
+}
+
+/// Summary entry for dry run output
+#[derive(Debug, Clone)]
+struct DryRunEntry {
+    service_number: String,
+    customer_name: String,
+    #[allow(dead_code)]
+    action: DryRunAction,
+    days_overdue: i64,
+    current_assignee: Option<String>,
+    status: String,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum DryRunAction {
+    CreateTask,
+    UpdateTask,
+    ReassignOverdueTask,
+}
+
+/// Summary for dry run
+#[derive(Debug, Default)]
+struct DryRunSummary {
+    orders_found: Vec<DryRunEntry>,
+    tasks_to_create: Vec<DryRunEntry>,
+    tasks_to_update: Vec<DryRunEntry>,
+    overdue_tasks: Vec<DryRunEntry>,
+}
+
+impl DryRunSummary {
+    fn print_summary(&self) {
+        println!("\n{}", "=".repeat(80));
+        println!("                         🔍 DRY RUN SUMMARY");
+        println!("{}\n", "=".repeat(80));
+
+        // Orders found
+        println!("📦 ORDERS FOUND (No Notes, Old Enough): {}", self.orders_found.len());
+        println!("{}", "-".repeat(80));
+        if self.orders_found.is_empty() {
+            println!("   (none)");
+        } else {
+            for entry in &self.orders_found {
+                println!("   • Service #{:<10} | {} | {} days | Status: {}", 
+                    entry.service_number, 
+                    truncate_string(&entry.customer_name, 25),
+                    entry.days_overdue,
+                    entry.status
+                );
+            }
+        }
+        println!();
+
+        // Tasks to create
+        println!("➕ TASKS TO CREATE: {}", self.tasks_to_create.len());
+        println!("{}", "-".repeat(80));
+        if self.tasks_to_create.is_empty() {
+            println!("   (none)");
+        } else {
+            for entry in &self.tasks_to_create {
+                println!("   • Service #{:<10} | {} | {} days overdue", 
+                    entry.service_number, 
+                    truncate_string(&entry.customer_name, 30),
+                    entry.days_overdue
+                );
+            }
+        }
+        println!();
+
+        // Tasks to update
+        println!("🔄 EXISTING TASKS TO UPDATE: {}", self.tasks_to_update.len());
+        println!("{}", "-".repeat(80));
+        if self.tasks_to_update.is_empty() {
+            println!("   (none)");
+        } else {
+            for entry in &self.tasks_to_update {
+                println!("   • Service #{:<10} | {} | {} days | Current: {}", 
+                    entry.service_number, 
+                    truncate_string(&entry.customer_name, 20),
+                    entry.days_overdue,
+                    entry.current_assignee.as_deref().unwrap_or("Unknown")
+                );
+            }
+        }
+        println!();
+
+        // Overdue tasks to reassign
+        println!("⏰ OVERDUE TASKS TO REASSIGN: {}", self.overdue_tasks.len());
+        println!("{}", "-".repeat(80));
+        if self.overdue_tasks.is_empty() {
+            println!("   (none)");
+        } else {
+            for entry in &self.overdue_tasks {
+                println!("   • Service #{:<10} | {} | {} days overdue | Current: {}", 
+                    entry.service_number, 
+                    truncate_string(&entry.customer_name, 20),
+                    entry.days_overdue,
+                    entry.current_assignee.as_deref().unwrap_or("Unknown")
+                );
+            }
+        }
+        println!();
+
+        // Totals
+        let total = self.tasks_to_create.len() + self.tasks_to_update.len() + self.overdue_tasks.len();
+        println!("{}", "=".repeat(80));
+        println!("📊 TOTAL ACTIONS THAT WOULD BE TAKEN: {}", total);
+        println!("   • New tasks to create:     {}", self.tasks_to_create.len());
+        println!("   • Existing tasks to update: {}", self.tasks_to_update.len());
+        println!("   • Overdue tasks to reassign: {}", self.overdue_tasks.len());
+        println!("{}", "=".repeat(80));
+        println!();
+    }
+}
+
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        format!("{:<width$}", s, width = max_len)
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
 }
 
 #[tokio::main]
@@ -95,7 +217,8 @@ async fn main() -> Result<()> {
         eprintln!("  done_shelf_audit --both          # Audit both done-shelf and in-repair");
         eprintln!("  done_shelf_audit --tasks         # Audit overdue tasks");
         eprintln!("  done_shelf_audit --all           # Run all audits");
-        eprintln!("  done_shelf_audit --both -s RIV   # Audit both for Riverside store only");
+        eprintln!("  done_shelf_audit --both -s RIV    # Audit both for RIV store");
+        eprintln!("  done_shelf_audit --all --dry-run # See what would happen without making changes");
         std::process::exit(1);
     }
 
@@ -111,7 +234,7 @@ async fn main() -> Result<()> {
     let assignee = get_audit_assignee().await?;
     info!("Tasks will be assigned to: {} ({})", assignee.get_name(), assignee.get_username());
 
-    // Determine which stores to process
+    // Determine which stores to process - default to RIV unless -s is specified
     let stores = if let Some(store_str) = &args.store {
         match store_str.to_uppercase().as_str() {
             "RIV" => vec![Store::RIV],
@@ -121,16 +244,21 @@ async fn main() -> Result<()> {
             "ORE" => vec![Store::ORE],
             "SAN" => vec![Store::SAN],
             "WJ" => vec![Store::WJ],
+            "ALL" => Store::VALUES.to_vec(),
             _ => {
-                error!("Unknown store: {}. Valid stores: RIV, AF, LTN, MUR, ORE, SAN, WJ", store_str);
+                error!("Unknown store: {}. Valid stores: RIV, AF, LTN, MUR, ORE, SAN, WJ, ALL", store_str);
                 std::process::exit(1);
             }
         }
     } else {
+        // Default to RIV
         vec![Store::RIV]
     };
 
+    info!("Processing store(s): {:?}", stores.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+
     let mut total_processed = 0;
+    let mut dry_run_summary = DryRunSummary::default();
 
     // Determine which audits to run
     let run_done = args.done || args.both || args.all;
@@ -142,10 +270,12 @@ async fn main() -> Result<()> {
         for store in &stores {
             info!("Processing store {}...", store.as_str());
             
-            match run_service_audit(*store, &assignee, run_done, run_repair, args.dry_run).await {
+            match run_service_audit(*store, &assignee, run_done, run_repair, args.dry_run, &mut dry_run_summary).await {
                 Ok(count) => {
                     total_processed += count;
-                    info!("Store {}: processed {} services", store.as_str(), count);
+                    if !args.dry_run {
+                        info!("Store {}: processed {} services", store.as_str(), count);
+                    }
                 }
                 Err(e) => {
                     error!("Error processing store {}: {:?}", store.as_str(), e);
@@ -157,10 +287,12 @@ async fn main() -> Result<()> {
     // Run task audit
     if run_tasks {
         info!("Running task audit for overdue tasks...");
-        match run_task_audit(&assignee, args.dry_run).await {
+        match run_task_audit(&assignee, args.dry_run, &mut dry_run_summary).await {
             Ok(count) => {
                 total_processed += count;
-                info!("Task audit: processed {} overdue tasks", count);
+                if !args.dry_run {
+                    info!("Task audit: processed {} overdue tasks", count);
+                }
             }
             Err(e) => {
                 error!("Error in task audit: {:?}", e);
@@ -168,7 +300,12 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!("Audit complete. Total processed: {}", total_processed);
+    // Print dry run summary if in dry run mode
+    if args.dry_run {
+        dry_run_summary.print_summary();
+    } else {
+        info!("Audit complete. Total processed: {}", total_processed);
+    }
 
     Ok(())
 }
@@ -193,7 +330,8 @@ async fn run_service_audit(
     assignee: &User, 
     include_done: bool, 
     include_repair: bool,
-    dry_run: bool
+    dry_run: bool,
+    summary: &mut DryRunSummary,
 ) -> Result<usize> {
     let mut tasks_processed = 0;
     let mut orders = Vec::new();
@@ -201,16 +339,16 @@ async fn run_service_audit(
     if include_done {
         let done_shelf_orders = get_done_shelf_orders(store).await?;
         info!("Found {} done-shelf orders for store {}", done_shelf_orders.len(), store.as_str());
-        orders.extend(done_shelf_orders);
+        orders.extend(done_shelf_orders.into_iter().map(|o| (o, "Done Shelf")));
     }
 
     if include_repair {
         let in_repair_orders = get_in_repair_orders(store).await?;
         info!("Found {} in-repair orders for store {}", in_repair_orders.len(), store.as_str());
-        orders.extend(in_repair_orders);
+        orders.extend(in_repair_orders.into_iter().map(|o| (o, "In Repair")));
     }
 
-    for order in orders {
+    for (order, status) in orders {
         // Check if order has been on shelf for more than MIN_DAYS_ON_SHELF
         if !is_old_enough(&order.date_add, MIN_DAYS_ON_SHELF) {
             continue;
@@ -221,8 +359,29 @@ async fn run_service_audit(
             continue;
         }
 
+        let days_overdue = get_days_overdue(&order.date_add);
+
+        // For dry run, we need to get customer info
+        let customer_name = if dry_run {
+            get_customer_name_for_order(&order.id).await.unwrap_or_else(|_| "Unknown".to_string())
+        } else {
+            String::new()
+        };
+
+        // Add to orders found for summary
+        if dry_run {
+            summary.orders_found.push(DryRunEntry {
+                service_number: order.id.clone(),
+                customer_name: customer_name.clone(),
+                action: DryRunAction::CreateTask, // placeholder
+                days_overdue,
+                current_assignee: None,
+                status: status.to_string(),
+            });
+        }
+
         // Validate that assignee exists before proceeding
-        if get_user_by_id(&assignee.get_id()).await?.is_none() {
+        if !dry_run && get_user_by_id(&assignee.get_id()).await?.is_none() {
             error!("Assignee user no longer exists! Aborting.");
             return Err(anyhow::anyhow!("Assignee user does not exist"));
         }
@@ -230,7 +389,17 @@ async fn run_service_audit(
         // Check if task already exists
         if let Some(existing_task) = get_existing_task(&order.id).await? {
             if dry_run {
-                info!("[DRY RUN] Would update existing task for order {}", order.id);
+                let current_assignee = get_user_by_id(&existing_task.assignee).await?
+                    .map(|u| u.get_username().to_string());
+                
+                summary.tasks_to_update.push(DryRunEntry {
+                    service_number: order.id.clone(),
+                    customer_name,
+                    action: DryRunAction::UpdateTask,
+                    days_overdue,
+                    current_assignee,
+                    status: status.to_string(),
+                });
                 tasks_processed += 1;
             } else {
                 match update_existing_task(&existing_task, &order.id, &order.date_add, assignee, AuditType::Service).await {
@@ -245,7 +414,14 @@ async fn run_service_audit(
             }
         } else {
             if dry_run {
-                info!("[DRY RUN] Would create new task for order {}", order.id);
+                summary.tasks_to_create.push(DryRunEntry {
+                    service_number: order.id.clone(),
+                    customer_name,
+                    action: DryRunAction::CreateTask,
+                    days_overdue,
+                    current_assignee: None,
+                    status: status.to_string(),
+                });
                 tasks_processed += 1;
             } else {
                 match create_audit_task(&order.id, &order.date_add, assignee).await {
@@ -264,8 +440,16 @@ async fn run_service_audit(
     Ok(tasks_processed)
 }
 
+/// Get customer name for an order (used in dry run)
+async fn get_customer_name_for_order(order_id: &str) -> Result<String> {
+    let payload: PrestashopPayload = PrestashopPayload::default()
+        .get_prestashop_payload(order_id)
+        .await?;
+    Ok(payload.customer.name)
+}
+
 /// Run task audit for overdue tasks
-async fn run_task_audit(assignee: &User, dry_run: bool) -> Result<usize> {
+async fn run_task_audit(assignee: &User, dry_run: bool, summary: &mut DryRunSummary) -> Result<usize> {
     let mut tasks_processed = 0;
 
     // Get all incomplete tasks with due dates more than 3 days ago
@@ -280,19 +464,36 @@ async fn run_task_audit(assignee: &User, dry_run: bool) -> Result<usize> {
     info!("Found {} overdue tasks (> {} days)", overdue_tasks.len(), MIN_DAYS_TASK_OVERDUE);
 
     for task in overdue_tasks {
-        // Validate that assignee exists before proceeding
-        if get_user_by_id(&assignee.get_id()).await?.is_none() {
-            error!("Assignee user no longer exists! Aborting.");
-            return Err(anyhow::anyhow!("Assignee user does not exist"));
-        }
-
         // Get task's due date as string for description building
         let due_date_str = task.due_date.to_string();
+        let days_overdue = get_days_overdue(&due_date_str);
 
         if dry_run {
-            info!("[DRY RUN] Would reassign overdue task {} (service: {:?})", task.id, task.service_number);
+            let current_assignee = get_user_by_id(&task.assignee).await?
+                .map(|u| u.get_username().to_string());
+            
+            let customer_name = if let Some(ref svc) = task.service_number {
+                get_customer_name_for_order(svc).await.unwrap_or_else(|_| task.task_name.clone())
+            } else {
+                task.task_name.clone()
+            };
+
+            summary.overdue_tasks.push(DryRunEntry {
+                service_number: task.service_number.clone().unwrap_or_else(|| "N/A".to_string()),
+                customer_name,
+                action: DryRunAction::ReassignOverdueTask,
+                days_overdue,
+                current_assignee,
+                status: "Overdue".to_string(),
+            });
             tasks_processed += 1;
         } else {
+            // Validate that assignee exists before proceeding
+            if get_user_by_id(&assignee.get_id()).await?.is_none() {
+                error!("Assignee user no longer exists! Aborting.");
+                return Err(anyhow::anyhow!("Assignee user does not exist"));
+            }
+
             // Check if this task has an associated service order
             let audit_type = if let Some(ref service_number) = task.service_number {
                 // Check if the order is AcceptedByOdoo

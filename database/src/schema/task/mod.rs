@@ -55,9 +55,9 @@ pub struct LiveTaskPayload {
     pub task_name: String,
     pub service_ticket: Option<RecordId>,
     pub task_description: String,
-    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
+    pub assignee: RecordId, 
     pub service_number: Option<String>,
-    pub due_date: Datetime, // optional because if not provided, set due date to creation date
+    pub due_date: Datetime,
     pub priority: Priority,
     pub completed: bool,
     pub status: Status,

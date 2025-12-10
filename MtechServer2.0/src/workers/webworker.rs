@@ -54,24 +54,14 @@ impl gloo_worker::Worker for WebWorker {
 pub async fn get_completed_tasks(input: Input, scope: WorkerScope<WebWorker>, id: HandlerId) -> anyhow::Result<(), anyhow::Error> {
     gloo_console::debug!("get_completed_tasks");
     let _ = Database::new("".to_string(), "".to_string(), Some(input.0.clone())).await?;
-
-    let mut offset = 0;
-    let limit = 20;
-
-    loop {
-        let tasks = get_completed_tasks_for_store(offset, limit).await?;
-        if tasks.is_empty() { break; } // Break the loop if no more results
-        scope.respond(id, Output { tasks: encode_task_payload(&tasks)? });
-        offset += limit;
-    }
+    let tasks = get_completed_tasks_for_store().await?;
+    scope.respond(id, Output { tasks: encode_task_payload(&tasks)? });
     Ok(())
 }
 
 pub fn encode_task_payload(message: &Vec<LiveTaskPayload>) -> anyhow::Result<Vec<u8>> {
     let bincoded = serde_json::to_vec(message)?;
-    // gloo_console::info!(format!("Uncompressed Completed task data: {}\n", bincoded.len()));
     let compressed = zstd::encode_all(std::io::Cursor::new(&bincoded), 5).context("zstd")?;
-    // gloo_console::info!(format!("Compressed Completed task data: {}\n", compressed.len()));
     Ok(compressed)
 }
 
@@ -81,40 +71,20 @@ pub fn decode_task_payload(packet: &[u8]) -> anyhow::Result<Vec<LiveTaskPayload>
     Ok(message)
 }
 
-pub async fn get_completed_tasks_for_store(_offset: i32, _limit: i32) -> anyhow::Result<Vec<LiveTaskPayload>, anyhow::Error> {
+pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<LiveTaskPayload>, anyhow::Error> {
     let query = r#"
         SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS true AND $this.assignee.active == true PARALLEL
     "#;
-    // let query = r#"
-    //     SELECT *, (
-    //         SELECT * FROM task_note 
-    //             WHERE task_id == $parent.id
-    //     ) AS task_note 
-    //     FROM task 
-    //     WHERE 
-    //         $this.assignee.store == $auth.store 
-    //         AND $this.completed == true 
-    //         AND $this.assignee.active == true
-    //     ORDER BY created_at DESC
-    //     LIMIT 200
-    //     FETCH 
-    //         service_ticket, 
-    //         service_ticket.computer, 
-    //         service_ticket.customer
-    //         PARALLEL
-    // "#; // $limit START $offset
 
-    let start_query = web_time::Instant::now(); // Start timing the query
+    let start_query = web_time::Instant::now();
 
     let query_results: Vec<LiveTaskPayload> = DATABASE
-        .query(query)
-        // .bind(("limit", limit))
-        // .bind(("offset", offset))        
+        .query(query)   
         .await?
         .take(0)?;
 
-    let _query_duration = start_query.elapsed(); // Measure query duration
-    // gloo_console::warn!(format!("Query execution time for completed tasks {query_duration:?}"));
+    let query_duration = start_query.elapsed();
+    log!(format!("Query execution time for completed tasks {query_duration:?}"));
 
     Ok(query_results)
 }
