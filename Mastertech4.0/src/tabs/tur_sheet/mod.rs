@@ -765,14 +765,21 @@ impl MastertechContext {
                 .min_size(text_edit_size)
                 .ui(ui);
 
-            TextEdit::singleline(&mut seb_details.id_recurly_account)
-                .hint_text(" Recurly Id")
+            TextEdit::singleline(&mut seb_details.current_period_ends_at)
+                .hint_text(" Current Period Ends At")
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
                 .ui(ui);
 
             ui.end_row();
+
+            TextEdit::singleline(&mut seb_details.id_recurly_account)
+                .hint_text(" Recurly Id")
+                .vertical_align(Align::Center)
+                .margin(vec2(4.0, 4.0))
+                .min_size(text_edit_size)
+                .ui(ui);
 
             TextEdit::singleline(&mut format!("{} Gb", seb_details.usage_gb))
                 .hint_text(" Usage (Gb)")

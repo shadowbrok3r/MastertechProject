@@ -376,6 +376,7 @@ impl MtechServer {
             }
         }
 
+        // let received_completed_tasks = &mut false;
         // Getting responses from our webworker
         if let Some(items) = self.data_update.take() {
             let tx = self.shared_ctx.initial_tasks_tx.clone();
@@ -383,7 +384,10 @@ impl MtechServer {
                 // log::info!("Got data update from webworker: {:?}", items.len());
                 let _ = tx.try_send(decode_task_payload(&items).unwrap_or_default());
             });
+            // *received_completed_tasks = true;
         }
+
+        // if *received_completed_tasks { self.bridge }
 
         // if let Some(decompressed_data) = self.admin_console_data_helper.deser_data_update.take() {
         //     if let Some(sysinfo) = deserializer::<SystemInformation>(&decompressed_data){
