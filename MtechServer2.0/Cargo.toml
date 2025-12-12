@@ -19,8 +19,10 @@ name = "deser_worker"
 path = "src/workers/deser_worker.rs"
 
 [dependencies]
-zstd = "0.13"
+displays = { path="../displays", features = ["wasm"]}
 gloo-worker = "0.5"
+js-sys = "0.3.83"
+zstd = "0.13"
 web-sys = { version = "0.3", features = [
 	"Storage",
 	"Window",
@@ -31,15 +33,13 @@ web-sys = { version = "0.3", features = [
 	"ServiceWorkerContainer",
 	"ServiceWorkerRegistration"
 ] }
-js-sys = "0.3.83"
-displays = { path="../displays", features = ["wasm"]}
 wasm-cookies = { workspace = true }
+wasm-bindgen-futures = { workspace=true }
+wasm-bindgen = { workspace=true }
+web-time = { workspace=true }
 egui_logger = {workspace = true }
 brotli = { workspace=true }
 base64 = { workspace=true }
-wasm-bindgen-futures = { workspace=true }
-web-time = { workspace=true }
-wasm-bindgen = { workspace=true }
 database = { workspace=true }
 log  = { workspace=true }
 serde = { workspace=true }

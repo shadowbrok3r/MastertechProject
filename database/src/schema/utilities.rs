@@ -481,6 +481,126 @@ pub async fn create_full_task_payload(
     result
 }
 
+/// Performs a cascade duplicate check for all related entities.
+/// Checks Task -> ServiceOrder -> Customer + Computer chain.
+pub async fn check_for_duplicates(
+    service_number: &str,
+    new_task: &LiveTaskPayload,
+    new_ticket: &TicketData,
+    new_customer: &CustomerData,
+    new_computer: Option<&ComputerData>,
+) -> anyhow::Result<super::DuplicateCheckResult, anyhow::Error> {
+    use super::{DuplicateCheckResult, DuplicatePair};
+    
+    let mut result = DuplicateCheckResult::new(service_number.to_string());
+    let service_number_owned = service_number.to_string();
+    
+    // 1. Check for existing task by service_number
+    let existing_tasks: Vec<LiveTaskPayload> = DATABASE
+        .query("SELECT * FROM task WHERE service_number == $service_number")
+        .bind(("service_number", service_number_owned.clone()))
+        .await?
+        .take(0)?;
+    
+    if let Some(existing_task) = existing_tasks.first() {
+        result.task = Some(DuplicatePair::new(existing_task.clone(), new_task.clone()));
+        
+        // 2. If task exists, fetch associated service order
+        if let Some(ref ticket_id) = existing_task.service_ticket {
+            let existing_ticket: Option<TicketData> = DATABASE
+                .select(ticket_id.clone())
+                .await?;
+            
+            if let Some(existing) = existing_ticket {
+                result.service_order = Some(DuplicatePair::new(existing, new_ticket.clone()));
+            }
+        }
+    } else {
+        // No existing task, but still check for service order by service_number
+        let existing_tickets: Vec<TicketData> = DATABASE
+            .query("SELECT * FROM service_order WHERE service_number == $service_number")
+            .bind(("service_number", service_number_owned.clone()))
+            .await?
+            .take(0)?;
+        
+        if let Some(existing) = existing_tickets.first() {
+            result.service_order = Some(DuplicatePair::new(existing.clone(), new_ticket.clone()));
+        }
+    }
+    
+    // 3. Check for existing customer by phone, email, or cust_code
+    let phone = new_customer.phone_number.clone();
+    let email = new_customer.email.clone();
+    let cust_code = new_customer.cust_code.clone();
+    
+    let customer_query = r#"
+        SELECT * FROM customer WHERE 
+            (phone_number == $phone AND phone_number != "" AND phone_number != "801-334-6262") OR
+            (email == $email AND email != "") OR
+            (cust_code == $cust_code AND cust_code != "")
+        LIMIT 1
+    "#;
+    
+    let existing_customers: Vec<CustomerData> = DATABASE
+        .query(customer_query)
+        .bind(("phone", phone))
+        .bind(("email", email))
+        .bind(("cust_code", cust_code))
+        .await?
+        .take(0)?;
+    
+    if let Some(existing) = existing_customers.first() {
+        result.customer = Some(DuplicatePair::new(existing.clone(), new_customer.clone()));
+    }
+    
+    // 4. Check for existing computer by hostname or serial (if specs are being sent)
+    if let Some(new_comp) = new_computer {
+        let hostname = new_comp.hostname.clone();
+        let product_serial = new_comp.product_serial.clone();
+        let motherboard_serial = new_comp.motherboard_serial.clone();
+        
+        let computer_query = r#"
+            SELECT * FROM computer WHERE 
+                (hostname == $hostname AND hostname != "") OR
+                (product_serial == $product_serial AND product_serial != "") OR
+                (motherboard_serial == $motherboard_serial AND motherboard_serial != "")
+            LIMIT 1
+        "#;
+        
+        let existing_computers: Vec<ComputerData> = DATABASE
+            .query(computer_query)
+            .bind(("hostname", hostname))
+            .bind(("product_serial", product_serial))
+            .bind(("motherboard_serial", motherboard_serial))
+            .await?
+            .take(0)?;
+        
+        if let Some(existing) = existing_computers.first() {
+            result.computer = Some(DuplicatePair::new(existing.clone(), new_comp.clone()));
+        }
+    }
+    
+    info!("Duplicate check result for service #{}: has_conflicts={}, has_any_duplicates={}", 
+        service_number, result.has_conflicts(), result.has_any_duplicates());
+    
+    Ok(result)
+}
+
+/// Creates task payload with resolved duplicates.
+/// Call this after the user has resolved any duplicate conflicts.
+pub async fn create_resolved_task_payload(
+    ticket_data: TicketData,
+    customer_data: CustomerData,
+    computer_data: ComputerData,
+    task_data: LiveTaskPayload,
+    task_notes: Vec<TaskNotePayload>,
+    send_specs: bool,
+) -> TaskCreationResult {
+    // This is a simplified version that just creates/updates without duplicate checking
+    // The duplicate checking should happen before this is called
+    create_full_task_payload(ticket_data, customer_data, computer_data, task_data, task_notes, send_specs).await
+}
+
 impl PrestashopPayload {}
 /* 
 impl Customer {

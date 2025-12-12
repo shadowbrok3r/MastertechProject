@@ -1,4 +1,5 @@
 use crate::{schema::COMPUTER_TABLE, DATABASE};
+use structdiff::{Difference, StructDiff};
 use surrealdb::RecordId;
 use serde_json::Value;
 
@@ -8,7 +9,7 @@ pub mod seb;
 pub use system_information::*;
 pub use seb::*;
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct ComputerData {
     pub id: RecordId,
     pub customer: Option<RecordId>,
