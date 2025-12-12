@@ -15,6 +15,12 @@ pub mod presta_api;
 
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
+        // Process any pending duplicate check results
+        self.process_duplicate_check_results();
+        
+        // Handle the merge modal if it's open
+        self.handle_merge_modal(ui.ctx());
+        
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ScrollArea::both()
             .auto_shrink(false)

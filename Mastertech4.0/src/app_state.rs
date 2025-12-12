@@ -1,4 +1,5 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
+use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, DuplicateResolution, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
+use displays::modals::DuplicateMergeModal;
 use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
 use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::task_modal::SpecialPartOrder, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
@@ -97,6 +98,36 @@ pub struct MastertechContext {
     pub get_settings: bool,
     pub client_friendly_name: String,
     pub client_title: String,
+    
+    // Duplicate check and merge modal state
+    pub duplicate_check_tx: Sender<DuplicateCheckResult>,
+    pub duplicate_check_rx: Receiver<DuplicateCheckResult>,
+    pub duplicate_merge_modal: Option<DuplicateMergeModal>,
+    /// State for TUR submission workflow
+    pub tur_submit_state: TurSubmitState,
+    /// Pending TUR data waiting for duplicate resolution
+    pub pending_tur_data: Option<PendingTurData>,
+}
+
+/// State machine for TUR submission workflow
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum TurSubmitState {
+    #[default]
+    Idle,
+    CheckingDuplicates,
+    AwaitingResolution,
+    Submitting,
+}
+
+/// Holds the TUR data while waiting for duplicate resolution
+#[derive(Debug, Clone)]
+pub struct PendingTurData {
+    pub task_data: LiveTaskPayload,
+    pub ticket_data: TicketData,
+    pub customer_data: CustomerData,
+    pub computer_data: ComputerData,
+    pub task_notes: Vec<TaskNotePayload>,
+    pub send_specs: bool,
 }
 
 impl MasterTechApp {
@@ -114,6 +145,7 @@ impl MasterTechApp {
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
+        let (duplicate_check_tx, duplicate_check_rx) = crossbeam::channel::unbounded::<DuplicateCheckResult>();
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
 
         let send_specs = true;
@@ -201,7 +233,14 @@ impl MasterTechApp {
             // Data table shit
             seb_channel,
             get_settings: true,
-            client_title: Default::default()
+            client_title: Default::default(),
+            
+            // Duplicate check and merge modal
+            duplicate_check_tx,
+            duplicate_check_rx,
+            duplicate_merge_modal: None,
+            tur_submit_state: TurSubmitState::Idle,
+            pending_tur_data: None,
         };
         
         let context = mastertech_context;

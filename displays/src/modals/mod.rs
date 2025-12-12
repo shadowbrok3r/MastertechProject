@@ -9,12 +9,16 @@ use std::ops::Deref;
 pub mod task_modal;
 pub mod create_task_modal;
 pub mod tabs;
+pub mod duplicate_merge_modal;
+
+pub use duplicate_merge_modal::DuplicateMergeModal;
 
 #[derive(Serialize, Default, Clone, Debug)]
 pub enum ModalType{
     CreateTaskModal(CreateTaskModal),
     TaskModal(TaskModal),
     ChatView(ChatView),
+    DuplicateMergeModal(DuplicateMergeModal),
     #[default]
     Null
 }
@@ -26,6 +30,7 @@ impl Deref for ModalType{
             ModalType::CreateTaskModal(create_task_modal) => &create_task_modal.title,
             ModalType::TaskModal(task_modal) => &task_modal.title,
             ModalType::ChatView(chat_view) => &chat_view.title,
+            ModalType::DuplicateMergeModal(merge_modal) => &merge_modal.title,
             ModalType::Null => "",
         }
     }
@@ -74,6 +79,11 @@ impl ModalWindow for ModalType {
                 ModalType::TaskModal(task_modal) => task_modal.display(ui, &mut handle_action),
                 ModalType::ChatView(chat_view) => {
                     chat_view.ui(ui);
+                    None
+                },
+                ModalType::DuplicateMergeModal(_merge_modal) => {
+                    // DuplicateMergeModal handles its own window display via show()
+                    // This branch should not be reached in practice
                     None
                 },
                 ModalType::Null => None,
