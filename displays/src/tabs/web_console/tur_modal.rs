@@ -5,8 +5,8 @@
 
 use database::schema::{ComputerData, ConnectedClient, CustomerData};
 use eframe::egui::{
-    Align, Button, Color32, Context, Frame, Grid, Layout, Margin, RichText, Rounding, ScrollArea,
-    TextEdit, Ui, Vec2, Window,
+    Align, Button, Color32, Context, CornerRadius, Frame, Grid, Layout, Margin, RichText,
+    ScrollArea, TextEdit, Vec2, Window,
 };
 use serde::{Deserialize, Serialize};
 
@@ -69,7 +69,7 @@ impl TurModalState {
         self.drives = computer
             .drives
             .iter()
-            .map(|d| format!("{}: {}", d.name, d.total_capacity))
+            .map(|d| format!("{}: {}", d.drive_letter, d.total_size))
             .collect::<Vec<_>>()
             .join(", ");
         self.device_serial = computer.device_serial.clone().unwrap_or_default();
@@ -154,10 +154,10 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                 ui.heading("Computer Specifications");
                 ui.add_space(8.0);
 
-                Frame::none()
+                Frame::NONE
                     .fill(Color32::from_rgb(25, 28, 35))
-                    .inner_margin(Margin::same(12.0))
-                    .rounding(Rounding::same(6.0))
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(6))
                     .show(ui, |ui| {
                         Grid::new("tur_specs_grid")
                             .num_columns(2)
@@ -253,10 +253,10 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                 ui.heading("Service Information");
                 ui.add_space(8.0);
 
-                Frame::none()
+                Frame::NONE
                     .fill(Color32::from_rgb(25, 28, 35))
-                    .inner_margin(Margin::same(12.0))
-                    .rounding(Rounding::same(6.0))
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(6))
                     .show(ui, |ui| {
                         Grid::new("tur_service_grid")
                             .num_columns(2)
@@ -273,10 +273,12 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                             .desired_width(200.0),
                                     );
                                     if ui.small_button("Generate").clicked() {
-                                        // Generate a service number based on date and random
+                                        // Generate a service number based on date and timestamp
                                         let now = chrono::Local::now();
+                                        // Use timestamp subseconds as pseudo-random suffix
+                                        let suffix = (now.timestamp_subsec_millis() % 10000) as u16;
                                         state.service_number =
-                                            format!("{}-{:04}", now.format("%Y%m%d"), rand::random::<u16>() % 10000);
+                                            format!("{}-{:04}", now.format("%Y%m%d"), suffix);
                                     }
                                 });
                                 ui.end_row();
@@ -302,10 +304,10 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                     ui.heading("Customer");
                     ui.add_space(8.0);
 
-                    Frame::none()
+                    Frame::NONE
                         .fill(Color32::from_rgb(25, 28, 35))
-                        .inner_margin(Margin::same(12.0))
-                        .rounding(Rounding::same(6.0))
+                        .inner_margin(Margin::same(12))
+                        .corner_radius(CornerRadius::same(6))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(

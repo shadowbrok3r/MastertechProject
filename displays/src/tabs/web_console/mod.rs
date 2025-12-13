@@ -6,21 +6,15 @@
 //! - Client actions: Delete, Create TUR, Remote Shell, File Explorer
 //! - AI-enhanced shell with MCP integration
 
-use crate::{
-    channel_manager::ChannelManager,
-    mcp::McpService,
-    virtual_filesystem::FileSystem,
-    PlatformSpawner, Spawner,
-};
+use crate::{virtual_filesystem::FileSystem, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{
     utilities::get_connected_clients, ComputerData, ConnectedClient, User,
 };
 use eframe::egui::{
-    Align, CentralPanel, Color32, Context, Frame, Layout, Margin, RichText,
-    ScrollArea, SidePanel, Stroke, TopBottomPanel, Ui, Vec2,
+    CentralPanel, Color32, Context, CornerRadius, Frame, Margin, RichText, SidePanel, Stroke,
+    TopBottomPanel, Ui,
 };
-use eframe::egui::CornerRadius;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use web_time::Instant;
@@ -478,9 +472,9 @@ impl WebConsole {
         }
 
         // Main layout
-        let inner_margin = Margin::same(3.0);
+        let inner_margin = Margin::same(3);
         let stroke = Stroke::new(0.7, Color32::from_additive_luminance(150));
-        let radius = eframe::egui::CornerRadius::same(5.0);
+        let radius = CornerRadius::same(5);
 
         // Top panel with title
         TopBottomPanel::top("web_console_top")
@@ -524,7 +518,7 @@ impl WebConsole {
                 .frame(
                     Frame::default()
                         .fill(Color32::from_rgb(15, 17, 22))
-                        .inner_margin(Margin::same(8.0))
+                        .inner_margin(Margin::same(8))
                         .stroke(stroke)
                         .corner_radius(radius),
                 )
@@ -564,7 +558,7 @@ impl WebConsole {
             .frame(
                 Frame::default()
                     .fill(Color32::from_rgb(12, 14, 18))
-                    .inner_margin(Margin::same(12.0)),
+                    .inner_margin(Margin::same(12)),
             )
             .show_inside(ui, |ui| {
                 ClientGrid::show(ui, self);
