@@ -35,7 +35,10 @@ impl ClientCard {
         is_selected: bool,
     ) -> bool {
         let mut clicked = false;
-        let style = ui.style().clone();
+        let _style = ui.style().clone();
+        
+        // Use client connection_string as unique ID for this card
+        let card_id = &client.connection_string;
 
         // Card frame styling
         let bg_color = if is_selected {
@@ -60,10 +63,10 @@ impl ClientCard {
                 ui.set_min_width(280.0);
                 ui.set_max_width(320.0);
 
-                // Make the whole card clickable
+                // Make the whole card clickable - use unique ID based on client
                 let card_response = ui.interact(
                     ui.available_rect_before_wrap(),
-                    ui.id().with("card"),
+                    ui.id().with(format!("card_{}", card_id)),
                     Sense::click(),
                 );
                 if card_response.clicked() {
@@ -221,18 +224,24 @@ impl ClientCard {
                     .min_size(btn_size)
                     .fill(Color32::from_rgb(35, 40, 50));
 
-                    let shell_response = ui.add(shell_btn).on_hover_text("Remote Shell");
+                    let shell_response = ui.add(shell_btn).on_hover_text("Remote Shell (right-click for options)");
                     
                     // Show shell type menu on click
                     if shell_response.clicked() {
-                        // Default to PowerShell
+                        // Default to Bash on Linux, PowerShell on Windows
+                        let default_shell = if cfg!(target_os = "linux") {
+                            ShellType::Bash
+                        } else {
+                            ShellType::PowerShell
+                        };
                         let _ = action_tx.send(WebConsoleAction::OpenShell(
                             client.clone(),
-                            ShellType::PowerShell,
+                            default_shell,
                         ));
                     }
                     
                     shell_response.context_menu(|ui| {
+                        ui.set_min_width(120.0);
                         if ui.button("PowerShell").clicked() {
                             let _ = action_tx.send(WebConsoleAction::OpenShell(
                                 client.clone(),
@@ -244,6 +253,13 @@ impl ClientCard {
                             let _ = action_tx.send(WebConsoleAction::OpenShell(
                                 client.clone(),
                                 ShellType::Cmd,
+                            ));
+                            ui.close();
+                        }
+                        if ui.button("Bash").clicked() {
+                            let _ = action_tx.send(WebConsoleAction::OpenShell(
+                                client.clone(),
+                                ShellType::Bash,
                             ));
                             ui.close();
                         }
@@ -354,6 +370,9 @@ impl ClientCard {
         is_selected: bool,
     ) -> bool {
         let mut clicked = false;
+        
+        // Use client connection_string as unique ID for this row
+        let _row_id = &client.connection_string;
 
         let bg_color = if is_selected {
             Color32::from_rgb(30, 35, 45)
@@ -373,44 +392,85 @@ impl ClientCard {
 
                     ui.add_space(8.0);
 
-                    // Name
+                    // Name (fixed width)
                     let name = client
                         .friendly_name
                         .clone()
-                        .unwrap_or_else(|| client.connection_string.clone());
-                    ui.label(RichText::new(&name).size(12.0).strong());
+                        .unwrap_or_else(|| {
+                            client.connection_string
+                                .split(':')
+                                .next()
+                                .unwrap_or(&client.connection_string)
+                                .to_string()
+                        });
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(150.0, 20.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.label(RichText::new(&name).size(12.0).strong());
+                        },
+                    );
 
-                    ui.add_space(16.0);
-
-                    // User
+                    // User (fixed width)
                     let user_name = client
                         .assigned_user
                         .as_ref()
                         .and_then(|id| user_cache.get(&id.to_string()))
                         .map(|u| u.get_username().to_string())
                         .unwrap_or_else(|| "-".to_string());
-                    ui.label(
-                        RichText::new(&user_name)
-                            .size(11.0)
-                            .color(Color32::from_rgb(51, 255, 189)),
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(100.0, 20.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.label(
+                                RichText::new(&user_name)
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(51, 255, 189)),
+                            );
+                        },
                     );
 
-                    ui.add_space(16.0);
+                    // Last update (fixed width)
+                    let last_update_str = client.last_update.as_ref().map(|dt| {
+                        DateTime::parse_from_rfc3339(&dt.to_string())
+                            .map(|d| d.with_timezone(&Local).format("%m/%d %I:%M%p").to_string())
+                            .unwrap_or_else(|_| "-".to_string())
+                    }).unwrap_or_else(|| "-".to_string());
+                    
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(100.0, 20.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.label(
+                                RichText::new(&last_update_str)
+                                    .size(10.0)
+                                    .color(Color32::from_rgb(130, 135, 145)),
+                            );
+                        },
+                    );
 
-                    // Pong time
-                    if let Some(secs) = last_pong_secs {
-                        let color = if secs < 10 {
-                            Color32::from_rgb(50, 205, 50)
-                        } else if secs < 20 {
-                            Color32::YELLOW
-                        } else {
-                            Color32::RED
-                        };
-                        ui.label(RichText::new(format!("{}s", secs)).size(10.0).color(color));
-                    }
+                    // Pong time (fixed width)
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(50.0, 20.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            if let Some(secs) = last_pong_secs {
+                                let color = if secs < 10 {
+                                    Color32::from_rgb(50, 205, 50)
+                                } else if secs < 20 {
+                                    Color32::YELLOW
+                                } else {
+                                    Color32::RED
+                                };
+                                ui.label(RichText::new(format!("{}s", secs)).size(10.0).color(color));
+                            } else {
+                                ui.label(RichText::new("-").size(10.0).color(Color32::GRAY));
+                            }
+                        },
+                    );
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        // Quick action buttons
+                        // Quick action buttons with unique IDs
                         if ui.small_button("🗑").on_hover_text("Delete").clicked() {
                             let _ = action_tx.send(WebConsoleAction::DeleteClient(client.clone()));
                         }
@@ -418,9 +478,14 @@ impl ClientCard {
                             let _ = action_tx.send(WebConsoleAction::OpenTurModal(client.clone()));
                         }
                         if ui.small_button("🖥").on_hover_text("Shell").clicked() {
+                            let default_shell = if cfg!(target_os = "linux") {
+                                ShellType::Bash
+                            } else {
+                                ShellType::PowerShell
+                            };
                             let _ = action_tx.send(WebConsoleAction::OpenShell(
                                 client.clone(),
-                                ShellType::PowerShell,
+                                default_shell,
                             ));
                         }
                         if ui.small_button("📁").on_hover_text("Files").clicked() {

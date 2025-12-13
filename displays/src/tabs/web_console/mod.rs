@@ -69,6 +69,17 @@ pub enum ClientFilter {
     Disconnected,
 }
 
+/// Detail view mode for the side panel
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DetailViewMode {
+    #[default]
+    Shell,
+    FileExplorer,
+}
+
+/// Maximum age (in hours) before a client is considered stale and auto-hidden
+pub const STALE_CLIENT_HOURS: i64 = 4;
+
 /// Main state for the revamped web console
 #[derive(Serialize)]
 pub struct WebConsole {
@@ -110,16 +121,31 @@ pub struct WebConsole {
     pub clients_tx: Sender<Vec<ConnectedClient>>,
     #[serde(skip)]
     pub clients_rx: Receiver<Vec<ConnectedClient>>,
+    /// Channel for receiving computer data updates
+    #[serde(skip)]
+    pub computer_tx: Sender<(String, ComputerData)>,
+    #[serde(skip)]
+    pub computer_rx: Receiver<(String, ComputerData)>,
     /// Shared filesystem for file explorer
     #[serde(skip)]
     pub filesystem: FileSystem,
     /// TUR modal state (connection_string of client being created)
     pub tur_modal_client: Option<String>,
+    /// TUR modal state object (persisted between frames)
+    #[serde(skip)]
+    pub tur_modal_state: Option<tur_modal::TurModalState>,
     /// Active shell views (keyed by connection_string)
     #[serde(skip)]
     pub shell_views: HashMap<String, ShellView>,
+    /// Active file explorer views (keyed by connection_string)
+    #[serde(skip)]
+    pub file_explorers: HashMap<String, file_explorer_view::FileExplorerView>,
+    /// Current detail view mode per client (keyed by connection_string)
+    pub detail_view_modes: HashMap<String, DetailViewMode>,
     /// Ping timeout duration in seconds
     pub ping_timeout_secs: u64,
+    /// Whether to hide stale clients
+    pub hide_stale_clients: bool,
 }
 
 impl Default for WebConsole {
@@ -132,6 +158,7 @@ impl WebConsole {
     pub fn new() -> Self {
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let (clients_tx, clients_rx) = crossbeam::channel::unbounded();
+        let (computer_tx, computer_rx) = crossbeam::channel::unbounded();
 
         Self {
             clients: Vec::new(),
@@ -150,10 +177,16 @@ impl WebConsole {
             action_rx,
             clients_tx,
             clients_rx,
+            computer_tx,
+            computer_rx,
             filesystem: FileSystem::new(),
             tur_modal_client: None,
+            tur_modal_state: None,
             shell_views: HashMap::new(),
+            file_explorers: HashMap::new(),
+            detail_view_modes: HashMap::new(),
             ping_timeout_secs: 10,
+            hide_stale_clients: true,
         }
     }
 
@@ -164,6 +197,21 @@ impl WebConsole {
             self.clients = clients;
             self.loading = false;
             self.last_refresh = Some(Instant::now());
+            ctx.request_repaint();
+        }
+
+        // Receive computer data updates
+        while let Ok((conn_string, computer)) = self.computer_rx.try_recv() {
+            log::info!("WebConsole: Cached computer data for {}", conn_string);
+            self.computer_cache.insert(conn_string.clone(), computer.clone());
+            
+            // If TUR modal is open for this client, update it with the computer data
+            if self.tur_modal_client.as_ref() == Some(&conn_string) {
+                if let Some(modal_state) = &mut self.tur_modal_state {
+                    modal_state.populate_from_computer(&computer);
+                }
+            }
+            
             ctx.request_repaint();
         }
 
@@ -183,6 +231,11 @@ impl WebConsole {
         for shell in self.shell_views.values_mut() {
             shell.receive(ctx);
         }
+        
+        // Update file explorer views
+        for explorer in self.file_explorers.values_mut() {
+            explorer.receive();
+        }
     }
 
     /// Handle UI actions
@@ -201,8 +254,21 @@ impl WebConsole {
                 self.delete_client(&client);
             }
             WebConsoleAction::OpenTurModal(client) => {
-                self.tur_modal_client = Some(client.connection_string.clone());
-                self.fetch_computer_data(&client);
+                let conn_string = client.connection_string.clone();
+                self.tur_modal_client = Some(conn_string.clone());
+                
+                // Create a new modal state
+                let mut modal_state = tur_modal::TurModalState::new(client.clone());
+                
+                // Check if we already have computer data cached
+                if let Some(computer) = self.computer_cache.get(&conn_string) {
+                    modal_state.populate_from_computer(computer);
+                } else {
+                    // Fetch computer data
+                    self.fetch_computer_data(&client);
+                }
+                
+                self.tur_modal_state = Some(modal_state);
             }
             WebConsoleAction::OpenShell(client, shell_type) => {
                 self.open_shell(&client, shell_type);
@@ -286,12 +352,15 @@ impl WebConsole {
         if let Some(computer_id) = &client.computer {
             let computer_id = computer_id.clone();
             let conn_string = client.connection_string.clone();
-            let cache_tx = crossbeam::channel::unbounded::<(String, ComputerData)>().0;
             
             // Check cache first
             if self.computer_cache.contains_key(&conn_string) {
+                log::info!("WebConsole: Computer data already cached for {}", conn_string);
                 return;
             }
+
+            // Use the stored channel sender
+            let cache_tx = self.computer_tx.clone();
 
             PlatformSpawner::spawn(async move {
                 use database::DATABASE;
@@ -303,10 +372,12 @@ impl WebConsole {
                         log::info!("WebConsole: Fetched computer data for {}", conn_string);
                         let _ = cache_tx.send((conn_string, computer));
                     }
-                    Ok(None) => log::warn!("WebConsole: No computer data for {}", conn_string),
+                    Ok(None) => log::warn!("WebConsole: No computer data found in DB for {}", conn_string),
                     Err(e) => log::error!("WebConsole: Failed to fetch computer: {e:?}"),
                 }
             });
+        } else {
+            log::warn!("WebConsole: Client has no computer record ID");
         }
     }
 
@@ -320,14 +391,27 @@ impl WebConsole {
         }
 
         // Create or update shell view
-        if let Some(manager) = self.connections.get(&conn_string) {
+        if let Some(manager) = self.connections.get_mut(&conn_string) {
+            // Create a new channel for this shell view's output
+            // The connection manager's shell_output_tx will send to this new receiver
+            let (new_shell_tx, shell_output_rx) = crossbeam::channel::unbounded();
+            
+            // Replace the manager's sender with the new one so output goes to this shell
+            manager.shell_output_tx = new_shell_tx;
+            
             let shell = ShellView::new(
                 client.clone(),
                 shell_type,
                 manager.send_cmd_tx.clone(),
+                Some(shell_output_rx),
             );
-            self.shell_views.insert(conn_string, shell);
+            self.shell_views.insert(conn_string.clone(), shell);
         }
+        
+        // Set view mode to Shell and select client
+        self.detail_view_modes.insert(conn_string.clone(), DetailViewMode::Shell);
+        self.selected_client = Some(conn_string);
+        self.show_side_panel = true;
     }
 
     /// Open file explorer for a client
@@ -339,7 +423,28 @@ impl WebConsole {
             self.connect_to_client(client);
         }
 
+        // Create file explorer if not exists
+        if !self.file_explorers.contains_key(&conn_string) {
+            if let Some(manager) = self.connections.get(&conn_string) {
+                let mut explorer = file_explorer_view::FileExplorerView::new(
+                    client.clone(),
+                    manager.send_cmd_tx.clone(),
+                );
+                // Request initial directory listing
+                explorer.initialize();
+                self.file_explorers.insert(conn_string.clone(), explorer);
+            }
+        } else {
+            // Refresh if already exists
+            if let Some(explorer) = self.file_explorers.get_mut(&conn_string) {
+                explorer.refresh();
+            }
+        }
+        
+        // Set view mode to FileExplorer and select client
+        self.detail_view_modes.insert(conn_string.clone(), DetailViewMode::FileExplorer);
         self.selected_client = Some(conn_string);
+        self.show_side_panel = true;
     }
 
     /// Mark a client as disconnected in the database
@@ -391,8 +496,41 @@ impl WebConsole {
 
     /// Get filtered and searched clients
     pub fn filtered_clients(&self) -> Vec<&ConnectedClient> {
+        let now = chrono::Utc::now();
+        
         self.clients
             .iter()
+            .filter(|c| {
+                // Filter out stale disconnected clients if enabled
+                if self.hide_stale_clients && !c.connected {
+                    if let Some(last_update) = &c.last_update {
+                        // SurrealDB Datetime can be converted to timestamp
+                        // The Datetime has a timestamp() method or we can use the inner value
+                        let update_str = last_update.to_string();
+                        // Try parsing as ISO 8601 / RFC 3339 format
+                        if let Ok(update_time) = chrono::DateTime::parse_from_rfc3339(&update_str) {
+                            let age = now.signed_duration_since(update_time.with_timezone(&chrono::Utc));
+                            if age.num_hours() > STALE_CLIENT_HOURS {
+                                return false;
+                            }
+                        } else {
+                            // Try alternative parsing - SurrealDB might use different format
+                            // Check if it's been more than STALE_CLIENT_HOURS by comparing timestamps
+                            // The Datetime type implements Ord so we can compare directly
+                            let stale_threshold = chrono::Utc::now() - chrono::Duration::hours(STALE_CLIENT_HOURS);
+                            let threshold_str = stale_threshold.to_rfc3339();
+                            // If update string is less than threshold string, it's stale
+                            if update_str < threshold_str {
+                                return false;
+                            }
+                        }
+                    } else {
+                        // No last_update means it's likely stale
+                        return false;
+                    }
+                }
+                true
+            })
             .filter(|c| {
                 // Apply filter
                 match self.filter {
@@ -448,23 +586,18 @@ impl WebConsole {
         self.receive(ui.ctx());
 
         // Handle TUR modal if open
-        if let Some(conn_string) = self.tur_modal_client.clone() {
-            if let Some(client) = self.clients.iter().find(|c| c.connection_string == conn_string) {
-                let mut modal_state = tur_modal::TurModalState::new(client.clone());
-                
-                // Populate with cached computer data if available
-                if let Some(computer) = self.computer_cache.get(&conn_string) {
-                    modal_state.populate_from_computer(computer);
-                }
-
-                match tur_modal::show_tur_modal(ui.ctx(), &mut modal_state) {
+        if self.tur_modal_client.is_some() {
+            if let Some(modal_state) = &mut self.tur_modal_state {
+                match tur_modal::show_tur_modal(ui.ctx(), modal_state) {
                     tur_modal::TurModalResult::Cancelled => {
                         self.tur_modal_client = None;
+                        self.tur_modal_state = None;
                     }
                     tur_modal::TurModalResult::Confirmed(data) => {
                         log::info!("TUR creation confirmed: {:?}", data);
                         // TODO: Navigate to TUR sheet tab with pre-populated data
                         self.tur_modal_client = None;
+                        self.tur_modal_state = None;
                     }
                     tur_modal::TurModalResult::Open => {}
                 }
@@ -524,20 +657,77 @@ impl WebConsole {
                 )
                 .show_inside(ui, |ui| {
                     if let Some(conn_string) = &self.selected_client.clone() {
-                        // Show shell view if available
-                        if let Some(shell) = self.shell_views.get_mut(conn_string) {
-                            shell.show(ui);
-                        } else if let Some(manager) = self.connections.get(conn_string) {
-                            // Show file explorer for connected client
-                            let mut explorer = file_explorer_view::FileExplorerView::new(
-                                manager.client.clone(),
-                                manager.send_cmd_tx.clone(),
-                            );
-                            explorer.show(ui);
+                        let has_connection = self.connections.contains_key(conn_string);
+                        
+                        if has_connection {
+                            // View mode tabs
+                            ui.horizontal(|ui| {
+                                let current_mode = self.detail_view_modes
+                                    .get(conn_string)
+                                    .copied()
+                                    .unwrap_or(DetailViewMode::Shell);
+                                
+                                let shell_selected = current_mode == DetailViewMode::Shell;
+                                let explorer_selected = current_mode == DetailViewMode::FileExplorer;
+                                
+                                if ui.selectable_label(shell_selected, "🖥 Shell").clicked() {
+                                    self.detail_view_modes.insert(conn_string.clone(), DetailViewMode::Shell);
+                                }
+                                
+                                if ui.selectable_label(explorer_selected, "📁 Files").clicked() {
+                                    self.detail_view_modes.insert(conn_string.clone(), DetailViewMode::FileExplorer);
+                                }
+                                
+                                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                    // Close button for detail view
+                                    if ui.small_button("✕").on_hover_text("Close").clicked() {
+                                        self.shell_views.remove(conn_string);
+                                        self.file_explorers.remove(conn_string);
+                                        self.selected_client = None;
+                                    }
+                                });
+                            });
+                            
+                            ui.separator();
+                            
+                            // Show the appropriate view based on mode
+                            let view_mode = self.detail_view_modes
+                                .get(conn_string)
+                                .copied()
+                                .unwrap_or(DetailViewMode::Shell);
+                            
+                            match view_mode {
+                                DetailViewMode::Shell => {
+                                    if let Some(shell) = self.shell_views.get_mut(conn_string) {
+                                        shell.show(ui);
+                                    } else {
+                                        ui.centered_and_justified(|ui| {
+                                            ui.label(
+                                                RichText::new("Click the Shell button on a client card to open a shell")
+                                                    .color(Color32::from_rgb(150, 155, 165)),
+                                            );
+                                        });
+                                    }
+                                }
+                                DetailViewMode::FileExplorer => {
+                                    if let Some(explorer) = self.file_explorers.get_mut(conn_string) {
+                                        explorer.show(ui);
+                                    } else {
+                                        // Create explorer on demand
+                                        if let Some(manager) = self.connections.get(conn_string) {
+                                            let explorer = file_explorer_view::FileExplorerView::new(
+                                                manager.client.clone(),
+                                                manager.send_cmd_tx.clone(),
+                                            );
+                                            self.file_explorers.insert(conn_string.clone(), explorer);
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             ui.centered_and_justified(|ui| {
                                 ui.label(
-                                    RichText::new("Select a client and connect to view details")
+                                    RichText::new("Connect to the client first")
                                         .color(Color32::from_rgb(150, 155, 165)),
                                 );
                             });

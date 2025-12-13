@@ -95,9 +95,9 @@ impl ChatServer {
                         .query("SELECT * FROM user WHERE id == $user_id")
                         .bind(("user_id", user_id.clone()))
                         .await
-                        .and_then(|mut r| r.take(0))
+                        .and_then(|mut r| r.take::<Option<User>>(0))
                     {
-                        log::info!("SELECTED USER: {user:?}");
+                        log::info!("SELECTED USER: {:?}", user.get_username());
                         let mut user_map = user_map_clone.lock().await;
                         user_map.insert(sess, user);
                     }
@@ -253,30 +253,58 @@ impl ChatServer {
                     if let Some(session) = target_session {
                         let mut session = session.lock().await;
                         let send_result = if let Some(bin) = bin {
+                            info!("Binary message sent to target session in room {}", room_id);
                             session.send(Message::Binary(bin.into())).await
                         } else if let Some(ping) = ping {
                             session.send(Message::Ping(ping.into())).await
                         } else if let Some(pong) = pong {
                             session.send(Message::Pong(pong.into())).await
                         } else {
+                            info!("{text} sent to target session in room {}", room_id);
                             session.send(Message::Text(text.into())).await
                         };
-                        match send_result {
-                            Ok(()) => info!("Message sent to target session in room {}", room_id),
-                            Err(e) => {
-                                log::error!("Failed to send message to session in room {}: {:?}", room_id, e);
-                                // Assume the target is dead and clean it up
-                                if self.is_session_match(room.master.as_ref(), &from).await {
-                                    room.client = None;
-                                    info!("Client removed from room {} due to send failure", room_id);
-                                } else if self.is_session_match(room.client.as_ref(), &from).await {
-                                    room.master = None;
-                                    info!("Master removed from room {} due to send failure", room_id);
-                                }
+                        if let Err(e) = send_result {
+                            log::error!("Failed to send message to session in room {}: {:?}", room_id, e);
+                            // Assume the target is dead and clean it up
+                            if self.is_session_match(room.master.as_ref(), &from).await {
+                                room.client = None;
+                                info!("Client removed from room {} due to send failure", room_id);
+                            } else if self.is_session_match(room.client.as_ref(), &from).await {
+                                room.master = None;
+                                info!("Master removed from room {} due to send failure", room_id);
                             }
                         }
                     } else {
-                        info!("No target session found in room {}", room_id);
+                        // No target session found - the other party isn't connected
+                        // Notify the sender that the target is unavailable
+                        log::warn!("No target session found in room {} - notifying sender", room_id);
+                        
+                        // Get the sender's session to notify them
+                        let sender_session = if self.is_session_match(room.master.as_ref(), &from).await {
+                            room.master.clone()
+                        } else if self.is_session_match(room.client.as_ref(), &from).await {
+                            room.client.clone()
+                        } else {
+                            None
+                        };
+                        
+                        if let Some(session) = sender_session {
+                            let mut session = session.lock().await;
+                            let _ = session.send(Message::Text(
+                                format!("ERROR: Target not connected in room {}", room_id).into()
+                            )).await;
+                        }
+                        
+                        // Mark the client as disconnected in the database since the other side isn't there
+                        let room_id_clone = room_id.clone();
+                        tokio::spawn(async move {
+                            let _: Result<Option<ConnectedClient>, _> = DATABASE
+                                .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $room_id")
+                                .bind(("room_id", room_id_clone.clone()))
+                                .await
+                                .and_then(|mut r| r.take(0));
+                            log::info!("Marked client {} as disconnected due to missing target session", room_id_clone);
+                        });
                     }
                 } else {
                     info!("Room {} not found", room_id);

@@ -101,6 +101,7 @@ impl TabViewer for MastertechContext {
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Inventory" => self.shared_ctx.stock_tables.ui(ui),
             "Sales Tracker" => self.shared_ctx.sales_tracker.ui(ui),
+            "Web Console" => self.shared_ctx.web_console.ui(ui),
             "Logs" => egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
                 .warn_color(Color32::from_rgb(94, 215, 221)) 

@@ -78,6 +78,8 @@ pub struct ShellView {
     /// Channel to receive command responses
     #[allow(dead_code)]
     receive_cmd_rx: Receiver<Cmd>,
+    /// Channel to receive shell output text
+    shell_output_rx: Option<Receiver<String>>,
     /// Output buffer for current command
     pub output_buffer: String,
     /// Is the shell waiting for a response?
@@ -111,7 +113,12 @@ pub struct ShellView {
 }
 
 impl ShellView {
-    pub fn new(client: ConnectedClient, shell_type: ShellType, send_cmd_tx: Sender<Cmd>) -> Self {
+    pub fn new(
+        client: ConnectedClient, 
+        shell_type: ShellType, 
+        send_cmd_tx: Sender<Cmd>,
+        shell_output_rx: Option<Receiver<String>>,
+    ) -> Self {
         let (_receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
         
         #[cfg(not(target_arch = "wasm32"))]
@@ -128,6 +135,7 @@ impl ShellView {
             history_index: 0,
             send_cmd_tx,
             receive_cmd_rx,
+            shell_output_rx,
             output_buffer: String::new(),
             is_loading: false,
             suggestions: Vec::new(),
@@ -151,6 +159,51 @@ impl ShellView {
 
     /// Process incoming messages
     pub fn receive(&mut self, ctx: &Context) {
+        // Receive shell output from the connection manager
+        if let Some(rx) = &self.shell_output_rx {
+            let mut received_count = 0;
+            while let Ok(output) = rx.try_recv() {
+                received_count += 1;
+                log::info!("ShellView: Received output ({} bytes): {}", 
+                    output.len(),
+                    if output.len() > 200 { &output[..200] } else { &output }
+                );
+                
+                // Check for DONE marker indicating command completion
+                let is_done = output.contains("DONE");
+                
+                // Clean up the output (remove DONE marker and trim)
+                let cleaned = output.replace("DONE", "").trim().to_string();
+                
+                if !cleaned.is_empty() {
+                    // Append to the current output buffer
+                    if !self.output_buffer.is_empty() {
+                        self.output_buffer.push('\n');
+                    }
+                    self.output_buffer.push_str(&cleaned);
+                    log::info!("ShellView: Output buffer now {} bytes", self.output_buffer.len());
+                }
+                
+                if is_done {
+                    log::info!("ShellView: DONE marker received, completing command");
+                    // Command completed - move output to history
+                    self.is_loading = false;
+                    if let Some(last_entry) = self.history.last_mut() {
+                        last_entry.output = std::mem::take(&mut self.output_buffer);
+                        last_entry.success = !last_entry.output.to_lowercase().contains("error");
+                        log::info!("ShellView: Command completed, output: {} bytes", last_entry.output.len());
+                    }
+                }
+                
+                ctx.request_repaint();
+            }
+            if received_count > 0 {
+                log::info!("ShellView: Processed {} messages this frame", received_count);
+            }
+        } else {
+            log::warn!("ShellView: No shell_output_rx channel available!");
+        }
+        
         // Receive diagnostic responses (AI completions)
         #[cfg(not(target_arch = "wasm32"))]
         while let Ok(response) = self.diagnostic_rx.try_recv() {
@@ -236,11 +289,21 @@ impl ShellView {
         });
         self.history_index = self.history.len();
 
-        // Send command to client via interactive input
-        // Note: The shell type is handled by the client based on the current session
-        let cmd = Cmd::InteractiveInput(command);
+        // NOTE: The Mastertech client currently uses a PersistentShell that:
+        // - On Windows: uses PowerShell
+        // - On Linux: uses sh (not bash directly)
+        // All commands are sent as InteractiveInput to this persistent shell.
+        // The shell type selector here is for future use when the client
+        // supports starting different shell types.
+        let cmd = Cmd::InteractiveInput(command.clone());
+        
+        log::info!("ShellView: Executing command: {}", command);
+        log::info!("ShellView: Sending Cmd::InteractiveInput to client");
 
-        let _ = self.send_cmd_tx.send(cmd);
+        match self.send_cmd_tx.send(cmd) {
+            Ok(_) => log::info!("ShellView: Command sent successfully"),
+            Err(e) => log::error!("ShellView: Failed to send command: {:?}", e),
+        }
 
         // Clear input
         self.input.clear();
