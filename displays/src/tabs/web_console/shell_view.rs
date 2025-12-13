@@ -6,12 +6,12 @@
 //! - Command history
 //! - Interactive shell mode
 
-use crate::{mcp::McpService, Cmd, FileSystemAction, PlatformSpawner, Spawner};
+use crate::{mcp::McpService, Cmd, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::ConnectedClient;
 use eframe::egui::{
-    Align, Button, Color32, ComboBox, Context, Frame, Key, Layout, Margin, Modifiers, RichText,
-    Rounding, ScrollArea, TextEdit, Ui, Vec2,
+    Align, Button, Color32, ComboBox, Context, CornerRadius, Frame, Key, Layout, Margin, RichText,
+    ScrollArea, TextEdit, Ui, Vec2,
 };
 use serde::{Deserialize, Serialize};
 use web_time::Instant;
@@ -236,12 +236,9 @@ impl ShellView {
         });
         self.history_index = self.history.len();
 
-        // Send command to client
-        let cmd = match self.shell_type {
-            ShellType::PowerShell => Cmd::PowerShell(command),
-            ShellType::Cmd => Cmd::Command(command),
-            ShellType::Bash => Cmd::Command(command),
-        };
+        // Send command to client via interactive input
+        // Note: The shell type is handled by the client based on the current session
+        let cmd = Cmd::InteractiveInput(command);
 
         let _ = self.send_cmd_tx.send(cmd);
 
@@ -320,10 +317,10 @@ impl ShellView {
     }
 
     fn render_header(&mut self, ui: &mut Ui) {
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(25, 28, 35))
-            .inner_margin(Margin::symmetric(12.0, 8.0))
-            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::symmetric(8, 12))
+            .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Shell type selector
@@ -421,10 +418,10 @@ impl ShellView {
     fn render_history(&mut self, ui: &mut Ui) {
         let available_height = ui.available_height() - 80.0; // Reserve space for input
 
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(15, 17, 22))
-            .inner_margin(Margin::same(8.0))
-            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
                 ScrollArea::vertical()
                     .max_height(available_height)
@@ -486,17 +483,17 @@ impl ShellView {
     }
 
     fn render_input(&mut self, ui: &mut Ui) {
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(25, 28, 35))
-            .inner_margin(Margin::same(8.0))
-            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
                 // Suggestions popup (rendered above input)
                 if self.show_suggestions && !self.suggestions.is_empty() {
-                    Frame::none()
+                    Frame::NONE
                         .fill(Color32::from_rgb(35, 38, 48))
-                        .rounding(Rounding::same(4.0))
-                        .inner_margin(Margin::same(4.0))
+                        .corner_radius(CornerRadius::same(4))
+                        .inner_margin(Margin::same(4))
                         .show(ui, |ui| {
                             for (i, suggestion) in self.suggestions.iter().enumerate() {
                                 let is_selected = i == self.selected_suggestion;
@@ -506,7 +503,7 @@ impl ShellView {
                                     Color32::TRANSPARENT
                                 };
 
-                                Frame::none().fill(bg).show(ui, |ui| {
+                                Frame::NONE.fill(bg).show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(
                                             RichText::new(&suggestion.completion)

@@ -5,12 +5,13 @@
 //! - Ping/pong tracking with 10-second timeout
 //! - Message routing between UI and client
 
-use crate::{virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
+use crate::{virtual_filesystem::FileSystem, Cmd};
 use crossbeam::channel::{Receiver, Sender};
 use database::{schema::ConnectedClient, WS_MASTER_URL, WS_MASTER_URL_LOCAL};
 use eframe::egui::Color32;
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
 /// Connection state for a client
@@ -51,8 +52,8 @@ pub struct ConnectionManager {
     pub client: ConnectedClient,
     /// Current connection state
     pub state: ConnectionState,
-    /// WebSocket sender (if connected)
-    ws_sender: Option<WsSender>,
+    /// WebSocket sender (if connected) - wrapped in Arc<Mutex> for interior mutability
+    ws_sender: Option<Arc<Mutex<WsSender>>>,
     /// WebSocket receiver (if connected)
     ws_receiver: Option<WsReceiver>,
     /// Time of last received pong
@@ -127,7 +128,7 @@ impl ConnectionManager {
 
         match ewebsock::connect(&url, Default::default()) {
             Ok((ws_sender, ws_receiver)) => {
-                self.ws_sender = Some(ws_sender);
+                self.ws_sender = Some(Arc::new(Mutex::new(ws_sender)));
                 self.ws_receiver = Some(ws_receiver);
                 self.state = ConnectionState::Connected;
                 self.connected_at = Some(Instant::now());
@@ -151,8 +152,10 @@ impl ConnectionManager {
 
     /// Disconnect from the client
     pub fn disconnect(&mut self) {
-        if let Some(mut sender) = self.ws_sender.take() {
-            sender.close();
+        if let Some(sender) = self.ws_sender.take() {
+            if let Ok(mut guard) = sender.lock() {
+                guard.close();
+            }
         }
         self.ws_receiver = None;
         self.state = ConnectionState::Disconnected;
@@ -220,34 +223,43 @@ impl ConnectionManager {
 
     /// Receive and process WebSocket messages
     fn receive_messages(&mut self) {
-        if let Some(receiver) = &self.ws_receiver {
+        // Collect events first to avoid borrow conflicts
+        let events: Vec<_> = if let Some(receiver) = &self.ws_receiver {
+            let mut events = Vec::new();
             while let Some(event) = receiver.try_recv() {
-                match event {
-                    ewebsock::WsEvent::Message(msg) => self.handle_message(msg),
-                    ewebsock::WsEvent::Opened => {
-                        log::info!(
-                            "ConnectionManager: WebSocket opened for {}",
-                            self.client.connection_string
-                        );
-                        self.state = ConnectionState::Connected;
-                        self.last_pong_time = Some(Instant::now());
-                    }
-                    ewebsock::WsEvent::Closed => {
-                        log::info!(
-                            "ConnectionManager: WebSocket closed for {}",
-                            self.client.connection_string
-                        );
-                        self.state = ConnectionState::Disconnected;
-                    }
-                    ewebsock::WsEvent::Error(e) => {
-                        log::error!(
-                            "ConnectionManager: WebSocket error for {}: {}",
-                            self.client.connection_string,
-                            e
-                        );
-                        self.error = Some(e);
-                        self.state = ConnectionState::Disconnected;
-                    }
+                events.push(event);
+            }
+            events
+        } else {
+            Vec::new()
+        };
+
+        for event in events {
+            match event {
+                ewebsock::WsEvent::Message(msg) => self.handle_message(msg),
+                ewebsock::WsEvent::Opened => {
+                    log::info!(
+                        "ConnectionManager: WebSocket opened for {}",
+                        self.client.connection_string
+                    );
+                    self.state = ConnectionState::Connected;
+                    self.last_pong_time = Some(Instant::now());
+                }
+                ewebsock::WsEvent::Closed => {
+                    log::info!(
+                        "ConnectionManager: WebSocket closed for {}",
+                        self.client.connection_string
+                    );
+                    self.state = ConnectionState::Disconnected;
+                }
+                ewebsock::WsEvent::Error(e) => {
+                    log::error!(
+                        "ConnectionManager: WebSocket error for {}: {}",
+                        self.client.connection_string,
+                        e
+                    );
+                    self.error = Some(e);
+                    self.state = ConnectionState::Disconnected;
                 }
             }
         }
@@ -274,7 +286,9 @@ impl ConnectionManager {
             WsMessage::Ping(_) => {
                 // Respond with pong
                 if let Some(sender) = &self.ws_sender {
-                    sender.send(WsMessage::Pong(vec![].into()));
+                    if let Ok(mut guard) = sender.lock() {
+                        guard.send(WsMessage::Pong(vec![].into()));
+                    }
                 }
             }
             WsMessage::Pong(_) => {
@@ -290,9 +304,11 @@ impl ConnectionManager {
     /// Send pending commands to the client
     fn send_pending_commands(&mut self) {
         if let Some(sender) = &self.ws_sender {
-            while let Ok(cmd) = self.send_cmd_rx.try_recv() {
-                let data = serialize_command(&cmd);
-                sender.send(WsMessage::Binary(data.into()));
+            if let Ok(mut guard) = sender.lock() {
+                while let Ok(cmd) = self.send_cmd_rx.try_recv() {
+                    let data = serialize_command(&cmd);
+                    guard.send(WsMessage::Binary(data.into()));
+                }
             }
         }
     }
@@ -306,8 +322,10 @@ impl ConnectionManager {
 
         if should_ping {
             if let Some(sender) = &self.ws_sender {
-                sender.send(WsMessage::Ping(vec![].into()));
-                self.last_ping_time = Some(Instant::now());
+                if let Ok(mut guard) = sender.lock() {
+                    guard.send(WsMessage::Ping(vec![].into()));
+                    self.last_ping_time = Some(Instant::now());
+                }
             }
         }
     }
@@ -315,7 +333,9 @@ impl ConnectionManager {
     /// Send a text message to the client
     pub fn send_text(&self, text: &str) {
         if let Some(sender) = &self.ws_sender {
-            sender.send(WsMessage::Text(text.into()));
+            if let Ok(mut guard) = sender.lock() {
+                guard.send(WsMessage::Text(text.into()));
+            }
         }
     }
 

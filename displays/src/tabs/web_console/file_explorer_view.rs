@@ -10,7 +10,7 @@ use crate::{
 use crossbeam::channel::Sender;
 use database::schema::ConnectedClient;
 use eframe::egui::{
-    Align, Button, Color32, Frame, Layout, Margin, RichText, Rounding, TextEdit, Ui, Vec2,
+    Align, Button, Color32, CornerRadius, Frame, Layout, Margin, RichText, TextEdit, Ui, Vec2,
 };
 
 /// File explorer view wrapping the virtual filesystem
@@ -69,19 +69,10 @@ impl FileExplorerView {
 
     /// Go up one directory level
     pub fn go_up(&mut self) {
-        if let Some(parent) = self
-            .filesystem
-            .current_prefix
-            .rsplit_once('\\')
-            .map(|(p, _)| p)
-        {
+        let current = self.filesystem.current_prefix.clone();
+        if let Some(parent) = current.rsplit_once('\\').map(|(p, _)| p) {
             self.navigate_to(parent);
-        } else if let Some(parent) = self
-            .filesystem
-            .current_prefix
-            .rsplit_once('/')
-            .map(|(p, _)| p)
-        {
+        } else if let Some(parent) = current.rsplit_once('/').map(|(p, _)| p) {
             self.navigate_to(parent);
         }
     }
@@ -117,10 +108,10 @@ impl FileExplorerView {
     }
 
     fn render_header(&mut self, ui: &mut Ui) {
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(25, 28, 35))
-            .inner_margin(Margin::symmetric(12.0, 8.0))
-            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::symmetric(8, 12))
+            .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Back button
@@ -213,10 +204,10 @@ impl FileExplorerView {
     }
 
     fn render_files(&mut self, ui: &mut Ui) {
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(18, 20, 25))
-            .inner_margin(Margin::same(8.0))
-            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
                 // Use the filesystem's display method
                 self.filesystem.display(ui);

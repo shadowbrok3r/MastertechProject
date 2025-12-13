@@ -4,8 +4,8 @@
 
 use super::{ClientCard, ClientFilter, ViewMode, WebConsole, WebConsoleAction};
 use eframe::egui::{
-    Align, Button, Color32, ComboBox, Frame, Layout, Margin, RichText, Rounding, ScrollArea,
-    TextEdit, TopBottomPanel, Ui, Vec2,
+    Align, Button, Color32, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea,
+    TextEdit, Ui, Vec2,
 };
 
 /// Grid/List view component for displaying clients
@@ -41,19 +41,22 @@ impl ClientGrid {
             return;
         }
 
+        // Clone needed data to avoid borrow conflicts
+        let view_mode = console.view_mode;
+        
         // Render clients based on view mode
-        match console.view_mode {
-            ViewMode::Grid => Self::render_grid(ui, console, &filtered),
-            ViewMode::List => Self::render_list(ui, console, &filtered),
+        match view_mode {
+            ViewMode::Grid => Self::render_grid(ui, console),
+            ViewMode::List => Self::render_list(ui, console),
         }
     }
 
     /// Render the toolbar with search, filter, and view mode controls
     fn render_toolbar(ui: &mut Ui, console: &mut WebConsole) {
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(25, 28, 35))
-            .inner_margin(Margin::symmetric(12.0, 8.0))
-            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::symmetric(8, 12))
+            .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Refresh button
@@ -179,19 +182,13 @@ impl ClientGrid {
     }
 
     /// Render clients in a grid layout
-    fn render_grid(
-        ui: &mut Ui,
-        console: &mut WebConsole,
-        filtered: &[&database::schema::ConnectedClient],
-    ) {
+    fn render_grid(ui: &mut Ui, console: &mut WebConsole) {
+        // Collect all needed data upfront to avoid borrow conflicts
+        let filtered: Vec<_> = console.filtered_clients().into_iter().cloned().collect();
+
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // Calculate how many cards fit per row
-                let available_width = ui.available_width();
-                let card_width = 300.0;
-                let cards_per_row = ((available_width / card_width).floor() as usize).max(1);
-
                 ui.horizontal_wrapped(|ui| {
                     for client in filtered.iter() {
                         let conn_string = &client.connection_string;
@@ -222,7 +219,7 @@ impl ClientGrid {
 
                         if ClientCard::show(
                             ui,
-                            client,
+                            &client,
                             connection_state,
                             last_pong_secs,
                             &console.user_cache,
@@ -238,15 +235,14 @@ impl ClientGrid {
     }
 
     /// Render clients in a list layout
-    fn render_list(
-        ui: &mut Ui,
-        console: &mut WebConsole,
-        filtered: &[&database::schema::ConnectedClient],
-    ) {
+    fn render_list(ui: &mut Ui, console: &mut WebConsole) {
+        // Collect all needed data upfront to avoid borrow conflicts
+        let filtered: Vec<_> = console.filtered_clients().into_iter().cloned().collect();
+
         // Header row
-        Frame::none()
+        Frame::NONE
             .fill(Color32::from_rgb(30, 33, 40))
-            .inner_margin(Margin::symmetric(8.0, 6.0))
+            .inner_margin(Margin::symmetric(6, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(18.0); // For status indicator

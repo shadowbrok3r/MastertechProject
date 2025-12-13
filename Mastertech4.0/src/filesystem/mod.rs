@@ -4,6 +4,7 @@ use surrealdb::RecordId;
 use sysinfo::System;
 
 pub mod system_info;
+#[cfg(target_os = "windows")]
 pub mod oa_serial;
 pub mod machine;
 

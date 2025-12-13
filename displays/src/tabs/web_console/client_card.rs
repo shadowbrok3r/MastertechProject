@@ -9,13 +9,12 @@
 //! - Action buttons (Delete, TUR, Shell, Explorer)
 
 use super::{ConnectionState, ShellType, WebConsoleAction};
+use chrono::{DateTime, Local};
 use crossbeam::channel::Sender;
 use database::schema::{ComputerData, ConnectedClient, User};
 use eframe::egui::{
-    Align, Button, Color32, Frame, Layout, Margin, Response, RichText, Rounding, Sense, Stroke,
-    Ui, Vec2,
+    Align, Button, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Ui, Vec2,
 };
-use chrono::{DateTime, Local, Utc};
 use std::collections::HashMap;
 
 /// A card component displaying a single connected client
@@ -51,12 +50,12 @@ impl ClientCard {
             Stroke::new(1.0, Color32::from_rgb(50, 55, 65))
         };
 
-        Frame::none()
+        Frame::NONE
             .fill(bg_color)
             .stroke(stroke)
-            .rounding(Rounding::same(8.0))
-            .inner_margin(Margin::same(12.0))
-            .outer_margin(Margin::same(4.0))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::same(12))
+            .outer_margin(Margin::same(4))
             .show(ui, |ui| {
                 ui.set_min_width(280.0);
                 ui.set_max_width(320.0);
@@ -239,14 +238,14 @@ impl ClientCard {
                                 client.clone(),
                                 ShellType::PowerShell,
                             ));
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui.button("CMD").clicked() {
                             let _ = action_tx.send(WebConsoleAction::OpenShell(
                                 client.clone(),
                                 ShellType::Cmd,
                             ));
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
 
@@ -362,9 +361,9 @@ impl ClientCard {
             Color32::TRANSPARENT
         };
 
-        Frame::none()
+        Frame::NONE
             .fill(bg_color)
-            .inner_margin(Margin::symmetric(8.0, 4.0))
+            .inner_margin(Margin::symmetric(4, 8))
             .show(ui, |ui| {
                 let response = ui.horizontal(|ui| {
                     // Status indicator
