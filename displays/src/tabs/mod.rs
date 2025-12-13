@@ -19,6 +19,7 @@ pub mod koth;
 pub mod presta_order;
 pub mod checkin_form;
 pub mod sales_tracker;
+pub mod web_console;
 
 pub enum Tabs {
     #[cfg(not(target_arch="wasm32"))]
@@ -50,6 +51,7 @@ pub enum SharedTabs {
     BugReport,
     MyTools,
     AdminConsole,
+    WebConsole,
     DatabaseEditor,
     ResourceMonitor,
     QueryEditor,
@@ -88,6 +90,7 @@ impl Tabs {
                     SharedTabs::BugReport => "BugReport",
                     SharedTabs::MyTools => "My Tools",
                     SharedTabs::AdminConsole => "Admin Console",
+                    SharedTabs::WebConsole => "Web Console",
                     SharedTabs::DatabaseEditor => "Database Editor",
                     SharedTabs::ResourceMonitor => "Resource Monitor",
                     SharedTabs::QueryEditor => "Query Editor",
@@ -113,6 +116,7 @@ impl Tabs {
             "Logs" => Self::Shared(SharedTabs::Logs),
             "Resource Monitor" => Self::Shared(SharedTabs::ResourceMonitor),
             "Admin Console" => Self::Shared(SharedTabs::AdminConsole),
+            "Web Console" => Self::Shared(SharedTabs::WebConsole),
             "Query Editor" => Self::Shared(SharedTabs::QueryEditor),
             "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
             "Threads" => Self::Shared(SharedTabs::Threads),
@@ -144,7 +148,7 @@ impl Tabs {
 }
 
 #[cfg(target_arch="wasm32")]
-pub const TABS: [&str; 15] = [
+pub const TABS: [&str; 16] = [
     "My Tasks",
     "Store Tasks",
     "Completed Tasks",
@@ -156,6 +160,7 @@ pub const TABS: [&str; 15] = [
     "My Tools",
     "Logs",
     "Admin Console",
+    "Web Console",
     "Database Editor",
     "Query Editor",
     "KOTH",
@@ -163,7 +168,7 @@ pub const TABS: [&str; 15] = [
 ];
 
 #[cfg(not(target_arch="wasm32"))]
-pub const TABS: [&str; 25] = [
+pub const TABS: [&str; 26] = [
     "TUR Sheet",
     "Part Order",
     "KOTH",
@@ -186,6 +191,7 @@ pub const TABS: [&str; 25] = [
     "Logs",
     "Resource Monitor",
     "Admin Console",
+    "Web Console",
     "Query Editor",
     "Create Prestashop Order",
     "Threads",
@@ -269,6 +275,7 @@ impl egui_dock::TabViewer for SharedContext {
                 .enable_category("egui_glow::painter".to_string(), false)
                 .show(ui),
             "Admin Console" => self.admin_console(ui),
+            "Web Console" => self.web_console.ui(ui),
             "Database Editor" => self.database_viewer.ui(ui, self.current_user.clone()),
             "Query Editor" => if let Some(usr) = &self.current_user {
                 if usr.is_admin() {
