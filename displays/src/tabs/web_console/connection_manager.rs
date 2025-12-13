@@ -72,6 +72,12 @@ pub struct ConnectionManager {
     pub message_buffer: Vec<String>,
     /// Binary message buffer
     pub binary_buffer: Vec<Vec<u8>>,
+    /// Channel for shell output (text messages routed here for shell display)
+    /// Note: This sender should be cloned and given to ShellView
+    pub shell_output_tx: Sender<String>,
+    /// Internal receiver (not used directly - ShellView creates its own receiver from the sender)
+    #[allow(dead_code)]
+    shell_output_rx: Receiver<String>,
     /// Shared filesystem for file operations
     pub filesystem: FileSystem,
     /// Error message if connection failed
@@ -84,6 +90,7 @@ impl ConnectionManager {
     pub fn new(client: ConnectedClient, filesystem: FileSystem, ping_timeout_secs: u64) -> Self {
         let (send_cmd_tx, send_cmd_rx) = crossbeam::channel::unbounded();
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
+        let (shell_output_tx, shell_output_rx) = crossbeam::channel::unbounded();
 
         Self {
             client,
@@ -97,6 +104,8 @@ impl ConnectionManager {
             send_cmd_rx,
             receive_cmd_tx,
             receive_cmd_rx,
+            shell_output_tx,
+            shell_output_rx,
             message_buffer: Vec::new(),
             binary_buffer: Vec::new(),
             filesystem,
@@ -269,18 +278,45 @@ impl ConnectionManager {
     fn handle_message(&mut self, msg: WsMessage) {
         match msg {
             WsMessage::Text(text) => {
-                self.message_buffer.push(text.to_string());
+                let text_str = text.to_string();
+                log::info!("ConnectionManager: Received TEXT message ({} bytes): {}", 
+                    text_str.len(), 
+                    if text_str.len() > 100 { &text_str[..100] } else { &text_str }
+                );
+                self.message_buffer.push(text_str.clone());
+                
+                // Forward to shell output channel for display
+                if let Err(e) = self.shell_output_tx.send(text_str.clone()) {
+                    log::warn!("ConnectionManager: Failed to forward text to shell: {:?}", e);
+                }
+                
                 // Try to deserialize as command
                 if let Ok(cmd) = serde_json::from_str::<Cmd>(&text) {
+                    log::info!("ConnectionManager: Deserialized as Cmd: {:?}", cmd);
                     let _ = self.receive_cmd_tx.send(cmd);
                 }
             }
             WsMessage::Binary(data) => {
+                log::info!("ConnectionManager: Received BINARY message ({} bytes)", data.len());
+                
                 // Try to deserialize as command using bincode
                 if let Some(cmd) = deserialize_command(&data) {
+                    log::info!("ConnectionManager: Deserialized binary as Cmd: {:?}", cmd);
                     let _ = self.receive_cmd_tx.send(cmd);
                 } else {
-                    self.binary_buffer.push(data.to_vec());
+                    // Try to interpret as UTF-8 text (shell output)
+                    if let Ok(text) = String::from_utf8(data.to_vec()) {
+                        log::info!("ConnectionManager: Binary decoded as UTF-8 text ({} bytes): {}", 
+                            text.len(),
+                            if text.len() > 100 { &text[..100] } else { &text }
+                        );
+                        if let Err(e) = self.shell_output_tx.send(text) {
+                            log::warn!("ConnectionManager: Failed to forward binary-as-text to shell: {:?}", e);
+                        }
+                    } else {
+                        log::info!("ConnectionManager: Binary is not valid UTF-8, storing in buffer");
+                        self.binary_buffer.push(data.to_vec());
+                    }
                 }
             }
             WsMessage::Ping(_) => {
@@ -306,7 +342,9 @@ impl ConnectionManager {
         if let Some(sender) = &self.ws_sender {
             if let Ok(mut guard) = sender.lock() {
                 while let Ok(cmd) = self.send_cmd_rx.try_recv() {
+                    log::info!("ConnectionManager: Sending command to client: {:?}", cmd);
                     let data = serialize_command(&cmd);
+                    log::info!("ConnectionManager: Serialized command to {} bytes", data.len());
                     guard.send(WsMessage::Binary(data.into()));
                 }
             }

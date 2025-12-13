@@ -109,6 +109,12 @@ impl ClientGrid {
                             );
                         });
 
+                    ui.add_space(8.0);
+                    
+                    // Hide stale clients toggle
+                    ui.checkbox(&mut console.hide_stale_clients, "Hide stale")
+                        .on_hover_text("Hide disconnected clients older than 4 hours");
+
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // View mode toggle
                         let grid_btn = Button::new(
@@ -153,11 +159,14 @@ impl ClientGrid {
 
                         ui.add_space(16.0);
 
-                        // Client count
-                        let total = console.clients.len();
-                        let connected = console.clients.iter().filter(|c| c.connected).count();
+                        // Client count - use filtered clients for accuracy
+                        let filtered = console.filtered_clients();
+                        let visible_total = filtered.len();
+                        let visible_connected = filtered.iter().filter(|c| c.connected).count();
+                        let db_total = console.clients.len();
+                        
                         ui.label(
-                            RichText::new(format!("{} / {} online", connected, total))
+                            RichText::new(format!("{}/{} online ({} shown)", visible_connected, db_total, visible_total))
                                 .size(11.0)
                                 .color(Color32::from_rgb(51, 255, 189)),
                         );
@@ -185,52 +194,66 @@ impl ClientGrid {
     fn render_grid(ui: &mut Ui, console: &mut WebConsole) {
         // Collect all needed data upfront to avoid borrow conflicts
         let filtered: Vec<_> = console.filtered_clients().into_iter().cloned().collect();
+        
+        // Calculate cards per row based on available width
+        let available_width = ui.available_width();
+        let card_width = 300.0; // Approximate card width including margins
+        let cards_per_row = ((available_width / card_width).floor() as usize).max(1);
 
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for client in filtered.iter() {
-                        let conn_string = &client.connection_string;
+                // Use a grid layout for proper wrapping
+                eframe::egui::Grid::new("client_grid")
+                    .num_columns(cards_per_row)
+                    .spacing([8.0, 8.0])
+                    .show(ui, |ui| {
+                        for (idx, client) in filtered.iter().enumerate() {
+                            let conn_string = &client.connection_string;
 
-                        // Get connection state
-                        let connection_state = console
-                            .connections
-                            .get(conn_string)
-                            .map(|m| m.state)
-                            .unwrap_or_else(|| {
-                                if client.connected {
-                                    super::ConnectionState::Disconnected // DB says connected but no WS
-                                } else {
-                                    super::ConnectionState::Disconnected
-                                }
-                            });
+                            // Get connection state
+                            let connection_state = console
+                                .connections
+                                .get(conn_string)
+                                .map(|m| m.state)
+                                .unwrap_or_else(|| {
+                                    if client.connected {
+                                        super::ConnectionState::Disconnected // DB says connected but no WS
+                                    } else {
+                                        super::ConnectionState::Disconnected
+                                    }
+                                });
 
-                        // Get last pong time
-                        let last_pong_secs = console
-                            .get_last_pong_elapsed(conn_string)
-                            .map(|d| d.as_secs());
+                            // Get last pong time
+                            let last_pong_secs = console
+                                .get_last_pong_elapsed(conn_string)
+                                .map(|d| d.as_secs());
 
-                        let is_selected = console
-                            .selected_client
-                            .as_ref()
-                            .map(|s| s == conn_string)
-                            .unwrap_or(false);
+                            let is_selected = console
+                                .selected_client
+                                .as_ref()
+                                .map(|s| s == conn_string)
+                                .unwrap_or(false);
 
-                        if ClientCard::show(
-                            ui,
-                            &client,
-                            connection_state,
-                            last_pong_secs,
-                            &console.user_cache,
-                            &console.computer_cache,
-                            &console.action_tx,
-                            is_selected,
-                        ) {
-                            console.selected_client = Some(conn_string.clone());
+                            if ClientCard::show(
+                                ui,
+                                &client,
+                                connection_state,
+                                last_pong_secs,
+                                &console.user_cache,
+                                &console.computer_cache,
+                                &console.action_tx,
+                                is_selected,
+                            ) {
+                                console.selected_client = Some(conn_string.clone());
+                            }
+                            
+                            // End row after cards_per_row cards
+                            if (idx + 1) % cards_per_row == 0 {
+                                ui.end_row();
+                            }
                         }
-                    }
-                });
+                    });
             });
     }
 
@@ -252,7 +275,7 @@ impl ClientGrid {
                             .strong()
                             .color(Color32::from_rgb(180, 185, 195)),
                     );
-                    ui.add_space(100.0);
+                    ui.add_space(120.0);
                     ui.label(
                         RichText::new("User")
                             .size(11.0)
@@ -260,6 +283,13 @@ impl ClientGrid {
                             .color(Color32::from_rgb(180, 185, 195)),
                     );
                     ui.add_space(80.0);
+                    ui.label(
+                        RichText::new("Last Update")
+                            .size(11.0)
+                            .strong()
+                            .color(Color32::from_rgb(180, 185, 195)),
+                    );
+                    ui.add_space(60.0);
                     ui.label(
                         RichText::new("Ping")
                             .size(11.0)

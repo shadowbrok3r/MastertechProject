@@ -38,6 +38,7 @@ impl MasterTechApp {
                             &"Bug Tracker".to_string(),
                             &"Websockets".to_string(),
                             &"Admin Console".to_string(),
+                            &"Web Console".to_string(),
                             &"Inventory".to_string(),
                             &"Task Audit".to_string(),
                             &"Create Prestashop Order".to_string(),

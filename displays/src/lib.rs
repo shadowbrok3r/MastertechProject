@@ -236,10 +236,29 @@ pub enum Cmd {
     PullKeys(String),
     PullTicket(String),
     InteractiveInput(String),
+    /// Execute a shell command with specified shell type
+    ShellCommand { command: String, shell: ShellCommandType },
+    /// Start an interactive shell session with specified shell type
+    StartInteractiveShell(ShellCommandType),
     QuitInteractive,
     ReadEvents,
     Quit,
     None,
+}
+
+/// Shell command type for cross-platform shell execution
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellCommandType {
+    /// Windows PowerShell
+    PowerShell,
+    /// Windows CMD
+    Cmd,
+    /// Unix Bash
+    Bash,
+    /// Unix sh
+    Sh,
+    /// Auto-detect based on OS
+    Auto,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

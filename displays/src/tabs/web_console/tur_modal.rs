@@ -132,9 +132,8 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
     Window::new(RichText::new(format!("Create TUR Sheet - {}", client_name)).size(16.0))
         .open(&mut open)
         .collapsible(false)
-        .resizable(true)
-        .default_width(600.0)
-        .min_width(500.0)
+        .resizable(false)  // Don't allow resizing to prevent expansion
+        .fixed_size(Vec2::new(550.0, 500.0))  // Fixed window size
         .show(ctx, |ui| {
             if state.loading {
                 ui.centered_and_justified(|ui| {
@@ -149,7 +148,11 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                 ui.add_space(8.0);
             }
 
-            ScrollArea::vertical().show(ui, |ui| {
+            // Use a fixed height scroll area that fits within the window
+            ScrollArea::vertical()
+                .max_height(380.0)  // Fixed max height for scroll content
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                 // Computer specs section
                 ui.heading("Computer Specifications");
                 ui.add_space(8.0);
