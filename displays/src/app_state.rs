@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
@@ -183,6 +183,9 @@ pub struct SharedContext {
     pub resource_mon: ResourceMonitor,
     #[serde(skip)]
     pub web_console_layout: AdminConsole,
+    /// New revamped web console
+    #[serde(skip)]
+    pub web_console: WebConsole,
     pub room_id: String,
     #[serde(skip)]
     pub associated_notes_tx: Sender<Vec<TaskNotePayload>>,
@@ -349,6 +352,7 @@ impl SharedContext {
             timer: None,
             filesystem,
             web_console_layout,
+            web_console: WebConsole::new(),
             room_id: String::new(),
             user_chat: UserChat::default(),
             pending_store: None,
