@@ -6,7 +6,9 @@
 //! - Command history
 //! - Interactive shell mode
 
-use crate::{mcp::McpService, Cmd, PlatformSpawner, Spawner};
+use crate::{Cmd, PlatformSpawner, Spawner};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::mcp::McpService;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::ConnectedClient;
 use eframe::egui::{
