@@ -2,14 +2,14 @@ use std::fmt::Display;
 
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
-use surrealdb::{RecordId, Value};
+use surrealdb::types::Value;
 
 use crate::DATABASE;
 
-use super::{NOTIFICATION_TABLE, USER_TABLE};
+use super::{random_record_id, RecordId, SurrealValue, NOTIFICATION_TABLE, USER_TABLE};
 
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Difference, SurrealValue)]
 pub struct Notification {
     pub id: RecordId,
     /// receiver of notification
@@ -25,8 +25,8 @@ pub struct Notification {
 impl Default for Notification {
     fn default() -> Self {
         Self {
-            id: RecordId::from((NOTIFICATION_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            user: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(NOTIFICATION_TABLE),
+            user: random_record_id(USER_TABLE),
             notification_description: Default::default(),
             notification_type: Default::default(),
             status: Default::default()
@@ -34,7 +34,7 @@ impl Default for Notification {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SurrealValue)]
 pub enum NotificationType {
     NewMessage,
     SpoStatusChange,
@@ -44,13 +44,13 @@ pub enum NotificationType {
     OverdueTask,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, SurrealValue)]
 pub enum NotificationStatus {
     Read,
     Unread,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, SurrealValue)]
 pub struct ModifyNotification {
     pub id: RecordId,
     /// either Read or Unread
@@ -78,7 +78,7 @@ impl Notification {
             .await?
             .take(0)?;
 
-        log::info!("Created notification: {notif}");
+        log::info!("Created notification: {notif:?}");
 
         Ok(())
     }

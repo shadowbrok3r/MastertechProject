@@ -1,6 +1,6 @@
+use crate::schema::SurrealValue;
 
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone, PartialEq, SurrealValue)]
 #[allow(non_snake_case)]
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 #[serde(rename = "xml")]
@@ -17,7 +17,7 @@ pub struct LocalSebData {
     pub ExtendedSeb: Option<ExtendedSeb>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone, PartialEq, SurrealValue)]
 pub struct ExtendedSeb {
     pub email: String,
     pub phone: String,

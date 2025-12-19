@@ -1,6 +1,6 @@
 use eframe::egui::{Color32, Grid, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
 use database::schema::{ComputerData, TicketData, COMPUTER_TABLE};
-use surrealdb::RecordId;
+use database::schema::RecordId;
 
 use crate::{PlatformSpawner, Spawner};
 

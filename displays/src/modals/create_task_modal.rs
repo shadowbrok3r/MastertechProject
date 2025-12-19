@@ -3,7 +3,7 @@ use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
-use surrealdb::{sql::Datetime, RecordId};
+use database::schema::{Datetime, RecordId};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use crossbeam::channel::Sender;

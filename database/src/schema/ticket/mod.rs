@@ -1,11 +1,10 @@
 use crate::DATABASE;
 
-use super::{ComputerData, CustomerData, HardwareTests, Job, CUSTOMER_TABLE, TICKET_TABLE};
-use surrealdb::{sql::Datetime, RecordId};
+use super::{random_record_id, ComputerData, CustomerData, Datetime, HardwareTests, Job, RecordId, SurrealValue, CUSTOMER_TABLE, TICKET_TABLE};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TicketPayload {
     pub id: RecordId,
     pub created_at: Datetime,
@@ -29,7 +28,7 @@ pub struct TicketPayload {
 impl Default for TicketPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(TICKET_TABLE),
             created_at: Default::default(),
             customer: Default::default(),
             computer: Default::default(),
@@ -49,7 +48,7 @@ impl Default for TicketPayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TicketData {
     // Live Ticket Payload
     pub id: RecordId,
@@ -99,8 +98,8 @@ impl TicketData {
 impl Default for TicketData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
-            customer: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(TICKET_TABLE),
+            customer: random_record_id(CUSTOMER_TABLE),
             created_at: Default::default(),
             computer: Default::default(),
             service_number: Default::default(),

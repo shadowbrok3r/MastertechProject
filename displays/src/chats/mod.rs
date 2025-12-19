@@ -6,7 +6,7 @@ use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use itertools::Itertools;
 use log::{error, info};
 use serde::Serialize;

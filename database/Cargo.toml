@@ -25,6 +25,8 @@ brotli = { workspace=true }
 rfd = { workspace = true }
 log = { workspace=true }
 fuzzy-matcher = { workspace=true }
+uuid = { workspace = true }
+surrealdb-types = { workspace = true }
 
 [build-dependencies]
 dotenvy = { workspace=true }

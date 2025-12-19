@@ -1,10 +1,11 @@
 use crate::schema::{SortDirection, Sortable, CONNECTED_CLIENT_TABLE};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use structdiff::{Difference, StructDiff};
-use surrealdb::{Datetime, RecordId};
 use std::cmp::Reverse;
 
-#[derive(serde::Serialize, Debug, Clone, serde::Deserialize, PartialEq, Difference)]
+use super::{random_record_id, Datetime, RecordId, SurrealValue};
+
+#[derive(serde::Serialize, Debug, Clone, serde::Deserialize, PartialEq, Difference, SurrealValue)]
 pub struct ConnectedClient {
     pub id: RecordId,
     pub assigned_user: Option<RecordId>,
@@ -22,7 +23,7 @@ pub struct ConnectedClient {
 impl Default for ConnectedClient {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CONNECTED_CLIENT_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(CONNECTED_CLIENT_TABLE),
             assigned_user: Default::default(),
             client_hash: Default::default(),
             connection_string: Default::default(),

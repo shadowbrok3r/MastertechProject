@@ -1,6 +1,6 @@
 #![allow(async_fn_in_trait)]
 use super::{
-    prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
+    prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, RecordId, SurrealValue, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
 use crate::{schema::{parse_msg_date, prestashop::PrestashopId, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -8,7 +8,6 @@ use std::{collections::HashMap, fmt::Debug};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
-use surrealdb::RecordId;
 use log::{debug, info};
 
 /// Get the associated data tied to an ID
@@ -418,10 +417,10 @@ impl EmployeeHelper for Employee {
             .await?;
 
         let customer = CustomerData {
-            id: RecordId::from((
-                CUSTOMER_TABLE.to_string(),
+            id: RecordId::new(
+                CUSTOMER_TABLE,
                 order.id_customer.clone(),
-            )),
+            ),
             cust_code: order.id_customer.clone(),
             name: format!("{} {}", &cust.firstname, &cust.lastname),
             phone_number: address.phone.clone().to_string(),
@@ -519,7 +518,7 @@ impl ComputerDataHelper for ComputerData {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, SurrealValue)]
 pub struct PrestaResourceResponse {
     pub date_add: String,
     pub id: String,
@@ -638,10 +637,10 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
             .await?;
 
         self.customer = CustomerData {
-            id: RecordId::from((
-                CUSTOMER_TABLE.to_string(),
+            id: RecordId::new(
+                CUSTOMER_TABLE,
                 self.order.id_customer.clone(),
-            )),
+            ),
             cust_code: self.order.id_customer.clone(),
             name: format!("{} {}", &cust.firstname, &cust.lastname),
             phone_number: address.phone.clone().to_string(),
@@ -695,14 +694,14 @@ impl From<PrestashopPayload> for TaskPayload {
         ticket.ticket_total = value.order.total_products_wt.clone();
         ticket.doc_alias = value.order.order_type.clone();
         ticket.service_number = value.order.id.clone();
-        ticket.id = RecordId::from((
-            TICKET_TABLE.to_string(),
+        ticket.id = RecordId::new(
+            TICKET_TABLE,
             ticket.service_number.clone(),
-        ));
-        task.id = RecordId::from((
-            TASK_TABLE.to_string(),
+        );
+        task.id = RecordId::new(
+            TASK_TABLE,
             ticket.service_number.clone(),
-        ));
+        );
 
         let (tx, rx) = crossbeam::channel::bounded::<User>(1);
         
@@ -734,7 +733,7 @@ impl From<PrestashopPayload> for TaskPayload {
         for msg in value.customer_messages.iter() {
             task_notes.push(TaskNotePayload {
                 note: msg.message.clone(),
-                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
+                id: RecordId::new(TASK_NOTE_TABLE, msg.id.clone()),
                 task_id: Some(task.id.clone()),
                 created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&msg.date_add) {
                     date.with_timezone(&Utc).into()

@@ -1,8 +1,8 @@
 use serde::{de::{self, Deserializer, MapAccess, Visitor}, Deserialize, Serialize, Serializer};
-use surrealdb::RecordId;
 use std::fmt;
+use surrealdb_types::{Kind, Value, SurrealValue as SurrealValueTrait};
 
-use crate::schema::{prestashop::{Associations, Order}, Qc};
+use crate::schema::{prestashop::{Associations, Order}, Qc, RecordId, RecordIdExt};
 
 pub fn deserialize_to_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     struct StringOrIntVisitor;
@@ -83,7 +83,7 @@ impl Serialize for Qc {
         map.serialize_entry("task", &self.task)?;
 
         // Serialize order.id as RecordId
-        let record_id = RecordId::from(("qc", self.order.id.as_str()));
+        let record_id = RecordId::new("qc", self.order.id.as_str());
         map.serialize_entry("id", &record_id)?;
 
         // Serialize remaining Order fields
@@ -168,7 +168,7 @@ impl<'de> Deserialize<'de> for Qc {
                         "id" => {
                             // Handle RecordId (Thing) or string
                             let thing: RecordId = map.next_value()?;
-                            id = Some(thing.to_string());
+                            id = Some(thing.key_string());
                         }
                         "id_order_type" => id_order_type = Some(map.next_value()?),
                         "id_address_delivery" => id_address_delivery = Some(map.next_value()?),
@@ -242,5 +242,75 @@ impl<'de> Deserialize<'de> for Qc {
         }
 
         deserializer.deserialize_map(QcVisitor)
+    }
+}
+
+// Manual SurrealValue implementation for Qc
+impl SurrealValueTrait for Qc {
+    fn kind_of() -> Kind {
+        Kind::Any
+    }
+    
+    fn into_value(self) -> Value {
+        // Serialize via serde to get a Value
+        match serde_json::to_value(&self) {
+            Ok(json) => json_to_value(json),
+            Err(_) => Value::None,
+        }
+    }
+    
+    fn from_value(value: Value) -> surrealdb_types::anyhow::Result<Self> {
+        // Convert Value to JSON and deserialize
+        let json = value_to_json(value);
+        serde_json::from_value(json).map_err(|e| surrealdb_types::anyhow::anyhow!(e))
+    }
+}
+
+fn json_to_value(json: serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Number(i.into())
+            } else if let Some(f) = n.as_f64() {
+                Value::Number(f.into())
+            } else {
+                Value::None
+            }
+        },
+        serde_json::Value::String(s) => Value::String(s),
+        serde_json::Value::Array(arr) => {
+            let surreal_arr: Vec<Value> = arr.into_iter().map(json_to_value).collect();
+            Value::Array(surreal_arr.into())
+        },
+        serde_json::Value::Object(obj) => {
+            let mut surreal_obj = surrealdb_types::Object::new();
+            for (k, v) in obj {
+                surreal_obj.insert(k, json_to_value(v));
+            }
+            Value::Object(surreal_obj)
+        },
+    }
+}
+
+fn value_to_json(value: Value) -> serde_json::Value {
+    match value {
+        Value::None | Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(b),
+        Value::Number(n) => serde_json::json!(n),
+        Value::String(s) => serde_json::Value::String(s),
+        Value::Array(arr) => {
+            let json_arr: Vec<serde_json::Value> = arr.into_iter().map(value_to_json).collect();
+            serde_json::Value::Array(json_arr)
+        },
+        Value::Object(obj) => {
+            let mut json_obj = serde_json::Map::new();
+            for (k, v) in obj.into_iter() {
+                json_obj.insert(k, value_to_json(v));
+            }
+            serde_json::Value::Object(json_obj)
+        },
+        _ => serde_json::Value::Null,
     }
 }

@@ -1,4 +1,11 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Record as SurrealRec}, Surreal};
+use surrealdb::{
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, 
+    opt::auth::Record as SurrealRec, 
+    Surreal
+};
+
+// Re-export SurrealValue from the correct location
+pub use surrealdb::types::SurrealValue;
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -29,6 +36,9 @@ pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
 pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
 pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 
+// JWT token type - in v3.0 this is just a String
+pub type Jwt = String;
+
 // The static variable holding the currently logged-in user
 // Wrapped in Mutex for safe interior mutability
 // Wrapped in Lazy for easy static initialization
@@ -42,11 +52,11 @@ pub static STORE_USERS: Lazy<std::sync::Mutex<Vec<User>>> = Lazy::new(|| {
 
 #[derive(Clone, Debug, Default)]
 pub struct Database {
-    pub jwt: Option<Jwt>,
+    pub jwt: Option<String>,
     pub user: Option<User>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, SurrealValue)]
 pub struct Auth {
     pub email: String,
     pub password: String,
@@ -54,7 +64,7 @@ pub struct Auth {
 
 #[derive(Clone, Debug)]
 pub struct Session {
-    pub jwt: Jwt,
+    pub jwt: String,
     pub user: User,
 }
 
@@ -173,9 +183,9 @@ impl Database {
                 // Select a specific namespace / database
                 let jwt = DATABASE
                     .signin(SurrealRec {
-                        namespace: NS,
-                        database: DB,
-                        access: USER_SCOPE,
+                        namespace: NS.to_string(),
+                        database: DB.to_string(),
+                        access: USER_SCOPE.to_string(),
                         params: Auth { email: full_email, password },
                     })
                     .await?;
@@ -195,12 +205,12 @@ impl Database {
                     *user_info_guard = user.clone(); // Set the user info
                 }
 
-                Ok( Self { jwt: Some(jwt), user } )
+                Ok( Self { jwt: Some(jwt.access.as_insecure_token().to_string()), user } )
             }
         }
     }
 
-    pub async fn signup<T: Serialize + Debug + Clone>(
+    pub async fn signup<T: Serialize + Debug + Clone + SurrealValue>(
         signup: T,
         email: String,
     ) -> anyhow::Result<Self, anyhow::Error> {
@@ -229,9 +239,9 @@ impl Database {
         // Select a specific namespace / database
         let jwt = DATABASE
             .signup(SurrealRec {
-                namespace: NS,
-                database: DB,
-                access: USER_SCOPE,
+                namespace: NS.to_string(),
+                database: DB.to_string(),
+                access: USER_SCOPE.to_string(),
                 params: signup.clone(),
             })
             .await;
@@ -242,7 +252,7 @@ impl Database {
                 DATABASE.set("email", email).await?;
                 let user: Option<User> = DATABASE.query(query).await?.take(0)?;
                 Ok(Self {
-                    jwt: Some(j),
+                    jwt: Some(j.access.as_insecure_token().to_string()),
                     user,
                 })
             },
@@ -287,30 +297,30 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
     DATABASE.use_ns(NS).use_db(DB).await?;
 
     DATABASE.signin(SurrealRec {
-        namespace: NS,
-        database: DB,
-        access: "guest",
+        namespace: NS.to_string(),
+        database: DB.to_string(),
+        access: "guest".to_string(),
         params: Credentials {
-            username: "guest",
-            password: "toor10!9"
+            username: "guest".to_string(),
+            password: "toor10!9".to_string()
         }
     }).await?;
 
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct Credentials<'a> {
-    username: &'a str,
-    password: &'a str,
+#[derive(serde::Serialize, SurrealValue)]
+struct Credentials {
+    username: String,
+    password: String,
 }
 
 pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
     let jwt = DATABASE
         .signin(SurrealRec {
-            namespace: NS,
-            database: DB,
-            access: USER_SCOPE,
+            namespace: NS.to_string(),
+            database: DB.to_string(),
+            access: USER_SCOPE.to_string(),
             params: Auth { email, password },
         })
         .await?;
@@ -321,15 +331,15 @@ pub async fn login(email: String, password: String) -> anyhow::Result<Session> {
         .take::<Option<User>>(0)?
         .ok_or_else(|| anyhow::anyhow!("User not found"))?;
 
-    Ok(Session { jwt, user })
+    Ok(Session { jwt: jwt.access.as_insecure_token().to_string(), user })
 }
 
-pub async fn signup<T: Serialize>(signup_data: T) -> anyhow::Result<Session> {
+pub async fn signup<T: Serialize + SurrealValue>(signup_data: T) -> anyhow::Result<Session> {
     let jwt = DATABASE
         .signup(SurrealRec {
-            namespace: NS,
-            database: DB,
-            access: USER_SCOPE,
+            namespace: NS.to_string(),
+            database: DB.to_string(),
+            access: USER_SCOPE.to_string(),
             params: signup_data,
         })
         .await?;
@@ -340,7 +350,7 @@ pub async fn signup<T: Serialize>(signup_data: T) -> anyhow::Result<Session> {
         .take::<Option<User>>(0)?
         .ok_or_else(|| anyhow::anyhow!("User not found"))?;
 
-    Ok(Session { jwt, user })
+    Ok(Session { jwt: jwt.access.as_insecure_token().to_string(), user })
 }
 
 pub async fn token_login(jwt: &str) -> anyhow::Result<Session> {

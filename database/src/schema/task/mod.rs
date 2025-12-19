@@ -1,10 +1,9 @@
 use crate::{schema::{Record, User, TASK_TABLE}, DATABASE};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use structdiff::{Difference, StructDiff};
-use surrealdb::{sql::Datetime, RecordId};
 use chrono::Utc;
 
-use super::{ComputerData, CustomerData, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
+use super::{random_record_id, ComputerData, CustomerData, Datetime, RecordId, SurrealValue, TaskNotePayload, TicketData, TicketPayload, USER_TABLE};
 
 pub mod update;
 pub mod sort;
@@ -13,7 +12,7 @@ pub mod filter;
 pub use filter::*;
 pub use sort::*;
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TaskPayload {
     pub id: RecordId,
     pub task_name: String,
@@ -33,11 +32,11 @@ pub struct TaskPayload {
 impl Default for TaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(TASK_TABLE),
             task_name: String::new(),
             service_ticket: None,
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            assignee: random_record_id(USER_TABLE),
             service_number: None,
             due_date: Utc::now().into(),
             priority: Priority::Normal,
@@ -49,7 +48,7 @@ impl Default for TaskPayload {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct LiveTaskPayload {
     pub id: RecordId,
     pub task_name: String,
@@ -67,11 +66,11 @@ pub struct LiveTaskPayload {
 impl Default for LiveTaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(TASK_TABLE),
             task_name: String::new(),
             service_ticket: None,
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            assignee: random_record_id(USER_TABLE),
             service_number: None,
             due_date: Utc::now().into(),
             priority: Priority::Normal,
@@ -299,7 +298,7 @@ impl From<TaskPayload> for LiveTaskPayload {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Default, Eq, Hash, SurrealValue)]
 pub enum Status {
     #[default]
     Todo,
@@ -350,7 +349,7 @@ impl<'de> Deserialize<'de> for Status {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default, SurrealValue)]
 pub enum Priority {
     Express,
     Rfs,
@@ -373,7 +372,7 @@ impl Priority {
     pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord, SurrealValue)]
 pub enum Store {
     #[default]
     RIV,

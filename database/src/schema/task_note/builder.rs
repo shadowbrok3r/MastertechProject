@@ -109,9 +109,9 @@ impl TaskNoteBuilder<flag::Yes, flag::Yes, flag::Yes> {
         // --- 1. generate / reconcile `id` -----------------------------------
         self.id = match &self.kind {
             Some(NoteKind::Prestashop { message_id, .. }) if message_id.is_some() => {
-                Some(RecordId::from((TASK_NOTE_TABLE, message_id.clone().unwrap())))
+                Some(RecordId::new(TASK_NOTE_TABLE, message_id.clone().unwrap()))
             }
-            _ => Some(RecordId::from((TASK_NOTE_TABLE, nanoid::nanoid!()))),
+            _ => Some(RecordId::new(TASK_NOTE_TABLE, nanoid::nanoid!())),
         };
 
         // --- 2. ensure legal combinations -----------------------------------

@@ -4,7 +4,7 @@ use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use serde::Deserialize;
 use serde::Serialize;
 use chrono::Utc;

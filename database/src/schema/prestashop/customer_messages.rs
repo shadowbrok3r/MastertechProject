@@ -31,7 +31,7 @@ impl CustomerMessage {
                             } else {
                                 parse_msg_date(&self.date_add).unwrap_or(Utc::now().into())
                             },
-                            id: surrealdb::RecordId::from((TASK_NOTE_TABLE, self.id.clone())),
+                            id: crate::schema::RecordId::new(TASK_NOTE_TABLE, self.id.clone()),
                             username: user.get_username().to_string(),
                             user: user.get_id(),
                             id_customer_thread: Some(self.id_customer_thread.clone()),

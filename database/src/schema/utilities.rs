@@ -1,4 +1,4 @@
-use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
 use std::{collections::HashMap, fmt::Debug};
@@ -7,7 +7,6 @@ use crossbeam::channel::Sender;
 use async_trait::async_trait;
 use log::{debug, info, warn};
 use anyhow::{Error, Result};
-use surrealdb::RecordId;
 use web_time::Instant;
 use regex::Regex;
 
@@ -33,37 +32,38 @@ pub trait LiveUpdate {
 #[async_trait]
 pub trait Task {
     // <T: Serialize + for<'a> Deserialize<'a> + Debug>
-    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
-    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
-    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
-    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
 }
 
 pub async fn query_id<T>(table: String, id: RecordId) -> Result<Option<T>, Error>
 where
-    T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de>
+    T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de> + SurrealValue
 {
-    let mut record: surrealdb::Response = DATABASE
+    let record: Option<T> = DATABASE
         .query("SELECT * FROM $table WHERE id == $id")
         .bind(("id", id.clone()))
         .bind(("table", table.clone()))
-        .await?;
+        .await?
+        .take(0)?;
 
     info!("schema/utilities.rs/query_id -> Record: {:?}\nSELECT * FROM ${id:?}", record);
-    Ok(record.take::<Option<T>>(0)?)
+    Ok(record)
 }
 
 pub async fn check_id_existence<T>(_table: String, id: T) -> Result<Option<bool>, Error>
 where
-    T: Serialize + Debug + Clone + 'static,
+    T: Serialize + Debug + Clone + 'static + SurrealValue,
 {
     let query = format!(
         r#"
@@ -214,7 +214,7 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
 pub async fn disconnect_client(tx: Sender<Vec<RecordId>>, id: RecordId) -> Result<(), Error> {
     let query: Vec<RecordId> = DATABASE
         .query("UPDATE connected_client SET connected = false WHERE id == $id")
-        .bind(("id", id.key().to_string()))
+        .bind(("id", id.key_string()))
         .await?
         .take(0)?;
     tx.try_send(query)?;
@@ -235,11 +235,11 @@ pub async fn delete_task(id: RecordId) -> Result<(), Error> {
     info!("schema/utilities.rs -> deleting id: {id:?}");
     let x = id.clone();
     let delete_result: Option<Record> = DATABASE.delete(
-        (TASK_TABLE, id.key().to_string())
+        (TASK_TABLE, id.key_string())
     )
     .await?;
 
-    info!("schema/utilities.rs -> delete_result: {delete_result:?} for {:?}", x.key().to_string());
+    info!("schema/utilities.rs -> delete_result: {delete_result:?} for {:?}", x.key_string());
     
     Ok(())
 }
@@ -280,7 +280,7 @@ pub trait NotificationMod {
 impl NotificationMod for Notification {
     async fn delete_notification(&mut self) -> Result<(), Error> {
         let query: Option<Record> = DATABASE
-            .delete(("notification", self.id.key().to_string()))
+            .delete(("notification", self.id.key_string()))
             .await?;
         info!("schema/utilities.rs -> Deleted notification: {query:?}");
         Ok(())
@@ -412,12 +412,11 @@ pub async fn create_full_task_payload(
     info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
 
     
-    let check_task_query: std::result::Result<surrealdb::Response, surrealdb::Error> = DATABASE
+    let check_task_record: Vec<LiveTaskPayload> = match DATABASE
         .query("SELECT * FROM task WHERE service_number == $service_number")
         .bind(("service_number", service_number.clone()))
-        .await;
-
-    let check_task_record: Vec<LiveTaskPayload> = match check_task_query {
+        .await
+    {
         Ok(mut response) => response.take(0).unwrap_or_default(),
         Err(e) => return TaskCreationResult::Error { message: format!("Failed to check for existing task: {e}") },
     };
@@ -631,10 +630,10 @@ impl Customer {
             .await?;
 
         Ok(CustomerData { 
-            id: RecordId::from((
-                CUSTOMER_TABLE.to_string(),
+            id: RecordId::new(
+                CUSTOMER_TABLE,
                 id_customer,
-            )),
+            ),
             cust_code: id_customer.to_string(),
             name: format!("{} {}", &cust.firstname, &cust.lastname),
             phone_number: tmp_address.phone.clone().to_string(),
@@ -858,10 +857,10 @@ pub async fn get_prestashop_payload_from_phone(phone: &str) -> anyhow::Result<Pr
     info!("schema/utilities.rs -> address: {tmp_address:#?}");
 
     let customer = CustomerData {
-        id: RecordId::from((
-            CUSTOMER_TABLE.to_string(),
+        id: RecordId::new(
+            CUSTOMER_TABLE,
             potential_order.id_customer.clone(),
-        )),
+        ),
         cust_code: potential_order.id_customer.clone(),
         name: format!("{} {}", &cust.firstname, &cust.lastname),
         phone_number: tmp_address.phone.clone().to_string(),
@@ -1033,10 +1032,10 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
     info!("schema/utilities.rs -> address: {customer_address:#?}");
 
     let customer = CustomerData {
-        id: RecordId::from((
-            CUSTOMER_TABLE.to_string(),
+        id: RecordId::new(
+            CUSTOMER_TABLE,
             order.id_customer.clone(),
-        )),
+        ),
         cust_code: order.id_customer.clone(),
         name: format!("{} {}", &cust.firstname, &cust.lastname),
         phone_number: customer_address.phone.clone().to_string(),

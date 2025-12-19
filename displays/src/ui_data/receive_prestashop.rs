@@ -1,6 +1,7 @@
-use database::schema::{CarboniteResponse, DriveData, TASK_TABLE, TICKET_TABLE, TaskNotePayload, helper_traits::parse_email_user, prestashop::OrderType};
+use database::schema::{CarboniteResponse, DriveData, RecordId, TASK_TABLE, TICKET_TABLE, TaskNotePayload, helper_traits::parse_email_user, prestashop::OrderType};
 use crate::{app_state::SharedContext, modals::ModalType, PlatformSpawner, Spawner};
 use log::info;
+use uuid::Uuid;
 
 impl SharedContext {
     pub fn receive_prestashop(&mut self) {
@@ -21,9 +22,9 @@ impl SharedContext {
             let customer_email = data.customer.email.clone();
             let client = reqwest::Client::new();
             let carobonite_tx = self.seb_channel.0.clone();
-            let mut services: Vec<surrealdb::RecordId> = Vec::new();
+            let mut services: Vec<RecordId> = Vec::new();
 
-            task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())));
+            task.id = RecordId::new(TASK_TABLE, Uuid::new_v4().to_string());
 
             PlatformSpawner::spawn(async move {
                 if !customer_email.is_empty() {
@@ -91,7 +92,7 @@ impl SharedContext {
             ticket.ticket_total = data.order.total_products_wt.clone();
             ticket.doc_alias = data.order.order_type.clone();
             ticket.service_number = data.order.id.clone();
-            ticket.id = surrealdb::RecordId::from((TICKET_TABLE.to_string(), ticket.service_number.clone() ));
+            ticket.id = RecordId::new(TICKET_TABLE, ticket.service_number.clone());
             log::info!("Salesman: {:?}\nTech: {:?}",ticket.salesman.clone(),ticket.tech.clone());
             services.push(ticket.id.clone());
             if !service_details.is_empty() {

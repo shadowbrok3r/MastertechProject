@@ -1,17 +1,15 @@
 use crate::{
-    DATABASE, schema::{LiveTaskPayload, TaskPayload, TicketPayload, helper_traits::PrestashopPayloadHelper, prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days}
+    DATABASE, live_data::Action, schema::{LiveTaskPayload, RecordId, SurrealValue, TaskPayload, TicketPayload, helper_traits::PrestashopPayloadHelper, prestashop_schema::{CustomerMessage, CustomerThread, MissedCallOrder, Prestashop}, utilities::get_missing_call_days}
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
-use surrealdb::RecordId;
 
 use super::utilities::Task;
 
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
-use surrealdb::Action;
 
 pub struct NewTicketChannel {
     pub new_ticket: TicketPayload,
@@ -146,41 +144,46 @@ pub async fn get_order_from_prestashop_payload(serial: &str) -> anyhow::Result<c
 
 #[async_trait]
 impl Task for TaskPayload {
-    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
-        let query = format!(
-            "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
-        );
-        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
+        let get_data: Option<T> = DATABASE
+            .query("SELECT service_ticket.computer FROM task WHERE id == $id FETCH service_ticket.computer")
+            .bind(("id", id))
+            .await?
+            .take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
 
-    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
-        let query = format!(
-            "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
-        );
-        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
+        let get_data: Option<T> = DATABASE
+            .query("SELECT service_ticket.customer FROM task WHERE id == $id FETCH service_ticket.customer")
+            .bind(("id", id))
+            .await?
+            .take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
 
-    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
-        let query = format!("SELECT * FROM task_note WHERE id={id}");
-        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
+        let get_data: Option<T> = DATABASE
+            .query("SELECT * FROM task_note WHERE id == $id")
+            .bind(("id", id))
+            .await?
+            .take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
 
-    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
+    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static + SurrealValue>(
         &mut self,
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();

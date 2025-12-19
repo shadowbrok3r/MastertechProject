@@ -5,8 +5,10 @@ use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use async_trait::async_trait;
-use surrealdb::RecordId;
 use anyhow::Error;
+
+// Re-export types from surrealdb for use throughout the schema
+pub use surrealdb::types::{RecordId, Datetime, Bytes, Value as SurrealDBValue, SurrealValue};
 
 pub mod helper_traits;
 pub mod deserializer;
@@ -58,11 +60,43 @@ pub const QC_TABLE: &str = "qc";
 
 pub use prestashop as prestashop_schema;
 
+// Re-export RecordIdKey for use in other modules
+pub use surrealdb::types::RecordIdKey;
+
+// Helper function to generate random record IDs
+pub fn random_record_id(table: &str) -> RecordId {
+    RecordId::new(table, uuid::Uuid::new_v4().to_string())
+}
+
+/// Helper function to convert RecordIdKey to String
+/// SurrealDB 3.0 RecordIdKey doesn't implement Display directly
+pub fn record_id_key_to_string(key: &RecordIdKey) -> String {
+    match key {
+        RecordIdKey::String(s) => s.clone(),
+        RecordIdKey::Number(n) => n.to_string(),
+        RecordIdKey::Uuid(u) => u.to_string(),
+        RecordIdKey::Array(a) => serde_json::to_string(a).unwrap_or_default(),
+        RecordIdKey::Object(o) => serde_json::to_string(o).unwrap_or_default(),
+        RecordIdKey::Range(r) => serde_json::to_string(r).unwrap_or_default(),
+    }
+}
+
+/// Helper trait extension for RecordId to easily get key as string
+pub trait RecordIdExt {
+    fn key_string(&self) -> String;
+}
+
+impl RecordIdExt for RecordId {
+    fn key_string(&self) -> String {
+        record_id_key_to_string(&self.key)
+    }
+}
+
 #[async_trait(?Send)]
-impl<D> GetAssociatedDataFromId<D> for RecordId {
-    async fn get_associated_data<RecordId>(&mut self) -> Result<D, Error>
+impl<D: SurrealValue> GetAssociatedDataFromId<D> for RecordId {
+    async fn get_associated_data<T>(&mut self) -> Result<D, Error>
     where
-        D: for<'de> Deserialize<'de>,
+        D: for<'de> Deserialize<'de> + SurrealValue,
     {
         let id = self.clone();
 
@@ -71,19 +105,19 @@ impl<D> GetAssociatedDataFromId<D> for RecordId {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, SurrealValue)]
 pub struct Record {
     #[allow(dead_code)]
     pub id: RecordId,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, SurrealValue)]
 pub struct RecordResult {
     pub result: bool,
     pub record: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, SurrealValue)]
 pub struct RecordSuccess {
     pub success: bool,
 }
@@ -94,12 +128,12 @@ pub struct Qc {
     pub order: Order,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct Job {
     computer: RecordId
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct ChatThreads {
     pub id: RecordId,
     pub files: Option<Vec<String>>,
@@ -108,7 +142,7 @@ pub struct ChatThreads {
     pub images: Option<Vec<bytes::Bytes>>
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct CarboniteResponse {
     pub id_carbonite: String,
     pub id_customer: String,
@@ -204,20 +238,20 @@ pub fn find_latest_carbonite_entry(entries: &[CarboniteResponse]) -> Option<&Car
         .map(|(entry, _)| entry)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, SurrealValue)]
 pub struct HardwareTests {
     pub hdd_test: String,
     pub ssd_test: String,
     pub ram_test: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone, SurrealValue)]
 pub struct GetKeysResponse {
     pub webroot_key: String,
     pub superanti_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub enum Node {
     Folder(String, HashMap<String, Node>),
     File((String, String)),
@@ -230,7 +264,7 @@ impl Default for Node {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct SpecialPartOrder {
     customer_name: String,              //  "kathleen Hoffmon",
     customer_phone_number: String,      //  "801-888-8888",
@@ -249,7 +283,7 @@ pub struct SpecialPartOrder {
     spo_status: SpoStatus,
 }
 
-#[derive(PartialEq, Default, Debug, Serialize, Clone)]
+#[derive(PartialEq, Default, Debug, Serialize, Clone, SurrealValue)]
 pub enum SpoStatus {
     #[default]
     AwaitingQuote,
@@ -257,7 +291,7 @@ pub enum SpoStatus {
     OrderPendingDM,
 }
 
-#[derive(PartialEq, Default, Debug, Serialize, Clone)]
+#[derive(PartialEq, Default, Debug, Serialize, Clone, SurrealValue)]
 pub enum Manufacturer {
     #[default]
     Pclaptops,

@@ -1,17 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display};
-use surrealdb::{sql::Bytes, RecordId};
 use serde_json::Value;
 use crate::DATABASE;
 
-use super::{prestashop_schema::{self, Prestashop}, Status, Store, USER_TABLE};
+use super::{prestashop_schema::{self, Prestashop}, random_record_id, Bytes, RecordId, Status, Store, SurrealValue, USER_TABLE};
 
 pub mod chats;
 pub use chats::*;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, SurrealValue)]
 pub struct User {
-    id: RecordId,
+    pub id: RecordId,
     active: bool,
     name: String,
     everest_initials: String,
@@ -32,7 +31,7 @@ pub struct User {
 impl Default for User {
     fn default() -> Self {
         Self {
-            id: RecordId::from((USER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(USER_TABLE),
             active: false,
             name: String::new(),
             everest_initials: String::new(),
@@ -53,14 +52,14 @@ impl Default for User {
 
 impl Eq for User {}
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
 pub enum UserAuthorization {
     #[default]
     User,
     Admin
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
 pub struct UserSettings {
     color_scheme: Option<Bytes>,
     /// Color scheme serialized egui::Style for desktop/egui environments
@@ -69,7 +68,7 @@ pub struct UserSettings {
     ui_layout: UiLayout
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
 pub struct UiLayout {
     mtechserver: Value,
     mastertech: Value,
@@ -311,7 +310,7 @@ impl User {
         Ok(())
     }
     
-    pub async fn save_version(&mut self, version: impl Display + Serialize + 'static) -> anyhow::Result<(), anyhow::Error> {
+    pub async fn save_version(&mut self, version: impl Display + Serialize + 'static + SurrealValue) -> anyhow::Result<(), anyhow::Error> {
         log::info!("helper_traits -> save_version -> {version}");
         match DATABASE
             .query("UPDATE $auth.id SET version = $version")
@@ -443,7 +442,7 @@ impl User {
             usr.email = full_email;
             let emp = usr.find_employee_by_email().await?;
             Ok(Self {
-                id: RecordId::from((USER_TABLE, emp.id.clone())),
+                id: RecordId::new(USER_TABLE, emp.id.clone()),
                 name: format!("{} {}", emp.firstname, emp.lastname),
                 everest_initials: emp.initials,
                 email: usr.email,
