@@ -2,7 +2,7 @@ use database::schema::{get_data::get_services_by_status, helper_traits::{parse_e
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use itertools::Itertools;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use chrono::Utc;
 
 use crate::{PlatformSpawner, Spawner};

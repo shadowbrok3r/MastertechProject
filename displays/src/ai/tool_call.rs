@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use serde_json::{json, Value};
 use anyhow::{Error, Result};
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use database::DATABASE;
 use futures::StreamExt;
 use std::sync::Arc;

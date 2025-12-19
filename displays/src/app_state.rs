@@ -3,7 +3,7 @@ use database::{schema::{get_data::NewTicketChannel, prestashop_schema::Prestasho
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
-use surrealdb::{Action, RecordId};
+use database::{live_data::Action, schema::RecordId};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use serde::Serialize;
 use anyhow::Error;

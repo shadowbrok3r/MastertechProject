@@ -1,12 +1,19 @@
-use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNotePayload, TaskPayload}};
+use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, RecordIdExt, TaskNotePayload, TaskPayload}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use surrealdb::{method::Stream, Action, Notification};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use structdiff::StructDiff;
 use futures::StreamExt;
 use std::fmt::Debug;
-use anyhow::Error;
+use surrealdb::types::SurrealValue;
+
+// Re-export or define Action enum for live query actions
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    Create,
+    Update,
+    Delete,
+}
 
 pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<LiveTaskPayload>) 
     -> anyhow::Result<(), anyhow::Error>
@@ -21,7 +28,6 @@ pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_task
         Action::Delete => {
             data.handle_live_delete(existing_tasks)?;
         },
-        _ => {},
     }
     Ok(())
 }
@@ -44,7 +50,6 @@ pub fn handle_live_notes((action, data): (Action, TaskNotePayload), existing_tas
             }
             // update_or_insert_notes(data, existing_task)?;
         },
-        _ => {},
     }
     Ok(())
 }
@@ -110,7 +115,7 @@ pub fn update_or_insert_notes(new_note: TaskNotePayload, task: &mut TaskPayload)
             let notes = &mut task.task_note;
             
             if let Some(existing_note) = notes.iter_mut().find(|note| {
-                note.id.key().to_string() == new_note.id.key().to_string()
+                note.id.key_string() == new_note.id.key_string()
             }) {
                 // Apply diffs to the existing note
                 let diffs = existing_note.diff(&new_note);
@@ -203,37 +208,34 @@ pub fn update_or_insert_layout(
 }
 
 
-// pub async fn listen_custom_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin>(tx: Sender<(Action, T)>, resource: &str) 
-//     -> anyhow::Result<(), anyhow::Error> 
-// {
-//     let data_stream: Stream<Vec<T>> = DATABASE.select(resource).live().await?;
-//     handle_streams(data_stream, tx).await?;
-//     Ok(())
-// }
-
-pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin>(tx: Sender<(Action, T)>, resource: &str) 
+// In SurrealDB 3.0, live queries are handled differently
+// The new API uses a different streaming approach
+pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin + SurrealValue>(tx: Sender<(Action, T)>, resource: &str) 
     -> anyhow::Result<(), anyhow::Error> 
 {
-    let data_stream: Stream<Vec<T>> = DATABASE.select(resource).live().await?;
-    handle_streams(data_stream, tx).await?;
-    Ok(())
-}
-
-async fn handle_streams<T: Serialize + Deserialize<'static> + Debug >(
-    mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
-    tx: Sender<(Action, T)>
-) 
-    -> anyhow::Result<(), Error> 
-{
-    while let Some(notification) = notification_stream.next().await {
-        let notif: Notification<T> = notification?;
-        let data = notif.data;
-        let action = notif.action;
-        info!("Data: {:?}", action);
-        match tx.try_send((action, data)){
-            Ok(_) => info!("Sent notification"),
-            Err(e) => error!("Error Sending notification {e:?}"),
+    let mut data_stream = DATABASE.select(resource).live().await?;
+    
+    while let Some(notification) = data_stream.next().await {
+        match notification {
+            Ok(notif) => {
+                let data = notif.data;
+                let action = match notif.action {
+                    surrealdb_types::Action::Create => Action::Create,
+                    surrealdb_types::Action::Update => Action::Update,
+                    surrealdb_types::Action::Delete => Action::Delete,
+                    surrealdb_types::Action::Killed => {
+                        error!("Live query was killed");
+                        continue;
+                    },
+                };
+                info!("Data: {:?}", action);
+                match tx.try_send((action, data)) {
+                    Ok(_) => info!("Sent notification"),
+                    Err(e) => error!("Error Sending notification {e:?}"),
+                }
+            },
+            Err(e) => error!("Error in notification stream: {e:?}"),
         }
-    }; 
+    }
     Ok(())
 }

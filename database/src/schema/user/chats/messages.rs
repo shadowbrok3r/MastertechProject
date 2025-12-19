@@ -1,9 +1,8 @@
 use chrono::Utc;
-use surrealdb::{sql::Datetime, RecordId};
 use super::ChatMessageType;
-use crate::{schema::USER_MESSAGE_TABLE, DATABASE};
+use crate::{schema::{random_record_id, Datetime, RecordId, SurrealValue, USER_MESSAGE_TABLE}, DATABASE};
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, SurrealValue)]
 pub struct UserMessage {
     pub id: RecordId,
     pub thread_id: RecordId,
@@ -16,7 +15,7 @@ pub struct UserMessage {
 impl UserMessage {
     pub fn new(thread_id: RecordId, user: RecordId, content: ChatMessageType) -> Self {
         Self {
-            id: RecordId::from((USER_MESSAGE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))), 
+            id: random_record_id(USER_MESSAGE_TABLE), 
             created_at: Utc::now().into(),
             thread_id,
             user,

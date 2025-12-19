@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use structdiff::{Difference, StructDiff};
-use surrealdb::RecordId;
 use crate::{schema::{prestashop::{Address, Customer, Prestashop}, CUSTOMER_TABLE}, DATABASE};
 
+use super::{random_record_id, RecordId, SurrealValue};
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct CustomerData {
     pub id: RecordId,
     pub cust_code: String,
@@ -22,7 +23,7 @@ pub struct CustomerData {
 impl Default for CustomerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(CUSTOMER_TABLE),
             cust_code: Default::default(),
             part_order_links: Default::default(),
             name: Default::default(),
@@ -76,10 +77,10 @@ impl CustomerData {
             .await?;
 
         Ok(CustomerData { 
-            id: RecordId::from((
-                CUSTOMER_TABLE.to_string(),
+            id: RecordId::new(
+                CUSTOMER_TABLE,
                 id_customer,
-            )),
+            ),
             cust_code: id_customer.to_string(),
             name: format!("{} {}", &cust.firstname, &cust.lastname),
             phone_number: tmp_address.phone.clone().to_string(),

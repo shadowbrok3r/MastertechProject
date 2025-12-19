@@ -2,7 +2,7 @@ use database::{live_data::{handle_live_delete, update_or_insert_anything}, schem
 use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use eframe::egui::{Color32, RichText};
 use std::collections::BTreeMap;
-use surrealdb::Action;
+use database::live_data::Action;
 
 
 

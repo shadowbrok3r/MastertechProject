@@ -11,7 +11,7 @@ use anyhow::{Result, Error};
 use crate::PlatformSpawner;
 use mime_guess::from_path;
 use database::STORAGE_URL;
-use surrealdb::sql::Uuid;
+use uuid::Uuid;
 use rfd::FileHandle;
 use bytes::Bytes;
 use std::iter;

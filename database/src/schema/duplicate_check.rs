@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ComputerData, CustomerData, LiveTaskPayload, TicketData};
+use super::{ComputerData, CustomerData, LiveTaskPayload, RecordIdExt, TicketData};
 
 /// Represents a potential duplicate entity with both existing and new versions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,7 +156,7 @@ impl FieldDisplay for LiveTaskPayload {
             fields.push(("task_description".to_string(), self.task_description.clone(), other.task_description.clone()));
         }
         if self.assignee != other.assignee {
-            fields.push(("assignee".to_string(), self.assignee.to_string(), other.assignee.to_string()));
+            fields.push(("assignee".to_string(), self.assignee.key_string(), other.assignee.key_string()));
         }
         if self.service_number != other.service_number {
             fields.push(("service_number".to_string(), 

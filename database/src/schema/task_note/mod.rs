@@ -1,7 +1,6 @@
-use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, LiveTaskPayload, Notification, Record, TASK_NOTE_TABLE}, DATABASE};
+use crate::{schema::{helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{CustomerMessage, CustomerThread}, Datetime, LiveTaskPayload, Notification, Record, RecordId, RecordIdExt, SurrealValue, TASK_NOTE_TABLE}, DATABASE};
 use super::{helper_traits::PrestaResourceResponse, prestashop_schema::{self, Employee, Prestashop}, User};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use surrealdb::{sql::Datetime, RecordId};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +13,7 @@ pub use task_note_builder::*;
 // pub use builder::*;
 
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TaskNotePayload {
 	/// This is required, but cannot be set until we have either determined
 	/// we are creating a prestashop note, or both a database note AND a prestashop
@@ -146,7 +145,7 @@ impl TaskNotePayload {
                     // Update task note with Prestashop details
                     if !response.id.to_string().is_empty() {
                         let updated_value = TaskNotePayload {
-                            id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
+                            id: RecordId::new(TASK_NOTE_TABLE, response.id.to_string().clone()),
                             id_customer_message: Some(response.id.to_string().clone()),
                             id_customer_thread: self.id_customer_thread.clone(),
                             created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&response.date_add) {
@@ -186,7 +185,7 @@ impl TaskNotePayload {
                 let response = self.create_customer_message().await?;
                 if !response.id.to_string().is_empty() {
                     let updated_value = TaskNotePayload {
-                        id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
+                        id: RecordId::new(TASK_NOTE_TABLE, response.id.to_string().clone()),
                         id_customer_message: Some(response.id.to_string().clone()),
                         id_customer_thread: self.id_customer_thread.clone(),
                         created_at: if let Ok(date) = DateTime::parse_from_rfc3339(&response.date_add) {
@@ -248,7 +247,7 @@ impl TaskNotePayload {
                 let name = if let Some(name) = task_name {
                     name
                 } else {
-                    id.to_string()
+                    id.key_string()
                 };
                 // Create notification
                 let notification = Notification {
@@ -300,7 +299,7 @@ impl TaskNotePayload {
             log::info!("task_note/mod.rs -> check_existing_note_record -> self.note Task ID: {:?}", self.task_id);
             if let (Some(existing_task_id), Some(task_id)) = (&note.task_id, &self.task_id) {
 
-                log::info!("self.task_id: {}\nqueried_note.task_id: {}", existing_task_id.key().to_string(), task_id.key().to_string());
+                log::info!("self.task_id: {}\nqueried_note.task_id: {}", existing_task_id.key_string(), task_id.key_string());
 
                 if existing_task_id != task_id {
                     log::error!(
@@ -540,7 +539,7 @@ impl TaskNotePayload {
         let id = self.id.clone();
         log::info!("schema/task_note/mod.rs -> deleting id: {:?}", id.clone());
         let _: Option<Record> = DATABASE
-            .delete((TASK_NOTE_TABLE, id.key().to_string()))
+            .delete((TASK_NOTE_TABLE, id.key_string()))
             .await?;
         Ok(())
     }
@@ -747,7 +746,7 @@ impl TaskNotePayload {
                             log::info!("task_note/mod.rs -> check_or_create_notes_from_thread -> Creating new note");
 
                             let mut task_note = TaskNotePayload {
-                                id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
+                                id: RecordId::new(TASK_NOTE_TABLE, customer_message.id.clone()),
                                 id_customer_message: Some(customer_message.id.clone()),
                                 id_customer_thread: Some(thread.id.clone()),
                                 task_id: self.task_id.clone(),
@@ -828,7 +827,7 @@ impl TaskNotePayload {
                             log::info!("task_note/mod.rs -> get_prestashop_notes_from_service -> Creating new note");
                             let user = User::query_user_from_email(employee.email.clone()).await?;
                             let mut task_note = TaskNotePayload {
-                                id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
+                                id: RecordId::new(TASK_NOTE_TABLE, customer_message.id.clone()),
                                 id_customer_message: Some(customer_message.id.clone()),
                                 id_customer_thread: Some(thread.id.clone()),
                                 task_id: task_id.clone(),

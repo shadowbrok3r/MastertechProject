@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
-use surrealdb::RecordId;
 
 use crate::DATABASE;
 use crate::schema::user::User;
 
+use super::{random_record_id, RecordId, SurrealValue};
+
 pub const SALES_NOTE_TABLE: &str = "sales_note";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct SalesNote {
     pub id: RecordId,
     pub user: RecordId,
@@ -17,7 +18,7 @@ pub struct SalesNote {
 impl SalesNote {
     pub fn new(user: &User, order_id: &str, note: &str) -> Self {
         Self {
-            id: RecordId::from((SALES_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(SALES_NOTE_TABLE),
             user: user.get_id(),
             order_id: order_id.to_string(),
             note: note.to_string(),

@@ -6,7 +6,7 @@ use modals::task_modal::ModalAction;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use egui_extras::Strip;
 use std::fmt::Debug;
 

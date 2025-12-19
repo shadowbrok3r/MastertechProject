@@ -6,7 +6,7 @@ use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use egui_extras::Column;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use std::cmp::Ordering;
 
 /// Every logic is defined in `Viewer`

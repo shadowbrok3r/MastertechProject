@@ -1,5 +1,4 @@
-use crate::{schema::{LiveTaskPayload, Priority, Record, Status}, DATABASE};
-use surrealdb::RecordId;
+use crate::{schema::{LiveTaskPayload, Priority, Record, RecordId, Status}, DATABASE};
 
 impl LiveTaskPayload {
     pub async fn update_service_number(&self, service_number: String) -> anyhow::Result<(), anyhow::Error> {

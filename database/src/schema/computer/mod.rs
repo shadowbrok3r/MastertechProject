@@ -1,7 +1,8 @@
 use crate::{schema::COMPUTER_TABLE, DATABASE};
 use structdiff::{Difference, StructDiff};
-use surrealdb::RecordId;
 use serde_json::Value;
+
+use super::{random_record_id, RecordId, SurrealValue};
 
 pub mod system_information;
 pub mod seb;
@@ -9,7 +10,7 @@ pub mod seb;
 pub use system_information::*;
 pub use seb::*;
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct ComputerData {
     pub id: RecordId,
     pub customer: Option<RecordId>,
@@ -40,7 +41,7 @@ pub struct ComputerData {
 impl Default for ComputerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            id: random_record_id(COMPUTER_TABLE),
             customer: Default::default(),
             seb_info: Default::default(),
             hostname: Default::default(),
@@ -118,7 +119,7 @@ impl ComputerData {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct DriveData {
     pub drive_letter: String,
     pub drive_type: String,

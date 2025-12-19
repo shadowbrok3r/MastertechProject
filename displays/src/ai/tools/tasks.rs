@@ -2,7 +2,7 @@ use crate::{ai::{chat::tool_fn, model::ModelManager}, openai::types::ChatComplet
 use serde::{Deserialize, Serialize};
 use anyhow::{Error, Result};
 use rpc_router::RpcParams;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use database::DATABASE;
 
 use super::{tool_spec, ToolSpec};

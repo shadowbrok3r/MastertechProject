@@ -6,7 +6,7 @@ use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
 use eframe::egui::{Button, Color32, FontId, Margin, RichText, Ui, Widget};
 use log::info;
 use regex::Regex;
-use surrealdb::Action;
+use database::live_data::Action;
 
 impl SharedContext {
     pub fn receive_notification(&mut self) {

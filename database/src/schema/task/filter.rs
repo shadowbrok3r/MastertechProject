@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use chrono::{DateTime, Utc};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
-use crate::schema::{LiveTaskPayload, Priority, Status, Store, TaskPayload, User};
+use crate::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, Store, TaskPayload, User};
 
 pub trait FilterTasks {
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
@@ -87,7 +87,7 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
     fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<LiveTaskPayload> {
         self.into_iter()
             .filter(|task| {
-                assignee.get_store() == *store && task.assignee.key().to_string() == assignee.get_id().key().to_string()
+                assignee.get_store() == *store && task.assignee.key_string() == assignee.get_id().key_string()
             })
             .cloned()
             .collect()
@@ -128,7 +128,7 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
         // Create a map of task IDs to tasks for O(1) lookups
         let task_map: std::collections::HashMap<_, _> = self
             .iter()
-            .map(|task| (task.id.key().to_string(), task))
+            .map(|task| (task.id.key_string(), task))
             .collect();
 
         // Collect tasks with their best match scores
@@ -138,7 +138,7 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
         for (output, input_score, _) in match_results {
             let output_str = output.as_ref();
             for task in self.iter() {
-                let task_id = task.id.key().to_string().clone();
+                let task_id = task.id.key_string().clone();
                 if seen_ids.contains(&task_id) {
                     continue;
                 }
@@ -203,7 +203,7 @@ impl FilterTasks for Vec<TaskPayload> {
     fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| {
-                assignee.get_store() == *store && task.assignee.key().to_string() == assignee.get_id().key().to_string()
+                assignee.get_store() == *store && task.assignee.key_string() == assignee.get_id().key_string()
             })
             .cloned()
             .collect()
@@ -244,7 +244,7 @@ impl FilterTasks for Vec<TaskPayload> {
         // Create a map of task IDs to tasks for O(1) lookups
         let task_map: std::collections::HashMap<_, _> = self
             .iter()
-            .map(|task| (task.id.key().to_string(), task))
+            .map(|task| (task.id.key_string(), task))
             .collect();
 
         // Collect tasks with their best match scores
@@ -254,7 +254,7 @@ impl FilterTasks for Vec<TaskPayload> {
         for (output, input_score, _) in match_results {
             let output_str = output.as_ref();
             for task in self.iter() {
-                let task_id = task.id.key().to_string().clone();
+                let task_id = task.id.key_string().clone();
                 if seen_ids.contains(&task_id) {
                     continue;
                 }

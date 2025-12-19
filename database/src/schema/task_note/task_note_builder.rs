@@ -1,10 +1,9 @@
 use crate::{
     schema::{
-        helper_traits::EmployeeHelper, prestashop_schema::{CustomerMessage, CustomerThread, Employee, Order, Prestashop}, LiveTaskPayload, Notification, Record, User, TASK_NOTE_TABLE
+        helper_traits::EmployeeHelper, prestashop_schema::{CustomerMessage, CustomerThread, Employee, Order, Prestashop}, Datetime, LiveTaskPayload, Notification, Record, RecordId, RecordIdExt, SurrealValue, User, TASK_NOTE_TABLE
     },
     DATABASE,
 };
-use surrealdb::{sql::Datetime, RecordId, Uuid};
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -12,7 +11,7 @@ use regex::Regex;
 use anyhow::Result;
 
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct TaskNote {
     pub id: RecordId,
     pub task_id: RecordId,
@@ -198,7 +197,7 @@ impl TaskNoteBuilder {
                     .await?
                     .take(0)?;
 
-                let name = task_name.unwrap_or_else(|| note.task_id.to_string());
+                let name = task_name.unwrap_or_else(|| note.task_id.key_string());
                 let notification = Notification {
                     notification_description: format!(
                         "tagged {} in task {}",
@@ -257,13 +256,13 @@ impl TaskNoteBuilder {
             (
                 Some(response.id.clone()),
                 parse_msg_date(&response.date_add).unwrap_or_else(|_| Utc::now().into()),
-                RecordId::from((TASK_NOTE_TABLE, response.id)),
+                RecordId::new(TASK_NOTE_TABLE, response.id),
             )
         } else {
             (
                 None,
                 self.created_at.clone(),
-                RecordId::from((TASK_NOTE_TABLE, Uuid::new_v4().to_string())),
+                RecordId::new(TASK_NOTE_TABLE, uuid::Uuid::new_v4().to_string()),
             )
         };
 
@@ -334,7 +333,7 @@ impl TaskNote {
         }
 
         let _: Option<TaskNote> = DATABASE
-            .delete((TASK_NOTE_TABLE, self.id.key().to_string()))
+            .delete((TASK_NOTE_TABLE, self.id.key_string()))
             .await?;
 
         Ok(())
@@ -369,7 +368,7 @@ impl TaskNote {
 
                     let user = User::query_user_from_email(employee.email.clone()).await?;
                     let task_note = TaskNote {
-                        id: RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone())),
+                        id: RecordId::new(TASK_NOTE_TABLE, customer_message.id.clone()),
                         task_id: task_id.clone().ok_or_else(|| {
                             anyhow::anyhow!("Task ID required for Prestashop note")
                         })?,
@@ -480,8 +479,8 @@ mod tests {
 
     // Setup common test data
     fn setup_test_data() -> (RecordId, RecordId, String) {
-        let task_id = RecordId::from(("task", Uuid::new_v4().to_string()));
-        let user_id = RecordId::from(("user", Uuid::new_v4().to_string()));
+        let task_id = RecordId::new("task", Uuid::new_v4().to_string());
+        let user_id = RecordId::new("user", Uuid::new_v4().to_string());
         let id_employee = "123".to_string();
         (task_id, user_id, id_employee)
     }
@@ -532,7 +531,7 @@ mod tests {
         DATABASE
             .expect_query()
             .times(1)
-            .returning(|_| Ok(vec![Record { id: RecordId::from(("task_note", Uuid::new_v4().to_string())) }]));
+            .returning(|_| Ok(vec![Record { id: RecordId::new("task_note", Uuid::new_v4().to_string()) }]));
         
         let result = builder.build().await;
         assert!(result.is_ok());
@@ -595,7 +594,7 @@ mod tests {
         DATABASE
             .expect_query()
             .times(1)
-            .returning(|_| Ok(vec![Record { id: RecordId::from(("task_note", Uuid::new_v4().to_string())) }]));
+            .returning(|_| Ok(vec![Record { id: RecordId::new("task_note", Uuid::new_v4().to_string()) }]));
 
         let builder = TaskNoteBuilder::new(task_id.clone(), user_id, id_employee)
             .note("Private note")
@@ -644,8 +643,8 @@ mod tests {
             .times(1)
             .returning(|_| {
                 Ok(vec![TaskNote {
-                    id: RecordId::from(("task_note", message_id)),
-                    task_id: RecordId::from(("task", Uuid::new_v4().to_string())),
+                    id: RecordId::new("task_note", message_id),
+                    task_id: RecordId::new("task", Uuid::new_v4().to_string()),
                     ..Default::default()
                 }])
             });
@@ -679,7 +678,7 @@ mod tests {
             .expect_query()
             .with(always())
             .times(3) // create note, task_name, create notification
-            .returning(|_| Ok(vec![Record { id: RecordId::from(("task_note", Uuid::new_v4().to_string())) }]));
+            .returning(|_| Ok(vec![Record { id: RecordId::new("task_note", Uuid::new_v4().to_string()) }]));
 
         let builder = TaskNoteBuilder::new(task_id.clone(), user_id, id_employee)
             .note("Note with @tagged.user")
@@ -708,10 +707,10 @@ mod tests {
         DATABASE
             .expect_upsert()
             .times(1)
-            .returning(|_| Ok(Some(TaskNote { id: RecordId::from(("task_note", message_id)), ..Default::default() })));
+            .returning(|_| Ok(Some(TaskNote { id: RecordId::new("task_note", message_id), ..Default::default() })));
 
         let mut note = TaskNote {
-            id: RecordId::from(("task_note", message_id)),
+            id: RecordId::new("task_note", message_id),
             task_id,
             created_at: Utc::now().into(),
             note: "Updated note".to_string(),
@@ -744,10 +743,10 @@ mod tests {
         DATABASE
             .expect_delete()
             .times(1)
-            .returning(|_| Ok(Some(TaskNote { id: RecordId::from(("task_note", message_id)), ..Default::default() })));
+            .returning(|_| Ok(Some(TaskNote { id: RecordId::new("task_note", message_id), ..Default::default() })));
 
         let note = TaskNote {
-            id: RecordId::from(("task_note", message_id)),
+            id: RecordId::new("task_note", message_id),
             task_id,
             created_at: Utc::now().into(),
             note: "Test note".to_string(),
