@@ -1,4 +1,4 @@
-use database::schema::{helper_traits::parse_email_user, prestashop_schema::ServiceOrder, CarboniteResponse, ComputerData, HardwareTests, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
+use database::schema::{helper_traits::parse_email_user, prestashop_schema::ServiceOrder, random_record_id, CarboniteResponse, ComputerData, HardwareTests, RecordId, TaskNotePayload, TASK_TABLE, TICKET_TABLE};
 use crate::app_state::MasterTechApp;
 use eframe::Frame;
 
@@ -25,11 +25,11 @@ impl MasterTechApp {
             let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
             let ram_test = format!("{:?}", &self.context.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
-            let mut services: Vec<surrealdb::RecordId> = Vec::new();
+            let mut services: Vec<RecordId> = Vec::new();
             let order_rows: Vec<database::schema::prestashop_schema::OrderRow> = data.order.associations.order_rows.clone();
             self.context.order_rows = order_rows;
 
-            task.id = surrealdb::RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())));
+            task.id = random_record_id(TASK_TABLE);
 
             tokio::spawn(async move {
                 if !customer_email.is_empty() {
@@ -90,7 +90,7 @@ impl MasterTechApp {
             ticket.doc_alias = data.order.order_type.clone();
             ticket.service_number = data.order.id.clone();
             ticket.hardware_test_results = HardwareTests { hdd_test, ssd_test, ram_test };
-            ticket.id = surrealdb::RecordId::from(( TICKET_TABLE.to_string(), ticket.service_number.clone() ));
+            ticket.id = RecordId::new(TICKET_TABLE.to_string(), ticket.service_number.clone());
             log::info!("Salesman: {:?}\nTech: {:?}",ticket.salesman.clone(),ticket.tech.clone());
 
             services.push(ticket.id.clone());

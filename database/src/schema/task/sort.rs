@@ -1,9 +1,9 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::schema::{LiveTaskPayload, Priority, TaskPayload};
+use crate::schema::{LiveTaskPayload, Priority, SurrealValue, TaskPayload};
 
-#[derive(Default, PartialEq, Clone, serde::Serialize, Debug, serde::Deserialize)]
+#[derive(Default, PartialEq, Clone, serde::Serialize, Debug, serde::Deserialize, SurrealValue)]
 pub enum SortDirection{
     #[default]
     Asc,

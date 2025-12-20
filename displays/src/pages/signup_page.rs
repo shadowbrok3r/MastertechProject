@@ -1,7 +1,7 @@
 use serde::Serialize;
 use crate::{app_state::{AppState, SharedContext}, PlatformSpawner, Spawner};
 use crossbeam::channel::Sender;
-use database::{schema::{Store, User}, Database};
+use database::{schema::{Store, User}, Database, SurrealValue};
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
@@ -9,7 +9,7 @@ use log::{error, info};
 #[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
 
-#[derive(Serialize, Debug, Default, Clone)]
+#[derive(Serialize, Debug, Default, Clone, SurrealValue)]
 pub struct Signup {
     #[serde(skip)]
     pub first_name: String,

@@ -1,13 +1,13 @@
 use egui_data_table::{viewer::{DecodeErrorBehavior, RowCodec}, RowViewer};
 use eframe::egui::{Color32, Response, RichText, Ui};
 use egui_extras::Column as TableColumnConfig;
+use database::SurrealValue;
 use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-
 use crate::tabs::stock::ProductID;
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct ExtraInventoryData {
     pub display_name: String,   // Display name is a String
     pub id: f64,                // ID is a positive integer

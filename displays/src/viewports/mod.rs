@@ -1,6 +1,7 @@
 use crate::{app_state::SharedContext, modals::{task_modal::ModalAction, ModalType, ModalWindow}};
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId, Window};
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use database::schema::RecordIdExt;
 use log::info;
 
 impl SharedContext {
@@ -59,7 +60,7 @@ impl SharedContext {
             info!("ID: {id:?}\nviewport: {:?}", viewport_data.is_visible);
             if viewport_data.is_visible.load(Ordering::Relaxed) {
                 let viewport_state = viewport_data.is_visible.clone();
-                let viewport_id = ViewportId::from_hash_of(id.key().to_string());
+                let viewport_id = ViewportId::from_hash_of(id.key_string());
                 let viewport_builder = ViewportBuilder::default()
                     .with_title("Task Viewport")
                     .with_inner_size([750.0, 850.0]); // Match modal dimensions

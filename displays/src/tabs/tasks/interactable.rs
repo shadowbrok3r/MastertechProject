@@ -1,6 +1,6 @@
 
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use database::schema::{LiveTaskPayload, Priority, Status, User};
+use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, User};
 use crate::{Interaction, PlatformSpawner, Spawner};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
@@ -82,7 +82,7 @@ impl Interaction for LiveTaskPayload {
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
         let mut due_date = self.due_date.date_naive();
 
-        let id = self.id.clone().key().to_string().to_string();
+        let id = self.id.key_string();
         let date_picker = DatePickerButton::new(&mut due_date)
             .format("%m/%d")
             .id_salt(id.as_str())
@@ -136,7 +136,7 @@ impl Interaction for LiveTaskPayload {
     }
 
     fn interact_status(&mut self, user: &User, ui: &mut Ui) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
+        ComboBox::new(Id::new(&self.id.key_string()), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(80.)
             .height(150.)
@@ -173,7 +173,7 @@ impl Interaction for LiveTaskPayload {
             ui.ctx().options_mut(|o| o.input_options.line_scroll_speed = 50.0);
         };
         
-        ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
+        ComboBox::new(Id::new(&self.id.key_string()), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
             .width(80.)
             .height(150.)
@@ -221,7 +221,7 @@ impl Interaction for LiveTaskPayload {
             )
         });
 
-        ComboBox::from_id_salt(Id::new(&self.id.clone().key().to_string()))
+        ComboBox::from_id_salt(Id::new(&self.id.key_string()))
             .selected_text(current_name)
             .width(100.)
             .height(150.)

@@ -36,7 +36,7 @@ impl SharedContext {
                             .find(|task| Some(task.id.clone()) == Some(chat_view.task_id.clone()) );
 
                         if let Some(task) = task {
-                            info!("receive_notes -> Inserting note into ChatView modal for task {}", task.id);
+                            info!("receive_notes -> Inserting note into ChatView modal for task {:?}", task.id);
                             // if let Err(e) = handle_live_notes(note_payload.clone(), task) {
                             //     log::error!("receive_notes -> Error in handle_live_notes for ChatView: {:?}", e);
                             // }
@@ -125,14 +125,14 @@ impl SharedContext {
                                     
                                     if should_include {
                                         log::debug!(
-                                            "receive_notes -> Adding associated note to task {} in layout {} should_include: {should_include}",
+                                            "receive_notes -> Adding associated note to task {:?} in layout {} should_include: {should_include}",
                                             task.id, layout_key
                                         );
                                     } else {
                                         // Remove task from this layout if it no longer belongs
                                         task_list.retain(|t| t.id != *task_id);
                                         log::debug!(
-                                            "receive_notes -> Removed task {} from layout {} as it no longer belongs",
+                                            "receive_notes -> Removed task {:?} from layout {} as it no longer belongs",
                                             task_id, layout_key
                                         );
                                     }

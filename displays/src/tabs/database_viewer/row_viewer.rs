@@ -1,12 +1,11 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
-use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
+use database::schema::{random_record_id, ComputerData, CustomerData, LiveTaskPayload, RecordIdExt, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
 use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use egui_extras::Column;
-use database::schema::RecordId;
 use std::cmp::Ordering;
 
 /// Every logic is defined in `Viewer`
@@ -202,7 +201,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             },
             DatabaseTable::User(user) => {
                 let _ = match column {
-                    0 => ui.label(format!(" {}", user.get_id().key().to_string())),
+                    0 => ui.label(format!(" {}", user.get_id().key_string())),
                     1 => ui.label(format!(" {}", user.get_name())),
                     2 => ui.label(format!(" {}", user.get_username())),
                     3 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| ui.label(format!(" {}", user.get_email()))).response,
@@ -215,7 +214,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             },
             DatabaseTable::Customer(customer) => {
                 let _ = match column {
-                    0 => ui.label(format!(" {}", customer.id.key().to_string())),
+                    0 => ui.label(format!(" {}", customer.id.key_string())),
                     1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
                         ui.add_space(2.);
                         ui.label(RichText::new(customer.name.trim()).underline())
@@ -233,7 +232,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             },
             DatabaseTable::Computer(computer) => {
                 let _ = match column {
-                    0 => ui.label(format!(" {}", computer.id.key().to_string())),
+                    0 => ui.label(format!(" {}", computer.id.key_string())),
                     1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
                         ui.add_space(2.);
                         ui.label(RichText::new(computer.hostname.trim()).underline())
@@ -272,14 +271,14 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     }).inner,
                     10 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
                         ui.add_space(2.);
-                        ui.label(RichText::new(computer.customer.clone().unwrap_or(RecordId::from((COMPUTER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))).key().to_string()))
+                        ui.label(RichText::new(computer.customer.clone().unwrap_or(random_record_id(COMPUTER_TABLE)).key_string()))
                     }).inner,
                     _ => ui.label(""),
                 };
             },
             DatabaseTable::Service(ticket) => {
                 let _ = match column {
-                    0 => ui.label(format!(" {}", ticket.id.key().to_string())),
+                    0 => ui.label(format!(" {}", ticket.id.key_string())),
                     1 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
                         ui.add_space(2.);
                         ui.label(RichText::new(ticket.service_number.trim()).underline())
@@ -397,7 +396,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             },
             DatabaseTable::User(user) => {
                 match column {
-                    0 => Some(ui.label(user.get_id().key().to_string())),
+                    0 => Some(ui.label(user.get_id().key_string())),
                     1 => Some(TextEdit::singleline(&mut user.get_name()).show(ui).response),
                     2 => Some(TextEdit::singleline(&mut user.get_username()).show(ui).response),
                     3 => Some(TextEdit::singleline(&mut user.get_email()).show(ui).response),
@@ -522,9 +521,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     8 => computer_l.ram.cmp(&computer_r.ram),
                     9 => computer_l.operating_system.cmp(&computer_r.operating_system),
                     10 => computer_l.customer.clone().unwrap_or(
-                        RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))
+                        random_record_id(CUSTOMER_TABLE)
                         ).cmp(&computer_r.customer.clone().unwrap_or(
-                            RecordId::from((CUSTOMER_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))
+                            random_record_id(CUSTOMER_TABLE)
                             )
                         ),
                     _ => Ordering::Equal, // Default for invalid columns

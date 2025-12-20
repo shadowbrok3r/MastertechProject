@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::schema::{ChatAction, ChatMessageType, ChatThread, UserMessage};
+use database::schema::{ChatAction, ChatMessageType, ChatThread, RecordIdExt, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
 use rfd::AsyncFileDialog;
@@ -68,7 +68,7 @@ impl UserChat {
                                         self.store_users
                                             .iter()
                                             .find(|user| user.get_id() == *u)
-                                            .map_or(u.to_string(), |user| user.get_username().to_string())
+                                            .map_or(u.key_string(), |user| user.get_username().to_string())
                                     })
                                     .collect::<Vec<String>>()
                                     .join(", ");
@@ -287,7 +287,7 @@ impl UserChat {
                             
                             let id = &item.id;
 
-                            if self.allow_edit.contains(&id.to_string()) {
+                            if self.allow_edit.contains(&id.key_string()) {
                                 if Button::new(RichText::new("Save").color(btn_txt_color))
                                 .ui(ui)
                                 .clicked() {
@@ -352,7 +352,7 @@ impl UserChat {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 ui.add_space(5.);
                                 if self.current_user.is_admin() {
-                                    if self.allow_edit.contains(&id.to_string()) {
+                                    if self.allow_edit.contains(&id.key_string()) {
                                         if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
                                         .ui(ui)
                                         .clicked() {
@@ -412,8 +412,8 @@ impl UserChat {
                             Align::Center,
                         ), |ui| {
                             ui.set_width(ui.available_width());
-                            if self.allow_edit.contains(&item.id.to_string()) {
-                                if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
+                            if self.allow_edit.contains(&item.id.key_string()) {
+                                if let Some(msg) = self.edit_text.get_mut(&item.id.key_string()){
                                         if let ChatMessageType::Text(note) = &mut msg.content {
                                         TextEdit::multiline(note)
                                             .margin(Margin::symmetric(10, 3))
@@ -480,19 +480,19 @@ pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &UserMessag
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("user_message:{}", item.id.key().to_string()));
+                    ui.label(format!("user_message:{}", item.id.key_string()));
                 });
             });
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "Task ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("chat_thread:{}", item.thread_id.key().to_string()));
+                    ui.label(format!("chat_thread:{}", item.thread_id.key_string()));
                 });
             });
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "User ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("User:{}", item.user.key().to_string()));
+                    ui.label(format!("User:{}", item.user.key_string()));
                 });
             });
         });

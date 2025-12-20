@@ -1,5 +1,5 @@
 use eframe::egui::{Button, Color32, FontId, Grid, Hyperlink, Margin, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
-use database::{schema::{CustomerData, LiveTaskPayload, Record, TicketData, User}, DATABASE};
+use database::{schema::{CustomerData, LiveTaskPayload, Record, RecordIdExt, TicketData, User}, DATABASE};
 use crate::{tabs::task_audit::row_viewer::BASE_URL, Interaction, PlatformSpawner, Spawner};
 use chrono::{DateTime, Utc};
 
@@ -15,7 +15,7 @@ pub fn display_ticket_page(
     current_user: User,
 ) {
     ui.vertical_centered_justified(|ui| {
-        ui.colored_label(Color32::LIGHT_GREEN, format!("ID: {}", task.id.key().to_string()));
+        ui.colored_label(Color32::LIGHT_GREEN, format!("ID: {}", task.id.key_string()));
 
         ui.add_space(10.0);
 
@@ -56,7 +56,7 @@ pub fn display_ticket_page(
                 ui.end_row();
 
                 ui.colored_label(Color32::LIGHT_RED, "Assignee");
-                ui.push_id(format!("Assignee {}", task.assignee.key().to_string()), |ui| {
+                ui.push_id(format!("Assignee {}", task.assignee.key_string()), |ui| {
                     task.interact_assignee(ui, store_users, &current_user);
                 });
                 

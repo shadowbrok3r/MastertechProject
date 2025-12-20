@@ -11,7 +11,7 @@
 use super::{ConnectionState, ShellType, WebConsoleAction};
 use chrono::{DateTime, Local};
 use crossbeam::channel::Sender;
-use database::schema::{ComputerData, ConnectedClient, User};
+use database::schema::{ComputerData, ConnectedClient, RecordIdExt, User};
 use eframe::egui::{
     Align, Button, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Ui, Vec2,
 };
@@ -144,7 +144,7 @@ impl ClientCard {
                     let user_name = client
                         .assigned_user
                         .as_ref()
-                        .and_then(|id| user_cache.get(&id.to_string()))
+                        .and_then(|id| user_cache.get(&id.key_string()))
                         .map(|u| u.get_username().to_string())
                         .unwrap_or_else(|| "Unassigned".to_string());
 
@@ -415,7 +415,7 @@ impl ClientCard {
                     let user_name = client
                         .assigned_user
                         .as_ref()
-                        .and_then(|id| user_cache.get(&id.to_string()))
+                        .and_then(|id| user_cache.get(&id.key_string()))
                         .map(|u| u.get_username().to_string())
                         .unwrap_or_else(|| "-".to_string());
                     ui.allocate_ui_with_layout(

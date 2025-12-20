@@ -10,7 +10,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
-use surrealdb::{RecordId, Response};
+use database::schema::RecordId;
 use anyhow::{Result, Error};
 use log::{error, info};
 
@@ -33,12 +33,12 @@ impl MastertechContext{
                         let name = self.client_friendly_name.clone();
                         let client = self.client_uuid.clone();
                         spawn(async move {
-                            let update_client: Response = DATABASE.query("UPDATE $client SET friendly_name = $name")
+                            let _update_client = DATABASE.query("UPDATE $client SET friendly_name = $name")
                                 .bind(("name", name))
                                 .bind(("client", client))
                                 .await?;
     
-                            info!("websockets -> update_client: {update_client:?}");
+                            info!("websockets -> update_client: {_update_client:?}");
                             Ok::<(), Error>(())
                         });
                     }
@@ -110,9 +110,8 @@ impl MastertechContext{
             info!("websockets -> query_id: {query_id:?}");
             let res: Option<Record> = DATABASE
                 .create(uuid.clone())
-                .content(connected_client)
-                .await?
-                .take();
+                .content::<ConnectedClient>(connected_client)
+                .await?;
 
             info!("websockets -> Upsert: {res:?}");
             Ok::<(), Error>(())
@@ -138,11 +137,11 @@ impl MastertechContext{
                 }
 
                 spawn(async move {
-                    let update_client: Response = DATABASE.query("UPDATE $client SET connected = true, last_update = time::now()")
+                    let _update_client = DATABASE.query("UPDATE $client SET connected = true, last_update = time::now()")
                         .bind(("client", client_id.clone()))
                         .await?;
 
-                    info!("websockets -> update_client: {update_client:?}");
+                    info!("websockets -> update_client: {_update_client:?}");
                     Ok::<(), Error>(())
                 });
 
@@ -151,11 +150,11 @@ impl MastertechContext{
             Err(error) => {
                 info!("websockets -> Failed to connect to {:?}: {}", &self.url, error);
                 spawn(async move {
-                    let update_client: Response = DATABASE.query("UPDATE $client SET connected = false, last_update = time::now()")
+                    let _update_client = DATABASE.query("UPDATE $client SET connected = false, last_update = time::now()")
                         .bind(("client", client_id.clone()))
                         .await?;
 
-                    info!("websockets -> update_client: {update_client:?}");
+                    info!("websockets -> update_client: {_update_client:?}");
                     Ok::<(), Error>(())
                 });
                 self.error = error;

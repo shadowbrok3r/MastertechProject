@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
-use database::{self, DATABASE, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
+use database::{self, DATABASE, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions};
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
@@ -48,13 +48,13 @@ pub struct LayoutConfig {
     pub update_assignees: bool,
 }
 
-#[derive(Clone, Default, PartialEq, Serialize, Debug, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Debug, Deserialize, database::SurrealValue)]
 pub struct SortOptions {
     pub field: SortField,
     pub direction: SortDirection,
 }
 
-#[derive(Clone, Default, PartialEq, Serialize, Debug, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Debug, Deserialize, database::SurrealValue)]
 pub enum SortField {
     #[default]
     Default,

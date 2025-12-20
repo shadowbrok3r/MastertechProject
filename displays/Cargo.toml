@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "4.6.5"
+version = "4.6.6"
 edition = "2024"
 
 [features]
@@ -20,6 +20,7 @@ zstd = "0.13"
 tap = "1"
 
 # surrealdb-alpha ={ workspace = true }
+surrealdb-types = { workspace = true }
 egui-data-table = { workspace = true }
 egui_json_tree = { workspace = true }
 egui_logger = { workspace = true }

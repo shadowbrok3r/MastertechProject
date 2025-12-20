@@ -1,6 +1,5 @@
 use eframe::egui::{Color32, Grid, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::schema::{ComputerData, TicketData, COMPUTER_TABLE};
-use database::schema::RecordId;
+use database::schema::{random_record_id, ComputerData, RecordIdExt, TicketData, COMPUTER_TABLE};
 
 use crate::{PlatformSpawner, Spawner};
 
@@ -19,7 +18,7 @@ pub fn display_computer_page(
 
     let computer = if let Some(computer) = computer { 
         computer 
-    } else { &mut ComputerData{ id: RecordId::from((COMPUTER_TABLE, "")), ..Default::default() } };
+    } else { &mut ComputerData{ id: random_record_id(COMPUTER_TABLE), ..Default::default() } };
 
 
     ScrollArea::vertical()
@@ -45,12 +44,12 @@ pub fn display_computer_page(
                 .with_row_color(|num, style| return_colors(num, style))
                 .show(ui, |ui| {
                     ui.colored_label(Color32::LIGHT_RED, "ID");
-                    ui.label(computer.id.key().to_string());
+                    ui.label(computer.id.key_string());
                     ui.end_row();
                     
                     if let Some(cust) = &computer.customer {
                         ui.colored_label(Color32::LIGHT_RED, "Linked Customer");
-                        ui.label(cust.key().to_string());
+                        ui.label(cust.key_string());
                         ui.end_row();
                     }
 

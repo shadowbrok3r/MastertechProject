@@ -9,7 +9,7 @@
 use crate::{virtual_filesystem::FileSystem, PlatformSpawner, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{
-    utilities::get_connected_clients, ComputerData, ConnectedClient, User,
+    utilities::get_connected_clients, ComputerData, ConnectedClient, RecordIdExt, User,
 };
 use eframe::egui::{
     CentralPanel, Color32, Context, CornerRadius, Frame, Margin, RichText, SidePanel, Stroke,
@@ -338,7 +338,7 @@ impl WebConsole {
         PlatformSpawner::spawn(async move {
             use database::{DATABASE, schema::CONNECTED_CLIENT_TABLE};
             let result: Result<Option<database::schema::Record>, _> = DATABASE
-                .delete((CONNECTED_CLIENT_TABLE, id.key().to_string()))
+                .delete((CONNECTED_CLIENT_TABLE, id.key_string()))
                 .await;
             match result {
                 Ok(_) => log::info!("WebConsole: Deleted client {}", conn_string),
@@ -459,7 +459,7 @@ impl WebConsole {
         // Update database
         PlatformSpawner::spawn(async move {
             use database::DATABASE;
-            let _: Result<surrealdb::Response, _> = DATABASE
+            let _: Result<_, _> = DATABASE
                 .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $conn")
                 .bind(("conn", conn_string.clone()))
                 .await;

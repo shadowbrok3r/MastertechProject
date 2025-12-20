@@ -1,7 +1,7 @@
 use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 // removed unused PlatformSpawner/Spawner imports after refactor
-use database::schema::TaskNotePayload;
+use database::schema::{RecordIdExt, TaskNotePayload};
 use crate::app_state::SharedContext;
 use crate::viewports::ViewportData;
 use log::info;
@@ -54,7 +54,7 @@ impl SharedContext {
                     let title = if let Some(task) = task {
                         task.task_name.clone()
                     } else {
-                        task_id.to_string()
+                        task_id.key_string()
                     };
 
                     if self.opened_modals.get(&title).is_some() {
@@ -114,7 +114,7 @@ impl SharedContext {
 /// the get_thread_id_from_order() will also handle the creation of new notes
 /// and in turn, will live update the modal with notes from prestashop / the database
 async fn get_or_insert_notes(
-    note_payload: (surrealdb::RecordId, Vec<TaskNotePayload>, Option<String>)
+    note_payload: (database::schema::RecordId, Vec<TaskNotePayload>, Option<String>)
 ) -> anyhow::Result<(), anyhow::Error> {
     // I will probably want to do this manually opposed to using TaskNotePayload::get_thread_id_from_order(&self)
     // Because, that will have to make a separate API call for every single note, since &Self, in the 

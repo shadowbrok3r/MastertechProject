@@ -11,7 +11,7 @@ use crossbeam::channel::Sender;
 use serde_json::{json, Value};
 use anyhow::{Error, Result};
 use database::schema::RecordId;
-use database::DATABASE;
+use database::{DATABASE, SurrealValue};
 use futures::StreamExt;
 use std::sync::Arc;
 use log::info;
@@ -95,7 +95,7 @@ pub struct GetTaskSummaryParams {
     pub task_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, SurrealValue)]
 pub struct TaskSummary {
     pub id: RecordId,
     pub task_name: String,

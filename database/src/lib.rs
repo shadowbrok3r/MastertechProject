@@ -68,7 +68,7 @@ pub struct Session {
     pub user: User,
 }
 
-#[derive(Serialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Debug, Clone, PartialEq, SurrealValue)]
 pub enum DatabaseSelection {
     Stable,
     Beta,

@@ -1,6 +1,6 @@
 use database::schema::{ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE};
 use system_info::generate_client_id;
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use sysinfo::System;
 
 pub mod system_info;
@@ -25,14 +25,14 @@ pub fn get_client_hash() -> ConnectedClient {
     let client_hash = generate_client_id(hostname.clone(), cpu.trim().to_string());
     let id = format!("{}:{}", hostname.clone(), client_hash.split_at(9).0);
 
-    let client_id = RecordId::from_table_key(
+    let client_id = RecordId::new(
         CONNECTED_CLIENT_TABLE.to_string(), 
-        id.clone().as_str()
+        id.clone()
     );
 
-    let computer_id = RecordId::from_table_key(
+    let computer_id = RecordId::new(
         COMPUTER_TABLE.to_string(), 
-        id.clone().as_str()
+        id.clone()
     );
 
     ConnectedClient {

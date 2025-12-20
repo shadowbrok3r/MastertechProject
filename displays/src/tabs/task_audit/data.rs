@@ -308,14 +308,14 @@ impl TaskRowViewer {
         ticket.ticket_total = value.order.total_products_wt.clone();
         ticket.doc_alias = value.order.order_type.clone();
         ticket.service_number = value.order.id.clone();
-        ticket.id = RecordId::from((
-            TICKET_TABLE.to_string(),
+        ticket.id = RecordId::new(
+            TICKET_TABLE,
             ticket.service_number.clone(),
-        ));
-        task.id = RecordId::from((
-            TASK_TABLE.to_string(),
+        );
+        task.id = RecordId::new(
+            TASK_TABLE,
             ticket.service_number.clone(),
-        ));
+        );
 
         for note in value.task_notes.iter_mut() {
             note.task_id = Some(task.id.clone());

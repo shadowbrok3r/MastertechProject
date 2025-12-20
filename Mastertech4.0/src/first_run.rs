@@ -3,7 +3,7 @@ use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_s
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use database::schema::GetKeysResponse;
 use eframe::egui::{Context, Style};
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use std::sync::Arc;
 use tokio::spawn;
 
@@ -177,9 +177,9 @@ impl MasterTechApp {
                 )
             );
             
-            self.context.client_uuid = RecordId::from_table_key(
+            self.context.client_uuid = RecordId::new(
                 CONNECTED_CLIENT_TABLE.to_string(), 
-                url_string.clone().as_str()
+                url_string.clone()
             );
         }
 

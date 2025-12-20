@@ -108,8 +108,8 @@ pub struct TurCreationData {
     pub product_name: String,
     pub notes: String,
     pub service_number: String,
-    pub computer_id: Option<surrealdb::RecordId>,
-    pub customer_id: Option<surrealdb::RecordId>,
+    pub computer_id: Option<database::schema::RecordId>,
+    pub customer_id: Option<database::schema::RecordId>,
 }
 
 /// Render the TUR creation modal
