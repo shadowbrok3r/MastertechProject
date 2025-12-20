@@ -78,8 +78,8 @@ impl QueryEditor {
         }
     }
 
-    pub async fn execute_query(tx: Sender<Value>, query: impl Display + surrealdb::opt::IntoQuery) -> anyhow::Result<(), anyhow::Error> {
-        let val = DATABASE.query(query).await?.take::<surrealdb::Value>(0)?;
+    pub async fn execute_query(tx: Sender<Value>, query: impl Display) -> anyhow::Result<(), anyhow::Error> {
+        let val = DATABASE.query(query.to_string()).await?.take::<database::schema::SurrealDBValue>(0)?;
         let value = serde_json::to_value(&val)?;
         // log::info!("Query executed: {val:?}\nValue: {value:?}");
         let _ = tx.try_send(value);

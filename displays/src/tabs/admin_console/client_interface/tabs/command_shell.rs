@@ -4,11 +4,12 @@ use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
 #[cfg(not(target_arch="wasm32"))]
 use crate::mcp::{DiagnosticResponse, mcp::ShellType};
+use database::SurrealValue;
 use ewebsock::WsMessage;
 use core::f32;
 use crate::Cmd;
 
-#[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize, Debug, SurrealValue)]
 pub struct History {
     pub from: String,
     pub message: String,

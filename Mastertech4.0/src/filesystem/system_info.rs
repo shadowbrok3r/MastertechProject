@@ -6,7 +6,7 @@ use num_format::{Locale, ToFormattedString};
 use crossbeam::channel::Sender;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
-use surrealdb::RecordId;
+use database::schema::RecordId;
 use log::{error, info};
 use reqwest::Client;
 use anyhow::Context;
@@ -174,7 +174,7 @@ impl ComputerInfo for ComputerData {
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
         info!("Filesystem -> get_computer_data -> ID: {id}");
-        self.id = RecordId::from((COMPUTER_TABLE, id.clone().as_str()));
+        self.id = RecordId::new(COMPUTER_TABLE, id.clone());
         info!("Filesystem -> get_computer_data -> RecordID: {:?}", self.id.clone());
 
         #[cfg(target_os="windows")]
@@ -297,7 +297,7 @@ impl ComputerInfo for ComputerData {
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
         info!("Filesystem -> get_computer_data -> ID: {id}");
-        self.id = RecordId::from((COMPUTER_TABLE, id.clone().as_str()));
+        self.id = RecordId::new(COMPUTER_TABLE, id.clone());
         info!("Filesystem -> get_computer_data -> RecordID: {:?}", self.id.clone());
         Ok(self.to_owned())
     }

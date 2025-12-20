@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Error, Result};
 use rpc_router::RpcParams;
 use database::schema::RecordId;
-use database::DATABASE;
+use database::{DATABASE, SurrealValue};
 
 use super::{tool_spec, ToolSpec};
 
@@ -22,7 +22,7 @@ pub struct GetTaskSummaryParams {
     pub task_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, SurrealValue)]
 pub struct TaskSummary {
     pub id: RecordId,
     pub task_name: String,

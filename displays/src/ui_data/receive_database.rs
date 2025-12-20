@@ -37,7 +37,7 @@ impl crate::app_state::SharedContext {
                         self
                         .bridge
                         .send(
-                            crate::webworker::Input(token.into_insecure_token())
+                            crate::webworker::Input(token)
                         );
                     } else { log::info!("No token"); }
                 }

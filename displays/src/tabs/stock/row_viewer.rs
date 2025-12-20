@@ -1,23 +1,24 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
 use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
+use database::SurrealValue;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 
 const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize, database::SurrealValue)]
 pub struct StockData {
     pub result: Vec<RawStockData>,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize, database::SurrealValue)]
 pub struct SerialData {
     pub result: Vec<SerialInfo>,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct SerialInfo {
     pub id: u64,
     pub bs_prest_ref: BoolOrString,
@@ -26,7 +27,7 @@ pub struct SerialInfo {
     pub name: String,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct RawStockData {
     pub available_quantity: f32,
     pub id: u64,
@@ -39,10 +40,10 @@ pub struct RawStockData {
     pub location_id: LotID,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct LotID(pub i32, pub String);
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct ProductID(pub i32, pub String);
 
 // Don't need to implement any trait on row data itself.
@@ -361,7 +362,7 @@ fn _round_to_two_decimal_places(value: f64) -> f64 {
 use serde::de::Deserializer;
 use std::fmt;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, database::SurrealValue)]
 pub enum BoolOrString {
     Bool(bool),
     String(String),

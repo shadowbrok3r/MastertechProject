@@ -1,5 +1,5 @@
 use eframe::egui::{Button, CollapsingHeader, Widget, Vec2, Color32, Frame, Margin, RichText, Ui};
-use database::schema::{LiveTaskPayload, TaskNotePayload, User};
+use database::schema::{LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
 use log::info;
@@ -96,19 +96,19 @@ impl Displayable for LiveTaskPayload {
             ui.separator();
 
             ui.horizontal(|ui: &mut Ui| {
-                ui.push_id(format!("Assignee {}", self.id.key().to_string().clone()), |ui| {
+                ui.push_id(format!("Assignee {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_assignee(ui, store_users, user);
                 });
 
                 ui.add_space(22.);
                 
-                ui.push_id(format!("Priority {}", self.id.key().to_string().clone()), |ui| {
+                ui.push_id(format!("Priority {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_priority(ui);
                 });
 
                 ui.add_space(22.);
 
-                ui.push_id(format!("Status {}", self.id.key().to_string().clone()), |ui| {
+                ui.push_id(format!("Status {}", self.id.key_string().clone()), |ui| {
                     let _ = self.interact_status(user, ui);
                 });
 

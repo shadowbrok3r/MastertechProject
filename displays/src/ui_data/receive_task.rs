@@ -1,4 +1,4 @@
-use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, Status, Store, TaskNotePayload}};
+use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, RecordIdExt, Status, Store, TaskNotePayload}};
 use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 
 impl SharedContext {
@@ -30,7 +30,7 @@ impl SharedContext {
 
             tasks.drain(..).for_each(|new_task| {
                 // Check for duplicates using task ID
-                let task_id = new_task.id.key().to_string();
+                let task_id = new_task.id.key_string();
                 if !self.task_index.contains_key(&task_id) {
                     // Add to global tasks and index
                     self.tasks.push(new_task.clone());
@@ -72,7 +72,7 @@ impl SharedContext {
                                     .task_map
                                     .entry(key.clone())
                                     .or_insert_with(Vec::new);
-                                if !task_list.iter().any(|t| t.id.key().to_string() == task_id) {
+                                if !task_list.iter().any(|t| t.id.key_string() == task_id) {
                                     task_list.push(new_task.clone());
                                     // log::info!("Added initial task to layout: {}", layout_key);
                                 }
@@ -115,10 +115,10 @@ impl SharedContext {
             match handle_live_data(new_task.to_owned(),&mut self.tasks) {
                 Ok(_) => {
                     // Update task_index
-                    let task_id = new_task.1.id.key().to_string();
+                    let task_id = new_task.1.id.key_string();
                     self.task_index.insert(task_id.clone(), new_task.1.clone().into());
                     // Update self.tasks to maintain consistency
-                    if let Some(pos) = self.tasks.iter().position(|t| t.id.key().to_string() == task_id) {
+                    if let Some(pos) = self.tasks.iter().position(|t| t.id.key_string() == task_id) {
                         self.tasks[pos] = new_task.1.clone().into();
                     } else {
                         self.tasks.push(new_task.1.clone().into());

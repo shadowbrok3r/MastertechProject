@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Id, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, Store, TaskNotePayload, TicketData, User};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, RecordIdExt, Store, TaskNotePayload, TicketData, User};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use crossbeam::channel::{Receiver, Sender};
 use rfd::{AsyncFileDialog, FileHandle};
@@ -171,7 +171,7 @@ impl DisplayModal for TaskModal {
         ui.set_max_size(max_space);
         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
-        TopBottomPanel::top(format!("Top panel header {}", self.task.id.key().to_string())).exact_height(28.).show_inside(ui, |ui| {
+        TopBottomPanel::top(format!("Top panel header {}", self.task.id.key_string())).exact_height(28.).show_inside(ui, |ui| {
 
             ui.columns(3, |ui| {
                 ui[0].with_layout(Layout::left_to_right(Align::Center), |ui| {

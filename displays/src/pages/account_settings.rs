@@ -1,12 +1,12 @@
 use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use database::{schema::{SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, DATABASE};
+use database::{schema::{SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, SurrealValue, DATABASE};
 use crate::{app_state::{AppState, MainPages, SharedContext}, tabs::tasks::task_layout::{SortField, SortOptions}};
 use egui_extras::{Size, StripBuilder};
 use crossbeam::channel::Sender;
 use serde::Serialize;
 use log::{error, info};
 
-#[derive(Serialize, Debug, Clone, Default)]
+#[derive(Serialize, Debug, Clone, Default, database::SurrealValue)]
 pub struct UserPreferences {
     name: String,
     email: String,
@@ -33,7 +33,7 @@ impl UserPreferences {
             ..Default::default()
         };
 
-        let mod_user_result: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+        let mod_user_result: Result<_, surrealdb::Error> = DATABASE
             .query("fn::modify_account($user, $new)")
             .bind(("user", user_id))
             .bind(("new", acc_mod))
@@ -45,7 +45,7 @@ impl UserPreferences {
     pub fn change_password(&self) {
         let password = self.password.clone();
         PlatformSpawner::spawn(async move {
-            let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+            let x: Result<_, surrealdb::Error> = DATABASE
                 .query("UPDATE $auth.id SET password = crypto::argon2::generate($pass)")
                 .bind(("pass", password))
                 .await;

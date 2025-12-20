@@ -1,7 +1,6 @@
 use bytes::Bytes;
-use database::{live_data::listen_data, schema::{ChatAction, ChatMessageType, ChatThread, User, UserMessage, CHAT_THREAD_TABLE, USER_MESSAGE_TABLE}};
+use database::{live_data::{listen_data, Action}, schema::{ChatAction, ChatMessageType, ChatThread, RecordId, User, UserMessage, CHAT_THREAD_TABLE, USER_MESSAGE_TABLE}};
 use crate::{get_current_user_from_auth, get_database_users, PlatformSpawner, Spawner};
-// use surrealdb::RecordId;
 use eframe::egui::Ui;
 use super::UserChat;
 
@@ -115,7 +114,7 @@ impl UserChat {
                 },
                 ChatAction::SubmitMessage(chat_message_type) => {
                     if let Some(thread) = self.selected_thread.clone() {
-                        let user: surrealdb::RecordId = self.current_user.get_id().clone();
+                        let user: RecordId = self.current_user.get_id().clone();
                         let tx = self.chat_msg_tx.clone();
                         PlatformSpawner::spawn(async move {
                             match Self::submit_message(thread.clone(), chat_message_type, tx, user).await {
@@ -189,20 +188,20 @@ impl UserChat {
             ui.ctx().request_repaint();
             let messages = self.thread_messages.entry(msg.thread_id.clone()).or_insert(Vec::new());
             match action {
-                surrealdb::Action::Create => {
+                Action::Create => {
                     let messages = self.thread_messages.entry(msg.thread_id.clone()).or_insert(Vec::new());
                     if !messages.iter().any(|m| m.id == msg.id) {
                         messages.push(msg.clone());
                         messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
                     }
                 },
-                surrealdb::Action::Update => {
+                Action::Update => {
                     if let Some(idx) = messages.iter().position(|m| m.id == msg.id) {
                         messages[idx] = msg.clone();
                         messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
                     }
                 },
-                surrealdb::Action::Delete => {
+                Action::Delete => {
                     messages.retain(|m| m.id != msg.id);
                 },
                 _ => {},
@@ -212,18 +211,18 @@ impl UserChat {
         while let Ok((action, chat_thread)) = self.thread_listener_rx.try_recv() {
             ui.ctx().request_repaint();
             match action {
-                surrealdb::Action::Create => {
+                Action::Create => {
                     if !self.threads.iter().any(|t| t.id == chat_thread.id) {
                         self.threads.push(chat_thread.clone());
                         self.thread_messages.entry(chat_thread.id.clone()).or_insert(Vec::new());
                     }
                 },
-                surrealdb::Action::Update => {
+                Action::Update => {
                     if let Some(idx) = self.threads.iter().position(|t| t.id == chat_thread.id) {
                         self.threads[idx] = chat_thread.clone();
                     }
                 },
-                surrealdb::Action::Delete => {
+                Action::Delete => {
                     self.threads.retain(|t| t.id != chat_thread.id);
                     self.thread_messages.remove(&chat_thread.id);
                     if self.selected_thread.as_ref().map_or(false, |t| t.id == chat_thread.id) {
@@ -262,7 +261,7 @@ impl UserChat {
         thread: ChatThread, 
         message: ChatMessageType, 
         tx: crossbeam::channel::Sender<UserMessage>, 
-        user: surrealdb::RecordId
+        user: RecordId
     ) -> anyhow::Result<(), anyhow::Error> {
         let msg = UserMessage::new(
             thread.id.clone(),

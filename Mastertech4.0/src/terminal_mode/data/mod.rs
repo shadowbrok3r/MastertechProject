@@ -5,7 +5,7 @@ use displays::remote_viewer::ratagui::TerminalEvent;
 use crate::filesystem::system_info::ComputerInfo;
 use crossbeam::channel::Receiver;
 use egui::{Key, Modifiers};
-use surrealdb::RecordId;
+use database::schema::{random_record_id, RecordId};
 use chrono::Utc;
 
 use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
@@ -63,7 +63,7 @@ impl ServiceData {
         let task_notes = &mut self.task_notes;
         let computer = &mut self.computer_data;
 
-        task.id = RecordId::from((TASK_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())));
+        task.id = random_record_id(TASK_TABLE);
         let service_details = presta_data.order.associations.order_service.clone();
         let mut services: Vec<RecordId> = Vec::new();
 
@@ -115,10 +115,10 @@ impl ServiceData {
         ticket.ticket_total = presta_data.order.total_products_wt.clone();
         ticket.doc_alias = presta_data.order.order_type.clone();
         ticket.service_number = presta_data.order.id.clone();
-        ticket.id = RecordId::from((
+        ticket.id = RecordId::new(
             TICKET_TABLE.to_string(),
             ticket.service_number.clone(),
-        ));
+        );
 
         services.push(ticket.id.clone());
         

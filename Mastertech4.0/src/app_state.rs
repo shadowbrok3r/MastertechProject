@@ -5,7 +5,7 @@ use displays::{app_state::{default_tree, SharedContext}, channel_manager::Channe
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
-use surrealdb::{sql::Uuid, RecordId};
+use database::schema::{random_record_id, RecordId};
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
 use eframe::egui::Align2;
@@ -146,7 +146,7 @@ impl MasterTechApp {
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (duplicate_check_tx, duplicate_check_rx) = crossbeam::channel::unbounded::<DuplicateCheckResult>();
-        let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
+        let client_uuid = random_record_id(CONNECTED_CLIENT_TABLE);
 
         let send_specs = true;
         // if cfg!(target_os = "windows") { true } else { false };

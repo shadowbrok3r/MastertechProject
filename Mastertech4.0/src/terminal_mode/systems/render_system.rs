@@ -1,5 +1,5 @@
 use crate::{filesystem::get_client_hash, terminal_mode::{context::TerminalContext, systems::{communication_system::DataMessage, notification_system::Notification}, websockets::create_client}};
-use database::{WS_CLIENT_URL, schema::{utilities::get_tasks_for_store, User}};
+use database::{WS_CLIENT_URL, schema::{utilities::get_tasks_for_store, RecordIdExt, User}};
 use displays::get_database_users;
 use std::{sync::{Arc, Mutex}, time::Duration};
 use crossbeam::channel::{Receiver, Sender};
@@ -69,7 +69,7 @@ impl RenderSystem {
                                     let mut client = get_client_hash();
                                     let connection_url = format!(
                                         "{WS_CLIENT_URL}&room_id={}",
-                                        client.id
+                                        client.id.key_string()
                                     );
                                     ctx.url = Some(connection_url.clone());
                                     ctx.store_users = get_database_users();

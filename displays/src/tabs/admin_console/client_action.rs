@@ -1,5 +1,5 @@
 use super::{client_interface::tabs::command_shell::History, AdminConsole};
-use database::{schema::{Record, CONNECTED_CLIENT_TABLE}, DATABASE, WS_MASTER_URL_LOCAL};
+use database::{schema::{Record, RecordIdExt, CONNECTED_CLIENT_TABLE}, DATABASE, WS_MASTER_URL_LOCAL};
 use crate::tabs::admin_console::client_interface::WebSocketClient;
 use database::{WS_MASTER_URL, schema::ConnectedClient};
 use crate::{PlatformSpawner, Spawner};
@@ -89,7 +89,7 @@ impl ClientHandler for ConnectedClient {
             DATABASE.set("id", id).await.unwrap();
             DATABASE.set("history", Some(history.clone())).await.unwrap();
             let query = "UPDATE $id SET command_history += $history";
-            let update_history: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+            let update_history: Result<_, surrealdb::Error> = DATABASE
                 .query(query)
                 .await;
 
@@ -102,7 +102,7 @@ impl ClientHandler for ConnectedClient {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
             let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE
-                .delete((CONNECTED_CLIENT_TABLE, id.key().to_string()))
+                .delete((CONNECTED_CLIENT_TABLE, id.key_string()))
                 .await;
 
             log::info!("History: {update_history:#?}");
@@ -112,7 +112,7 @@ impl ClientHandler for ConnectedClient {
     fn disconnect_client(&mut self) {
         let id = self.id.clone();
         PlatformSpawner::spawn(async move {
-            let update_history: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+            let update_history: Result<_, surrealdb::Error> = DATABASE
                 .query("UPDATE $id SET connected = false")
                 .bind(("id", id))
                 .await;

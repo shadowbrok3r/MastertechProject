@@ -376,14 +376,14 @@ impl CreateTaskModal {
                                 payload.task_data.assignee = user.get_id();
 
                                 log::info!("Payload: {payload:?}");
-                                let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                                let query: Result<_, surrealdb::Error> = DATABASE
                                     .query("CREATE task CONTENT $content")
                                     .bind(("content", payload.task_data))
                                     .await;
 
                                 match query {
                                     Ok(mut res) => {
-                                        let _: Option<RecordId> = res.take(0).unwrap_or_default();
+                                        let _: Option<database::schema::Record> = res.take(0).unwrap_or_default();
                                         let _ = toast_tx.try_send(ToastMessage::Success(
                                             "Task created successfully".to_string()
                                         ));

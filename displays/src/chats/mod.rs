@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
-use database::{live_data::handle_live_delete, schema::{TaskNotePayload, User, TASK_NOTE_TABLE}};
+use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
@@ -58,7 +58,7 @@ impl Default for ChatView {
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
             // THIS IS ON PURPOSE SO WE CANT ACCIDENTALLY TRY AND LEAVE A NOTE WITHOUT A TASK
-            task_id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+            task_id: random_record_id(TASK_NOTE_TABLE),
             service_number: None,
             hovered: HashSet::new(),
             remove_hovered: None,
@@ -128,16 +128,16 @@ impl ChatView {
         // Collect existing IDs from self.messages to check for duplicates
         let mut seen_ids: HashSet<String> = self.messages
             .iter()
-            .map(|note| note.id.to_string())
+            .map(|note| note.id.key_string())
             .collect();
 
         // Process new notes, adding only non-duplicates
         for mut note in notes {
             // Make sure seeded notes are tied to this chat's task
             note.set_task_id(&self.task_id);
-            if seen_ids.insert(note.id.to_string()) {
+            if seen_ids.insert(note.id.key_string()) {
                 // Add to edit_text (overwrites if ID exists, but seen_ids ensures it’s new)
-                self.edit_text.insert(note.id.to_string(), note.clone());
+                self.edit_text.insert(note.id.key_string(), note.clone());
                 // Append to messages
                 self.messages.push(note);
             }
@@ -181,7 +181,7 @@ impl ChatView {
                 info!("chats/mod.rs -> Inserting new note: {:#?}", new_note.id);
                 self.messages.push(new_note.clone());
             }
-            self.edit_text.insert(new_note.id.to_string(), new_note.clone());
+            self.edit_text.insert(new_note.id.key_string(), new_note.clone());
         } else {
             log::warn!("chats/mod.rs -> id_customer_thread, service_number, or task_id do not match\nOr self.messages is empty");
             log::error!("chats/mod.rs -> Removed elements: {new_note:#?}");
@@ -193,7 +193,7 @@ impl ChatView {
         if let Some(idx) = index {
             info!("chats/mod.rs -> Deleting Note @ {idx}");
             self.messages.remove(idx);
-            self.edit_text.remove(&note_to_delete.id.to_string());
+            self.edit_text.remove(&note_to_delete.id.key_string());
         }
     }
 
@@ -270,8 +270,8 @@ impl ChatView {
         if let Ok(event) = self.ui_event_rx.try_recv() {
             match event {
                 ChatEvent::SaveNote(task_note) => {
-                    if self.allow_edit.contains(&task_note.id.to_string()) {
-                        if let Some(msg) = self.edit_text.get_mut(&task_note.id.to_string()){
+                    if self.allow_edit.contains(&task_note.id.key_string()) {
+                        if let Some(msg) = self.edit_text.get_mut(&task_note.id.key_string()){
                             let mut task_note = msg.clone();
                             task_note.note = msg.note.clone();
                             PlatformSpawner::spawn(async move {
@@ -282,10 +282,10 @@ impl ChatView {
                             });
                         }
                     }
-                    self.allow_edit.remove(&task_note.id.to_string());
+                    self.allow_edit.remove(&task_note.id.key_string());
                 },
-                ChatEvent::Edit(id) => { self.allow_edit.insert(id.to_string()); },
-                ChatEvent::CancelEdit(id) => { self.allow_edit.remove(&id.to_string()); },
+                ChatEvent::Edit(id) => { self.allow_edit.insert(id.key_string()); },
+                ChatEvent::CancelEdit(id) => { self.allow_edit.remove(&id.key_string()); },
                 ChatEvent::DeleteNote(note) => {
                     self.delete = Some(note.clone());
                     let mut item = note.clone();
@@ -366,7 +366,7 @@ impl ChatView {
                                 id_customer_thread,
                                 service_number: self.service_number.clone(),
                                 private: markdown_editor.private_note.clone(),
-                                id: RecordId::from((TASK_NOTE_TABLE, surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into()))),
+                                id: random_record_id(TASK_NOTE_TABLE),
                                 created_at: Utc::now().into(),
                                 id_customer_message: None,
                             };
@@ -496,7 +496,7 @@ impl ChatView {
                                 
                                 let id = &item.id;
 
-                                if self.allow_edit.contains(&id.to_string()) {
+                                if self.allow_edit.contains(&id.key_string()) {
                                     if Button::new(RichText::new("Save").color(btn_txt_color))
                                     .ui(ui)
                                     .clicked() {
@@ -559,7 +559,7 @@ impl ChatView {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     ui.add_space(5.);
                                     if self.current_user.is_admin() {
-                                        if self.allow_edit.contains(&id.to_string()) {
+                                        if self.allow_edit.contains(&id.key_string()) {
                                             if Button::new(RichText::new("Cancel").color(Color32::LIGHT_RED))
                                             .ui(ui)
                                             .clicked() {
@@ -620,8 +620,8 @@ impl ChatView {
                                 Align::Center,
                             ), |ui| {
                                 ui.set_width(ui.available_width());
-                                if self.allow_edit.contains(&item.id.to_string()) {
-                                    if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
+                                if self.allow_edit.contains(&item.id.key_string()) {
+                                    if let Some(msg) = self.edit_text.get_mut(&item.id.key_string()){
                                         TextEdit::multiline(&mut msg.note)
                                             .margin(Margin::symmetric(10, 3))
                                             .desired_width(max_msg_width)
@@ -663,14 +663,14 @@ pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &TaskNotePa
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("Task_note:{}", item.id.key().to_string()));
+                    ui.label(format!("Task_note:{}", item.id.key_string()));
                 });
             });
             ui.horizontal(|ui| {
                 if let Some(task_id) = item.task_id.clone() {
                     ui.colored_label(style.visuals.hyperlink_color, "Task ID");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(format!("Task:{}", task_id.key().to_string()));
+                        ui.label(format!("Task:{}", task_id.key_string()));
                     });
                 }
             });
@@ -689,7 +689,7 @@ pub fn popup_widget(btn_response: Response, style: Arc<Style>, item: &TaskNotePa
             ui.horizontal(|ui| {
                 ui.colored_label(style.visuals.hyperlink_color, "User ID");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(format!("User:{}", item.user.key().to_string()));
+                    ui.label(format!("User:{}", item.user.key_string()));
                 });
             });
         });
