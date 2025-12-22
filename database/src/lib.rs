@@ -8,6 +8,7 @@ use surrealdb::{
 pub use surrealdb::types::SurrealValue;
 use once_cell::sync::Lazy;
 use serde::Serialize;
+use surrealdb_types::RecordId;
 use std::fmt::Debug;
 use schema::User;
 use log::info;
@@ -16,6 +17,8 @@ pub mod live_data;
 pub mod schema;
 
 pub use platform::PlatformSpawner;
+
+use crate::schema::{NOTIFICATION_TABLE, Notification, USER_TABLE};
 
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
@@ -306,6 +309,19 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
         }
     }).await?;
 
+    Ok(())
+}
+
+pub async fn create_guest_notification(notification: Notification) -> anyhow::Result<(), anyhow::Error> {
+    let try_guest = init_database().await;
+    match try_guest {
+        Ok(_) => {
+            DATABASE.create::<Option<Notification>>(NOTIFICATION_TABLE)
+            .content(notification)
+            .await?;
+        },
+        Err(e) => log::error!("Couldnt create notification from guest user account either.. {e:?}"),
+    }
     Ok(())
 }
 
