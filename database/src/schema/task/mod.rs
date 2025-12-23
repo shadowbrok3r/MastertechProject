@@ -298,7 +298,7 @@ impl From<TaskPayload> for LiveTaskPayload {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Default, Eq, Hash, SurrealValue)]
+#[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
 pub enum Status {
     #[default]
     Todo,
@@ -307,6 +307,23 @@ pub enum Status {
     Sales,
     Qc,
     CustomStatus(String),
+}
+
+impl SurrealValue for Status {
+    fn kind_of() -> surrealdb::types::Kind {
+        surrealdb::types::Kind::String
+    }
+
+    fn into_value(self) -> surrealdb::types::Value {
+        surrealdb::types::Value::String(self.as_str().to_string())
+    }
+
+    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
+        match value {
+            surrealdb::types::Value::String(s) => Ok(Status::from_str(&s)),
+            _ => anyhow::bail!("Expected string for Status, got {:?}", value),
+        }
+    }
 }
 
 impl Status {
@@ -349,7 +366,7 @@ impl<'de> Deserialize<'de> for Status {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default, SurrealValue)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default)]
 pub enum Priority {
     Express,
     Rfs,
@@ -357,6 +374,32 @@ pub enum Priority {
     Qc,
     #[default]
     Normal,
+}
+
+impl SurrealValue for Priority {
+    fn kind_of() -> surrealdb::types::Kind {
+        surrealdb::types::Kind::String
+    }
+
+    fn into_value(self) -> surrealdb::types::Value {
+        surrealdb::types::Value::String(self.as_str().to_string())
+    }
+
+    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
+        match value {
+            surrealdb::types::Value::String(s) => {
+                match s.as_str() {
+                    "Normal" => Ok(Priority::Normal),
+                    "Rfs" => Ok(Priority::Rfs),
+                    "Qc" => Ok(Priority::Qc),
+                    "Express" => Ok(Priority::Express),
+                    "Fire" => Ok(Priority::Fire),
+                    other => anyhow::bail!("Unknown Priority variant: {}", other),
+                }
+            }
+            _ => anyhow::bail!("Expected string for Priority, got {:?}", value),
+        }
+    }
 }
 
 impl Priority {
@@ -372,7 +415,7 @@ impl Priority {
     pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord, SurrealValue)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
 pub enum Store {
     #[default]
     RIV,
@@ -382,6 +425,34 @@ pub enum Store {
     WJ,
     ORE,
     SAN,
+}
+
+impl SurrealValue for Store {
+    fn kind_of() -> surrealdb::types::Kind {
+        surrealdb::types::Kind::String
+    }
+
+    fn into_value(self) -> surrealdb::types::Value {
+        surrealdb::types::Value::String(self.as_str().to_string())
+    }
+
+    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
+        match value {
+            surrealdb::types::Value::String(s) => {
+                match s.as_str() {
+                    "RIV" => Ok(Store::RIV),
+                    "LTN" => Ok(Store::LTN),
+                    "MUR" => Ok(Store::MUR),
+                    "AF" => Ok(Store::AF),
+                    "WJ" => Ok(Store::WJ),
+                    "ORE" => Ok(Store::ORE),
+                    "SAN" => Ok(Store::SAN),
+                    other => anyhow::bail!("Unknown Store variant: {}", other),
+                }
+            }
+            _ => anyhow::bail!("Expected string for Store, got {:?}", value),
+        }
+    }
 }
 
 impl Store {

@@ -31,6 +31,10 @@ use simplelog::{ColorChoice, Config, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
 use surrealdb::RecordId;
 
+////////////// TODO
+/// - Add a way to audit sales orders that are supposed to be service orders
+/// 
+
 /// Minimum days on done-shelf/in-repair before flagging
 const MIN_DAYS_ON_SHELF: i64 = 1;
 

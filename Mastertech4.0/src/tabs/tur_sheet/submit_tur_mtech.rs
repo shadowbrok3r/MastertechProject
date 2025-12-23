@@ -1,7 +1,7 @@
 use database::schema::{
     utilities::{check_for_duplicates, create_full_task_payload}, 
     merge_computer, merge_customer, merge_task, merge_ticket,
-    DuplicateCheckResult, MergeResolution, TaskCreationResult
+    DuplicateCheckResult, MergeResolution, RecordIdExt, TaskCreationResult
 };
 use displays::{get_toast_sender, modals::DuplicateMergeModal, ToastMessage};
 use crate::app_state::{MastertechContext, PendingTurData, TurSubmitState};
@@ -18,15 +18,31 @@ impl MastertechContext {
             return;
         }
 
+        // Use local fields which are populated by the TUR sheet form
         let mut task_data = self.task_data.clone();
         let customer_data = self.customer_data.clone();
         let ticket_data = self.ticket_data.clone();
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
 
-        task_data.due_date = self.date.into();
         let send_specs = self.send_specs;
         let service_number = ticket_data.service_number.clone();
+        
+        // Populate task_data fields that need to be set before duplicate check
+        task_data.due_date = self.date.into();
+        task_data.service_number = Some(service_number.clone());
+        task_data.task_name = format!("{} - {}", &customer_data.name, &service_number);
+        
+        // Set assignee from the TUR form's task_data.assignee (should be set by the form)
+        // If it's still a random ID, use current user as fallback
+        if task_data.assignee.key_string().contains("-") {
+            // Random UUID format - use current user instead
+            if let Some(ref user) = self.shared_ctx.current_user {
+                info!("Assignee was random ID, using current user: {:?}", user.get_id());
+                task_data.assignee = user.get_id();
+            }
+        }
+        info!("Task assignee: {:?}", task_data.assignee);
 
         // Store pending data for later use after resolution
         self.pending_tur_data = Some(PendingTurData {
@@ -36,6 +52,7 @@ impl MastertechContext {
             computer_data: computer_data.clone(),
             task_notes,
             send_specs,
+            duplicate_check_result: None, // Will be populated when duplicate check completes
         });
 
         // Update state
@@ -74,10 +91,32 @@ impl MastertechContext {
         if let Ok(result) = self.duplicate_check_rx.try_recv() {
             info!("Received duplicate check result for service #{}", result.service_number);
             
+            // Store the duplicate check result for later use in resolution
+            if let Some(ref mut pending) = self.pending_tur_data {
+                pending.duplicate_check_result = Some(result.clone());
+            }
+            
             if result.has_conflicts() && !result.all_identical() {
                 // Show merge modal
                 info!("Conflicts found, opening merge modal");
-                self.duplicate_merge_modal = Some(DuplicateMergeModal::new(result));
+                let mut modal = DuplicateMergeModal::new(result.clone());
+                
+                // Populate user cache for assignee display
+                // Add current user to cache
+                if let Some(ref user) = self.shared_ctx.current_user {
+                    modal.cache_user(&user.get_id(), user.get_username());
+                }
+                // Add store users to cache
+                for user in &self.shared_ctx.store_users {
+                    modal.cache_user(&user.get_id(), user.get_username());
+                }
+                // Log assignees from the duplicate check result
+                if let Some(ref task_dup) = result.task {
+                    info!("Existing task assignee: {:?}", task_dup.existing.assignee);
+                    info!("New task assignee: {:?}", task_dup.new.assignee);
+                }
+                
+                self.duplicate_merge_modal = Some(modal);
                 self.tur_submit_state = TurSubmitState::AwaitingResolution;
             } else {
                 // No conflicts or all identical - proceed with submission
@@ -125,19 +164,34 @@ impl MastertechContext {
         let toast_tx = get_toast_sender();
 
         // Apply resolution if provided
-        let (task_data, ticket_data, customer_data, computer_data) = if let Some(res) = resolution {
-            // Get the duplicate check result to access existing data
-            // For now, we'll just use the pending data since the modal was closed
-            // In a real implementation, you'd store the check result
-            (pending.task_data, pending.ticket_data, pending.customer_data, pending.computer_data)
+        let (mut task_data, ticket_data, customer_data, computer_data) = if let Some(ref res) = resolution {
+            if let Some(ref check_result) = pending.duplicate_check_result {
+                // Apply the user's resolution choices
+                Self::apply_resolution(check_result, &pending, res)
+            } else {
+                info!("No duplicate check result found, using pending data as-is");
+                (pending.task_data.clone(), pending.ticket_data.clone(), 
+                 pending.customer_data.clone(), pending.computer_data.clone())
+            }
         } else {
-            (pending.task_data, pending.ticket_data, pending.customer_data, pending.computer_data)
+            (pending.task_data.clone(), pending.ticket_data.clone(), 
+             pending.customer_data.clone(), pending.computer_data.clone())
         };
+
+        // IMPORTANT: When there's an existing task, ALWAYS use the existing task's ID
+        // The resolution determines which DATA to use, but we always update the existing record
+        if let Some(ref check_result) = pending.duplicate_check_result {
+            if let Some(ref task_dup) = check_result.task {
+                // Always use existing task ID when there's a duplicate - this is an UPDATE
+                info!("Existing task found, using existing task ID for update: {:?}", task_dup.existing.id);
+                task_data.id = task_dup.existing.id.clone();
+            }
+        }
 
         let task_notes = pending.task_notes;
         let send_specs = pending.send_specs;
 
-        let state_tx = self.duplicate_check_tx.clone();
+        let _state_tx = self.duplicate_check_tx.clone();
         
         spawn(async move {
             let send_payload_result = create_full_task_payload(

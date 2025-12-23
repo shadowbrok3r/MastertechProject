@@ -4,15 +4,16 @@
 //! Allows users to keep existing, use new, or merge fields from both versions.
 
 use eframe::egui::{
-    Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, 
-    RichText, ScrollArea, Shadow, Stroke, Ui, Vec2, Widget, Window
+    Align, Align2, Button, Color32, Context, Frame, Grid, Key, Layout, Margin, 
+    RichText, ScrollArea, Shadow, Ui, Vec2, Window
 };
 use database::schema::{
-    ComputerData, CustomerData, DuplicateCheckResult, DuplicatePair, 
+    ComputerData, CustomerData, DuplicateCheckResult, RecordId, RecordIdExt,
     DuplicateResolution, FieldDisplay, FieldSelections, LiveTaskPayload, 
-    MergeResolution, TicketData
+    MergeResolution, TicketData, merge_task, merge_ticket, merge_customer, merge_computer
 };
 use serde::Serialize;
+use std::collections::HashMap;
 
 use super::task_modal::ModalAction;
 
@@ -24,6 +25,7 @@ pub enum MergeModalPage {
     ServiceOrder,
     Customer,
     Computer,
+    Preview,
     Summary,
 }
 
@@ -44,6 +46,9 @@ pub struct DuplicateMergeModal {
     pub confirmed: bool,
     /// Whether the user cancelled
     pub cancelled: bool,
+    /// Cache of user RecordId -> username for display
+    #[serde(skip)]
+    pub user_cache: HashMap<String, String>,
 }
 
 impl Default for DuplicateMergeModal {
@@ -56,6 +61,7 @@ impl Default for DuplicateMergeModal {
             is_open: false,
             confirmed: false,
             cancelled: false,
+            user_cache: HashMap::new(),
         }
     }
 }
@@ -71,6 +77,22 @@ impl DuplicateMergeModal {
             is_open: true,
             confirmed: false,
             cancelled: false,
+            user_cache: HashMap::new(),
+        }
+    }
+    
+    /// Add a user to the cache for display purposes
+    pub fn cache_user(&mut self, id: &RecordId, username: &str) {
+        self.user_cache.insert(id.key_string(), username.to_string());
+    }
+    
+    /// Get a formatted string for an assignee: "Username (RecordId)" or just the ID if not cached
+    pub fn format_assignee(&self, id: &RecordId) -> String {
+        let id_str = id.key_string();
+        if let Some(username) = self.user_cache.get(&id_str) {
+            format!("{} ({})", username, id_str)
+        } else {
+            id_str
         }
     }
 
@@ -114,20 +136,16 @@ impl DuplicateMergeModal {
         Window::new(title_text)
             .frame(
                 Frame::default()
-                    .inner_margin(Margin::symmetric(12, 12))
+                    .inner_margin(Margin::symmetric(16, 16))
                     .stroke(style.window_stroke)
                     .fill(style.window_fill)
                     .corner_radius(style.menu_corner_radius)
                     .shadow(shadow)
             )
             .pivot(Align2::CENTER_CENTER)
-            .default_size([800.0, 600.0])
-            .min_width(750.0)
-            .max_width(900.0)
-            .min_height(500.0)
-            .max_height(700.0)
+            .fixed_size([800., 700.0])
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 self.ui_content(ui);
@@ -155,15 +173,20 @@ impl DuplicateMergeModal {
         ui.separator();
         ui.add_space(10.0);
 
-        // Main content area
+        // Main content area - use available height minus space for buttons
+        let available_height = ui.available_height() - 60.0;
         ScrollArea::vertical()
-            .max_height(400.0)
+            .min_scrolled_height(available_height)
+            .max_height(available_height)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 match self.current_page {
                     MergeModalPage::Task => self.render_task_diff(ui),
                     MergeModalPage::ServiceOrder => self.render_service_order_diff(ui),
                     MergeModalPage::Customer => self.render_customer_diff(ui),
                     MergeModalPage::Computer => self.render_computer_diff(ui),
+                    MergeModalPage::Preview => self.render_preview(ui),
                     MergeModalPage::Summary => self.render_summary(ui),
                 }
             });
@@ -186,7 +209,7 @@ impl DuplicateMergeModal {
             if has_task {
                 let selected = self.current_page == MergeModalPage::Task;
                 let task_dup = self.check_result.task.as_ref().unwrap();
-                let label = if task_dup.is_identical { "Task ✓" } else { "Task ⚠" };
+                let label = if task_dup.is_identical { "Task ✅" } else { "Task ⚠" };
                 if ui.selectable_label(selected, RichText::new(label).strong()).clicked() {
                     self.current_page = MergeModalPage::Task;
                 }
@@ -195,7 +218,7 @@ impl DuplicateMergeModal {
             if has_service {
                 let selected = self.current_page == MergeModalPage::ServiceOrder;
                 let svc_dup = self.check_result.service_order.as_ref().unwrap();
-                let label = if svc_dup.is_identical { "Service ✓" } else { "Service ⚠" };
+                let label = if svc_dup.is_identical { "Service ✅" } else { "Service ⚠" };
                 if ui.selectable_label(selected, RichText::new(label).strong()).clicked() {
                     self.current_page = MergeModalPage::ServiceOrder;
                 }
@@ -204,7 +227,7 @@ impl DuplicateMergeModal {
             if has_customer {
                 let selected = self.current_page == MergeModalPage::Customer;
                 let cust_dup = self.check_result.customer.as_ref().unwrap();
-                let label = if cust_dup.is_identical { "Customer ✓" } else { "Customer ⚠" };
+                let label = if cust_dup.is_identical { "Customer ✅" } else { "Customer ⚠" };
                 if ui.selectable_label(selected, RichText::new(label).strong()).clicked() {
                     self.current_page = MergeModalPage::Customer;
                 }
@@ -213,7 +236,7 @@ impl DuplicateMergeModal {
             if has_computer {
                 let selected = self.current_page == MergeModalPage::Computer;
                 let comp_dup = self.check_result.computer.as_ref().unwrap();
-                let label = if comp_dup.is_identical { "Computer ✓" } else { "Computer ⚠" };
+                let label = if comp_dup.is_identical { "Computer ✅" } else { "Computer ⚠" };
                 if ui.selectable_label(selected, RichText::new(label).strong()).clicked() {
                     self.current_page = MergeModalPage::Computer;
                 }
@@ -225,6 +248,13 @@ impl DuplicateMergeModal {
                     RichText::new("Summary").strong()
                 ).clicked() {
                     self.current_page = MergeModalPage::Summary;
+                }
+                
+                if ui.selectable_label(
+                    self.current_page == MergeModalPage::Preview,
+                    RichText::new("📋 Preview").strong().color(Color32::from_rgb(100, 200, 255))
+                ).clicked() {
+                    self.current_page = MergeModalPage::Preview;
                 }
             });
         });
@@ -249,15 +279,17 @@ impl DuplicateMergeModal {
     fn render_task_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.task.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::GREEN, "✓ Task records are identical - no action needed");
+                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Task records are identical - no action needed");
                 return;
             }
+            let user_cache = self.user_cache.clone();
             render_task_field_diff(
                 ui,
                 &dup.existing,
                 &dup.new,
                 &mut self.resolution.task_resolution,
                 &mut self.resolution.task_fields,
+                &user_cache,
             );
         } else {
             ui.label("No duplicate task found.");
@@ -267,7 +299,7 @@ impl DuplicateMergeModal {
     fn render_service_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.service_order.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::GREEN, "✓ Service Order records are identical - no action needed");
+                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Service Order records are identical - no action needed");
                 return;
             }
             render_ticket_field_diff(
@@ -285,7 +317,7 @@ impl DuplicateMergeModal {
     fn render_customer_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.customer.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::GREEN, "✓ Customer records are identical - no action needed");
+                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Customer records are identical - no action needed");
                 return;
             }
             render_customer_field_diff(
@@ -303,7 +335,7 @@ impl DuplicateMergeModal {
     fn render_computer_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.computer.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::GREEN, "✓ Computer records are identical - no action needed");
+                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Computer records are identical - no action needed");
                 return;
             }
             render_computer_field_diff(
@@ -347,9 +379,9 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Task"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::GREEN, "Identical");
+                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(Color32::YELLOW, "Conflict");
+                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.task_resolution)); });
@@ -361,9 +393,9 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Service Order"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::GREEN, "Identical");
+                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(Color32::YELLOW, "Conflict");
+                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.service_order_resolution)); });
@@ -375,9 +407,9 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Customer"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::GREEN, "Identical");
+                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(Color32::YELLOW, "Conflict");
+                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.customer_resolution)); });
@@ -389,15 +421,115 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Computer"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::GREEN, "Identical");
+                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(Color32::YELLOW, "Conflict");
+                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.computer_resolution)); });
                     });
                 }
             });
+    }
+
+    fn render_preview(&mut self, ui: &mut Ui) {
+        ui.heading("📋 Preview - Final Result");
+        ui.add_space(5.0);
+        ui.label(RichText::new("This shows what will be created/updated based on your resolution choices.").weak());
+        ui.add_space(15.0);
+
+        // Task Preview
+        if let Some(ref dup) = self.check_result.task.clone() {
+            let final_task = match self.resolution.task_resolution {
+                MergeResolution::KeepExisting => dup.existing.clone(),
+                MergeResolution::UseNew => dup.new.clone(),
+                MergeResolution::Merge => merge_task(&dup.existing, &dup.new, &self.resolution.task_fields),
+                MergeResolution::Cancel => dup.existing.clone(),
+            };
+            
+            let assignee_display = self.format_assignee(&final_task.assignee);
+            
+            ui.collapsing(RichText::new("📝 Task").strong().size(16.0), |ui| {
+                render_preview_grid(ui, &[
+                    ("Task Name", &final_task.task_name),
+                    ("Description", &final_task.task_description),
+                    ("Service Number", &final_task.service_number.clone().unwrap_or_default()),
+                    ("Assignee", &assignee_display),
+                    ("Status", final_task.status.as_str()),
+                    ("Priority", final_task.priority.as_str()),
+                    ("Completed", &final_task.completed.to_string()),
+                ]);
+            });
+            ui.add_space(10.0);
+        }
+
+        // Service Order Preview
+        if let Some(ref dup) = self.check_result.service_order.clone() {
+            let final_ticket = match self.resolution.service_order_resolution {
+                MergeResolution::KeepExisting => dup.existing.clone(),
+                MergeResolution::UseNew => dup.new.clone(),
+                MergeResolution::Merge => merge_ticket(&dup.existing, &dup.new, &self.resolution.service_order_fields),
+                MergeResolution::Cancel => dup.existing.clone(),
+            };
+            
+            ui.collapsing(RichText::new("🎫 Service Order").strong().size(16.0), |ui| {
+                render_preview_grid(ui, &[
+                    ("Service Number", &final_ticket.service_number),
+                    ("Check-in Rep", &final_ticket.checkin_rep),
+                    ("Sales Rep", &final_ticket.sales_rep),
+                    ("Tech", &final_ticket.tech),
+                    ("Salesman", &final_ticket.salesman),
+                    ("Terms", &final_ticket.terms),
+                    ("Total", &final_ticket.ticket_total),
+                    ("Check-in Notes", &final_ticket.checkin_notes),
+                ]);
+            });
+            ui.add_space(10.0);
+        }
+
+        // Customer Preview
+        if let Some(ref dup) = self.check_result.customer.clone() {
+            let final_customer = match self.resolution.customer_resolution {
+                MergeResolution::KeepExisting => dup.existing.clone(),
+                MergeResolution::UseNew => dup.new.clone(),
+                MergeResolution::Merge => merge_customer(&dup.existing, &dup.new, &self.resolution.customer_fields),
+                MergeResolution::Cancel => dup.existing.clone(),
+            };
+            
+            ui.collapsing(RichText::new("👤 Customer").strong().size(16.0), |ui| {
+                render_preview_grid(ui, &[
+                    ("Name", &final_customer.name),
+                    ("Email", &final_customer.email),
+                    ("Phone", &final_customer.phone_number),
+                    ("Phone 2", &final_customer.phone_number_2),
+                    ("Customer Code", &final_customer.cust_code),
+                ]);
+            });
+            ui.add_space(10.0);
+        }
+
+        // Computer Preview
+        if let Some(ref dup) = self.check_result.computer.clone() {
+            let final_computer = match self.resolution.computer_resolution {
+                MergeResolution::KeepExisting => dup.existing.clone(),
+                MergeResolution::UseNew => dup.new.clone(),
+                MergeResolution::Merge => merge_computer(&dup.existing, &dup.new, &self.resolution.computer_fields),
+                MergeResolution::Cancel => dup.existing.clone(),
+            };
+            
+            ui.collapsing(RichText::new("💻 Computer").strong().size(16.0), |ui| {
+                render_preview_grid(ui, &[
+                    ("Hostname", &final_computer.hostname),
+                    ("OS", &final_computer.operating_system),
+                    ("CPU", &final_computer.cpu),
+                    ("GPU", &final_computer.gpu),
+                    ("RAM", &final_computer.ram),
+                    ("Motherboard", &final_computer.motherboard_name),
+                    ("Product Name", &final_computer.product_name),
+                    ("Product Serial", &final_computer.product_serial),
+                ]);
+            });
+        }
     }
 
     fn render_action_buttons(&mut self, ui: &mut Ui) {
@@ -455,41 +587,61 @@ fn render_field_row(
     use_new: &mut bool,
     show_merge_option: bool,
 ) {
+    let available_width = 780.;
+    // Calculate column width: total width minus arrow (30px), checkbox area (80px if shown), and spacing
+    let checkbox_width = if show_merge_option { 90.0 } else { 0.0 };
+    let column_width = (available_width - 40.0 - checkbox_width) / 2.0;
+    
+    // Field name header
     ui.horizontal(|ui| {
-        ui.label(RichText::new(field_name).strong());
+        ui.label(RichText::new(field_name).strong().color(ui.style().visuals.warn_fg_color));
     });
 
-    ui.horizontal(|ui| {
-        // Existing value column
-        Frame::default()
-            .fill(Color32::from_rgb(60, 30, 30))
-            .corner_radius(4.0)
-            .inner_margin(Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.set_min_width(250.0);
-                let text = if existing_value.is_empty() { "(empty)" } else { existing_value };
-                ui.label(RichText::new(text).color(Color32::from_rgb(255, 150, 150)));
-            });
+    // Use a grid for proper column alignment
+    Grid::new(format!("field_row_{}", field_name))
+        .num_columns(if show_merge_option { 4 } else { 3 })
+        .spacing([8.0, 4.0])
+        .show(ui, |ui| {
+            // Existing value column
+            Frame::default()
+                .fill(Color32::from_rgb(60, 30, 50))
+                .corner_radius(4.0)
+                .inner_margin(Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_min_width(column_width);
+                    ui.set_max_width(column_width);
+                    let text = if existing_value.is_empty() { "(empty)" } else { existing_value };
+                    ui.add(eframe::egui::Label::new(
+                        RichText::new(text).color(Color32::from_rgb(255, 150, 150))
+                    ).wrap());
+                });
 
-        ui.label("→");
+            // Arrow
+            ui.label(RichText::new("➡").strong());
 
-        // New value column
-        Frame::default()
-            .fill(Color32::from_rgb(30, 60, 30))
-            .corner_radius(4.0)
-            .inner_margin(Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.set_min_width(250.0);
-                let text = if new_value.is_empty() { "(empty)" } else { new_value };
-                ui.label(RichText::new(text).color(Color32::from_rgb(150, 255, 150)));
-            });
+            // New value column
+            Frame::default()
+                .fill(Color32::from_rgb(30, 60, 55))
+                .corner_radius(4.0)
+                .inner_margin(Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_min_width(column_width);
+                    ui.set_max_width(column_width);
+                    let text = if new_value.is_empty() { "(empty)" } else { new_value };
+                    ui.add(eframe::egui::Label::new(
+                        RichText::new(text).color(Color32::from_rgb(150, 255, 150))
+                    ).wrap());
+                });
 
-        if show_merge_option {
-            ui.checkbox(use_new, "Use New");
-        }
-    });
+            // Checkbox for merge option
+            if show_merge_option {
+                ui.checkbox(use_new, "Use New");
+            }
+            
+            ui.end_row();
+        });
 
-    ui.add_space(5.0);
+    ui.add_space(8.0);
 }
 
 /// Render diff for LiveTaskPayload
@@ -499,6 +651,7 @@ pub fn render_task_field_diff(
     new: &LiveTaskPayload,
     resolution: &mut MergeResolution,
     selections: &mut FieldSelections,
+    user_cache: &HashMap<String, String>,
 ) {
     ui.heading("Task Differences");
     ui.add_space(10.0);
@@ -517,13 +670,27 @@ pub fn render_task_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::GREEN, "No differences found.");
+        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
         return;
     }
 
     for (field_name, existing_val, new_val) in fields {
         let mut use_new = selections.use_new(&field_name);
-        render_field_row(ui, &field_name, &existing_val, &new_val, &mut use_new, show_merge);
+        
+        // Format assignee field with username if available
+        let (display_existing, display_new) = if field_name == "assignee" {
+            let existing_display = user_cache.get(&existing_val)
+                .map(|name| format!("{} ({})", name, existing_val))
+                .unwrap_or_else(|| existing_val.clone());
+            let new_display = user_cache.get(&new_val)
+                .map(|name| format!("{} ({})", name, new_val))
+                .unwrap_or_else(|| new_val.clone());
+            (existing_display, new_display)
+        } else {
+            (existing_val.clone(), new_val.clone())
+        };
+        
+        render_field_row(ui, &field_name, &display_existing, &display_new, &mut use_new, show_merge);
         if show_merge {
             selections.set_use_new(&field_name, use_new);
         }
@@ -554,7 +721,7 @@ pub fn render_ticket_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::GREEN, "No differences found.");
+        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
         return;
     }
 
@@ -591,7 +758,7 @@ pub fn render_customer_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::GREEN, "No differences found.");
+        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
         return;
     }
 
@@ -628,7 +795,7 @@ pub fn render_computer_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::GREEN, "No differences found.");
+        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
         return;
     }
 
@@ -639,5 +806,21 @@ pub fn render_computer_field_diff(
             selections.set_use_new(&field_name, use_new);
         }
     }
+}
+
+/// Helper function to render a preview grid showing field values
+fn render_preview_grid(ui: &mut Ui, fields: &[(&str, &str)]) {
+    Grid::new(ui.next_auto_id())
+        .num_columns(2)
+        .spacing([20.0, 6.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for (label, value) in fields {
+                ui.label(RichText::new(*label).strong().color(Color32::from_rgb(150, 180, 220)));
+                let display_value = if value.is_empty() { "(empty)" } else { *value };
+                ui.add(eframe::egui::Label::new(display_value).wrap());
+                ui.end_row();
+            }
+        });
 }
 

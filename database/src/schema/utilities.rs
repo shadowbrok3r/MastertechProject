@@ -81,6 +81,19 @@ where
     Ok(record)
 }
 
+pub async fn record_exists(id: RecordId) -> Result<Option<bool>, Error>
+{
+    let record_exists: Option<bool> = DATABASE
+        .query("RETURN record::exists($id)")
+        .bind(("id", id))
+        .await?
+        .take(0)?;
+
+    match record_exists {
+        Some(exists) => if exists { Ok(Some(true)) } else { Ok(Some(false)) },
+        None => Err(anyhow::anyhow!("Record does not exist")),
+    }
+}
 
 pub async fn get_qcs() -> anyhow::Result<Vec<Qc>, anyhow::Error> {
     let qcs: Vec<Qc> = DATABASE
@@ -511,6 +524,22 @@ pub async fn check_for_duplicates(
                 .await?;
             
             if let Some(existing) = existing_ticket {
+                // Also fetch the computer linked to this service order if it exists
+                if let Some(ref computer_id) = existing.computer {
+                    let existing_computer: Option<ComputerData> = DATABASE
+                        .select(computer_id.clone())
+                        .await?;
+                    
+                    if let Some(existing_comp) = existing_computer {
+                        // Compare with the new computer if provided, otherwise show existing for reference
+                        if let Some(new_comp) = new_computer {
+                            result.computer = Some(DuplicatePair::new(existing_comp, new_comp.clone()));
+                        } else {
+                            // No new computer data, but existing has one - show for reference
+                            result.computer = Some(DuplicatePair::new(existing_comp.clone(), existing_comp));
+                        }
+                    }
+                }
                 result.service_order = Some(DuplicatePair::new(existing, new_ticket.clone()));
             }
         }
@@ -523,6 +552,20 @@ pub async fn check_for_duplicates(
             .take(0)?;
         
         if let Some(existing) = existing_tickets.first() {
+            // Also fetch the computer linked to this service order if it exists
+            if let Some(ref computer_id) = existing.computer {
+                let existing_computer: Option<ComputerData> = DATABASE
+                    .select(computer_id.clone())
+                    .await?;
+                
+                if let Some(existing_comp) = existing_computer {
+                    if let Some(new_comp) = new_computer {
+                        result.computer = Some(DuplicatePair::new(existing_comp, new_comp.clone()));
+                    } else {
+                        result.computer = Some(DuplicatePair::new(existing_comp.clone(), existing_comp));
+                    }
+                }
+            }
             result.service_order = Some(DuplicatePair::new(existing.clone(), new_ticket.clone()));
         }
     }
@@ -553,29 +596,32 @@ pub async fn check_for_duplicates(
     }
     
     // 4. Check for existing computer by hostname or serial (if specs are being sent)
-    if let Some(new_comp) = new_computer {
-        let hostname = new_comp.hostname.clone();
-        let product_serial = new_comp.product_serial.clone();
-        let motherboard_serial = new_comp.motherboard_serial.clone();
+    // Only do this if we haven't already found a computer from the service order
+    if result.computer.is_none() {
+        if let Some(new_comp) = new_computer {
+            let hostname = new_comp.hostname.clone();
+            let product_serial = new_comp.product_serial.clone();
+            let motherboard_serial = new_comp.motherboard_serial.clone();
+            
+            let computer_query = r#"
+                SELECT * FROM computer WHERE 
+                    (hostname == $hostname AND hostname != "") OR
+                    (product_serial == $product_serial AND product_serial != "") OR
+                    (motherboard_serial == $motherboard_serial AND motherboard_serial != "")
+                LIMIT 1
+            "#;
+            
+            let existing_computers: Vec<ComputerData> = DATABASE
+                .query(computer_query)
+                .bind(("hostname", hostname))
+                .bind(("product_serial", product_serial))
+                .bind(("motherboard_serial", motherboard_serial))
+                .await?
+                .take(0)?;
         
-        let computer_query = r#"
-            SELECT * FROM computer WHERE 
-                (hostname == $hostname AND hostname != "") OR
-                (product_serial == $product_serial AND product_serial != "") OR
-                (motherboard_serial == $motherboard_serial AND motherboard_serial != "")
-            LIMIT 1
-        "#;
-        
-        let existing_computers: Vec<ComputerData> = DATABASE
-            .query(computer_query)
-            .bind(("hostname", hostname))
-            .bind(("product_serial", product_serial))
-            .bind(("motherboard_serial", motherboard_serial))
-            .await?
-            .take(0)?;
-        
-        if let Some(existing) = existing_computers.first() {
-            result.computer = Some(DuplicatePair::new(existing.clone(), new_comp.clone()));
+            if let Some(existing) = existing_computers.first() {
+                result.computer = Some(DuplicatePair::new(existing.clone(), new_comp.clone()));
+            }
         }
     }
     

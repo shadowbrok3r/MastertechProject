@@ -127,6 +127,8 @@ pub struct PendingTurData {
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
+    /// Stored duplicate check result for applying resolutions
+    pub duplicate_check_result: Option<DuplicateCheckResult>,
     pub send_specs: bool,
 }
 

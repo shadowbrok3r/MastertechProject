@@ -52,11 +52,38 @@ impl Default for User {
 
 impl Eq for User {}
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub enum UserAuthorization {
     #[default]
     User,
     Admin
+}
+
+impl SurrealValue for UserAuthorization {
+    fn kind_of() -> surrealdb::types::Kind {
+        surrealdb::types::Kind::String
+    }
+
+    fn into_value(self) -> surrealdb::types::Value {
+        let s = match self {
+            UserAuthorization::User => "User",
+            UserAuthorization::Admin => "Admin",
+        };
+        surrealdb::types::Value::String(s.to_string())
+    }
+
+    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
+        match value {
+            surrealdb::types::Value::String(s) => {
+                match s.as_str() {
+                    "User" => Ok(UserAuthorization::User),
+                    "Admin" => Ok(UserAuthorization::Admin),
+                    other => anyhow::bail!("Unknown UserAuthorization variant: {}", other),
+                }
+            }
+            _ => anyhow::bail!("Expected string for UserAuthorization, got {:?}", value),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
@@ -272,6 +299,19 @@ impl User {
     pub fn set_statuses(&mut self, status: Status) -> &mut Self {
         self.user_statuses.as_mut().unwrap_or(&mut Status::VALUES.to_vec()).push(status);
         self
+    }
+
+    pub async fn get_user_record_from_id(id: RecordId) -> anyhow::Result<Self, anyhow::Error> {
+        let user: Option<Self> = DATABASE
+            .query("SELECT * FROM user WHERE id == $id")
+            .bind(("id", id))
+            .await?
+            .take(0)?;
+
+        match user {
+            Some(user) => Ok(user),
+            None => Err(anyhow::anyhow!("User not found")),
+        }
     }
 
     /// Finds and retrieves the associated Employee record based on the User information.
