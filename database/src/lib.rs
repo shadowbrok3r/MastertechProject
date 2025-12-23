@@ -8,7 +8,6 @@ use surrealdb::{
 pub use surrealdb::types::SurrealValue;
 use once_cell::sync::Lazy;
 use serde::Serialize;
-use surrealdb_types::RecordId;
 use std::fmt::Debug;
 use schema::User;
 use log::info;
@@ -18,7 +17,7 @@ pub mod schema;
 
 pub use platform::PlatformSpawner;
 
-use crate::schema::{NOTIFICATION_TABLE, Notification, USER_TABLE};
+use crate::schema::{NOTIFICATION_TABLE, Notification};
 
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 

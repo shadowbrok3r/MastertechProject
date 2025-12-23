@@ -1,8 +1,7 @@
-use database::{DATABASE, create_guest_notification, init_database, schema::{NOTIFICATION_TABLE, Notification, USER_TABLE, User, random_record_id}};
 use displays::{PlatformSpawner, Spawner, app_state::{AppState, MainPages}, pages::login_page::HASH, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use database::{create_guest_notification, schema::{NOTIFICATION_TABLE, Notification, USER_TABLE, random_record_id}};
+use crate::{app_state::MasterTechApp, utilities::{load_encrypted_user_data, save_encrypted_user_data}};
 use surrealdb::types::RecordId;
-use tokio::spawn;
-use crate::{app_state::MasterTechApp, utilities::save_encrypted_user_data};
 use eframe::egui::Context;
 
 impl MasterTechApp {
@@ -95,7 +94,22 @@ impl MasterTechApp {
                         };
                         
                         let msg = match user {
-                            Some(u) => format!("{u} ran into an error logging in: {e:?}"),
+                            Some(u) => {
+                                if u.is_empty() {
+                                    if let Some(login) = load_encrypted_user_data(HASH) {
+                                        let username = login.username.clone();
+                                        if username.is_empty() {
+                                            format!("A user ran into an error logging in: {e:?}")
+                                        } else {
+                                            format!("{username} ran into an error logging in: {e:?}")
+                                        }
+                                    } else {
+                                        format!("A user ran into an error logging in: {e:?}")
+                                    }
+                                } else {
+                                    format!("{u} ran into an error logging in: {e:?}")
+                                }
+                            },
                             None => format!("A user ran into an error logging in: {e:?}"),
                         };
 

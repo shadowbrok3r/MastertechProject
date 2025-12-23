@@ -382,7 +382,10 @@ impl SharedContext {
     pub fn login_mut(&mut self) -> Option<&mut Login> {
         match self.state {
             AppState::NoAuth(_) => Some(&mut self.login),
-            AppState::Authenticated(MainPages::Tasks) => None,
+            AppState::Authenticated(MainPages::Tasks) => {
+                self.login.password = Default::default();
+                Some(&mut self.login)
+            },
             _ => None,
         }
     }
