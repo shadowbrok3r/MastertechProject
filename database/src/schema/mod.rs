@@ -49,6 +49,7 @@ pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
 pub const TASK_TABLE: &str = "task";
+pub const TASK_HISTORY_TABLE: &str = "task_history";
 pub const TASK_NOTE_TABLE: &str = "task_note";
 pub const SEB_TABLE: &str = "seb_data";
 pub const USER_TABLE: &str = "user";

@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Id, Layout, Margin, RichText, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, RecordIdExt, Store, TaskNotePayload, TicketData, User};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, ComputerData, CustomerData, LiveTaskPayload, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use crossbeam::channel::{Receiver, Sender};
 use rfd::{AsyncFileDialog, FileHandle};
@@ -12,7 +12,7 @@ use bytes::Bytes;
 use core::f32;
 use log::info;
 
-use super::tabs::{display_computer_page, display_job_builder_page, display_software_page, display_ticket_page};
+use super::tabs::{display_computer_page, display_history_page, display_job_builder_page, display_software_page, display_ticket_page};
 
 #[cfg(target_arch="wasm32")]
 use std::sync::Mutex;
@@ -55,6 +55,12 @@ pub struct TaskModal {
     pub initial_notes_tx: Sender<Vec<TaskNotePayload>>,
     #[serde(skip)]
     pub initial_notes_rx: Receiver<Vec<TaskNotePayload>>,
+    #[serde(skip)]
+    pub task_history_tx: Sender<Vec<TaskHistory>>,
+    #[serde(skip)]
+    pub task_history_rx: Receiver<Vec<TaskHistory>>,
+    /// Cached task history records
+    pub task_history: Vec<TaskHistory>,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -66,6 +72,7 @@ pub enum ModalAction {
     ComputerInfoPage,
     JobBuilderPage,
     TaskNotePage,
+    TaskHistoryPage,
     ImportTask,
     Close,
     // TaskPage,
@@ -78,10 +85,12 @@ impl TaskModal {
         let (customer_tx, customer_rx) = crossbeam::channel::unbounded();
         let (computer_tx, computer_rx) = crossbeam::channel::unbounded();
         let (initial_notes_tx, initial_notes_rx) = crossbeam::channel::unbounded();
+        let (task_history_tx, task_history_rx) = crossbeam::channel::unbounded();
         let comp_tx = computer_tx.clone();
         let cust_tx = customer_tx.clone();
         let svc_tx = service_ticket_tx.clone();
         let notes_tx = initial_notes_tx.clone();
+        let history_tx = task_history_tx.clone();
         let id = task.id.clone();
         let service_number = task.service_number.clone();
         PlatformSpawner::spawn(async move {
@@ -100,6 +109,11 @@ impl TaskModal {
             match TaskNotePayload::get_db_notes_from_task_id(id.clone()).await {
                 Ok(notes) => { let _ = notes_tx.try_send(notes); },
                 Err(e) => log::error!("Error getting notes from task ID: {e:?}"),
+            }
+            // Fetch task history
+            match TaskHistory::get_history_for_task(id.clone()).await {
+                Ok(history) => { let _ = history_tx.try_send(history); },
+                Err(e) => log::error!("Error getting task history: {e:?}"),
             }
 
             if let Some(service_number) = service_number {
@@ -121,6 +135,8 @@ impl TaskModal {
             customer_tx, customer_rx,
             computer_tx, computer_rx,
             initial_notes_tx, initial_notes_rx,
+            task_history_tx, task_history_rx,
+            task_history: Vec::new(),
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -157,7 +173,12 @@ impl TaskModal {
         if let Ok(notes) = self.initial_notes_rx.try_recv() {
             log::info!("Received notes: {}", notes.len());
             self.chat_view.set_notes(notes);
-        } 
+        }
+        
+        if let Ok(history) = self.task_history_rx.try_recv() {
+            log::info!("Received task history: {} records", history.len());
+            self.task_history = history;
+        }
     }
 
 }
@@ -196,11 +217,12 @@ impl DisplayModal for TaskModal {
 
                 ui[1].vertical_centered(|ui| {
                     ui.horizontal_top(|ui| {
-                        ui.add_space(75.);
+                        ui.add_space(55.);
                         if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::TicketInfoPage,
                             RichText::new("🖹").heading()
                         ))
+                        .on_hover_text("Ticket Info")
                         .clicked() {
                             self.current_page_state = ModalAction::TicketInfoPage;
                         }
@@ -208,6 +230,7 @@ impl DisplayModal for TaskModal {
                             self.current_page_state == ModalAction::ComputerInfoPage,
                             RichText::new("🖥").heading()
                         ))
+                        .on_hover_text("Computer Info")
                         .clicked() {
                             self.current_page_state = ModalAction::ComputerInfoPage;
                         }
@@ -215,13 +238,23 @@ impl DisplayModal for TaskModal {
                             self.current_page_state == ModalAction::SoftwareInfoPage,
                             RichText::new("💾").heading()
                         ))
+                        .on_hover_text("Software Info")
                         .clicked() {
                             self.current_page_state = ModalAction::SoftwareInfoPage;
+                        }
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
+                            self.current_page_state == ModalAction::TaskHistoryPage,
+                            RichText::new("📜").heading()
+                        ))
+                        .on_hover_text("Task History")
+                        .clicked() {
+                            self.current_page_state = ModalAction::TaskHistoryPage;
                         }
                         if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::TaskNotePage,
                             RichText::new("💬").heading()
                         ))
+                        .on_hover_text("Task Notes")
                         .clicked() {
                             self.current_page_state = ModalAction::TaskNotePage;
                         }
@@ -252,6 +285,7 @@ impl DisplayModal for TaskModal {
                 ModalAction::ComputerInfoPage => 670.,
                 ModalAction::JobBuilderPage => 670.,
                 ModalAction::TaskNotePage => 715.,
+                ModalAction::TaskHistoryPage => 670.,
                 _ => 715.
             };
 
@@ -268,6 +302,7 @@ impl DisplayModal for TaskModal {
                 ModalAction::SoftwareInfoPage => display_software_page(ui, self.computer.as_mut().unwrap_or(&mut ComputerData::default()), avail_size),
                 ModalAction::JobBuilderPage   => display_job_builder_page(ui),
                 ModalAction::TaskNotePage     => self.chat_view.ui(ui),
+                ModalAction::TaskHistoryPage  => display_history_page(ui, &self.task_history, avail_size),
                 // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
                 _ => {}
             }

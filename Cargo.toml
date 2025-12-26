@@ -5,14 +5,14 @@ members = [ "database" , "displays", "MtechServer2.0", "Mastertech4.0"] #
 [workspace.dependencies]
 database = { path = "database" }
 eframe = { version="0.33", features=["serde",  "default_fonts", "glow"], default-features=false } # ratatui = { version = "0.29", features = ["crossterm", "unstable-widget-ref", "serde", "underline-color", "widget-calendar"] }
-ratatui = { git = "https://github.com/ratatui/ratatui", tag = "ratatui-v0.30.0-beta.0", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
+ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
 surrealdb = { git = "https://github.com/surrealdb/surrealdb", tag = "v3.0.0-beta.1", features = ["protocol-ws"] }  # surrealdb-alpha = {version = "3.0.6", features = ["protocol-ws"]}
 egui_extras = { version = "0.33", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = ["serde"] } 
 egui_logger = { git = "https://github.com/shadowbrok3r/egui_logger" }
-rmcp = { version = "0.11.0", features = ["server", "client", "transport-async-rw"] }
+rmcp = { version = "0.12.0", features = ["server", "client", "transport-async-rw"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } # features = ["now", "wasmbind", "wasm-bindgen", "js-sys"]
 tokio = { version = "1.48.0", features = ["full", "tracing"] }
 async-openai-wasm = { version = "0.29.5" }

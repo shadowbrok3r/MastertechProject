@@ -515,3 +515,78 @@ impl Store {
         Self::SAN,
     ];
 }
+
+// ============================================================================
+// Task History - tracks changes made to tasks
+// ============================================================================
+
+use super::TASK_HISTORY_TABLE;
+
+/// Represents a historical record of changes made to a task
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct TaskHistory {
+    pub id: RecordId,
+    /// The task that was modified
+    pub task_id: RecordId,
+    /// The user who made the change
+    pub user: RecordId,
+    /// The username of the user (for display purposes)
+    pub username: String,
+    /// JSON object containing the diff of changed fields
+    /// Format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
+    pub diff: serde_json::Value,
+    /// When the change was made
+    pub created_at: Datetime,
+}
+
+impl Default for TaskHistory {
+    fn default() -> Self {
+        Self {
+            id: random_record_id(TASK_HISTORY_TABLE),
+            task_id: random_record_id(TASK_TABLE),
+            user: random_record_id(USER_TABLE),
+            username: String::new(),
+            diff: serde_json::Value::Null,
+            created_at: Utc::now().into(),
+        }
+    }
+}
+
+impl TaskHistory {
+    /// Create a new TaskHistory record from diff data
+    pub fn new(
+        task_id: RecordId,
+        user_id: RecordId,
+        username: String,
+        diff: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: random_record_id(TASK_HISTORY_TABLE),
+            task_id,
+            user: user_id,
+            username,
+            diff,
+            created_at: Utc::now().into(),
+        }
+    }
+
+    /// Save this history record to the database
+    pub async fn save(&self) -> anyhow::Result<Option<Record>, anyhow::Error> {
+        let record: Option<Record> = DATABASE
+            .create(TASK_HISTORY_TABLE)
+            .content(self.clone())
+            .await?;
+        log::info!("Created task history record: {:?}", record);
+        Ok(record)
+    }
+
+    /// Get all history records for a specific task
+    pub async fn get_history_for_task(task_id: RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let history: Vec<Self> = DATABASE
+            .query("SELECT * FROM task_history WHERE task_id == $task_id ORDER BY created_at DESC")
+            .bind(("task_id", task_id))
+            .await?
+            .take(0)?;
+        Ok(history)
+    }
+}

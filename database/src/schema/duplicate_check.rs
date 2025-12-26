@@ -207,6 +207,45 @@ impl FieldDisplay for TicketData {
         if self.ticket_total != other.ticket_total {
             fields.push(("ticket_total".to_string(), self.ticket_total.clone(), other.ticket_total.clone()));
         }
+        // Additional fields that can cause conflicts
+        if self.doc_alias != other.doc_alias {
+            fields.push(("doc_alias".to_string(), self.doc_alias.clone(), other.doc_alias.clone()));
+        }
+        if self.created_at != other.created_at {
+            fields.push(("created_at".to_string(), 
+                self.created_at.to_string(), 
+                other.created_at.to_string()));
+        }
+        // Customer link (as display only - usually shouldn't differ)
+        if self.customer != other.customer {
+            fields.push(("customer".to_string(), 
+                self.customer.key_string(), 
+                other.customer.key_string()));
+        }
+        // Computer link
+        let self_computer = self.computer.as_ref().map(|c| c.key_string()).unwrap_or_default();
+        let other_computer = other.computer.as_ref().map(|c| c.key_string()).unwrap_or_default();
+        if self_computer != other_computer {
+            fields.push(("computer".to_string(), self_computer, other_computer));
+        }
+        // Hardware test results
+        if self.hardware_test_results != other.hardware_test_results {
+            fields.push(("hardware_tests".to_string(),
+                format!("HDD:{} SSD:{} RAM:{}", 
+                    self.hardware_test_results.hdd_test,
+                    self.hardware_test_results.ssd_test,
+                    self.hardware_test_results.ram_test),
+                format!("HDD:{} SSD:{} RAM:{}", 
+                    other.hardware_test_results.hdd_test,
+                    other.hardware_test_results.ssd_test,
+                    other.hardware_test_results.ram_test)));
+        }
+        // Current antivirus
+        let self_av = self.current_antivirus.as_ref().map(|v| v.join(", ")).unwrap_or_default();
+        let other_av = other.current_antivirus.as_ref().map(|v| v.join(", ")).unwrap_or_default();
+        if self_av != other_av {
+            fields.push(("current_antivirus".to_string(), self_av, other_av));
+        }
         
         fields
     }

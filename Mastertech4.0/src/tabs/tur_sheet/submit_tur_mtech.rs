@@ -1,16 +1,21 @@
 use database::schema::{
     utilities::{check_for_duplicates, create_full_task_payload}, 
     merge_computer, merge_customer, merge_task, merge_ticket,
-    DuplicateCheckResult, MergeResolution, RecordIdExt, TaskCreationResult
+    DuplicateCheckResult, FieldDisplay, MergeResolution, RecordIdExt, TaskCreationResult, TaskHistory
 };
 use displays::{get_toast_sender, modals::DuplicateMergeModal, ToastMessage};
 use crate::app_state::{MastertechContext, PendingTurData, TurSubmitState};
 use tokio::spawn;
 use log::info;
+use eframe::egui::{Align, Align2, Area, Button, Color32, Frame, Layout, Order, RichText, Vec2};
+use std::time::Instant;
+
+/// Duration for confirmation countdown (in seconds)
+const CONFIRMATION_COUNTDOWN_SECS: f32 = 5.0;
 
 impl MastertechContext {
     /// Main entry point for submitting a TUR sheet.
-    /// This initiates the duplicate check flow.
+    /// This shows a 5-second confirmation toast before starting the duplicate check.
     pub fn submit_tur_mastertech(&mut self) {
         // Don't start a new submission if one is already in progress
         if self.tur_submit_state != TurSubmitState::Idle {
@@ -53,7 +58,155 @@ impl MastertechContext {
             task_notes,
             send_specs,
             duplicate_check_result: None, // Will be populated when duplicate check completes
+            confirmation_start: Some(Instant::now()),
         });
+
+        // Update state to show confirmation toast
+        self.tur_submit_state = TurSubmitState::AwaitingConfirmation;
+        info!("Showing confirmation toast for service #{}", service_number);
+    }
+
+    /// Renders the confirmation toast UI. Call this in the UI loop.
+    pub fn render_confirmation_toast(&mut self, ctx: &eframe::egui::Context) {
+        if self.tur_submit_state != TurSubmitState::AwaitingConfirmation {
+            return;
+        }
+
+        let Some(ref pending) = self.pending_tur_data else {
+            self.tur_submit_state = TurSubmitState::Idle;
+            return;
+        };
+
+        let Some(start_time) = pending.confirmation_start else {
+            self.tur_submit_state = TurSubmitState::Idle;
+            return;
+        };
+
+        let elapsed = start_time.elapsed().as_secs_f32();
+        let remaining = (CONFIRMATION_COUNTDOWN_SECS - elapsed).max(0.0);
+        let progress = elapsed / CONFIRMATION_COUNTDOWN_SECS;
+
+        // Check if countdown has finished
+        if remaining <= 0.0 {
+            info!("Confirmation countdown finished, proceeding with duplicate check");
+            self.start_duplicate_check();
+            return;
+        }
+
+        // Render toast-like UI
+        let mut should_submit = false;
+        let mut should_cancel = false;
+
+        Area::new("confirmation_toast".into())
+            .anchor(Align2::RIGHT_BOTTOM, [-20.0, -80.0])
+            .order(Order::Foreground)
+            .interactable(true)
+            .show(ctx, |ui| {
+                Frame::popup(ui.style())
+                    .inner_margin(12.0)
+                    .fill(ui.style().visuals.window_fill)
+                    .stroke(ui.style().visuals.window_stroke)
+                    .show(ui, |ui| {
+                        ui.set_min_width(280.0);
+                        
+                        // Header with icon and countdown
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("⏳").size(18.0));
+                            ui.label(RichText::new(format!(
+                                "Creating task in {:.1}s...", 
+                                remaining
+                            )).strong().size(14.0));
+                        });
+                        
+                        ui.add_space(6.0);
+                        
+                        // Service number info
+                        let service_num = pending.ticket_data.service_number.clone();
+                        ui.label(RichText::new(format!("Service #{}", service_num))
+                            .color(Color32::from_rgb(150, 180, 220)));
+                        
+                        ui.add_space(8.0);
+                        
+                        // Progress bar
+                        let progress_rect = ui.available_rect_before_wrap();
+                        let progress_height = 4.0;
+                        let bar_rect = eframe::egui::Rect::from_min_size(
+                            eframe::egui::pos2(progress_rect.left(), progress_rect.top()),
+                            eframe::egui::vec2(progress_rect.width(), progress_height)
+                        );
+                        
+                        // Background
+                        ui.painter().rect_filled(
+                            bar_rect,
+                            2.0,
+                            Color32::from_rgb(60, 60, 60)
+                        );
+                        
+                        // Progress fill
+                        let fill_width = bar_rect.width() * progress;
+                        let fill_rect = eframe::egui::Rect::from_min_size(
+                            bar_rect.min,
+                            eframe::egui::vec2(fill_width, progress_height)
+                        );
+                        ui.painter().rect_filled(
+                            fill_rect,
+                            2.0,
+                            Color32::from_rgb(52, 235, 171)
+                        );
+                        
+                        ui.add_space(progress_height + 10.0);
+                        
+                        // Buttons
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.add(
+                                Button::new(RichText::new("Submit Now").color(Color32::LIGHT_GREEN))
+                                    .min_size(Vec2::new(90.0, 28.0))
+                            ).clicked() {
+                                should_submit = true;
+                            }
+                            
+                            ui.add_space(8.0);
+                            
+                            if ui.add(
+                                Button::new(RichText::new("Undo").color(Color32::LIGHT_RED))
+                                    .min_size(Vec2::new(60.0, 28.0))
+                            ).clicked() {
+                                should_cancel = true;
+                            }
+                        });
+                    });
+            });
+
+        // Request repaint for smooth countdown animation
+        ctx.request_repaint();
+
+        // Handle button clicks outside the closure
+        if should_submit {
+            info!("User clicked Submit Now");
+            self.start_duplicate_check();
+        } else if should_cancel {
+            info!("User clicked Undo - cancelling task submission");
+            self.tur_submit_state = TurSubmitState::Idle;
+            self.pending_tur_data = None;
+            
+            let toast_tx = get_toast_sender();
+            let _ = toast_tx.try_send(ToastMessage::Info("Task submission cancelled".to_string()));
+        }
+    }
+
+    /// Actually starts the duplicate check process
+    fn start_duplicate_check(&mut self) {
+        let Some(ref pending) = self.pending_tur_data else {
+            self.tur_submit_state = TurSubmitState::Idle;
+            return;
+        };
+
+        let task_data = pending.task_data.clone();
+        let ticket_data = pending.ticket_data.clone();
+        let customer_data = pending.customer_data.clone();
+        let computer_data = pending.computer_data.clone();
+        let send_specs = pending.send_specs;
+        let service_number = ticket_data.service_number.clone();
 
         // Update state
         self.tur_submit_state = TurSubmitState::CheckingDuplicates;
@@ -178,6 +331,41 @@ impl MastertechContext {
              pending.customer_data.clone(), pending.computer_data.clone())
         };
 
+        // Determine if this is a modification (existing task with UseNew or Merge resolution)
+        // and prepare task history data if so
+        let task_history_data: Option<(database::schema::RecordId, serde_json::Value)> = 
+            if let Some(ref res) = resolution {
+                if let Some(ref check_result) = pending.duplicate_check_result {
+                    if let Some(ref task_dup) = check_result.task {
+                        // Only create history for UseNew or Merge resolutions
+                        if matches!(res.task_resolution, MergeResolution::UseNew | MergeResolution::Merge) {
+                            // Build diff JSON from the changes
+                            let diff_fields = task_dup.existing.get_differing_fields(&task_data);
+                            if !diff_fields.is_empty() {
+                                let mut diff_map = serde_json::Map::new();
+                                for (field_name, old_val, new_val) in diff_fields {
+                                    diff_map.insert(field_name, serde_json::json!({
+                                        "old": old_val,
+                                        "new": new_val
+                                    }));
+                                }
+                                Some((task_dup.existing.id.clone(), serde_json::Value::Object(diff_map)))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         // IMPORTANT: When there's an existing task, ALWAYS use the existing task's ID
         // The resolution determines which DATA to use, but we always update the existing record
         if let Some(ref check_result) = pending.duplicate_check_result {
@@ -191,9 +379,31 @@ impl MastertechContext {
         let task_notes = pending.task_notes;
         let send_specs = pending.send_specs;
 
+        // Get current user info for task history
+        let current_user = self.shared_ctx.current_user.clone();
+
         let _state_tx = self.duplicate_check_tx.clone();
         
         spawn(async move {
+            // Create task history record if we're modifying an existing task
+            if let Some((task_id, diff)) = task_history_data {
+                // Get current user for the history record
+                if let Some(user) = &current_user {
+                    let history = TaskHistory::new(
+                        task_id,
+                        user.get_id(),
+                        user.get_username().to_string(),
+                        diff,
+                    );
+                    match history.save().await {
+                        Ok(_) => info!("Task history record created"),
+                        Err(e) => log::error!("Failed to create task history record: {:?}", e),
+                    }
+                } else {
+                    info!("No current user available for task history");
+                }
+            }
+
             let send_payload_result = create_full_task_payload(
                 ticket_data,
                 customer_data,

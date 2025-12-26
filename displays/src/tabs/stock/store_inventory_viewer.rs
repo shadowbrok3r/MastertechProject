@@ -10,7 +10,7 @@ use crate::tabs::stock::ProductID;
 #[derive(Default, Debug, Serialize, Deserialize, Clone, database::SurrealValue)]
 pub struct ExtraInventoryData {
     pub display_name: String,   // Display name is a String
-    pub id: f64,                // ID is a positive integer
+    // pub id: f64,             // ID is a positive integer
     pub list_price: f64,        // Monetary value (with decimals), so f64 is appropriate
     pub qty_available: f64,     // Quantities should remain as u64 for non-negative integers
     pub standard_price: f64,    // Monetary value (with decimals), so f64 is appropriate

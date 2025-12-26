@@ -114,6 +114,8 @@ pub struct MastertechContext {
 pub enum TurSubmitState {
     #[default]
     Idle,
+    /// User clicked submit, waiting for confirmation (5-second countdown)
+    AwaitingConfirmation,
     CheckingDuplicates,
     AwaitingResolution,
     Submitting,
@@ -130,6 +132,8 @@ pub struct PendingTurData {
     /// Stored duplicate check result for applying resolutions
     pub duplicate_check_result: Option<DuplicateCheckResult>,
     pub send_specs: bool,
+    /// Timestamp when confirmation countdown started
+    pub confirmation_start: Option<std::time::Instant>,
 }
 
 impl MasterTechApp {
