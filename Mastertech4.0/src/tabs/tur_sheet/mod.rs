@@ -15,6 +15,9 @@ pub mod presta_api;
 
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
+        // Render confirmation toast if showing
+        self.render_confirmation_toast(ui.ctx());
+        
         // Process any pending duplicate check results
         self.process_duplicate_check_results();
         

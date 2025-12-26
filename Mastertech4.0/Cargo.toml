@@ -36,10 +36,10 @@ clap = { version = "4.5", features = ["derive"] }
 sha2 = { version = "0.10", features = ["std"] }
 nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 strum = { version = "0.27", features = ["strum_macros", "derive"] }
-rmcp = { version = "0.11.0", features = ["server", "transport-io", "schemars"]}
+rmcp = { version = "0.12.0", features = ["server", "transport-io", "schemars"]}
 enigo = { version = "0.6.1", features = ["serde"] }
 indexmap = { version = "2.10.0", features = ["serde"] }
-tachyonfx = { git = "https://github.com/shadowbrok3r/tachyonfx" }
+tachyonfx = { version = "0.22"}
 tui-logger = { git = "https://github.com/shadowbrok3r/tui-logger" }
 rayon = "1"
 textwrap = "0.16"
@@ -64,7 +64,7 @@ itertools = "0.14.0"
 unicode-width = "0.2.0"
 arboard = "3"
 tempfile = "3.19"
-xcap = "0.7"
+xcap = "0.8.0"
 display-info = "0.5"
 self-replace = "1.5.0"
 zstd = "0.13.3"
