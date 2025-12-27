@@ -43,9 +43,13 @@ pub struct Order {
     #[serde(default)]
     pub delivery_date: String,
     #[serde(default)]
+    pub total_products: String,
+    #[serde(default)]
     pub total_products_wt: String,
     #[serde(default)]
     pub total_paid_tax_excl: String,
+    #[serde(default)]
+    pub total_discounts_tax_excl: String,
     #[serde(default)]
     pub reference: String, // what prestashop sees since order id and reference are different...
     #[serde(default)]
@@ -234,6 +238,7 @@ isPrice
 isPrice
 isFloat
 */
+
 impl Order {
     pub async fn create_prestashop_order(&self, client: Client) ->anyhow::Result<(), anyhow::Error> {
                 // Prepare the XML payload

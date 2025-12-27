@@ -2,9 +2,9 @@ use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Spinner, TextEdit, T
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
-use crate::{PlatformSpawner, Spawner};
+use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
+use database::schema::{Store, UserAuthorization};
 use egui_data_table::Renderer;
-use database::schema::Store;
 use log::info;
 
 pub mod row_viewer;
@@ -21,10 +21,19 @@ pub struct StockTable {
     inventory_serials_viewer: SerialsViewer,
     stock_quantity_viewer: StockQuantityViewer,
     stock_quantity_table: egui_data_table::DataTable<StockQuantityData>,
+    // Cost breakdown
+    cost_breakdown_viewer: CostBreakdownViewer,
+    cost_breakdown_table: egui_data_table::DataTable<CostBreakdownData>,
+    cost_order_id: String,
+    cost_loading: bool,
+    cost_summary: Option<CostBreakdownSummary>,
+    is_admin: bool,
     first_run: bool,
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
     pub extra_stock_channel: (Sender<Vec<ExtraInventoryData>>, Receiver<Vec<ExtraInventoryData>>),
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
+    pub cost_channel: (Sender<Vec<CostBreakdownData>>, Receiver<Vec<CostBreakdownData>>),
+    pub cost_summary_channel: (Sender<CostBreakdownSummary>, Receiver<CostBreakdownSummary>),
     store_selection: u64
 }
 
@@ -32,7 +41,8 @@ pub struct StockTable {
 pub enum StockSelection {
     #[default]
     CompanyStock,
-    StoreInventory
+    StoreInventory,
+    CostBreakdown,
 }
 
 impl StockSelection {
@@ -40,6 +50,7 @@ impl StockSelection {
         match self {
             StockSelection::CompanyStock => "Company Stock",
             StockSelection::StoreInventory => "Store Inventory",
+            StockSelection::CostBreakdown => "Cost Breakdown",
         }
     }
 }
@@ -49,9 +60,16 @@ impl Default for StockTable {
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
+        let cost_channel = <Vec<CostBreakdownData>>::create_unbounded_channel();
+        let cost_summary_channel = <CostBreakdownSummary>::create_unbounded_channel();
 
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
+
+        // Check if current user is admin
+        let is_admin = get_current_user_from_auth()
+            .map(|user| user.get_authorization() == UserAuthorization::Admin)
+            .unwrap_or(false);
 
         Self { 
             stock_selection: Default::default(), 
@@ -59,10 +77,18 @@ impl Default for StockTable {
             inventory_serials_viewer,
             stock_quantity_viewer: StockQuantityViewer::default(),
             stock_quantity_table: egui_data_table::DataTable::<StockQuantityData>::default(),
+            cost_breakdown_viewer: CostBreakdownViewer::default(),
+            cost_breakdown_table: egui_data_table::DataTable::<CostBreakdownData>::default(),
+            cost_order_id: String::new(),
+            cost_loading: false,
+            cost_summary: None,
+            is_admin,
             first_run: true, 
             serial_channel, 
             extra_stock_channel, 
             stock_channel,
+            cost_channel,
+            cost_summary_channel,
             store_selection: 76,
         }
     }
@@ -88,6 +114,14 @@ impl StockTable {
                             StockSelection::StoreInventory,
                             StockSelection::StoreInventory.as_str()
                         );
+                        // Only show Cost Breakdown option for admins
+                        if self.is_admin {
+                            ui.selectable_value(
+                                selected, 
+                                StockSelection::CostBreakdown,
+                                StockSelection::CostBreakdown.as_str()
+                            );
+                        }
                     });
 
                     ui.add_space(10.);
@@ -172,9 +206,110 @@ impl StockTable {
                                 });
                             }
                         },
+                        StockSelection::CostBreakdown => {
+                            TextEdit::singleline(&mut self.cost_order_id)
+                                .desired_width(200.)
+                                .hint_text("Enter Order ID")
+                                .ui(ui);
+
+                            ui.add_space(10.);
+
+                            let can_search = !self.cost_order_id.is_empty() && !self.cost_loading;
+                            if ui.add_enabled(can_search, Button::new("Search")).clicked() {
+                                let cost_tx = self.cost_channel.0.clone();
+                                let summary_tx = self.cost_summary_channel.0.clone();
+                                let order_id = self.cost_order_id.clone();
+                                self.cost_loading = true;
+                                self.cost_summary = None;
+                                self.cost_breakdown_viewer.clear_selection();
+                                PlatformSpawner::spawn(async move {
+                                    let _ = get_cost_breakdown(order_id, cost_tx, summary_tx).await;
+                                });
+                            }
+
+                            if self.cost_loading {
+                                ui.add_space(5.);
+                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                            }
+
+                            ui.add_space(10.);
+
+                            TextEdit::singleline(&mut self.cost_breakdown_viewer.filter)
+                                .desired_width(250.)
+                                .hint_text("Filter results")
+                                .ui(ui);
+                        },
                     }
                 });
             });
+
+        // Bottom panel for Cost Breakdown summary
+        if self.stock_selection == StockSelection::CostBreakdown {
+            // Calculate selection sums
+            let selected_products = &self.cost_breakdown_viewer.selected_products;
+            let (selected_unit_price_sum, selected_cost_sum): (f64, f64) = if !selected_products.is_empty() {
+                self.cost_breakdown_table
+                    .iter()
+                    .filter(|row| selected_products.contains(&row.0))
+                    .fold((0.0, 0.0), |(price_acc, cost_acc), row| {
+                        // row.3 = unit_price, row.4 = cost, row.2 = quantity
+                        (price_acc + (row.3 * row.2), cost_acc + (row.4 * row.2))
+                    })
+            } else {
+                (0.0, 0.0)
+            };
+            let selection_count = selected_products.len();
+            
+            if let Some(ref summary) = self.cost_summary {
+                TopBottomPanel::bottom("CostBreakdownBottom")
+                    .exact_height(30.)
+                    .show_inside(ui, |ui| {
+                        ui.horizontal_centered(|ui| {
+                            ui.spacing_mut().item_spacing.x = 25.0;
+                            
+                            ui.colored_label(Color32::LIGHT_BLUE, format!("Customer: {}", summary.customer_name));
+                            
+                            ui.label(format!("Order Total: ${:.2}", summary.order_total));
+                            
+                            ui.colored_label(
+                                Color32::from_rgb(200, 100, 100),
+                                format!("Cost: ${:.2}", summary.total_cost)
+                            );
+                            
+                            let profit_color = if summary.profit >= 0.0 {
+                                Color32::LIGHT_GREEN
+                            } else {
+                                ui.style().visuals.error_fg_color
+                            };
+                            ui.colored_label(
+                                profit_color,
+                                format!("Gross Profit: ${:.2}", summary.profit)
+                            );
+                            
+                            // Show selection sum if any items are selected
+                            if selection_count > 0 {
+                                ui.separator();
+                                ui.colored_label(
+                                    Color32::GOLD,
+                                    format!("Selected ({}):", selection_count)
+                                );
+                                ui.label(format!("Price: ${:.2}", selected_unit_price_sum));
+                                ui.colored_label(
+                                    Color32::from_rgb(200, 100, 100),
+                                    format!("Cost: ${:.2}", selected_cost_sum)
+                                );
+                                let sel_profit = selected_unit_price_sum - selected_cost_sum;
+                                let sel_profit_color = if sel_profit >= 0.0 {
+                                    Color32::LIGHT_GREEN
+                                } else {
+                                    ui.style().visuals.error_fg_color
+                                };
+                                ui.colored_label(sel_profit_color, format!("Profit: ${:.2}", sel_profit));
+                            }
+                        });
+                    });
+            }
+        }
 
         CentralPanel::default().show_inside(ui, |ui| {
             match self.stock_selection {
@@ -215,6 +350,30 @@ impl StockTable {
                         .ui(ui);
                     }
                 },
+                StockSelection::CostBreakdown => {
+                    if self.cost_loading {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            ui.label("Fetching order cost breakdown...");
+                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                        });
+                    } else if self.cost_breakdown_table.len() < 1 {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            ui.label("Enter an Order ID above and click Search to view cost breakdown.");
+                        });
+                    } else {
+                        Renderer::new(
+                            &mut self.cost_breakdown_table, 
+                            &mut self.cost_breakdown_viewer
+                        ).with_style_modify(|s| {
+                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                            s.single_click_edit_mode = true;
+                            s.auto_shrink = [false, false].into();
+                        })
+                        .ui(ui);
+                    }
+                },
             }
         });
     }
@@ -234,6 +393,15 @@ impl StockTable {
                 let stock = get_stock(stock_tx.clone(), store_selection).await;
                 log::info!("Stock call: {stock:?}");
             });
+            self.is_admin = get_current_user_from_auth()
+                .map(|user| if user.get_username().is_empty() {
+                    log::info!("User is empty");
+                    false
+                } else {
+                    log::info!("User: {:?}", user.get_authorization());
+                    user.get_authorization() == UserAuthorization::Admin
+                })
+                .unwrap_or(false);
         }
     }
 
@@ -316,6 +484,19 @@ impl StockTable {
                 .collect();
             self.stock_quantity_table.replace(data);
         }
-    
+
+        // Handle cost breakdown data
+        if let Ok(cost_data) = self.cost_channel.1.try_recv() {
+            log::info!("Received cost breakdown data: {} items", cost_data.len());
+            self.cost_loading = false;
+            self.cost_breakdown_table.replace(cost_data);
+        }
+
+        // Handle cost breakdown summary
+        if let Ok(summary) = self.cost_summary_channel.1.try_recv() {
+            log::info!("Received cost summary: customer={}, total=${:.2}, cost=${:.2}, profit=${:.2}", 
+                      summary.customer_name, summary.order_total, summary.total_cost, summary.profit);
+            self.cost_summary = Some(summary);
+        }
     }
 }

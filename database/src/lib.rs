@@ -37,6 +37,7 @@ pub const WS_CLIENT_URL: &str = env!("WS_CLIENT_URL");
 pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
 pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
 pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
+pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");
 
 // JWT token type - in v3.0 this is just a String
 pub type Jwt = String;

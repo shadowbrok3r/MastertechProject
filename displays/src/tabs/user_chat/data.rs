@@ -203,8 +203,7 @@ impl UserChat {
                 },
                 Action::Delete => {
                     messages.retain(|m| m.id != msg.id);
-                },
-                _ => {},
+                }
             }
         }
 
@@ -228,8 +227,7 @@ impl UserChat {
                     if self.selected_thread.as_ref().map_or(false, |t| t.id == chat_thread.id) {
                         self.selected_thread = None;
                     }
-                },
-                _ => {},
+                }
             }
         }
     }
