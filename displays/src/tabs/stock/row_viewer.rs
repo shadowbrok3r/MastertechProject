@@ -350,15 +350,6 @@ impl RowCodec<SerialsData> for Codec {
     }
 }
 
-fn _round_to_two_decimal_places(value: f64) -> f64 {
-    if value > 0.0 {
-        (value * 100.0).round() / 100.0
-    } else {
-        value
-    }
-}
-
-
 use serde::de::Deserializer;
 use std::fmt;
 
@@ -408,5 +399,195 @@ impl<'de> Deserialize<'de> for BoolOrString {
         }
 
         deserializer.deserialize_any(BoolOrStringVisitor)
+    }
+}
+
+/* ---------------------------------------- Cost Breakdown ---------------------------------------- */
+
+/// Row data for the cost breakdown table
+/// (Product ID, Product Name, Quantity, Unit Price, Cost)
+#[derive(Default, Serialize, Clone, Debug)]
+pub struct CostBreakdownData(pub String, pub String, pub f64, pub f64, pub f64);
+
+/// Viewer for the cost breakdown table
+#[derive(Default, Serialize)]
+pub struct CostBreakdownViewer {
+    pub filter: String,
+    pub row_protection: bool,
+    /// Selected product IDs (for sum calculation) - uses product_id as unique key
+    #[serde(skip)]
+    pub selected_products: std::collections::HashSet<String>,
+}
+
+impl CostBreakdownViewer {
+    /// Clear all selections
+    pub fn clear_selection(&mut self) {
+        self.selected_products.clear();
+    }
+}
+
+impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<CostBreakdownData>> { 
+        Some(CostBreakdownCodec) 
+    }
+
+    fn num_columns(&mut self) -> usize { 5 }
+
+    fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
+        ["Product ID", "Product Name", "Quantity", "Unit Price", "Cost"][column].into()
+    }
+
+    fn is_sortable_column(&mut self, column: usize) -> bool {
+        [true, true, true, true, true][column]
+    }
+
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &CostBreakdownData) -> bool { 
+        false 
+    }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
+
+    fn filter_row(&mut self, row: &CostBreakdownData) -> bool {
+        let filter = &self.filter.to_uppercase();
+        row.0.to_uppercase().contains(filter) || row.1.to_uppercase().contains(filter)
+    }
+
+    fn show_cell_view(&mut self, ui: &mut Ui, row: &CostBreakdownData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
+        let _ = match column {
+            0 => ui.label(RichText::new(&row.0).color(Color32::from_rgb(42, 195, 222))),
+            1 => ui.label(&row.1),
+            2 => ui.label(format!("{:.0}", row.2)),
+            3 => ui.label(format!("$ {:.2}", row.3)),
+            4 => {
+                let color = if row.4 > 0.0 {
+                    Color32::from_rgb(51, 255, 189)
+                } else {
+                    Color32::from_rgb(150, 150, 150)
+                };
+                ui.label(RichText::new(format!("$ {:.2}", row.4)).color(color))
+            }
+            _ => unreachable!(),
+        };
+    }
+    
+    fn on_highlight_change(&mut self, highlighted: &[&CostBreakdownData], unhighlighted: &[&CostBreakdownData]) {
+        // Remove unhighlighted rows from selection
+        for row in unhighlighted.iter() {
+            self.selected_products.remove(&row.0);
+        }
+        // Add highlighted rows to selection
+        for row in highlighted.iter() {
+            self.selected_products.insert(row.0.clone());
+        }
+    }
+
+    fn show_cell_editor(
+        &mut self,
+        ui: &mut Ui,
+        row: &mut CostBreakdownData,
+        column: usize,
+    ) -> Option<Response> {
+        ui.vertical_centered_justified(|ui| {
+            match column {
+                0 => ui.label(&row.0),
+                1 => ui.label(&row.1),
+                2 => ui.label(format!("{:.0}", row.2)),
+                3 => ui.label(format!("$ {:.2}", row.3)),
+                4 => ui.label(format!("$ {:.2}", row.4)),
+                _ => unreachable!(),
+            }
+            .into()
+        })
+        .inner
+    }
+
+    fn set_cell_value(
+        &mut self,
+        src: &CostBreakdownData,
+        dst: &mut CostBreakdownData,
+        column: usize,
+    ) {
+        match column {
+            0 => dst.0 = src.0.clone(),
+            1 => dst.1 = src.1.clone(),
+            2 => dst.2 = src.2,
+            3 => dst.3 = src.3,
+            4 => dst.4 = src.4,
+            _ => unreachable!(),
+        }
+    }
+
+    fn compare_cell(
+        &self,
+        row_l: &CostBreakdownData,
+        row_r: &CostBreakdownData,
+        column: usize,
+    ) -> std::cmp::Ordering {
+        match column {
+            0 => row_l.0.cmp(&row_r.0),
+            1 => row_l.1.cmp(&row_r.1),
+            2 => row_l.2.partial_cmp(&row_r.2).unwrap_or(std::cmp::Ordering::Equal),
+            3 => row_l.3.partial_cmp(&row_r.3).unwrap_or(std::cmp::Ordering::Equal),
+            4 => row_l.4.partial_cmp(&row_r.4).unwrap_or(std::cmp::Ordering::Equal),
+            _ => unreachable!(),
+        }
+    }
+
+    fn new_empty_row(&mut self) -> CostBreakdownData {
+        CostBreakdownData::default()
+    }
+
+    fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> TableColumnConfig {
+        let col_config = TableColumnConfig::auto();
+        match column {
+            0 => col_config.resizable(true).at_least(70.).at_most(100.),
+            1 => col_config.resizable(true).at_least(200.).at_most(300.),
+            2 => col_config.resizable(true).at_least(50.).at_most(70.),
+            3 => col_config.resizable(true).at_least(100.).at_most(150.),
+            4 => col_config.resizable(true).at_least(100.).at_most(150.),
+            _ => col_config,
+        }
+    }
+}
+
+struct CostBreakdownCodec;
+
+impl RowCodec<CostBreakdownData> for CostBreakdownCodec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src_row: &CostBreakdownData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.0),
+            1 => dst.push_str(&src_row.1),
+            2 => dst.push_str(&format!("{}", src_row.2)),
+            3 => dst.push_str(&format!("{}", src_row.3)),
+            4 => dst.push_str(&format!("{}", src_row.4)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        src_data: &str,
+        column: usize,
+        dst_row: &mut CostBreakdownData,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst_row.0 = src_data.to_string(),
+            1 => dst_row.1 = src_data.to_string(),
+            2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> CostBreakdownData {
+        CostBreakdownData::default()
     }
 }

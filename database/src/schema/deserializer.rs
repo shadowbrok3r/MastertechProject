@@ -161,7 +161,9 @@ impl<'de> Deserialize<'de> for Qc {
                 let mut shipping_number: Option<String> = None;
                 let mut order_type: Option<String> = None;
                 let mut associations: Option<Associations> = None;
-
+                let mut total_discounts_tax_excl: Option<String> = None;
+                let mut total_products: Option<String> = None;
+                
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "task" => task = Some(map.next_value()?),
@@ -187,6 +189,7 @@ impl<'de> Deserialize<'de> for Qc {
                         "id_store" => id_store = Some(map.next_value()?),
                         "total_paid" => total_paid = Some(map.next_value()?),
                         "delivery_date" => delivery_date = Some(map.next_value()?),
+                        "total_products" => total_products = Some(map.next_value()?),
                         "total_products_wt" => total_products_wt = Some(map.next_value()?),
                         "total_paid_tax_excl" => total_paid_tax_excl = Some(map.next_value()?),
                         "reference" => reference = Some(map.next_value()?),
@@ -194,6 +197,7 @@ impl<'de> Deserialize<'de> for Qc {
                         "shipping_number" => shipping_number = Some(map.next_value()?),
                         "order_type" => order_type = Some(map.next_value()?),
                         "associations" => associations = Some(map.next_value()?),
+                        "total_discounts_tax_excl" => total_discounts_tax_excl = Some(map.next_value()?),
                         _ => {
                             // Ignore unknown fields
                             let _ = map.next_value::<serde::de::IgnoredAny>()?;
@@ -236,6 +240,8 @@ impl<'de> Deserialize<'de> for Qc {
                         shipping_number: shipping_number.unwrap_or_default(),
                         order_type: order_type.unwrap_or_default(),
                         associations,
+                        total_discounts_tax_excl: total_discounts_tax_excl.unwrap_or_default(),
+                        total_products: total_products.unwrap_or_default(),
                     },
                 })
             }
