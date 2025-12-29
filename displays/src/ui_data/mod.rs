@@ -133,7 +133,7 @@ impl crate::app_state::SharedContext {
     }
 
     pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
-        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        ctx.request_repaint_after(web_time::Duration::from_secs(1));
         if let Ok(state) = self.app_state_rx.try_recv() {
             log::info!("Got a new state: {state:?}\nbefore state: {:?}", self.state);
             if let crate::app_state::AppState::NoAuth(reason) = &state {

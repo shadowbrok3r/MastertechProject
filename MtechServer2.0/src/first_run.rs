@@ -177,6 +177,12 @@ impl MtechServer {
                 self.shared_ctx.current_user = None;
             }
         };
+
+        use displays::Spawner;
+        displays::PlatformSpawner::spawn(async move {
+            let results = database::test_database_wasm().await;
+            gloo_console::info!(format!("Results: {results:?}"));
+        });
     }
 
     pub fn invalidate(&mut self) {

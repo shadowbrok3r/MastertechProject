@@ -1,6 +1,7 @@
-use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Spinner, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
+use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Hyperlink, RichText, Spinner, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::channel_manager::ChannelManager;
+use crate::tabs::task_audit::row_viewer::BASE_URL;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use database::schema::{Store, UserAuthorization};
@@ -68,7 +69,7 @@ impl Default for StockTable {
 
         // Check if current user is admin
         let is_admin = get_current_user_from_auth()
-            .map(|user| user.get_authorization() == UserAuthorization::Admin)
+            .map(|user| user.is_admin() | user.is_manager())
             .unwrap_or(false);
 
         Self { 
@@ -266,7 +267,16 @@ impl StockTable {
                     .show_inside(ui, |ui| {
                         ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing.x = 25.0;
-                            
+                            Hyperlink::from_label_and_url(
+                                RichText::new(self.cost_order_id.clone())
+                                    .underline()
+                                    .strong()
+                                    .color(ui.style().visuals.error_fg_color),
+                                format!("{}{}", BASE_URL, self.cost_order_id),
+                            )
+                            .open_in_new_tab(true)
+                            .ui(ui);
+
                             ui.colored_label(Color32::LIGHT_BLUE, format!("Customer: {}", summary.customer_name));
                             
                             ui.label(format!("Order Total: ${:.2}", summary.order_total));
@@ -398,8 +408,7 @@ impl StockTable {
                     log::info!("User is empty");
                     false
                 } else {
-                    log::info!("User: {:?}", user.get_authorization());
-                    user.get_authorization() == UserAuthorization::Admin
+                    user.is_admin() | user.is_manager()
                 })
                 .unwrap_or(false);
         }

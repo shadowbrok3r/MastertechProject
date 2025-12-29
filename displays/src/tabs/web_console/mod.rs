@@ -490,7 +490,7 @@ impl WebConsole {
 
         // Request repaint if we have active connections
         if !self.connections.is_empty() {
-            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            ctx.request_repaint_after(web_time::Duration::from_secs(1));
         }
     }
 
@@ -574,7 +574,7 @@ impl WebConsole {
     }
 
     /// Get elapsed time since last pong for a client
-    pub fn get_last_pong_elapsed(&self, conn_string: &str) -> Option<std::time::Duration> {
+    pub fn get_last_pong_elapsed(&self, conn_string: &str) -> Option<web_time::Duration> {
         self.connections
             .get(conn_string)
             .and_then(|m| m.last_pong_time)

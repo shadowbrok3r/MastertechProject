@@ -29,7 +29,7 @@ pub fn LoginPage(props: LoginPageProps) -> Element {
                     Ok(db) if db.jwt.is_some() && db.user.is_some() => {
                         // persist session
                         if let Some(jwt) = &db.jwt { 
-                            crate::save_session(&crate::SavedSession { token: Some(jwt.as_insecure_token().to_string()), email: Some(email.clone()) });
+                            crate::save_session(&crate::SavedSession { token: Some(jwt), email: Some(email.clone()) });
                         }
                         props.on_login.call((true, None));
                     }
