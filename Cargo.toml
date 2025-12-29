@@ -62,3 +62,9 @@ lto = false
 # debug = false
 # opt-level = 3
 # codegen-units = 1
+
+[patch.'https://github.com/surrealdb/surrealdb']
+# Override the main crate
+surrealdb = { path = "/home/shadowbroker/Desktop/surrealdb/crates/sdk" }
+surrealdb-core = { path = "/home/shadowbroker/Desktop/surrealdb/crates/core" }
+surrealdb-types = { path = "/home/shadowbroker/Desktop/surrealdb/crates/types" }

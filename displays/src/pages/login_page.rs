@@ -69,7 +69,7 @@ impl Login {
                         let encoded: String = general_purpose::STANDARD.encode(&compressed);
                         log::info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr_json.len());
 
-                        wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
+                        wasm_cookies::set("jwt", cookie, &cookie_opts);
                         wasm_cookies::set("user", &encoded, &cookie_opts);
                         info!("set cookies");
                     }

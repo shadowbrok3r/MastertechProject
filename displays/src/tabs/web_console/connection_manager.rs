@@ -383,12 +383,12 @@ impl ConnectionManager {
     }
 
     /// Get connection uptime
-    pub fn uptime(&self) -> Option<std::time::Duration> {
+    pub fn uptime(&self) -> Option<web_time::Duration> {
         self.connected_at.map(|t| t.elapsed())
     }
 
     /// Get time since last pong
-    pub fn time_since_pong(&self) -> Option<std::time::Duration> {
+    pub fn time_since_pong(&self) -> Option<web_time::Duration> {
         self.last_pong_time.map(|t| t.elapsed())
     }
 }

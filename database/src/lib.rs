@@ -31,6 +31,7 @@ pub const STORAGE_URL: &str = env!("STORAGE_URL");
 pub const REGION: &str = env!("REGION");
 pub const DB_URL_DEV: &str = env!("DB_URL_DEV");
 pub const DB_URL_LOCAL: &str = env!("DB_URL_LOCAL");
+pub const DB_URL_BETA: &str = env!("DB_URL_BETA");
 pub const WS_CLIENT_URL_LOCAL: &str = env!("WS_CLIENT_URL_LOCAL");
 pub const WS_MASTER_URL_LOCAL: &str = env!("WS_MASTER_URL_LOCAL");
 pub const WS_CLIENT_URL: &str = env!("WS_CLIENT_URL");
@@ -145,9 +146,9 @@ impl Database {
             let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
             log::info!("Attempting to connect to local DB: {try_local:?}");
         } else {
-            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
-                Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
-                Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
+            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_BETA).await {
+                Ok(_) => log::info!("Connected to {DB_URL_BETA:?}"),
+                Err(e) => log::error!("Failed connecting to: {DB_URL_BETA:?}\n{e:?}"),
             }
         }
 
@@ -310,6 +311,119 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
     }).await?;
 
     Ok(())
+}
+
+/// Debug test for WASM time issues - call this to narrow down which DB operation fails
+pub async fn test_database_wasm() -> anyhow::Result<String, anyhow::Error> {
+    let mut results = String::new();
+    
+    // Step 1: Connect
+    results.push_str("[Step 1] Attempting to connect...\n");
+    log::info!("[test_database_wasm] Step 1: Connecting to database");
+    
+    match init_database().await {
+        Ok(_) => {
+            results.push_str("[Step 1] ✓ Connected to database\n");
+            log::info!("[test_database_wasm] Step 1: Connected successfully");
+        }
+        Err(e) => {
+            results.push_str(&format!("[Step 1] ✗ Failed to connect: {:?}\n", e));
+            log::error!("[test_database_wasm] Step 1 FAILED: {:?}", e);
+            return Ok(results);
+        }
+    }
+    
+    // Step 2: Use namespace/database
+    results.push_str("[Step 2] Setting namespace and database...\n");
+    log::info!("[test_database_wasm] Step 2: Setting NS={} DB={}", NS, DB);
+    
+    match DATABASE.use_ns(NS).use_db(DB).await {
+        Ok(_) => {
+            results.push_str(&format!("[Step 2] ✓ Using NS={} DB={}\n", NS, DB));
+            log::info!("[test_database_wasm] Step 2: NS/DB set successfully");
+        }
+        Err(e) => {
+            results.push_str(&format!("[Step 2] ✗ Failed to set NS/DB: {:?}\n", e));
+            log::error!("[test_database_wasm] Step 2 FAILED: {:?}", e);
+            return Ok(results);
+        }
+    }
+    
+    // Step 3: Sign in
+    results.push_str("[Step 3] Signing in as guest...\n");
+    log::info!("[test_database_wasm] Step 3: Signing in as guest");
+    
+    match DATABASE.signin(SurrealRec {
+        namespace: NS.to_string(),
+        database: DB.to_string(),
+        access: "guest".to_string(),
+        params: Credentials {
+            username: "guest".to_string(),
+            password: "toor10!9".to_string()
+        }
+    }).await {
+        Ok(_) => {
+            results.push_str("[Step 3] ✓ Signed in successfully\n");
+            log::info!("[test_database_wasm] Step 3: Signed in successfully");
+        }
+        Err(e) => {
+            results.push_str(&format!("[Step 3] ✗ Failed to sign in: {:?}\n", e));
+            log::error!("[test_database_wasm] Step 3 FAILED: {:?}", e);
+            return Ok(results);
+        }
+    }
+    
+    // Step 4: Run a simple query
+    results.push_str("[Step 4] Running query: RETURN $auth...\n");
+    log::info!("[test_database_wasm] Step 4: Running RETURN $auth query");
+    
+    match DATABASE.query("RETURN $auth").await {
+        Ok(mut response) => {
+            match response.take::<Option<serde_json::Value>>(0) {
+                Ok(auth_value) => {
+                    results.push_str(&format!("[Step 4] ✓ Query result: {:?}\n", auth_value));
+                    log::info!("[test_database_wasm] Step 4: Query successful: {:?}", auth_value);
+                }
+                Err(e) => {
+                    results.push_str(&format!("[Step 4] ✗ Failed to take result: {:?}\n", e));
+                    log::error!("[test_database_wasm] Step 4 take FAILED: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            results.push_str(&format!("[Step 4] ✗ Query failed: {:?}\n", e));
+            log::error!("[test_database_wasm] Step 4 FAILED: {:?}", e);
+            return Ok(results);
+        }
+    }
+    
+    // Step 5: Run another query to test time-related operations
+    results.push_str("[Step 5] Running query: RETURN time::now()...\n");
+    log::info!("[test_database_wasm] Step 5: Running time::now() query");
+    
+    match DATABASE.query("RETURN time::now()").await {
+        Ok(mut response) => {
+            match response.take::<Option<serde_json::Value>>(0) {
+                Ok(time_value) => {
+                    results.push_str(&format!("[Step 5] ✓ Time query result: {:?}\n", time_value));
+                    log::info!("[test_database_wasm] Step 5: Time query successful: {:?}", time_value);
+                }
+                Err(e) => {
+                    results.push_str(&format!("[Step 5] ✗ Failed to take time result: {:?}\n", e));
+                    log::error!("[test_database_wasm] Step 5 take FAILED: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            results.push_str(&format!("[Step 5] ✗ Time query failed: {:?}\n", e));
+            log::error!("[test_database_wasm] Step 5 FAILED: {:?}", e);
+        }
+    }
+    
+    results.push_str("\n[Complete] All steps finished.\n");
+    log::info!("[test_database_wasm] Test complete");
+    
+    Ok(results)
 }
 
 pub async fn create_guest_notification(notification: Notification) -> anyhow::Result<(), anyhow::Error> {

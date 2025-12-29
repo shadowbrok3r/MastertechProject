@@ -56,7 +56,8 @@ impl Eq for User {}
 pub enum UserAuthorization {
     #[default]
     User,
-    Admin
+    Root,
+    Manager,
 }
 
 impl SurrealValue for UserAuthorization {
@@ -67,7 +68,8 @@ impl SurrealValue for UserAuthorization {
     fn into_value(self) -> surrealdb::types::Value {
         let s = match self {
             UserAuthorization::User => "User",
-            UserAuthorization::Admin => "Admin",
+            UserAuthorization::Root => "Root",
+            UserAuthorization::Manager => "Manager",
         };
         surrealdb::types::Value::String(s.to_string())
     }
@@ -77,7 +79,8 @@ impl SurrealValue for UserAuthorization {
             surrealdb::types::Value::String(s) => {
                 match s.as_str() {
                     "User" => Ok(UserAuthorization::User),
-                    "Admin" => Ok(UserAuthorization::Admin),
+                    "Root" => Ok(UserAuthorization::Root),
+                    "Manager" => Ok(UserAuthorization::Manager),
                     other => anyhow::bail!("Unknown UserAuthorization variant: {}", other),
                 }
             }
@@ -135,13 +138,15 @@ impl UserAuthorization {
     pub fn as_str(&self) -> &str {
         match self {
             Self::User => "User",
-            Self::Admin => "Admin",
+            Self::Root => "Root",
+            Self::Manager => "Manager",
         }
     }
     pub fn from_str(authorization: &str) -> Self {
         match authorization {
             "User" => Self::User,
-            "Admin" => Self::Admin,
+            "Root" => Self::Root,
+            "Manager" => Self::Manager,
             _ => Self::User
         }
     }
@@ -163,7 +168,16 @@ impl User {
     pub fn is_admin(&self) -> bool {
         match self.authorization {
             UserAuthorization::User => false,
-            UserAuthorization::Admin => true,
+            UserAuthorization::Root => true,
+            UserAuthorization::Manager => false,
+        }
+    }
+
+    pub fn is_manager(&self) -> bool {
+        match self.authorization {
+            UserAuthorization::User => false,
+            UserAuthorization::Root => false,
+            UserAuthorization::Manager => true,
         }
     }
 

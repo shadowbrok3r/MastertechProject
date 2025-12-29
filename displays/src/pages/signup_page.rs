@@ -87,7 +87,7 @@ impl Signup {
                                 let encoded: String = general_purpose::STANDARD.encode(&compressed);
                                 info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
                                 wasm_cookies::set("user", &encoded, &cookie_opts);
-                                wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
+                                wasm_cookies::set("jwt", cookie, &cookie_opts);
                             }
                             info!("set cookies");
                         }else{ info!("no usr"); }

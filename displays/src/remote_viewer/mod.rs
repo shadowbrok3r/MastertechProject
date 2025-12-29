@@ -23,7 +23,8 @@ pub fn encode_buffer_with_frame(frame_index: u64, buffer: &Buffer) -> anyhow::Re
 
 // Updated encoding function
 pub fn encode_buffer_with_timestamp(frame_count: u64, buffer: &Buffer) -> anyhow::Result<Vec<u8>, anyhow::Error> {
-    let timestamp = std::time::SystemTime::now()
+    
+    let timestamp = web_time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis();
