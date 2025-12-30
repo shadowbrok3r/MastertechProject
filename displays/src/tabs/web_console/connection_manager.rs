@@ -319,6 +319,7 @@ impl ConnectionManager {
                     }
                 }
             }
+            #[cfg(not(target_arch="wasm32"))]
             WsMessage::Ping(_) => {
                 // Respond with pong
                 if let Some(sender) = &self.ws_sender {
@@ -327,6 +328,7 @@ impl ConnectionManager {
                     }
                 }
             }
+            // #[cfg(not(target_arch="wasm32"))]
             WsMessage::Pong(_) => {
                 self.last_pong_time = Some(Instant::now());
                 if self.state == ConnectionState::Stale {
@@ -361,6 +363,7 @@ impl ConnectionManager {
         if should_ping {
             if let Some(sender) = &self.ws_sender {
                 if let Ok(mut guard) = sender.lock() {
+                    #[cfg(not(target_arch="wasm32"))]
                     guard.send(WsMessage::Ping(vec![].into()));
                     self.last_ping_time = Some(Instant::now());
                 }

@@ -186,15 +186,15 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     None
                 } else {
                     let url = row.2.clone();
-                    if Hyperlink::from_label_and_url(
+                    Hyperlink::from_label_and_url(
                         format!(" {}", row.2.clone()), 
                         format!("{BASE_URL}{}", last_n(&url, 7))
                     )
                     .open_in_new_tab(true)
-                    .ui(ui)
-                    .clicked() {
-                        OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
-                    }
+                    .ui(ui);
+                    // .clicked() {
+                    //     OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
+                    // }
                     None
                 }
             },
@@ -212,7 +212,8 @@ impl RowViewer<SerialsData> for SerialsViewer {
         match column {
             2 => {
                 if resp.clicked() {
-                    OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
+                    log::info!("Clicked on order: {}", row.2);
+                    OpenUrl::new_tab(format!("{BASE_URL}{}", row.2));
                     None
                 } else { None }
             },
@@ -405,9 +406,9 @@ impl<'de> Deserialize<'de> for BoolOrString {
 /* ---------------------------------------- Cost Breakdown ---------------------------------------- */
 
 /// Row data for the cost breakdown table
-/// (Product ID, Product Name, Quantity, Unit Price, Cost)
+/// (Odoo Product ID, Prestashop Product ID, Product Name, Quantity, Unit Price, Cost)
 #[derive(Default, Serialize, Clone, Debug)]
-pub struct CostBreakdownData(pub String, pub String, pub f64, pub f64, pub f64);
+pub struct CostBreakdownData(pub String, pub String, pub String, pub f64, pub f64, pub f64);
 
 /// Viewer for the cost breakdown table
 #[derive(Default, Serialize)]
@@ -431,14 +432,14 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
         Some(CostBreakdownCodec) 
     }
 
-    fn num_columns(&mut self) -> usize { 5 }
+    fn num_columns(&mut self) -> usize { 6 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Product ID", "Product Name", "Quantity", "Unit Price", "Cost"][column].into()
+        ["Odoo ID", "Presta ID", "Product Name", "Quantity", "Unit Price", "Cost"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true][column]
+        [true, true, true, true, true, true][column]
     }
 
     fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &CostBreakdownData) -> bool { 
@@ -449,7 +450,7 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
 
     fn filter_row(&mut self, row: &CostBreakdownData) -> bool {
         let filter = &self.filter.to_uppercase();
-        row.0.to_uppercase().contains(filter) || row.1.to_uppercase().contains(filter)
+        row.0.to_uppercase().contains(filter) || row.1.to_uppercase().contains(filter) || row.2.to_uppercase().contains(filter)
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &CostBreakdownData, column: usize) {
@@ -458,30 +459,55 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
         style.interaction.selectable_labels = false;
 
         let _ = match column {
-            0 => ui.label(RichText::new(&row.0).color(Color32::from_rgb(42, 195, 222))),
-            1 => ui.label(&row.1),
-            2 => ui.label(format!("{:.0}", row.2)),
-            3 => ui.label(format!("$ {:.2}", row.3)),
-            4 => {
-                let color = if row.4 > 0.0 {
+            // Odoo Product ID - links to Odoo product page
+            0 => {
+                if row.0.is_empty() || row.0 == "0" {
+                    ui.label(RichText::new("-").color(Color32::GRAY))
+                } else {
+                    Hyperlink::from_label_and_url(
+                        RichText::new(format!(" {}", row.0)).color(Color32::from_rgb(42, 195, 222)),
+                        format!("https://odoo.pclaptops.com/web#id={}&menu_id=244&cids=1&action=443&model=product.template&view_type=form", row.0)
+                    )
+                    .open_in_new_tab(true)
+                    .ui(ui)
+                }
+            }
+            // Prestashop Product ID - links to Prestashop product page
+            1 => {
+                if row.1.is_empty() || row.1 == "0" {
+                    ui.label(RichText::new("-").color(Color32::GRAY))
+                } else {
+                    Hyperlink::from_label_and_url(
+                        RichText::new(format!(" {}", row.1)).color(Color32::from_rgb(255, 165, 0)),
+                        format!("https://pclaptops.mojo11.com/pcladmin/index.php/sell/catalog/products/{}", row.1)
+                    )
+                    .open_in_new_tab(true)
+                    .ui(ui)
+                }
+            }
+            2 => ui.label(&row.2),
+            3 => ui.label(format!("{:.0}", row.3)),
+            4 => ui.label(format!("$ {:.2}", row.4)),
+            5 => {
+                let color = if row.5 > 0.0 {
                     Color32::from_rgb(51, 255, 189)
                 } else {
                     Color32::from_rgb(150, 150, 150)
                 };
-                ui.label(RichText::new(format!("$ {:.2}", row.4)).color(color))
+                ui.label(RichText::new(format!("$ {:.2}", row.5)).color(color))
             }
             _ => unreachable!(),
         };
     }
     
     fn on_highlight_change(&mut self, highlighted: &[&CostBreakdownData], unhighlighted: &[&CostBreakdownData]) {
-        // Remove unhighlighted rows from selection
+        // Remove unhighlighted rows from selection (use Odoo ID + Presta ID as unique key)
         for row in unhighlighted.iter() {
-            self.selected_products.remove(&row.0);
+            self.selected_products.remove(&format!("{}:{}", row.0, row.1));
         }
         // Add highlighted rows to selection
         for row in highlighted.iter() {
-            self.selected_products.insert(row.0.clone());
+            self.selected_products.insert(format!("{}:{}", row.0, row.1));
         }
     }
 
@@ -493,11 +519,34 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
     ) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
             match column {
-                0 => ui.label(&row.0),
-                1 => ui.label(&row.1),
-                2 => ui.label(format!("{:.0}", row.2)),
-                3 => ui.label(format!("$ {:.2}", row.3)),
+                0 => {
+                    if row.0.is_empty() || row.0 == "0" {
+                        ui.label("-")
+                    } else {
+                        Hyperlink::from_label_and_url(
+                            format!(" {}", row.0), 
+                            format!("https://odoo.pclaptops.com/web#id={}&menu_id=244&cids=1&action=443&model=product.template&view_type=form", row.0)
+                        )
+                        .open_in_new_tab(true)
+                        .ui(ui)
+                    }
+                }
+                1 => {
+                    if row.1.is_empty() || row.1 == "0" {
+                        ui.label("-")
+                    } else {
+                        Hyperlink::from_label_and_url(
+                            format!(" {}", row.1), 
+                            format!("https://pclaptops.mojo11.com/pcladmin/index.php/sell/catalog/products/{}", row.1)
+                        )
+                        .open_in_new_tab(true)
+                        .ui(ui)
+                    }
+                }
+                2 => ui.label(&row.2),
+                3 => ui.label(format!("{:.0}", row.3)),
                 4 => ui.label(format!("$ {:.2}", row.4)),
+                5 => ui.label(format!("$ {:.2}", row.5)),
                 _ => unreachable!(),
             }
             .into()
@@ -514,9 +563,10 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
         match column {
             0 => dst.0 = src.0.clone(),
             1 => dst.1 = src.1.clone(),
-            2 => dst.2 = src.2,
+            2 => dst.2 = src.2.clone(),
             3 => dst.3 = src.3,
             4 => dst.4 = src.4,
+            5 => dst.5 = src.5,
             _ => unreachable!(),
         }
     }
@@ -530,9 +580,10 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
         match column {
             0 => row_l.0.cmp(&row_r.0),
             1 => row_l.1.cmp(&row_r.1),
-            2 => row_l.2.partial_cmp(&row_r.2).unwrap_or(std::cmp::Ordering::Equal),
+            2 => row_l.2.cmp(&row_r.2),
             3 => row_l.3.partial_cmp(&row_r.3).unwrap_or(std::cmp::Ordering::Equal),
             4 => row_l.4.partial_cmp(&row_r.4).unwrap_or(std::cmp::Ordering::Equal),
+            5 => row_l.5.partial_cmp(&row_r.5).unwrap_or(std::cmp::Ordering::Equal),
             _ => unreachable!(),
         }
     }
@@ -544,11 +595,12 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
     fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> TableColumnConfig {
         let col_config = TableColumnConfig::auto();
         match column {
-            0 => col_config.resizable(true).at_least(70.).at_most(100.),
-            1 => col_config.resizable(true).at_least(200.).at_most(300.),
-            2 => col_config.resizable(true).at_least(50.).at_most(70.),
-            3 => col_config.resizable(true).at_least(100.).at_most(150.),
-            4 => col_config.resizable(true).at_least(100.).at_most(150.),
+            0 => col_config.resizable(true).at_least(70.).at_most(100.),  // Odoo ID
+            1 => col_config.resizable(true).at_least(70.).at_most(100.),  // Presta ID
+            2 => col_config.resizable(true).at_least(150.).at_most(250.), // Product Name
+            3 => col_config.resizable(true).at_least(50.).at_most(70.),   // Quantity
+            4 => col_config.resizable(true).at_least(80.).at_most(120.),  // Unit Price
+            5 => col_config.resizable(true).at_least(80.).at_most(120.),  // Cost
             _ => col_config,
         }
     }
@@ -563,9 +615,10 @@ impl RowCodec<CostBreakdownData> for CostBreakdownCodec {
         match column {
             0 => dst.push_str(&src_row.0),
             1 => dst.push_str(&src_row.1),
-            2 => dst.push_str(&format!("{}", src_row.2)),
+            2 => dst.push_str(&src_row.2),
             3 => dst.push_str(&format!("{}", src_row.3)),
             4 => dst.push_str(&format!("{}", src_row.4)),
+            5 => dst.push_str(&format!("{}", src_row.5)),
             _ => unreachable!(),
         }
     }
@@ -579,9 +632,10 @@ impl RowCodec<CostBreakdownData> for CostBreakdownCodec {
         match column {
             0 => dst_row.0 = src_data.to_string(),
             1 => dst_row.1 = src_data.to_string(),
-            2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            2 => dst_row.2 = src_data.to_string(),
             3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            5 => dst_row.5 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             _ => unreachable!(),
         }
         Ok(())

@@ -178,11 +178,11 @@ impl MtechServer {
             }
         };
 
-        use displays::Spawner;
-        displays::PlatformSpawner::spawn(async move {
-            let results = database::test_database_wasm().await;
-            gloo_console::info!(format!("Results: {results:?}"));
-        });
+        // use displays::Spawner;
+        // displays::PlatformSpawner::spawn(async move {
+        //     let results = database::test_database_wasm().await;
+        //     gloo_console::info!(format!("Results: {results:?}"));
+        // });
     }
 
     pub fn invalidate(&mut self) {
@@ -234,7 +234,6 @@ impl MtechServer {
         if self.shared_ctx.first_run { self.first_run(ctx, frame); }
         
         self.shared_ctx.receive_shared(frame, ctx);
-
         
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.shared_ctx.db_rx.try_recv() {
