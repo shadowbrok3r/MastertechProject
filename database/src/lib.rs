@@ -163,8 +163,8 @@ impl Database {
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
-                let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
-                log::info!("Session: {:?}", sess);
+                // let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
+                // log::info!("Session: {:?}", sess);
  
                 if !users.is_empty() {
                     if let Ok(mut users_guard) = STORE_USERS.try_lock() {
@@ -196,8 +196,8 @@ impl Database {
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
-                let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
-                log::info!("Session: {:?}", sess);
+                // let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
+                // log::info!("Session: {:?}", sess);
                 if !users.is_empty() {
                     if let Ok(mut users_guard) = STORE_USERS.try_lock() {
                         *users_guard = users.clone(); 

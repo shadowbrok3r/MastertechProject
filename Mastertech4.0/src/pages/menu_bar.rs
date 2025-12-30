@@ -164,7 +164,7 @@ impl MasterTechApp {
                                     match self.context.shared_ctx.app_state_tx.try_send(
                                         AppState::Authenticated(MainPages::UserPreferences),
                                     ) {
-                                        Ok(_) => info!("Switching to UserPreferences Page"),
+                                        Ok(_) => self.context.shared_ctx.account_mod.set_user(usr.clone()),
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }

@@ -251,10 +251,10 @@ impl StockTable {
             let (selected_unit_price_sum, selected_cost_sum): (f64, f64) = if !selected_products.is_empty() {
                 self.cost_breakdown_table
                     .iter()
-                    .filter(|row| selected_products.contains(&row.0))
+                    .filter(|row| selected_products.contains(&format!("{}:{}", row.0, row.1)))
                     .fold((0.0, 0.0), |(price_acc, cost_acc), row| {
-                        // row.3 = unit_price, row.4 = cost, row.2 = quantity
-                        (price_acc + (row.3 * row.2), cost_acc + (row.4 * row.2))
+                        // row.4 = unit_price, row.5 = cost, row.3 = quantity
+                        (price_acc + (row.4 * row.3), cost_acc + (row.5 * row.3))
                     })
             } else {
                 (0.0, 0.0)

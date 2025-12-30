@@ -1,10 +1,10 @@
 use super::{store_inventory_viewer::ExtraInventoryData, row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData}};
-use anyhow::{Error, Result};
-use crossbeam::channel::Sender;
 use database::{DATABASE, schema::prestashop::{Customer, Order, Prestashop}};
-use reqwest::Client;
+use crossbeam::channel::Sender;
+use anyhow::{Error, Result};
 use serde::Deserialize;
 use serde_json::json;
+use reqwest::Client;
 use log::info;
 
 pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>, location: u64) -> Result<(), Error> {
@@ -162,12 +162,19 @@ pub async fn get_order_from_prestashop(order_id: &str) -> Result<PrestashopOrder
     })
 }
 
+/// Result from Odoo product lookup containing both ID and cost
+#[derive(Debug, Clone)]
+pub struct OdooProductResult {
+    pub id: i64,
+    pub cost: f64,
+}
+
 /// Look up product cost from Odoo by product code/name
-/// Returns the cost from the product with the highest qty_available
-pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<f64>, Error> {
+/// Returns the Odoo product ID and cost from the product with the highest qty_available
+pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<OdooProductResult>, Error> {
     let client = Client::new();
     let url = "https://odoo.master-tech.app/jsonrpc";
-    
+    log::warn!("Searching for product: {search_term}");
     let request_body = json!({
         "jsonrpc": "2.0",
         "method": "call",
@@ -180,7 +187,7 @@ pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<f64>
                 database::ODOO_API_KEY,
                 "product.template",
                 "search_read",
-                [
+                [ 
                     [
                         "&",
                         ["type", "in", ["consu", "product"]],
@@ -194,9 +201,8 @@ pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<f64>
                     ]
                 ],
                 {
-                    "fields": ["id", "name", "default_code", "standard_price", "qty_available"],
-                    "limit": 20,
-                    "order": "qty_available desc"
+                    "fields": ["id", "name", "default_code", "standard_price", "virtual_available", "list_price", "qty_available"],
+                    "limit": 20
                 }
             ]
         },
@@ -210,7 +216,7 @@ pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<f64>
         .await?;
     
     let response_text = response.text().await?;
-    
+    log::warn!("Response text: {response_text}");
     if let Ok(parsed) = serde_json::from_str::<OdooCostResponse>(&response_text) {
         if !parsed.result.is_empty() {
             // Sort by qty_available descending and take the product with highest quantity
@@ -218,9 +224,12 @@ pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<f64>
             products.sort_by(|a, b| b.qty_available.partial_cmp(&a.qty_available).unwrap_or(std::cmp::Ordering::Equal));
             
             if let Some(product) = products.first() {
-                info!("Found product '{}' (qty: {}) with cost ${:.2}", 
-                      product.default_code, product.qty_available, product.standard_price);
-                return Ok(Some(product.standard_price));
+                info!("Found product '{}' (id: {}, qty: {}) with cost ${:.2}", 
+                      product.default_code, product.id, product.qty_available, product.standard_price);
+                return Ok(Some(OdooProductResult {
+                    id: product.id,
+                    cost: product.standard_price,
+                }));
             }
         }
     }
@@ -265,20 +274,25 @@ pub async fn get_cost_breakdown(
         let quantity: f64 = row.product_quantity.parse().unwrap_or(0.0);
         let unit_price: f64 = row.product_price.parse().unwrap_or(0.0);
         
-        // Look up cost from Odoo using product reference
-        let cost = if !row.product_reference.is_empty() {
+        // Look up cost from Odoo using product reference - returns both Odoo ID and cost
+        let odoo_result = if !row.product_reference.is_empty() {
             get_product_cost_from_odoo(&row.product_reference).await.unwrap_or(None)
         } else {
             None
         };
         
-        let item_cost = cost.unwrap_or(0.0);
+        let (odoo_id, item_cost) = match odoo_result {
+            Some(result) => (result.id.to_string(), result.cost),
+            None => (String::new(), 0.0),
+        };
+        
         // Total cost = cost per unit * quantity
         total_cost += item_cost * quantity;
         
         cost_data.push(CostBreakdownData(
-            row.product_id.clone(),
-            row.product_reference.clone(),
+            odoo_id,                      // Odoo Product ID
+            row.product_id.clone(),       // Prestashop Product ID
+            row.product_reference.clone(), // Product Name/Reference
             quantity,
             unit_price,
             item_cost,
