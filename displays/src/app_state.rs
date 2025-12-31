@@ -128,6 +128,14 @@ pub struct SharedContext {
     #[serde(skip)]
     pub live_user_rx: Receiver<(Action, User)>,
     
+    /// {Channel for live query connection errors - triggers reconnection in WASM}
+    #[serde(skip)]
+    pub live_query_error_tx: Sender<String>,
+    #[serde(skip)]
+    pub live_query_error_rx: Receiver<String>,
+    /// {Flag indicating we need to reconnect due to a connection reset}
+    pub needs_reconnect: bool,
+    
     /// {UI actions channel for communication between UI components and main function}
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
@@ -262,6 +270,7 @@ impl SharedContext {
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
         let (live_user_tx, live_user_rx) = channel::unbounded::<(Action, User)>();
+        let (live_query_error_tx, live_query_error_rx) = channel::unbounded::<String>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
@@ -320,6 +329,8 @@ impl SharedContext {
             new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
             live_user_tx, live_user_rx,
+            live_query_error_tx, live_query_error_rx,
+            needs_reconnect: false,
             new_note_tx, new_note_rx,
             notification_tx, notification_rx,
             live_notification_tx, live_notification_rx,

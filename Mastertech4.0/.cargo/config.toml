@@ -1,19 +1,12 @@
-[build]
-# target = [ "x86_64-unknown-linux-gnu" ] # Linux 64
-# [target.x86_64-unknown-linux-gnu]
-# linker = "clang"
-# rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold", "-Awarnings"]
+# [build]
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold", "-Awarnings"]
 
 [target.x86_64-pc-windows-msvc]
-# linker = "lld-link.exe"
-rustflags = ["-C", "target-feature=+crt-static"] # ,target-cpu=native "--cfg", "tokio_unstable" , "-Awarnings"
-
-# [target.x86_64-pc-windows-msvc]
-# linker = "clang"
+# linker = "lld-link.exe" # "clang"
+rustflags = ["-C", "target-feature=+crt-static", "-Awarnings"]
 # rustflags = ["-C", "link-arg=-fuse-ld=C:\\Users\\Owner\\Documents\\Mold\\bin\\mold", "-Awarnings"]
-
-
-
 
 # [build]
 #target = [

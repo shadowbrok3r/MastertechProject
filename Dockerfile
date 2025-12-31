@@ -11,11 +11,11 @@ RUN rustup component add rust-src
 # RUN rustup default nightly
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
-COPY .cargo .cargo
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY .env .env
 COPY database database
+COPY surrealdb surrealdb
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
 
