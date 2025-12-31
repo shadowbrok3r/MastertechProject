@@ -335,7 +335,7 @@ impl ConnectionManager {
                     self.state = ConnectionState::Connected;
                 }
             }
-            WsMessage::Unknown(_) => {}
+            _ => {}
         }
     }
 

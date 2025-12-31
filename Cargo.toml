@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [ "database" , "displays", "MtechServer2.0" ] #  , "Mastertech4.0"
+exclude = ["surrealdb"]
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -55,16 +56,20 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
-# codegen-units = 1
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
+codegen-units = 1
+
+[profile.wasm-release] # trunk build --release --profile wasm-release
+inherits = "release"
+strip = false  # Disable strip just for this profile
 
 [patch.'https://github.com/surrealdb/surrealdb']
 # Override the main crate
-surrealdb = { path = "/home/shadowbroker/Desktop/surrealdb/crates/sdk" }
-surrealdb-core = { path = "/home/shadowbroker/Desktop/surrealdb/crates/core" }
-surrealdb-types = { path = "/home/shadowbroker/Desktop/surrealdb/crates/types" }
+surrealdb = { path = "surrealdb/crates/sdk" }
+surrealdb-core = { path = "surrealdb/crates/core" }
+surrealdb-types = { path = "surrealdb/crates/types" }

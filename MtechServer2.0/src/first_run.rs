@@ -235,6 +235,24 @@ impl MtechServer {
         
         self.shared_ctx.receive_shared(frame, ctx);
         
+        // Handle live query connection errors - reconnect if needed (WASM only)
+        #[cfg(target_arch = "wasm32")]
+        if self.shared_ctx.needs_reconnect {
+            log::info!("Reconnecting due to live query connection error...");
+            self.shared_ctx.needs_reconnect = false;
+            
+            // Re-run check_authentication which will reconnect and trigger load_data
+            let db_tx = self.shared_ctx.db_tx.clone();
+            match check_authentication(db_tx) {
+                Ok(state) => {
+                    log::info!("Reconnection initiated, new state: {:?}", state);
+                }
+                Err(e) => {
+                    log::error!("Failed to initiate reconnection: {:?}", e);
+                }
+            }
+        }
+        
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.shared_ctx.db_rx.try_recv() {
             ctx.request_repaint();

@@ -73,24 +73,50 @@ impl crate::app_state::SharedContext {
             });
         }
 
+        // Clone error channel for each live query
+        let error_tx_notes = self.live_query_error_tx.clone();
+        let error_tx_users = self.live_query_error_tx.clone();
+        let error_tx_tasks = self.live_query_error_tx.clone();
+        let error_tx_notifs = self.live_query_error_tx.clone();
+        
         PlatformSpawner::spawn(async move {
             let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
             log::info!("listen_task_notes: {listen_data:?}");
+            if let Err(e) = listen_data {
+                let error_msg = e.to_string();
+                log::error!("Live query error (notes): {}", error_msg);
+                let _ = error_tx_notes.try_send(error_msg);
+            }
         });
 
         PlatformSpawner::spawn(async move {
             let listen_data = listen_data(live_user_tx, USER_TABLE).await;
             log::info!("listen_user: {listen_data:?}");
+            if let Err(e) = listen_data {
+                let error_msg = e.to_string();
+                log::error!("Live query error (users): {}", error_msg);
+                let _ = error_tx_users.try_send(error_msg);
+            }
         });
 
         PlatformSpawner::spawn(async move {
             let listen_data = listen_data(live_tasks_tx, TASK_TABLE).await;
             log::info!("listen_tasks: {listen_data:?}");
+            if let Err(e) = listen_data {
+                let error_msg = e.to_string();
+                log::error!("Live query error (tasks): {}", error_msg);
+                let _ = error_tx_tasks.try_send(error_msg);
+            }
         });
 
         PlatformSpawner::spawn(async move {
             let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
             log::info!("listen_notifications: {listen_data:?}");
+            if let Err(e) = listen_data {
+                let error_msg = e.to_string();
+                log::error!("Live query error (notifications): {}", error_msg);
+                let _ = error_tx_notifs.try_send(error_msg);
+            }
         });
 
         self.stock_tables.first_run();
@@ -134,6 +160,25 @@ impl crate::app_state::SharedContext {
 
     pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
+        
+        // Check for live query connection errors (Connection Reset in WASM)
+        if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
+            log::warn!("Live query connection error detected: {}", error_msg);
+            if error_msg.contains("Connection reset") || error_msg.contains("reset") || error_msg.contains("I/O") {
+                log::warn!("Connection reset detected - setting needs_reconnect flag");
+                self.needs_reconnect = true;
+                // Show a toast to inform the user
+                self.toasts.add(Toast {
+                    kind: ToastKind::Warning,
+                    text: "Connection lost. Reconnecting...".into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(4.0),
+                    style: ToastStyle::default(),
+                });
+            }
+        }
+        
         if let Ok(state) = self.app_state_rx.try_recv() {
             log::info!("Got a new state: {state:?}\nbefore state: {:?}", self.state);
             if let crate::app_state::AppState::NoAuth(reason) = &state {
