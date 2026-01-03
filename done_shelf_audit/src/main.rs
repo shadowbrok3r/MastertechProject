@@ -242,7 +242,6 @@ async fn main() -> Result<()> {
     let stores = if let Some(store_str) = &args.store {
         match store_str.to_uppercase().as_str() {
             "RIV" => vec![Store::RIV],
-            "AF" => vec![Store::AF],
             "LTN" => vec![Store::LTN],
             "MUR" => vec![Store::MUR],
             "ORE" => vec![Store::ORE],

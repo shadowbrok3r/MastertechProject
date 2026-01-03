@@ -233,7 +233,7 @@ impl Koth {
                         let tx = self.response_tx.clone();
                         PlatformSpawner::spawn(async move {
                             if id != 0 {
-                                let res = generate_orders_report(pay_period, &state.id().to_string(), &id_employee).await;
+                                let res = generate_orders_report(pay_period, &state.to_id().to_string(), &id_employee).await;
                                 log::info!("Result: {res:?}");
                                 match res {
                                     Ok(orders) => {let _ = tx.try_send(orders);},
@@ -276,7 +276,7 @@ impl Koth {
                                     for state in OrderState::VALUES.iter() {
                                         let period = pay_period.clone();
                                         if *state != OrderState::Returned {
-                                            let state_id = state.id().to_string();
+                                            let state_id = state.to_id().to_string();
                                             let res = generate_orders_report(period, &state_id, &id_employee).await;
                                             log::info!("Result: {res:?}");
                                             match res {
@@ -1173,10 +1173,10 @@ impl Koth {
                         // for state in OrderState::VALUES.iter() { }
                         let period = pay_period.clone();
                         // if *state != OrderState::Returned { }
-                        // let state_id = state.id().to_string();
+                        // let state_id = state.to_id().to_string();
                         let res = generate_orders_report(
                             period, 
-                            &OrderState::AcceptedByOdoo.id().to_string(), 
+                            &OrderState::AcceptedByOdoo.to_id().to_string(), 
                             &id_employee
                         ).await;
                         

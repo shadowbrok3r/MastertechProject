@@ -225,7 +225,7 @@ pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std
                     surrealdb_types::Action::Delete => Action::Delete,
                     surrealdb_types::Action::Killed => {
                         error!("Live query was killed");
-                        continue;
+                        return Err(anyhow::anyhow!("Live query was killed"));
                     },
                 };
                 info!("Data: {:?}", action);
@@ -234,7 +234,10 @@ pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std
                     Err(e) => error!("Error Sending notification {e:?}"),
                 }
             },
-            Err(e) => error!("Error in notification stream: {e:?}"),
+            Err(e) => {
+                error!("Error in notification stream: {e:?}");
+                return Err(anyhow::anyhow!("I/O error: {}", e));
+            },
         }
     }
     Ok(())

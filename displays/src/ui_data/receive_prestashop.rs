@@ -48,7 +48,11 @@ impl SharedContext {
             }
 
             
-            if OrderType::from_id_str(&data.order.order_type) == OrderType::SalesOrder {
+            if OrderType::from_id_str(&data.order.order_type) == OrderType::SalesOrder 
+                || OrderType::from_id_str(&data.order.order_type) == OrderType::Bsd 
+                || OrderType::from_id_str(&data.order.order_type) == OrderType::ReadyToRoll 
+                || OrderType::from_id_str(&data.order.order_type) == OrderType::Rci 
+            {
                 for details in data.order.associations.order_rows.iter() {
                     match details.product_name.to_lowercase().as_str() {
                         "cpu/" => { computer.cpu = details.product_name.clone(); }

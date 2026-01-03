@@ -254,14 +254,14 @@ impl SalesTracker {
 				for s in OrderState::VALUES.iter() {
 					if *s == OrderState::Returned { continue; }
 					let period = pay_period.clone();
-					let state_id = s.id().to_string();
+					let state_id = s.to_id().to_string();
 					match database::schema::prestashop::generate_orders_report(period, &state_id, &emp_id).await {
 						Ok(orders) => { let _ = tx.try_send(orders); },
 						Err(e) => log::error!("Error getting orders for sales tracker: {e:?}"),
 					}
 				}
 			} else {
-				match database::schema::prestashop::generate_orders_report(pay_period, &state.id().to_string(), &emp_id).await {
+				match database::schema::prestashop::generate_orders_report(pay_period, &state.to_id().to_string(), &emp_id).await {
 					Ok(orders) => { let _ = tx.try_send(orders); },
 					Err(e) => log::error!("Error getting orders for sales tracker: {e:?}"),
 				}

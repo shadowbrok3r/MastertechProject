@@ -1,5 +1,5 @@
 use super::{store_inventory_viewer::ExtraInventoryData, row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData}};
-use database::{DATABASE, schema::prestashop::{Customer, Order, Prestashop}};
+use database::{DATABASE, schema::prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -315,4 +315,502 @@ pub async fn get_cost_breakdown(
     cost_tx.try_send(cost_data)?;
     
     Ok(())
+}
+
+/* ------------------------------------ Systems In-Store API ------------------------------------ */
+
+use super::row_viewer::{SystemInStoreData, SystemType};
+use database::schema::prestashop::OrderType;
+use std::collections::HashMap;
+
+/// Customer IDs for in-store systems (R2R inventory accounts)
+pub const INSTORE_CUSTOMER_IDS: [&str; 2] = ["148642", "128011"];
+
+/// Fetch systems in-store for a given store
+pub async fn get_systems_in_store(
+    store_id: u64,
+    systems_tx: Sender<Vec<SystemInStoreData>>,
+) -> Result<(), Error> {
+    info!("Fetching systems in-store for store {}", store_id);
+    
+    let presta = Prestashop::default();
+    let mut all_orders: Vec<Order> = Vec::new();
+    
+    // Order types we want: SalesOrder, ReadyToRoll, Bsd, Rci
+    let order_types = [
+        OrderType::SalesOrder,
+        OrderType::ReadyToRoll,
+        OrderType::Bsd,
+        OrderType::Rci,
+    ];
+    
+    // Query for each customer ID and order type combination
+    for customer_id in INSTORE_CUSTOMER_IDS.iter() {
+        for order_type in order_types.iter() {
+            let mut query = HashMap::new();
+            let store_id_str = store_id.to_string();
+            let order_type_id = order_type.to_id().to_string();
+            let order_state_id = OrderState::DeliveredToStore.to_id().to_string();
+
+            query.insert("output_format", "JSON");
+            query.insert("filter[id_customer]", customer_id);
+            query.insert("filter[id_store]", &store_id_str);
+            query.insert("filter[id_order_type]", &order_type_id);
+            query.insert("filter[current_state]", &order_state_id);
+
+            // Convert HashMap<&str, String> to HashMap<&str, &str> for the API
+            let query_refs: HashMap<&str, &str> = query.iter()
+                .map(|(k, v)| (*k, *v))
+                .collect();
+            
+            match presta.request_resources_wasm::<Order>("orders", query_refs).await {
+                Ok(orders) => {
+                    info!("Got {} orders for customer {} type {:?}", orders.len(), customer_id, order_type.to_id());
+                    all_orders.extend(orders);
+                }
+                Err(e) => {
+                    log::error!("Failed to fetch orders for customer {} type {:?}: {:?}", customer_id, order_type.to_id(), e);
+                }
+            }
+        }
+    }
+    
+    info!("Total orders fetched: {}", all_orders.len());
+    
+    // Process each order into SystemInStoreData
+    let mut systems_data: Vec<SystemInStoreData> = Vec::new();
+    
+    for order in all_orders.iter() {
+        let system_data = process_order_to_system_data(order).await;
+        systems_data.push(system_data);
+    }
+    
+    systems_tx.try_send(systems_data)?;
+    
+    Ok(())
+}
+
+/// Add a single order to the systems table
+pub async fn add_order_to_systems(
+    order_id: String,
+    systems_tx: Sender<SystemInStoreData>,
+) -> Result<(), Error> {
+    info!("Adding order {} to systems in-store", order_id);
+    
+    let presta = Prestashop::default();
+    let order: Order = presta.request_subresources_by_id_wasm("orders", "order", &order_id).await?;
+    
+    let system_data = process_order_to_system_data(&order).await;
+    systems_tx.try_send(system_data)?;
+    
+    Ok(())
+}
+
+/// Process a single order into SystemInStoreData
+async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
+    let price: f64 = order.total_paid_tax_excl.parse().unwrap_or(0.0);
+    
+    // Determine system type from order type
+    let system_type = SystemType::from_order_type_id(&order.id_order_type);
+    
+    // Extract model name from order rows (main product, usually laptop/desktop)
+    let model = extract_model_from_order(order);
+    
+    // Extract specs (CPU, GPU, RAM) from order rows
+    let (cpu, gpu, ram) = extract_specs_from_order(order).await;
+    
+    // Extract warranty info
+    let warranty = extract_warranty_from_order(order);
+    
+    // Calculate spiffs
+    let spiff = calculate_spiffs_for_order(order);
+    
+    // Get cost from Odoo (for the main product)
+    let cost = get_system_cost_from_order(order).await;
+    
+    let revenue = price - cost;
+    
+    SystemInStoreData {
+        order_id: order.id.clone(),
+        model,
+        price,
+        cost,
+        revenue,
+        spiff,
+        system_type,
+        cpu,
+        gpu,
+        ram,
+        warranty,
+        store_id: order.id_store.clone(),
+    }
+}
+
+/// Extract the main model name from order rows
+fn extract_model_from_order(order: &Order) -> String {
+    // Look for the main system product (LAP/, CASE/, BSD/, RCI/, R2R/, RTR/)
+    for row in order.associations.order_rows.iter() {
+        let r = row.product_reference.to_lowercase();
+        if r.starts_with("lap/") 
+            || (r.starts_with("case/") && !r.starts_with("case/15") && !r.starts_with("case/17"))
+            || r.starts_with("bsd/")
+            || r.starts_with("rci/")
+            || r.starts_with("r2r/")
+            || r.starts_with("rtr/")
+        {
+            return row.product_name.clone();
+        }
+    }
+    // Fallback to first product
+    order.associations.order_rows.first()
+        .map(|r| r.product_name.clone())
+        .unwrap_or_default()
+}
+
+/// Extract CPU, GPU, RAM specs from order rows
+async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
+    let mut cpu = String::new();
+    let mut gpu = String::new();
+    let mut ram = String::new();
+    
+    // Step 1: Check for serialized products with explicit part references
+    for row in order.associations.order_rows.iter() {
+        let r = row.product_reference.to_lowercase();
+        let name = &row.product_name;
+        
+        // CPU detection from serialized parts
+        if r.starts_with("cpu/") {
+            cpu = name.clone();
+        }
+        
+        // GPU detection from serialized parts
+        if r.starts_with("gpu/") || r.starts_with("vid/") {
+            gpu = name.clone();
+        }
+        
+        // RAM detection from serialized parts
+        if r.starts_with("ddr5/") || r.starts_with("ddr4/") || r.starts_with("ram/") || r.starts_with("mem/") {
+            ram = name.clone();
+        }
+    }
+    
+    // Step 2: For RCI systems, fetch OrderDetail and parse specs from detail_notes
+    let is_rci = order.id_order_type == OrderType::Rci.to_id().to_string();
+    if is_rci && (cpu.is_empty() || gpu.is_empty() || ram.is_empty()) {
+        info!("RCI order {} - looking for U/DESKTOP or U/LAPTOPS in {} order_serials", 
+              order.id, order.associations.order_serial.len());
+        
+        // Find U/DESKTOP or U/LAPTOPS in order_serial to get id_order_detail
+        for serial in order.associations.order_serial.iter() {
+            let ref_lower = serial.product_reference.to_lowercase();
+            info!("  Checking serial: product_ref='{}', id_order_detail='{}'", 
+                  serial.product_reference, serial.id_order_detail);
+            
+            if ref_lower == "u/desktop" || ref_lower == "u/laptops" || ref_lower == "u/laptop" {
+                info!("  Found matching serial, fetching OrderDetail id={}", serial.id_order_detail);
+                
+                // Fetch OrderDetail using id_order_detail
+                let presta = Prestashop::default();
+                match presta.request_subresources_by_id_wasm::<OrderDetail>(
+                    "order_details", 
+                    "order_detail", 
+                    &serial.id_order_detail
+                ).await {
+                    Ok(detail) => {
+                        info!("  OrderDetail fetched, detail_notes length={}", detail.detail_notes.len());
+                        info!("  detail_notes: {:?}", &detail.detail_notes[..detail.detail_notes.len().min(200)]);
+                        
+                        // Parse detail_notes format: "Brand: DELL\r\nCPU: i7-10610U\r\nRAM: 16GB\r\n..."
+                        let (parsed_cpu, parsed_gpu, parsed_ram) = parse_detail_notes(&detail.detail_notes);
+                        info!("  Parsed specs: cpu='{}', gpu='{}', ram='{}'", parsed_cpu, parsed_gpu, parsed_ram);
+                        
+                        if cpu.is_empty() && !parsed_cpu.is_empty() {
+                            cpu = parsed_cpu;
+                        }
+                        if gpu.is_empty() && !parsed_gpu.is_empty() {
+                            gpu = parsed_gpu;
+                        }
+                        if ram.is_empty() && !parsed_ram.is_empty() {
+                            ram = parsed_ram;
+                        }
+                    }
+                    Err(e) => {
+                        info!("  Failed to fetch OrderDetail: {:?}", e);
+                    }
+                }
+                break;
+            }
+        }
+    }
+    
+    // Step 3: For non-RCI laptops, parse specs from LAP/ product name
+    if cpu.is_empty() || gpu.is_empty() {
+        for row in order.associations.order_rows.iter() {
+            let r = row.product_reference.to_lowercase();
+            if r.starts_with("lap/") {
+                // Parse CPU and GPU from laptop product name
+                // Examples: "SM-5 15" RTX 5060 Core Ultra 7 275HX", "SM3 14" RYZEN 7 255"
+                let (parsed_cpu, parsed_gpu) = parse_laptop_product_name(&row.product_name);
+                if cpu.is_empty() && !parsed_cpu.is_empty() {
+                    cpu = parsed_cpu;
+                }
+                if gpu.is_empty() && !parsed_gpu.is_empty() {
+                    gpu = parsed_gpu;
+                }
+                break;
+            }
+        }
+    }
+    
+    (cpu, gpu, ram)
+}
+
+/// Parse detail_notes from RCI order_serial
+/// Format: "Brand: DELL\r\nCPU: i7-10610U\r\nRAM: 16GB\r\nGPU: INTEGRATED\r\n..."
+fn parse_detail_notes(notes: &str) -> (String, String, String) {
+    let mut cpu = String::new();
+    let mut gpu = String::new();
+    let mut ram = String::new();
+    
+    for line in notes.split(|c| c == '\n' || c == '\r') {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        
+        if let Some(value) = line.strip_prefix("CPU:") {
+            cpu = value.trim().to_string();
+        } else if let Some(value) = line.strip_prefix("GPU:") {
+            let val = value.trim();
+            // Skip "INTEGRATED" as it's not useful
+            if val.to_lowercase() != "integrated" {
+                gpu = val.to_string();
+            }
+        } else if let Some(value) = line.strip_prefix("RAM:") {
+            ram = value.trim().to_string();
+        }
+    }
+    
+    (cpu, gpu, ram)
+}
+
+/// Parse CPU and GPU from laptop product name
+/// Examples:
+/// - "SM-5 15" RTX 5060 Core Ultra 7 275HX" -> CPU: "Core Ultra 7 275HX", GPU: "RTX 5060"
+/// - "SM3 14" RYZEN 7 255" -> CPU: "RYZEN 7 255", GPU: ""
+/// - "SMT-8 17" RTX 5070 U9 275HX" -> CPU: "Ultra 9 275HX", GPU: "RTX 5070"
+fn parse_laptop_product_name(name: &str) -> (String, String) {
+    let cpu = extract_cpu_from_laptop_name(name);
+    let gpu = extract_gpu_from_laptop_name(name);
+    (cpu, gpu)
+}
+
+/// Extract CPU model from laptop product name
+fn extract_cpu_from_laptop_name(name: &str) -> String {
+    let name_upper = name.to_uppercase();
+    
+    // Check for "Core Ultra X" pattern (e.g., "Core Ultra 7 275HX")
+    if let Some(idx) = name_upper.find("CORE ULTRA") {
+        let after = &name[idx..];
+        return extract_until_resolution(after, 25);
+    }
+    
+    // Check for "Core X" pattern without Ultra (e.g., "Core 7 250H", "Core 5 120U")
+    if let Some(idx) = name_upper.find("CORE ") {
+        // Make sure it's not "Core Ultra" (already handled above)
+        let after = &name_upper[idx..];
+        if !after.starts_with("CORE ULTRA") {
+            let after_orig = &name[idx..];
+            return extract_until_resolution(after_orig, 20);
+        }
+    }
+    
+    // Check for "U5/U7/U9" shorthand pattern (e.g., "U9 275HX" -> "Ultra 9 275HX")
+    for (short, full) in [("U9 ", "Ultra 9"), ("U7 ", "Ultra 7"), ("U5 ", "Ultra 5")] {
+        if let Some(idx) = name_upper.find(short) {
+            // Get the model number after UX
+            let after_prefix = &name[idx + 3..];
+            let model = extract_until_resolution(after_prefix, 10);
+            if !model.is_empty() {
+                return format!("{} {}", full, model);
+            }
+        }
+    }
+    
+    // Check for RYZEN patterns (e.g., "RYZEN 7 7435HS", "RYZEN AI 7 350")
+    if let Some(idx) = name_upper.find("RYZEN") {
+        let after_ryzen = &name[idx..];
+        return extract_until_resolution(after_ryzen, 25);
+    }
+    
+    // Check for Intel i5/i7/i9 patterns
+    for prefix in ["I9 ", "I9-", "I7 ", "I7-", "I5 ", "I5-"] {
+        if let Some(idx) = name_upper.find(prefix) {
+            let after_prefix = &name[idx..];
+            return extract_until_resolution(after_prefix, 15);
+        }
+    }
+    
+    String::new()
+}
+
+/// Extract CPU/model string until we hit a resolution indicator or end
+fn extract_until_resolution(s: &str, max_len: usize) -> String {
+    let end_idx = s.len().min(max_len);
+    let spec = &s[..end_idx];
+    
+    // Split by common resolution/end markers
+    let end_markers = ["1080", "2K", "4K", "FHD", "QHD", "LAPTOP", "Ready", "SOLD"];
+    
+    let mut result = spec.to_string();
+    for marker in end_markers {
+        if let Some(pos) = result.to_uppercase().find(marker) {
+            result = result[..pos].to_string();
+        }
+    }
+    
+    result.trim().to_string()
+}
+
+/// Extract GPU model from laptop product name  
+fn extract_gpu_from_laptop_name(name: &str) -> String {
+    let name_upper = name.to_uppercase();
+    
+    // Look for RTX patterns (e.g., RTX 5070, RTX 4060, RTX 3080Ti)
+    if let Some(idx) = name_upper.find("RTX") {
+        let after_rtx = &name[idx..];
+        // Extract "RTX XXXX" or "RTX XXXXTi"
+        let parts: Vec<&str> = after_rtx.split_whitespace().take(2).collect();
+        if parts.len() >= 2 {
+            let model = parts[1];
+            // Check if next part is "Ti" suffix
+            if after_rtx.to_uppercase().contains(&format!("RTX {}TI", model.to_uppercase())) {
+                return format!("RTX {}Ti", model);
+            }
+            return format!("RTX {}", model);
+        }
+    }
+    
+    // Look for GTX patterns
+    if let Some(idx) = name_upper.find("GTX") {
+        let after_gtx = &name[idx..];
+        let parts: Vec<&str> = after_gtx.split_whitespace().take(2).collect();
+        if parts.len() >= 2 {
+            return format!("GTX {}", parts[1]);
+        }
+    }
+    
+    String::new()
+}
+
+/// Extract warranty info from order rows
+fn extract_warranty_from_order(order: &Order) -> String {
+    for row in order.associations.order_rows.iter() {
+        let r = row.product_reference.to_lowercase();
+        
+        // Check for WTY/ prefix warranties
+        if r.starts_with("wty/") {
+            return row.product_name.clone();
+        }
+        
+        // Check for PCL/ prefix warranties
+        // PCL/12MONTH, PCL/18MONTH, PCL/6MONTH, PCL/90DAY, PCL/R2R-WAR/2Y
+        if r == "pcl/12month" {
+            return "12 Month Warranty".to_string();
+        }
+        if r == "pcl/18month" {
+            return "18 Month Warranty".to_string();
+        }
+        if r == "pcl/6month" {
+            return "6 Month Warranty".to_string();
+        }
+        if r == "pcl/90day" {
+            return "90 Day Warranty".to_string();
+        }
+        if r == "pcl/r2r-war/2y" {
+            return "2 Year Parts Warranty".to_string();
+        }
+    }
+    "None".to_string()
+}
+
+/// Calculate spiffs for an order (using same logic as koth)
+fn calculate_spiffs_for_order(order: &Order) -> f64 {
+    let mut spiffs_total: f64 = 0.0;
+    let mut has_system_product = false;
+    let mut cps_units: i32 = 0;
+    let mut has_sas: bool = false;
+    let mut has_wrav: bool = false;
+    
+    for row in order.associations.order_rows.iter() {
+        let r = row.product_reference.to_lowercase();
+        let qty: i32 = row.product_quantity.parse().unwrap_or(1);
+        
+        // Track if this order contains a system product
+        if r.starts_with("lap/") || (r.starts_with("case/") && !r.starts_with("case/15") && !r.starts_with("case/17")) {
+            has_system_product = true;
+        }
+        
+        // Track SAS/WRAV presence
+        if r.starts_with("sw/sas") { has_sas = true; }
+        if r.starts_with("sw/wrav") { has_wrav = true; }
+        
+        // CPS $10 (not cps-plat)
+        if r.starts_with("sw/cps") && !r.starts_with("sw/cps-plat") {
+            cps_units += qty;
+        }
+        
+        // CPS Plat $25
+        if r.starts_with("sw/cps-plat") {
+            spiffs_total += 25.0 * qty as f64;
+        }
+        
+        // SEB/Year $15
+        if r == "seb/year" {
+            spiffs_total += 15.0 * qty as f64;
+        }
+        
+        // Parts with $2 spiff
+        if r.starts_with("mon/")
+            || r.starts_with("kb/")
+            || r.starts_with("mou/")
+            || r.contains("/dock/")
+            || r == "dvdrw/usb"
+            || r.starts_with("case/15")
+            || r.starts_with("case/17")
+            || r.starts_with("spkr/")
+            || r.starts_with("belk/")
+        {
+            spiffs_total += 2.0 * qty as f64;
+        }
+    }
+    
+    // CPS spiff rules: $10 per CPS, but paired with SAS/WRAV means first unit is free
+    if cps_units > 0 {
+        let mut payable_cps = cps_units;
+        if has_system_product && (has_sas || has_wrav) {
+            payable_cps = (cps_units - 1).max(0);
+        }
+        spiffs_total += 10.0 * payable_cps as f64;
+    }
+    
+    spiffs_total
+}
+
+/// Get cost for the main system product from Odoo
+async fn get_system_cost_from_order(order: &Order) -> f64 {
+    // Find the main system product
+    for row in order.associations.order_rows.iter() {
+        let r = row.product_reference.to_lowercase();
+        if r.starts_with("lap/") 
+            || (r.starts_with("case/") && !r.starts_with("case/15") && !r.starts_with("case/17"))
+            || r.starts_with("bsd/")
+            || r.starts_with("rci/")
+            || r.starts_with("r2r/")
+            || r.starts_with("rtr/")
+        {
+            if let Ok(Some(result)) = get_product_cost_from_odoo(&row.product_reference).await {
+                return result.cost;
+            }
+        }
+    }
+    0.0
 }
