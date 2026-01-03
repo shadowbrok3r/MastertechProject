@@ -421,7 +421,6 @@ pub enum Store {
     RIV,
     LTN,
     MUR,
-    AF,
     WJ,
     ORE,
     SAN,
@@ -443,7 +442,6 @@ impl SurrealValue for Store {
                     "RIV" => Ok(Store::RIV),
                     "LTN" => Ok(Store::LTN),
                     "MUR" => Ok(Store::MUR),
-                    "AF" => Ok(Store::AF),
                     "WJ" => Ok(Store::WJ),
                     "ORE" => Ok(Store::ORE),
                     "SAN" => Ok(Store::SAN),
@@ -461,7 +459,6 @@ impl Store {
             Store::RIV => "RIV",
             Store::LTN => "LTN",
             Store::MUR => "MUR",
-            Store::AF => "AF",
             Store::WJ => "WJ",
             Store::ORE => "ORE",
             Store::SAN => "SAN",
@@ -470,11 +467,10 @@ impl Store {
     
     pub fn store_email(&self) -> &'static str {
         match *self {
-            Store::RIV => "RIV",
+            Store::RIV => "pclriv@pclaptops.com",
             Store::MUR => "pclmur@pclaptops.com",
             Store::WJ => "pclwj@pclaptops.com",
             Store::LTN => "pclltn@pclaptops.com",
-            Store::AF => "pclaf@pclaptops.com",
             Store::SAN => "pclsan@pclaptops.com",
             Store::ORE => "pclore@pclaptops.com",
         }
@@ -487,7 +483,6 @@ impl Store {
             "10" => Self::MUR,
             "11" => Self::WJ,
             "12" => Self::SAN,
-            "13" => Self::AF,
             "14" => Self::ORE,
             _ => Self::RIV,
         }
@@ -500,16 +495,14 @@ impl Store {
             Self::MUR => 10,
             Self::WJ => 11,
             Self::SAN => 12,
-            Self::AF => 13,
             Self::ORE => 14,
         }
     }
 
-    pub const VALUES: [Self; 7] = [
+    pub const VALUES: [Self; 6] = [
         Self::RIV,
         Self::LTN,
         Self::MUR,
-        Self::AF,
         Self::WJ,
         Self::ORE,
         Self::SAN,

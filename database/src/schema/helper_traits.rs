@@ -783,7 +783,6 @@ impl From<u64> for Store {
             74 => Store::MUR,
             78 => Store::WJ,
             75 => Store::ORE,
-            72 => Store::AF,
             77 => Store::SAN,
             _ => Store::RIV,
         }
@@ -798,7 +797,6 @@ impl From<Store> for u64 {
             Store::MUR => 74,
             Store::WJ => 78,
             Store::ORE => 75,
-            Store::AF => 72,
             Store::SAN => 77
         }
     }

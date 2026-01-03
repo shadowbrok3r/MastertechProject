@@ -645,3 +645,320 @@ impl RowCodec<CostBreakdownData> for CostBreakdownCodec {
         CostBreakdownData::default()
     }
 }
+
+/* ---------------------------------------- Systems In-Store ---------------------------------------- */
+
+/// System type classification
+#[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum SystemType {
+    #[default]
+    ReadyToRoll,
+    Rci,
+    Bsd,
+    Demo,
+    CustomBuild,
+}
+
+impl SystemType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            SystemType::ReadyToRoll => "R2R",
+            SystemType::Rci => "RCI",
+            SystemType::Bsd => "BSD",
+            SystemType::Demo => "Demo",
+            SystemType::CustomBuild => "Custom",
+        }
+    }
+    
+    pub fn from_order_type_id(id: &str) -> Self {
+        match id {
+            "12" => SystemType::ReadyToRoll,
+            "13" => SystemType::Bsd,
+            "14" => SystemType::Rci,
+            _ => SystemType::CustomBuild,
+        }
+    }
+}
+
+/// Row data for Systems In-Store table
+#[derive(Default, Serialize, Deserialize, Clone, Debug)]
+pub struct SystemInStoreData {
+    pub order_id: String,
+    pub model: String,
+    pub price: f64,
+    pub cost: f64,
+    pub revenue: f64,
+    pub spiff: f64,
+    pub system_type: SystemType,
+    pub cpu: String,
+    pub gpu: String,
+    pub ram: String,
+    pub warranty: String,
+    pub store_id: String,
+}
+
+/// Viewer for Systems In-Store table
+#[derive(Default, Serialize)]
+pub struct SystemInStoreViewer {
+    pub filter: String,
+    pub row_protection: bool,
+    /// Callback sender for creating tasks
+    #[serde(skip)]
+    pub task_create_tx: Option<Sender<SystemInStoreData>>,
+}
+
+impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<SystemInStoreData>> { 
+        Some(SystemInStoreCodec) 
+    }
+
+    fn num_columns(&mut self) -> usize { 12 }
+
+    fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
+        [
+            "Order ID", "Model", "Price", "Cost", "Revenue", "Spiff",
+            "Type", "CPU", "GPU", "RAM", "Warranty", "Create Task"
+        ][column].into()
+    }
+
+    fn is_sortable_column(&mut self, column: usize) -> bool {
+        column < 11 // All columns except the button column
+    }
+
+    fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &SystemInStoreData) -> bool { 
+        false 
+    }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
+
+    fn filter_row(&mut self, row: &SystemInStoreData) -> bool {
+        let filter = &self.filter.to_uppercase();
+        row.order_id.to_uppercase().contains(filter) 
+            || row.model.to_uppercase().contains(filter)
+            || row.cpu.to_uppercase().contains(filter)
+            || row.gpu.to_uppercase().contains(filter)
+    }
+
+    fn show_cell_view(&mut self, ui: &mut Ui, row: &SystemInStoreData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
+        match column {
+            // Order ID - hyperlink to Prestashop
+            0 => {
+                Hyperlink::from_label_and_url(
+                    RichText::new(&row.order_id).color(Color32::from_rgb(42, 195, 222)),
+                    format!("{}{}", BASE_URL, row.order_id)
+                )
+                .open_in_new_tab(true)
+                .ui(ui);
+            }
+            1 => { ui.label(&row.model); }
+            2 => { ui.label(format!("${:.2}", row.price)); }
+            3 => {
+                let color = if row.cost > 0.0 {
+                    Color32::from_rgb(200, 100, 100)
+                } else {
+                    Color32::GRAY
+                };
+                ui.label(RichText::new(format!("${:.2}", row.cost)).color(color));
+            }
+            4 => {
+                let color = if row.revenue >= 0.0 {
+                    Color32::LIGHT_GREEN
+                } else {
+                    Color32::from_rgb(255, 80, 80)
+                };
+                ui.label(RichText::new(format!("${:.2}", row.revenue)).color(color));
+            }
+            5 => {
+                ui.label(RichText::new(format!("${:.2}", row.spiff)).color(Color32::GOLD));
+            }
+            6 => {
+                let (color, text) = match row.system_type {
+                    SystemType::ReadyToRoll => (Color32::from_rgb(100, 200, 100), "R2R"),
+                    SystemType::Rci => (Color32::from_rgb(200, 150, 50), "RCI"),
+                    SystemType::Bsd => (Color32::from_rgb(100, 150, 200), "BSD"),
+                    SystemType::Demo => (Color32::from_rgb(200, 100, 200), "Demo"),
+                    SystemType::CustomBuild => (Color32::GRAY, "Custom"),
+                };
+                ui.label(RichText::new(text).color(color));
+            }
+            7 => { ui.label(&row.cpu); }
+            8 => { ui.label(&row.gpu); }
+            9 => { ui.label(&row.ram); }
+            10 => { 
+                let color = if row.warranty.is_empty() || row.warranty == "None" {
+                    Color32::GRAY
+                } else {
+                    Color32::from_rgb(100, 180, 255)
+                };
+                ui.label(RichText::new(&row.warranty).color(color)); 
+            }
+            11 => {
+                if Button::new("📋").ui(ui).clicked() {
+                    if let Some(ref tx) = self.task_create_tx {
+                        let _ = tx.try_send(row.clone());
+                    }
+                }
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    fn show_cell_editor(
+        &mut self,
+        ui: &mut Ui,
+        row: &mut SystemInStoreData,
+        column: usize,
+    ) -> Option<Response> {
+        ui.vertical_centered_justified(|ui| {
+            match column {
+                0 => Hyperlink::from_label_and_url(&row.order_id, format!("{}{}", BASE_URL, row.order_id))
+                    .open_in_new_tab(true).ui(ui),
+                1 => ui.label(&row.model),
+                2 => ui.label(format!("${:.2}", row.price)),
+                3 => ui.label(format!("${:.2}", row.cost)),
+                4 => ui.label(format!("${:.2}", row.revenue)),
+                5 => ui.label(format!("${:.2}", row.spiff)),
+                6 => ui.label(row.system_type.as_str()),
+                7 => ui.label(&row.cpu),
+                8 => ui.label(&row.gpu),
+                9 => ui.label(&row.ram),
+                10 => ui.label(&row.warranty),
+                11 => ui.label(""),
+                _ => unreachable!(),
+            }
+            .into()
+        })
+        .inner
+    }
+
+    fn set_cell_value(
+        &mut self,
+        src: &SystemInStoreData,
+        dst: &mut SystemInStoreData,
+        column: usize,
+    ) {
+        match column {
+            0 => dst.order_id = src.order_id.clone(),
+            1 => dst.model = src.model.clone(),
+            2 => dst.price = src.price,
+            3 => dst.cost = src.cost,
+            4 => dst.revenue = src.revenue,
+            5 => dst.spiff = src.spiff,
+            6 => dst.system_type = src.system_type.clone(),
+            7 => dst.cpu = src.cpu.clone(),
+            8 => dst.gpu = src.gpu.clone(),
+            9 => dst.ram = src.ram.clone(),
+            10 => dst.warranty = src.warranty.clone(),
+            11 => {}
+            _ => unreachable!(),
+        }
+    }
+
+    fn compare_cell(
+        &self,
+        row_l: &SystemInStoreData,
+        row_r: &SystemInStoreData,
+        column: usize,
+    ) -> std::cmp::Ordering {
+        match column {
+            0 => row_l.order_id.cmp(&row_r.order_id),
+            1 => row_l.model.cmp(&row_r.model),
+            2 => row_l.price.partial_cmp(&row_r.price).unwrap_or(std::cmp::Ordering::Equal),
+            3 => row_l.cost.partial_cmp(&row_r.cost).unwrap_or(std::cmp::Ordering::Equal),
+            4 => row_l.revenue.partial_cmp(&row_r.revenue).unwrap_or(std::cmp::Ordering::Equal),
+            5 => row_l.spiff.partial_cmp(&row_r.spiff).unwrap_or(std::cmp::Ordering::Equal),
+            6 => row_l.system_type.as_str().cmp(row_r.system_type.as_str()),
+            7 => row_l.cpu.cmp(&row_r.cpu),
+            8 => row_l.gpu.cmp(&row_r.gpu),
+            9 => row_l.ram.cmp(&row_r.ram),
+            10 => row_l.warranty.cmp(&row_r.warranty),
+            11 => std::cmp::Ordering::Equal,
+            _ => unreachable!(),
+        }
+    }
+
+    fn new_empty_row(&mut self) -> SystemInStoreData {
+        SystemInStoreData::default()
+    }
+
+    fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> TableColumnConfig {
+        let col_config = TableColumnConfig::auto();
+        match column {
+            0 => col_config.resizable(true).at_least(80.).at_most(100.),   // Order ID
+            1 => col_config.resizable(true).at_least(150.).at_most(250.),  // Model
+            2 => col_config.resizable(true).at_least(70.).at_most(100.),   // Price
+            3 => col_config.resizable(true).at_least(70.).at_most(100.),   // Cost
+            4 => col_config.resizable(true).at_least(70.).at_most(100.),   // Revenue
+            5 => col_config.resizable(true).at_least(60.).at_most(80.),    // Spiff
+            6 => col_config.resizable(true).at_least(50.).at_most(70.),    // Type
+            7 => col_config.resizable(true).at_least(100.).at_most(180.),  // CPU
+            8 => col_config.resizable(true).at_least(80.).at_most(150.),   // GPU
+            9 => col_config.resizable(true).at_least(50.).at_most(80.),    // RAM
+            10 => col_config.resizable(true).at_least(60.).at_most(100.),  // Warranty
+            11 => col_config.resizable(false).at_least(30.).at_most(50.),  // Create Task button
+            _ => col_config,
+        }
+    }
+}
+
+struct SystemInStoreCodec;
+
+impl RowCodec<SystemInStoreData> for SystemInStoreCodec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src_row: &SystemInStoreData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.order_id),
+            1 => dst.push_str(&src_row.model),
+            2 => dst.push_str(&format!("{}", src_row.price)),
+            3 => dst.push_str(&format!("{}", src_row.cost)),
+            4 => dst.push_str(&format!("{}", src_row.revenue)),
+            5 => dst.push_str(&format!("{}", src_row.spiff)),
+            6 => dst.push_str(src_row.system_type.as_str()),
+            7 => dst.push_str(&src_row.cpu),
+            8 => dst.push_str(&src_row.gpu),
+            9 => dst.push_str(&src_row.ram),
+            10 => dst.push_str(&src_row.warranty),
+            11 => {}
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        src_data: &str,
+        column: usize,
+        dst_row: &mut SystemInStoreData,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst_row.order_id = src_data.to_string(),
+            1 => dst_row.model = src_data.to_string(),
+            2 => dst_row.price = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.cost = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst_row.revenue = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            5 => dst_row.spiff = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            6 => dst_row.system_type = match src_data {
+                "R2R" => SystemType::ReadyToRoll,
+                "RCI" => SystemType::Rci,
+                "BSD" => SystemType::Bsd,
+                "Demo" => SystemType::Demo,
+                _ => SystemType::CustomBuild,
+            },
+            7 => dst_row.cpu = src_data.to_string(),
+            8 => dst_row.gpu = src_data.to_string(),
+            9 => dst_row.ram = src_data.to_string(),
+            10 => dst_row.warranty = src_data.to_string(),
+            11 => {}
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> SystemInStoreData {
+        SystemInStoreData::default()
+    }
+}

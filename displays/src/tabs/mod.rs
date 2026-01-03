@@ -208,7 +208,6 @@ impl SharedContext {
             74 => Store::MUR.as_str(),
             78 => Store::WJ.as_str(),
             75 => Store::ORE.as_str(),
-            72 => Store::AF.as_str(),
             77 => Store::SAN.as_str(),
             _ => Store::RIV.as_str(),
         };
@@ -221,7 +220,6 @@ impl SharedContext {
                 ui.selectable_value(selected, 74, "MUR");
                 ui.selectable_value(selected, 78, "WJ");
                 ui.selectable_value(selected, 75, "ORE");
-                ui.selectable_value(selected, 72, "AF");
                 ui.selectable_value(selected, 77, "SAN");
             });
 

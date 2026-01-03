@@ -28,6 +28,12 @@ pub struct StockTable {
     cost_order_id: String,
     cost_loading: bool,
     cost_summary: Option<CostBreakdownSummary>,
+    // Systems In-Store
+    systems_in_store_viewer: SystemInStoreViewer,
+    systems_in_store_table: egui_data_table::DataTable<SystemInStoreData>,
+    systems_order_id: String,
+    systems_loading: bool,
+    systems_first_load: bool,
     is_admin: bool,
     first_run: bool,
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
@@ -35,6 +41,9 @@ pub struct StockTable {
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
     pub cost_channel: (Sender<Vec<CostBreakdownData>>, Receiver<Vec<CostBreakdownData>>),
     pub cost_summary_channel: (Sender<CostBreakdownSummary>, Receiver<CostBreakdownSummary>),
+    pub systems_channel: (Sender<Vec<SystemInStoreData>>, Receiver<Vec<SystemInStoreData>>),
+    pub systems_add_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
+    pub systems_task_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
     store_selection: u64
 }
 
@@ -44,6 +53,7 @@ pub enum StockSelection {
     CompanyStock,
     StoreInventory,
     CostBreakdown,
+    SystemsInStore,
 }
 
 impl StockSelection {
@@ -52,6 +62,7 @@ impl StockSelection {
             StockSelection::CompanyStock => "Company Stock",
             StockSelection::StoreInventory => "Store Inventory",
             StockSelection::CostBreakdown => "Cost Breakdown",
+            StockSelection::SystemsInStore => "Systems In-Store",
         }
     }
 }
@@ -63,9 +74,15 @@ impl Default for StockTable {
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let cost_channel = <Vec<CostBreakdownData>>::create_unbounded_channel();
         let cost_summary_channel = <CostBreakdownSummary>::create_unbounded_channel();
+        let systems_channel = <Vec<SystemInStoreData>>::create_unbounded_channel();
+        let systems_add_channel = <SystemInStoreData>::create_unbounded_channel();
+        let systems_task_channel = <SystemInStoreData>::create_unbounded_channel();
 
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
+
+        let mut systems_in_store_viewer = SystemInStoreViewer::default();
+        systems_in_store_viewer.task_create_tx = Some(systems_task_channel.0.clone());
 
         // Check if current user is admin
         let is_admin = get_current_user_from_auth()
@@ -83,6 +100,11 @@ impl Default for StockTable {
             cost_order_id: String::new(),
             cost_loading: false,
             cost_summary: None,
+            systems_in_store_viewer,
+            systems_in_store_table: egui_data_table::DataTable::<SystemInStoreData>::default(),
+            systems_order_id: String::new(),
+            systems_loading: false,
+            systems_first_load: true,
             is_admin,
             first_run: true, 
             serial_channel, 
@@ -90,7 +112,10 @@ impl Default for StockTable {
             stock_channel,
             cost_channel,
             cost_summary_channel,
-            store_selection: 76,
+            systems_channel,
+            systems_add_channel,
+            systems_task_channel,
+            store_selection: Store::RIV.into_store_id() as u64,
         }
     }
 }
@@ -121,6 +146,11 @@ impl StockTable {
                                 selected, 
                                 StockSelection::CostBreakdown,
                                 StockSelection::CostBreakdown.as_str()
+                            );
+                            ui.selectable_value(
+                                selected,
+                                StockSelection::SystemsInStore,
+                                StockSelection::SystemsInStore.as_str()
                             );
                         }
                     });
@@ -160,7 +190,6 @@ impl StockTable {
                                 74 => Store::MUR.as_str(),
                                 78 => Store::WJ.as_str(),
                                 75 => Store::ORE.as_str(),
-                                72 => Store::AF.as_str(),
                                 77 => Store::SAN.as_str(),
                                 _ => Store::RIV.as_str(),
                             };
@@ -173,7 +202,6 @@ impl StockTable {
                                     ui.selectable_value(selected, 74, "MUR");
                                     ui.selectable_value(selected, 78, "WJ");
                                     ui.selectable_value(selected, 75, "ORE");
-                                    ui.selectable_value(selected, 72, "AF");
                                     ui.selectable_value(selected, 77, "SAN");
                                 });
         
@@ -238,6 +266,83 @@ impl StockTable {
                             TextEdit::singleline(&mut self.cost_breakdown_viewer.filter)
                                 .desired_width(250.)
                                 .hint_text("Filter results")
+                                .ui(ui);
+                        },
+                        StockSelection::SystemsInStore => {
+                            // Store selection for Systems In-Store
+                            let selected = &mut self.store_selection;
+                            let current = *selected;
+                            
+                            let selected_text = match *selected {
+                                7 => Store::RIV.as_str(),
+                                8 => Store::LTN.as_str(),
+                                10 => Store::MUR.as_str(),
+                                11 => Store::WJ.as_str(),
+                                12 => Store::SAN.as_str(),
+                                14 => Store::ORE.as_str(),
+                                _ => Store::RIV.as_str(),
+                            };
+                            
+                            ComboBox::new("Systems_Store_Selection", "")
+                                .selected_text(selected_text)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(selected, 7, "RIV");
+                                    ui.selectable_value(selected, 8, "LTN");
+                                    ui.selectable_value(selected, 10, "MUR");
+                                    ui.selectable_value(selected, 11, "WJ");
+                                    ui.selectable_value(selected, 14, "ORE");
+                                    ui.selectable_value(selected, 12, "SAN");
+                                });
+                            
+                            // Trigger refresh when store changes
+                            if *selected != current {
+                                self.systems_first_load = true;
+                            }
+                            
+                            ui.add_space(10.);
+
+                            if Button::new("Refresh").ui(ui).clicked() || self.systems_first_load {
+                                self.systems_first_load = false;
+                                self.systems_loading = true;
+                                let systems_tx = self.systems_channel.0.clone();
+                                let store_id = self.store_selection;
+                                PlatformSpawner::spawn(async move {
+                                    let _ = get_systems_in_store(store_id, systems_tx).await;
+                                });
+                            }
+                            
+                            ui.add_space(10.);
+                            ui.separator();
+                            ui.add_space(10.);
+                            
+                            // Manual order add
+                            TextEdit::singleline(&mut self.systems_order_id)
+                                .desired_width(120.)
+                                .hint_text("Add Order ID")
+                                .ui(ui);
+
+                            ui.add_space(5.);
+
+                            let can_add = !self.systems_order_id.is_empty() && !self.systems_loading;
+                            if ui.add_enabled(can_add, Button::new("Add")).clicked() {
+                                let systems_tx = self.systems_add_channel.0.clone();
+                                let order_id = self.systems_order_id.clone();
+                                self.systems_order_id.clear();
+                                PlatformSpawner::spawn(async move {
+                                    let _ = add_order_to_systems(order_id, systems_tx).await;
+                                });
+                            }
+
+                            if self.systems_loading {
+                                ui.add_space(5.);
+                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                            }
+
+                            ui.add_space(10.);
+
+                            TextEdit::singleline(&mut self.systems_in_store_viewer.filter)
+                                .desired_width(200.)
+                                .hint_text("Filter systems")
                                 .ui(ui);
                         },
                     }
@@ -384,6 +489,30 @@ impl StockTable {
                         .ui(ui);
                     }
                 },
+                StockSelection::SystemsInStore => {
+                    if self.systems_loading {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            ui.label("Fetching systems in-store...");
+                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                        });
+                    } else if self.systems_in_store_table.len() < 1 {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(50.);
+                            ui.label("No systems found. Select a store and click Refresh to load systems.");
+                        });
+                    } else {
+                        Renderer::new(
+                            &mut self.systems_in_store_table, 
+                            &mut self.systems_in_store_viewer
+                        ).with_style_modify(|s| {
+                            s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                            s.single_click_edit_mode = true;
+                            s.auto_shrink = [false, false].into();
+                        })
+                        .ui(ui);
+                    }
+                },
             }
         });
     }
@@ -429,7 +558,6 @@ impl StockTable {
                             74 => Store::MUR.as_str(),
                             78 => Store::WJ.as_str(),
                             75 => Store::ORE.as_str(),
-                            72 => Store::AF.as_str(),
                             77 => Store::SAN.as_str(),
                             _ => Store::RIV.as_str(),
                         }
@@ -507,5 +635,28 @@ impl StockTable {
                       summary.customer_name, summary.order_total, summary.total_cost, summary.profit);
             self.cost_summary = Some(summary);
         }
+
+        // Handle systems in-store data
+        if let Ok(systems_data) = self.systems_channel.1.try_recv() {
+            log::info!("Received systems in-store data: {} systems", systems_data.len());
+            self.systems_loading = false;
+            self.systems_in_store_table.replace(systems_data);
+        }
+
+        // Handle single system add
+        if let Ok(system_data) = self.systems_add_channel.1.try_recv() {
+            log::info!("Adding system to table: {}", system_data.order_id);
+            let mut data = self.systems_in_store_table.take();
+            // Only add if not already in the table
+            if !data.iter().any(|s| s.order_id == system_data.order_id) {
+                data.push(system_data);
+            }
+            self.systems_in_store_table.replace(data);
+        }
+    }
+    
+    /// Get pending task creation request (if any)
+    pub fn get_pending_task_create(&mut self) -> Option<SystemInStoreData> {
+        self.systems_task_channel.1.try_recv().ok()
     }
 }

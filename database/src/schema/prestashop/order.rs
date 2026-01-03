@@ -70,6 +70,25 @@ pub struct Associations {
     pub order_rows: Vec<OrderRow>,
     #[serde(default = "new_svc_vec")]
     pub order_service: Vec<ServiceOrder>,
+    #[serde(default = "new_order_serial_vec")]
+    pub order_serial: Vec<OrderSerial>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct OrderSerial {
+    pub id_order: String,
+    pub id_order_detail: String,
+    pub serial_number: String,
+    pub product_reference: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct OrderDetail {
+    pub id: String,
+    pub id_order: String,
+    pub detail_notes: String,
+    pub product_id: String,
+    pub product_name: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
@@ -142,7 +161,7 @@ impl OrderState {
     }
 
     /*84=Returned, 30=In Repair, 239=Accepted by Odoo?, 29=CheckinShelf, 40=DoneShelf, 73=Order Placed, 70=PrePulled236=ShipToStore */
-    pub fn id(&self) -> i32 {
+    pub fn to_id(&self) -> i32 {
         match self {
             Self::AcceptedByOdoo => 239,
             Self::Shipped => 4,
@@ -178,6 +197,10 @@ fn new_vec() -> Vec<OrderRow> {
 }
 
 fn new_svc_vec() -> Vec<ServiceOrder> {
+    Vec::new()
+}
+
+fn new_order_serial_vec() -> Vec<OrderSerial> {
     Vec::new()
 }
 

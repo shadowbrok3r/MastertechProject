@@ -550,7 +550,6 @@ impl SpecialPartOrder {
                                                 Store::RIV => "1".to_string(),
                                                 Store::LTN => "2".to_string(),
                                                 Store::MUR => "4".to_string(),
-                                                Store::AF => "7".to_string(),
                                                 Store::WJ => "5".to_string(),
                                                 Store::ORE => "8".to_string(),
                                                 Store::SAN => "6".to_string(),

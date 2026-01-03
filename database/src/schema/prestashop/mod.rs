@@ -236,7 +236,6 @@ impl<'a> Prestashop<'a> {
     //         "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
     //         self.query_args(resource_name, url_params.clone())
     //     );
-
     //     let response: Value = self
     //         .client
     //         .get(self.query_args(resource_name, url_params))
@@ -244,11 +243,9 @@ impl<'a> Prestashop<'a> {
     //         .await?
     //         .json()
     //         .await?;
-
     //     info!("prestashop_schema -> response: {:#?}", response);
     //     let x: Vec<T> = from_value(response[resource_name].clone())?;
     //     info!("prestashop_schema -> x: {x:#?}");
-
     //     Ok(x)
     // }
 

@@ -164,7 +164,7 @@ impl crate::app_state::SharedContext {
         // Check for live query connection errors (Connection Reset in WASM)
         if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
             log::warn!("Live query connection error detected: {}", error_msg);
-            if error_msg.contains("Connection reset") || error_msg.contains("reset") || error_msg.contains("I/O") {
+            if error_msg.contains("connection reset") || error_msg.contains("reset") || error_msg.contains("I/O") {
                 log::warn!("Connection reset detected - setting needs_reconnect flag");
                 self.needs_reconnect = true;
                 // Show a toast to inform the user
