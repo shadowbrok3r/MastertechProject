@@ -29,7 +29,7 @@ use database::{
 use log::{error, info, warn};
 use simplelog::{ColorChoice, Config, LevelFilter, TermLogger, TerminalMode};
 use std::collections::HashMap;
-use surrealdb::RecordId;
+use surrealdb_types::{Datetime, RecordId};
 
 ////////////// TODO
 /// - Add a way to audit sales orders that are supposed to be service orders
@@ -516,10 +516,10 @@ async fn run_task_audit(assignee: &User, dry_run: bool, summary: &mut DryRunSumm
             match update_existing_task(&task, task.service_number.as_deref().unwrap_or("N/A"), &due_date_str, assignee, audit_type).await {
                 Ok(_) => {
                     tasks_processed += 1;
-                    info!("Reassigned overdue task {} to audit user", task.id);
+                    info!("Reassigned overdue task {:?} to audit user", task.id);
                 }
                 Err(e) => {
-                    error!("Failed to reassign task {}: {:?}", task.id, e);
+                    error!("Failed to reassign task {:?}: {:?}", task.id, e);
                 }
             }
         }
@@ -710,7 +710,7 @@ fn build_task_audit_description(
 ) -> String {
     let mut description = String::new();
     
-    description.push_str(&format!("🔴 TASK AUDIT - {}\n\n", task_id));
+    description.push_str(&format!("🔴 TASK AUDIT - {:?}\n\n", task_id));
     
     if let Some(svc) = service_number {
         description.push_str(&format!("📄 SERVICE: #{}\n\n", svc));
@@ -783,7 +783,7 @@ async fn update_existing_task(
     assignee: &User,
     audit_type: AuditType,
 ) -> Result<()> {
-    let today: surrealdb::sql::Datetime = Utc::now().into();
+    let today: Datetime = Utc::now().into();
     
     // Get the previous assignee's username
     let previous_assignee_username = if let Some(prev_user) = get_user_by_id(&task.assignee).await? {
@@ -825,7 +825,7 @@ async fn update_existing_task(
 
     // Create a private task note explaining the reassignment
     let mut task_note = TaskNotePayload {
-        id: RecordId::from((TASK_NOTE_TABLE, surrealdb::sql::Id::rand().to_string())),
+        id: RecordId::new(TASK_NOTE_TABLE, uuid::Uuid::new_v4().to_string().as_str()),
         task_id: Some(task.id.clone()),
         created_at: Utc::now().into(),
         note: audit_description,
@@ -840,7 +840,7 @@ async fn update_existing_task(
     
     task_note.create_task_note_in_db().await?;
 
-    info!("Updated task {} - reassigned from {} and private audit note created", task.id, previous_assignee_username);
+    info!("Updated task {:?} - reassigned from {} and private audit note created", task.id, previous_assignee_username);
     Ok(())
 }
 
@@ -865,7 +865,7 @@ async fn create_audit_task(order_id: &str, date_str: &str, assignee: &User) -> R
 
     // Create ticket data
     let ticket_data = TicketData {
-        id: RecordId::from((TICKET_TABLE, order_id.to_string())),
+        id: RecordId::new(TICKET_TABLE, order_id),
         service_number: order_id.to_string(),
         salesman: String::new(),
         sales_rep: sales_rep_name.clone().unwrap_or_default(),
@@ -895,7 +895,7 @@ async fn create_audit_task(order_id: &str, date_str: &str, assignee: &User) -> R
     );
 
     let task_data = LiveTaskPayload {
-        id: RecordId::from((TASK_TABLE, order_id.to_string())),
+        id: RecordId::new(TASK_TABLE, order_id.to_string()),
         task_name,
         service_number: Some(order_id.to_string()),
         service_ticket: Some(ticket_data.id.clone()),
@@ -927,11 +927,11 @@ async fn create_audit_task(order_id: &str, date_str: &str, assignee: &User) -> R
             Ok(())
         }
         database::schema::TaskCreationResult::AlreadyExists { service_number } => {
-            info!("Task already exists for {}", service_number);
+            log::warn!("Task already exists for {}", service_number);
             Ok(())
         }
         database::schema::TaskCreationResult::Updated { service_number } => {
-            info!("Updated existing task for {}", service_number);
+            log::warn!("Updated existing task for {}", service_number);
             Ok(())
         }
         database::schema::TaskCreationResult::Error { message } => {

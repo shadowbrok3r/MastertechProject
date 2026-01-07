@@ -97,7 +97,7 @@ impl SharedContext {
             // Initialize layout_configs if needed
             self.init_layout_configs();
 
-            let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
+            let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
             let layout_configs = self.layout_configs.as_ref();
 
             for note in notes.iter() {

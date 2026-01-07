@@ -463,19 +463,19 @@ impl MtechServer {
                             .selected_text(selected_text)
                             .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(selected, 76, "RIV");
-                                ui.selectable_value(selected, 73, "LTN");
-                                ui.selectable_value(selected, 74, "MUR");
-                                ui.selectable_value(selected, 78, "WJ");
-                                ui.selectable_value(selected, 75, "ORE");
-                                ui.selectable_value(selected, 77, "SAN");
+                                ui.selectable_value(selected, database::schema::task::Store::RIV.into_store_id() as u64, database::schema::task::Store::RIV.as_str());
+                                ui.selectable_value(selected, database::schema::task::Store::LTN.into_store_id() as u64, database::schema::task::Store::LTN.as_str());
+                                ui.selectable_value(selected, database::schema::task::Store::MUR.into_store_id() as u64, database::schema::task::Store::MUR.as_str());
+                                ui.selectable_value(selected, database::schema::task::Store::WJ.into_store_id() as u64, database::schema::task::Store::WJ.as_str());
+                                ui.selectable_value(selected, database::schema::task::Store::ORE.into_store_id() as u64, database::schema::task::Store::ORE.as_str());
+                                ui.selectable_value(selected, database::schema::task::Store::SAN.into_store_id() as u64, database::schema::task::Store::SAN.as_str());
                             });
                         });
 
                         if *selected != current {
                             let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
                             let store_users_tx = self.shared_ctx.store_users_tx.clone();
-                            let store_selection = std::convert::Into::<Store>::into(*selected);
+                            let store_selection = Store::from_presta_store_id(&selected.to_string());
                             self.shared_ctx.store_users.clear();
                             self.shared_ctx.tasks.clear();
                             self.shared_ctx.layout_configs = None; // Force reinitialization

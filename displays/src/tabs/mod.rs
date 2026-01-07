@@ -201,32 +201,23 @@ impl SharedContext {
     pub fn store_selection_menu(&mut self, ui: &mut Ui) {
         let selected = &mut self.store_selection;
         let current = selected.clone();
-
-        let selected_text = match selected {
-            76 => Store::RIV.as_str(),
-            73 => Store::LTN.as_str(),
-            74 => Store::MUR.as_str(),
-            78 => Store::WJ.as_str(),
-            75 => Store::ORE.as_str(),
-            77 => Store::SAN.as_str(),
-            _ => Store::RIV.as_str(),
-        };
+        let selected_text = Store::from_presta_store_id(&selected.to_string());
 
         ComboBox::new("Store_Selection", "")
-            .selected_text(selected_text)
+            .selected_text(selected_text.as_str())
             .show_ui(ui, |ui| {
-                ui.selectable_value(selected, 76, "RIV");
-                ui.selectable_value(selected, 73, "LTN");
-                ui.selectable_value(selected, 74, "MUR");
-                ui.selectable_value(selected, 78, "WJ");
-                ui.selectable_value(selected, 75, "ORE");
-                ui.selectable_value(selected, 77, "SAN");
+                ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
+                ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
+                ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
+                ui.selectable_value(selected, Store::WJ.into_store_id() as u64, Store::WJ.as_str());
+                ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
+                ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
             });
 
         if *selected != current {
             let tasks_tx = self.initial_tasks_tx.clone();
             let store_users_tx = self.store_users_tx.clone();
-            let store_selection = std::convert::Into::<Store>::into(*selected);
+            let store_selection = Store::from_presta_store_id(&selected.to_string());
 
             // Signal store switch
             self.pending_store = Some(store_selection.clone());
@@ -350,8 +341,8 @@ impl egui_dock::TabViewer for SharedContext {
                     if self.tasks.filter_by_completion(true).is_empty() {
                         let tasks_tx = self.initial_tasks_tx.clone();
                         let store_sel = self.store_selection;
-                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
-                        
+                        let store_selection = Store::from_presta_store_id(&store_sel.to_string()).as_str().to_string();
+                        log::info!("Pulling completed tasks for store: {store_selection}");
                         PlatformSpawner::spawn(async move {
                             let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
@@ -373,8 +364,8 @@ impl egui_dock::TabViewer for SharedContext {
                     if self.tasks.filter_by_completion(false).is_empty() {
                         let tasks_tx = self.initial_tasks_tx.clone();
                         let store_sel = self.store_selection;
-                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
-                        
+                        let store_selection = Store::from_presta_store_id(&store_sel.to_string()).as_str().to_string();
+                        log::info!("Pulling tasks for store: {store_selection}");
                         PlatformSpawner::spawn(async move {
                             let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_tasks_for_store: {get_tasks_for_store:?}");
