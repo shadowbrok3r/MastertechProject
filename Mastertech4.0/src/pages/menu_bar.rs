@@ -128,12 +128,12 @@ impl MasterTechApp {
                                         .close_behavior(PopupCloseBehavior::IgnoreClicks)
                                         .selected_text(selected_text)
                                         .show_ui(ui, |ui| {
-                                            ui.selectable_value(selected, 76, "RIV");
-                                            ui.selectable_value(selected, 73, "LTN");
-                                            ui.selectable_value(selected, 74, "MUR");
-                                            ui.selectable_value(selected, 78, "WJ");
-                                            ui.selectable_value(selected, 75, "ORE");
-                                            ui.selectable_value(selected, 77, "SAN");
+                                            ui.selectable_value(selected, database::schema::task::Store::RIV.into_store_id() as u64, database::schema::task::Store::RIV.as_str());
+                                            ui.selectable_value(selected, database::schema::task::Store::LTN.into_store_id() as u64, database::schema::task::Store::LTN.as_str());
+                                            ui.selectable_value(selected, database::schema::task::Store::MUR.into_store_id() as u64, database::schema::task::Store::MUR.as_str());
+                                            ui.selectable_value(selected, database::schema::task::Store::WJ.into_store_id() as u64, database::schema::task::Store::WJ.as_str());
+                                            ui.selectable_value(selected, database::schema::task::Store::ORE.into_store_id() as u64, database::schema::task::Store::ORE.as_str());
+                                            ui.selectable_value(selected, database::schema::task::Store::SAN.into_store_id() as u64, database::schema::task::Store::SAN.as_str());
                                         });
                             
                                         if *selected != current {
@@ -142,7 +142,7 @@ impl MasterTechApp {
                                             self.context.shared_ctx.task_layouts.clear();
                                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
                                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
-                                            let store_selection = std::convert::Into::<Store>::into(*selected);
+                                            let store_selection = Store::from_presta_store_id(&selected.to_string());
                                             
                                             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
                                             spawn(async move {

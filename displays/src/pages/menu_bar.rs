@@ -139,15 +139,7 @@ impl SharedContext {
                     let selected = &mut self.store_selection;
                     let current = selected.clone();
                     let user_store = user.get_store();
-                    let selected_text = match selected {
-                        76 => Store::RIV.as_str(),
-                        73 => Store::LTN.as_str(),
-                        74 => Store::MUR.as_str(),
-                        78 => Store::WJ.as_str(),
-                        75 => Store::ORE.as_str(),
-                        77 => Store::SAN.as_str(),
-                        _ => user_store.as_str(),
-                    };
+                    let selected_text = Store::from_presta_store_id(&selected.to_string());
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(8.0);
@@ -439,22 +431,22 @@ impl SharedContext {
                         Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
                             ComboBox::new("Store_Selection", "")                    
                             .width(60.)
-                            .selected_text(selected_text)
+                            .selected_text(selected_text.as_str())
                             .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(selected, 76, "RIV");
-                                ui.selectable_value(selected, 73, "LTN");
-                                ui.selectable_value(selected, 74, "MUR");
-                                ui.selectable_value(selected, 78, "WJ");
-                                ui.selectable_value(selected, 75, "ORE");
-                                ui.selectable_value(selected, 77, "SAN");
+                                ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
+                                ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
+                                ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
+                                ui.selectable_value(selected, Store::WJ.into_store_id() as u64, Store::WJ.as_str());
+                                ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
+                                ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
                             });
                         });
 
                         if *selected != current {
                             let tasks_tx = self.initial_tasks_tx.clone();
                             let store_users_tx = self.store_users_tx.clone();
-                            let store_selection = std::convert::Into::<Store>::into(*selected);
+                            let store_selection = Store::from_presta_store_id(&selected.to_string());
                             self.store_users.clear();
                             self.tasks.clear();
                             self.layout_configs = None; // Force reinitialization

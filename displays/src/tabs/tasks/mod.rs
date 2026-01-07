@@ -36,7 +36,7 @@ impl SharedContext {
         // Get or update the layout
         let Some(config) = layout_configs.get(page) else { return; };
 
-        let store_selection = std::convert::Into::<Store>::into(self.store_selection.clone());
+        let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
         let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
 
         // Always rebuild task_map to reflect current tasks

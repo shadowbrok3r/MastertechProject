@@ -368,7 +368,7 @@ impl Koth {
                         .map(|o| o.total_paid_tax_excl.parse::<f64>().unwrap_or(0.0))
                         .sum::<f64>();
 
-                    let ar_financing_ratio = if self.total > 0.0 { (total_financed / self.total) * 10.0 } else { 0.0 };
+                    let ar_financing_ratio = if self.total > 0.0 { (total_financed / self.total) * 100.0 } else { 0.0 };
                     
                     let total_sales = total_desktops + total_laptops;
                     
@@ -913,8 +913,8 @@ impl Koth {
             }
 
             // Finance ratio: out of total revenue (tax excl), how much was financed
-            // Use the same scale the "Me" summary uses (x10 to match observed data)
-            let finance_ratio = if total_revenue > 0.0 { (total_financed / total_revenue) * 10.0 } else { 0.0 };
+            // Use the same scale the "Me" summary uses (x100 to match observed data)
+            let finance_ratio = if total_revenue > 0.0 { (total_financed / total_revenue) * 100.0 } else { 0.0 };
 
             // Total orders = count of attributed orders (share > 0)
             let total_orders = self

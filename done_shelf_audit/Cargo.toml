@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 database = { path = "../database" }
 surrealdb = { workspace = true }
+surrealdb-types = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -20,7 +21,7 @@ log = { workspace = true }
 simplelog = { workspace = true }
 dotenvy = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
-
+uuid = { workspace = true }
 [build-dependencies]
 dotenvy = { workspace = true }
 
