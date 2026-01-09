@@ -209,7 +209,6 @@ impl SharedContext {
                 ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
                 ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
                 ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                ui.selectable_value(selected, Store::WJ.into_store_id() as u64, Store::WJ.as_str());
                 ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
                 ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
             });
@@ -249,7 +248,7 @@ impl egui_dock::TabViewer for SharedContext {
             "Completed Tasks" => self.render_layout(ui, "Completed Tasks"),
             "Sales Tracker" => self.sales_tracker.ui(ui),
             "Inventory" => self.stock_tables.ui(ui),
-            "Task Audit" => self.task_table_viewer(ui),
+            "Task Audit" => self.task_table_viewer(ui, self.ui_actions_tx.clone()),
             "Threads" => self.user_chat.ui(ui),
             "Bug Report" => self.github(ui),
             "My Tools" => self.filesystem.display(ui),

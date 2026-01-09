@@ -34,6 +34,8 @@ pub mod mcp;
 pub mod remote_viewer;
 
 
+use crate::modals::create_task_modal::Tur;
+
 #[cfg(target_arch="wasm32")]
 pub use {
     // rayon_wasm::prelude::{self as rayon},
@@ -156,9 +158,11 @@ pub fn get_database_users() -> Vec<User> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskUiActions {
     OpenTaskModal(LiveTaskPayload),
-    CreateTaskModal,
+    CreateTaskModal(Option<Tur>),
     OpenChatModal((RecordId, Vec<TaskNotePayload>, Option<String>)),
     OpenViewport(LiveTaskPayload),
+    OpenCreateTaskModalFromOrder(database::schema::prestashop_schema::PrestashopPayload),
+    OpenCreateTaskModalFromSystem(crate::tabs::stock::SystemInStoreData),
     None,
 }
 

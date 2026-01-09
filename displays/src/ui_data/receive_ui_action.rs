@@ -1,4 +1,5 @@
-use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
+use crate::{TaskUiActions, chats::ChatView, modals::{ModalType, create_task_modal::{CreateTaskModal, Tur}, task_modal::TaskModal}};
+use crate::tabs::stock::SystemInStoreData;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 // removed unused PlatformSpawner/Spawner imports after refactor
 use database::schema::{RecordIdExt, TaskNotePayload};
@@ -65,20 +66,106 @@ impl SharedContext {
                             .or_insert(ModalType::ChatView(chat_modal));
                     }
                 }
-                TaskUiActions::CreateTaskModal => {
-                    let create_modal = CreateTaskModal::new(
+                TaskUiActions::CreateTaskModal(optional_task_data) => {
+                    if let Some(task_data) = optional_task_data {
+                        let mut create_modal = CreateTaskModal::new(
+                            "Create Task",
+                            self.store_users.clone(),
+                            self.tur_channel.0.clone(),
+                        );
+                        create_modal.update_tur_info(task_data);
+                    } else {
+                        let create_modal = CreateTaskModal::new(
+                            "Create Task",
+                            self.store_users.clone(),
+                            self.tur_channel.0.clone(),
+                        );
+
+                        if self.opened_modals.get(&create_modal.title).is_some() {
+                            self.opened_modals.remove_entry(&create_modal.title);
+                        } else {
+                            self.opened_modals
+                                .entry(create_modal.title.clone())
+                                .or_insert(ModalType::CreateTaskModal(create_modal));
+                        }
+                    }
+                }
+                TaskUiActions::OpenCreateTaskModalFromOrder(presta_payload) => {
+                    info!("Opening create task modal from order: {}", presta_payload.order.id);
+                    let mut create_modal = CreateTaskModal::new(
                         "Create Task",
                         self.store_users.clone(),
                         self.tur_channel.0.clone(),
                     );
-
-                    if self.opened_modals.get(&create_modal.title).is_some() {
-                        self.opened_modals.remove_entry(&create_modal.title);
-                    } else {
-                        self.opened_modals
-                            .entry(create_modal.title.clone())
-                            .or_insert(ModalType::CreateTaskModal(create_modal));
-                    }
+                    
+                    // Get service details for device info
+                    let service = presta_payload.order.associations.order_service.get(0);
+                    let device_mfg = service.map(|s| s.device_mfg.clone()).unwrap_or_default();
+                    let device_model = service.map(|s| s.device_model.clone()).unwrap_or_default();
+                    let checkin_notes = service.map(|s| s.check_in_notes.clone()).unwrap_or_default();
+                    
+                    // Create a Tur struct from the PrestashopPayload
+                    let tur = Tur {
+                        data: presta_payload.clone(),
+                        ticket_data: database::schema::TicketData {
+                            service_number: presta_payload.order.id.clone(),
+                            checkin_notes,
+                            ..Default::default()
+                        },
+                        customer_data: database::schema::CustomerData {
+                            name: presta_payload.customer.name.clone(),
+                            phone_number: presta_payload.customer.phone_number.clone(),
+                            email: presta_payload.customer.email.clone(),
+                            ..Default::default()
+                        },
+                        computer_data: database::schema::ComputerData {
+                            device_mfg: Some(device_mfg),
+                            device_model: Some(device_model),
+                            ..Default::default()
+                        },
+                        task_data: database::schema::LiveTaskPayload::default(),
+                        task_notes: Vec::new(),
+                        store_users: self.store_users.clone(),
+                    };
+                    
+                    create_modal.update_tur_info(tur);
+                    
+                    // Remove existing modal if present, then insert
+                    self.opened_modals.remove(&create_modal.title);
+                    self.opened_modals
+                        .entry(create_modal.title.clone())
+                        .or_insert(ModalType::CreateTaskModal(create_modal));
+                }
+                TaskUiActions::OpenCreateTaskModalFromSystem(system_data) => {
+                    info!("Opening create task modal from system: {}", system_data.order_id);
+                    let mut create_modal = CreateTaskModal::new(
+                        "Create Task",
+                        self.store_users.clone(),
+                        self.tur_channel.0.clone(),
+                    );
+                    
+                    // Create a Tur struct from the SystemInStoreData
+                    // The computer_data is already populated in SystemInStoreData
+                    let tur = Tur {
+                        data: database::schema::prestashop_schema::PrestashopPayload::default(),
+                        ticket_data: database::schema::TicketData {
+                            service_number: system_data.order_id.clone(),
+                            ..Default::default()
+                        },
+                        customer_data: database::schema::CustomerData::default(),
+                        computer_data: system_data.computer_data.clone(),
+                        task_data: database::schema::LiveTaskPayload::default(),
+                        task_notes: Vec::new(),
+                        store_users: self.store_users.clone(),
+                    };
+                    
+                    create_modal.update_tur_info(tur);
+                    
+                    // Remove existing modal if present, then insert
+                    self.opened_modals.remove(&create_modal.title);
+                    self.opened_modals
+                        .entry(create_modal.title.clone())
+                        .or_insert(ModalType::CreateTaskModal(create_modal));
                 }
                 TaskUiActions::OpenViewport(task) => {
                     info!("receive_ui_action -> TaskUiActions::OpenViewport");

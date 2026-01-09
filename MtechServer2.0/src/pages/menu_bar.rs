@@ -158,7 +158,6 @@ impl MtechServer {
                         76 => Store::RIV.as_str(),
                         73 => Store::LTN.as_str(),
                         74 => Store::MUR.as_str(),
-                        78 => Store::WJ.as_str(),
                         75 => Store::ORE.as_str(),
                         77 => Store::SAN.as_str(),
                         _ => usr_store.as_str(),
@@ -466,7 +465,6 @@ impl MtechServer {
                                 ui.selectable_value(selected, database::schema::task::Store::RIV.into_store_id() as u64, database::schema::task::Store::RIV.as_str());
                                 ui.selectable_value(selected, database::schema::task::Store::LTN.into_store_id() as u64, database::schema::task::Store::LTN.as_str());
                                 ui.selectable_value(selected, database::schema::task::Store::MUR.into_store_id() as u64, database::schema::task::Store::MUR.as_str());
-                                ui.selectable_value(selected, database::schema::task::Store::WJ.into_store_id() as u64, database::schema::task::Store::WJ.as_str());
                                 ui.selectable_value(selected, database::schema::task::Store::ORE.into_store_id() as u64, database::schema::task::Store::ORE.as_str());
                                 ui.selectable_value(selected, database::schema::task::Store::SAN.into_store_id() as u64, database::schema::task::Store::SAN.as_str());
                             });

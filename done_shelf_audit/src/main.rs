@@ -246,7 +246,6 @@ async fn main() -> Result<()> {
             "MUR" => vec![Store::MUR],
             "ORE" => vec![Store::ORE],
             "SAN" => vec![Store::SAN],
-            "WJ" => vec![Store::WJ],
             "ALL" => Store::VALUES.to_vec(),
             _ => {
                 error!("Unknown store: {}. Valid stores: RIV, AF, LTN, MUR, ORE, SAN, WJ, ALL", store_str);

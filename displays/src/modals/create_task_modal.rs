@@ -9,7 +9,7 @@ use egui_extras::DatePickerButton;
 use crossbeam::channel::Sender;
 use std::collections::BTreeSet;
 use log::{error, info};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal {
@@ -33,7 +33,7 @@ pub struct CreateTaskModal {
 }
 
 // TODO This is an ugly implementation
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Tur {
     pub data: PrestashopPayload,
     pub ticket_data: TicketData,

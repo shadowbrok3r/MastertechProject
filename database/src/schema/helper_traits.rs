@@ -2,7 +2,7 @@
 use super::{
     prestashop_schema::{self, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, RecordId, SurrealValue, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::{schema::{parse_msg_date, prestashop::PrestashopId, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{DATABASE, PlatformSpawner, Spawner, schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE, parse_msg_date, prestashop::{OrderState, OrderType, PrestashopId}}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -222,8 +222,8 @@ impl EmployeeHelper for Employee {
         let mut query: HashMap<&str, &str> = HashMap::new();
         query.insert("filter[id_employee_sales_rep]", &self.id);
         query.insert("filter[id_store]", &self.id_store);
-        query.insert("filter[id_order_type]", "2");
-        query.insert("filter[current_state]", "30");
+        query.insert("filter[id_order_type]", OrderType::ServiceOrder.to_id_str());
+        query.insert("filter[current_state]", OrderState::InRepair.to_id_str());
         query.insert("sort", "[id_DESC]");
         query.insert("output_format", "JSON");
         api_call.display = "[id]";
@@ -231,7 +231,13 @@ impl EmployeeHelper for Employee {
         let orders: Vec<PrestashopId> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
+
+        if orders.is_empty() {
+            return Err(anyhow::anyhow!("No orders found"));
+        }
+
         info!("helper_traits -> Orders list: {orders:?}");
+
         Ok(orders)
     }
 
@@ -240,8 +246,8 @@ impl EmployeeHelper for Employee {
         let mut query: HashMap<&str, &str> = HashMap::new();
         query.insert("filter[id_employee_sales_rep]", &self.id);
         query.insert("filter[id_store]", &self.id_store);
-        query.insert("filter[id_order_type]", "2");
-        query.insert("filter[current_state]", "30");
+        query.insert("filter[id_order_type]", OrderType::ServiceOrder.to_id_str());
+        query.insert("filter[current_state]", OrderState::InRepair.to_id_str());
         query.insert("sort", "[id_DESC]");
         query.insert("limit", "20");
         query.insert("output_format", "JSON");
@@ -250,7 +256,13 @@ impl EmployeeHelper for Employee {
         let orders: Vec<PrestashopId> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
+        
+        if orders.is_empty() {
+            return Err(anyhow::anyhow!("No orders found"));
+        }
+
         info!("helper_traits -> Orders list: {orders:?}");
+
         Ok(orders)
     }
 
@@ -259,7 +271,7 @@ impl EmployeeHelper for Employee {
         let mut query: HashMap<&str, &str> = HashMap::new();
         let pagination = format!("{},{}",start_idx.clone(), offset);
         query.insert("filter[id_store]", &self.id_store);
-        query.insert("filter[id_order_type]", "2");
+        query.insert("filter[id_order_type]", OrderType::ServiceOrder.to_id_str());
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
@@ -276,7 +288,7 @@ impl EmployeeHelper for Employee {
         let mut query: HashMap<&str, &str> = HashMap::new();
         let pagination = format!("{},{}",start_idx.clone(), offset);
         query.insert("filter[id_store]", &self.id_store);
-        query.insert("filter[id_order_type]", "2");
+        query.insert("filter[id_order_type]", OrderType::ServiceOrder.to_id_str());
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
@@ -296,7 +308,7 @@ impl EmployeeHelper for Employee {
         info!("helper_traits -> Pagination: {pagination}");
 
         query.insert("filter[id_store]", id_store);
-        query.insert("filter[id_order_type]", "2");
+        query.insert("filter[id_order_type]", OrderType::ServiceOrder.to_id_str());
         query.insert("filter[current_state]", status);
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
@@ -306,6 +318,10 @@ impl EmployeeHelper for Employee {
         let orders: Vec<PrestashopId> = api_call
             .request_resources_wasm("orders", query.clone())
             .await.context("Pulling orders list")?;
+
+        if orders.is_empty() {
+            return Err(anyhow::anyhow!("No orders found"));
+        }
 
         info!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
@@ -398,7 +414,7 @@ impl EmployeeHelper for Employee {
             cust.lastname = "Shelf".to_string();
             cust
         } else {
-            api_call.display = "[lastname,firstname,email]";
+            api_call.display = "[id,lastname,firstname,email]";
             let mut new_query = query.clone();
             new_query.clear();
             new_query.insert("filter[id]", &order.id_customer);
@@ -781,7 +797,6 @@ impl From<u64> for Store {
             76 => Store::RIV,
             73 => Store::LTN,
             74 => Store::MUR,
-            78 => Store::WJ,
             75 => Store::ORE,
             77 => Store::SAN,
             _ => Store::RIV,
@@ -795,7 +810,6 @@ impl From<Store> for u64 {
             Store::RIV => 76,
             Store::LTN => 73,
             Store::MUR => 74,
-            Store::WJ => 78,
             Store::ORE => 75,
             Store::SAN => 77
         }

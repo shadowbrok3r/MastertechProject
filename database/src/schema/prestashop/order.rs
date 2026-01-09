@@ -104,7 +104,9 @@ pub enum OrderState {
     QcAndBurnin,
     ShipToStore,
     OdooPendingReview,
-    Returned 
+    Returned,
+    InRepair,
+    CheckinShelf,
 }
 
 impl OrderState {
@@ -121,6 +123,8 @@ impl OrderState {
             Self::ShipToStore => "Ship To Store",
             Self::OdooPendingReview => "Odoo Pending Review",
             Self::Returned => "Returned",
+            Self::InRepair => "In Repair",
+            Self::CheckinShelf => "Checkin Shelf",
         }
     }
 
@@ -156,6 +160,8 @@ impl OrderState {
             "236" => Self::ShipToStore,
             "84" => Self::Returned,
             "242" => Self::OdooPendingReview,
+            "30" => Self::InRepair,
+            "29" => Self::CheckinShelf,
             _ => Self::AcceptedByOdoo
         }
     }
@@ -174,10 +180,30 @@ impl OrderState {
             Self::ShipToStore => 236,
             Self::OdooPendingReview => 242,
             Self::Returned => 84,
+            Self::InRepair => 30,
+            Self::CheckinShelf => 29,
         }
     }
 
-    pub const VALUES: [Self; 11] = [
+    pub fn to_id_str(&self) -> &str {
+        match self {
+            Self::AcceptedByOdoo => "239",
+            Self::Shipped => "4",
+            Self::DeliveredToStore => "238",
+            Self::DoneShelf => "40",
+            Self::OrderPlaced => "73",
+            Self::PrePulled => "70",
+            Self::ReadyToBuild => "224",
+            Self::QcAndBurnin => "71",
+            Self::ShipToStore => "236",
+            Self::OdooPendingReview => "242",
+            Self::Returned => "84",
+            Self::InRepair => "30",
+            Self::CheckinShelf => "29",
+        }
+    }
+
+    pub const VALUES: [Self; 13] = [
         Self::AcceptedByOdoo,
         Self::Shipped,
         Self::DeliveredToStore,
@@ -189,6 +215,8 @@ impl OrderState {
         Self::ShipToStore,
         Self::OdooPendingReview,
         Self::Returned,
+        Self::InRepair,
+        Self::CheckinShelf,
     ];
 }
 

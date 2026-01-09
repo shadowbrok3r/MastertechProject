@@ -2,6 +2,7 @@ use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, U
 use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use database::SurrealValue;
+use database::schema::ComputerData;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -695,16 +696,28 @@ pub struct SystemInStoreData {
     pub ram: String,
     pub warranty: String,
     pub store_id: String,
+    /// Computer data for task creation (detachable for use with CreateTaskModal)
+    pub computer_data: ComputerData,
 }
 
 /// Viewer for Systems In-Store table
-#[derive(Default, Serialize)]
+#[derive(Serialize)]
 pub struct SystemInStoreViewer {
     pub filter: String,
     pub row_protection: bool,
     /// Callback sender for creating tasks
     #[serde(skip)]
-    pub task_create_tx: Option<Sender<SystemInStoreData>>,
+    pub task_create_tx: Sender<SystemInStoreData>,
+}
+
+impl SystemInStoreViewer {
+    pub fn new(task_create_tx: Sender<SystemInStoreData>) -> Self {
+        Self {
+            filter: Default::default(),
+            row_protection: Default::default(),
+            task_create_tx,
+        }
+    }
 }
 
 impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
@@ -797,10 +810,8 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 ui.label(RichText::new(&row.warranty).color(color)); 
             }
             11 => {
-                if Button::new("📋").ui(ui).clicked() {
-                    if let Some(ref tx) = self.task_create_tx {
-                        let _ = tx.try_send(row.clone());
-                    }
+                if Button::new("Create Task").ui(ui).clicked() {
+                    let _ = self.task_create_tx.try_send(row.clone());
                 }
             }
             _ => unreachable!(),
@@ -898,8 +909,8 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
             7 => col_config.resizable(true).at_least(100.).at_most(180.),  // CPU
             8 => col_config.resizable(true).at_least(80.).at_most(150.),   // GPU
             9 => col_config.resizable(true).at_least(50.).at_most(80.),    // RAM
-            10 => col_config.resizable(true).at_least(60.).at_most(100.),  // Warranty
-            11 => col_config.resizable(false).at_least(30.).at_most(50.),  // Create Task button
+            10 => col_config.resizable(true).at_least(150.).at_most(180.),  // Warranty
+            11 => col_config.resizable(false).at_least(70.).at_most(90.),  // Create Task button
             _ => col_config,
         }
     }

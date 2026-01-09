@@ -1,9 +1,11 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
-use eframe::egui::{Color32, Grid, Style};
+use crossbeam::channel::Sender;
+use eframe::egui::{Color32, Grid, Style, scroll_area};
 use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{Store, User};
+use database::get_database_users;
 use egui_data_table::Renderer;
-use crate::PlatformSpawner;
+use crate::{PlatformSpawner, TaskUiActions};
 use crate::Spawner;
 use log::info;
 
@@ -12,7 +14,24 @@ use super::TaskAudit;
 use super::TaskAuditViewer;
 
 impl TaskAuditViewer {
-    pub fn show(&mut self, ui: &mut Ui, current_user: Option<User>) {
+    pub fn show(&mut self, ui: &mut Ui, current_user: Option<User>, ui_actions_tx: Sender<TaskUiActions>) {
+        // First run: load database users for comboboxes
+        if self.services_viewer.first_run {
+            let users = get_database_users();
+            if !users.is_empty() {
+                self.services_viewer.users = users;
+                self.services_viewer.first_run = false;
+                info!("Loaded {} users for task audit comboboxes", self.services_viewer.users.len());
+            }
+        }
+        
+        // Handle create task channel
+        if let Ok(order_payload) = self.services_viewer.create_task_channel.1.try_recv() {
+            info!("Received create task request for order: {}", order_payload.order.id);
+            // Send the order to the task creation modal
+            let _ = ui_actions_tx.try_send(TaskUiActions::OpenCreateTaskModalFromOrder(order_payload));
+        }
+        
         if let Some(order) = self.services_viewer.selected.clone() {
             let header = &format!("{} - {}", order.customer.name, order.order.id);
 
@@ -169,7 +188,6 @@ impl TaskAuditViewer {
                     ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
                     ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
                     ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                    ui.selectable_value(selected, Store::WJ.into_store_id() as u64, Store::WJ.as_str());
                     ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
                     ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
                 });
@@ -308,8 +326,12 @@ impl TaskAuditViewer {
             if let Some(table) = self.service_map.get_mut(&self.audit_selection.as_str().to_string()) {
                 // style.single_click_edit_mode = true;
                 Renderer::new(table, &mut self.services_viewer)
-                    .with_style(egui_data_table::Style::default())
-                    .ui(ui);
+                .with_style_modify(|s| {
+                    s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                    s.single_click_edit_mode = true;
+                    s.auto_shrink = [false, false].into();
+                })
+                .ui(ui);
             }
         });  
     }
