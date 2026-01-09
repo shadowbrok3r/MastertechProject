@@ -1,11 +1,8 @@
-use serde::{Deserialize, Serialize};
-
-use crate::DATABASE;
-use crate::schema::user::User;
-
 use super::{random_record_id, RecordId, SurrealValue};
-
-pub const SALES_NOTE_TABLE: &str = "sales_note";
+use serde::{Deserialize, Serialize};
+use crate::schema::SALES_NOTE_TABLE;
+use crate::schema::user::User;
+use crate::DATABASE;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct SalesNote {

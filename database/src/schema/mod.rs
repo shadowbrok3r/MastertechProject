@@ -58,6 +58,7 @@ pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 pub const CHAT_THREAD_TABLE: &str = "chat_thread";
 pub const USER_MESSAGE_TABLE: &str = "user_message";
 pub const QC_TABLE: &str = "qc";
+pub const SALES_NOTE_TABLE: &str = "sales_note";
 
 pub use prestashop as prestashop_schema;
 
