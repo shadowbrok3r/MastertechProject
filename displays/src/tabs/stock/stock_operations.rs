@@ -1,5 +1,6 @@
-use super::{store_inventory_viewer::ExtraInventoryData, row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData}};
-use database::{DATABASE, schema::prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}};
+use super::store_inventory_viewer::ExtraInventoryData;
+use super::row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData, SystemInStoreData, SystemType};
+use database::{DATABASE, schema::{ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -127,6 +128,20 @@ pub struct OdooProductCost {
 pub struct OdooCostResponse {
     pub jsonrpc: String,
     pub result: Vec<OdooProductCost>,
+}
+
+/// Order config response from Prestashop for getting system name
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct OrderConfigResponse {
+    pub order_config: OrderConfigData,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct OrderConfigData {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub id_order: String,
 }
 
 /// Summary data for cost breakdown (customer name, total revenue, total cost, profit)
@@ -319,7 +334,6 @@ pub async fn get_cost_breakdown(
 
 /* ------------------------------------ Systems In-Store API ------------------------------------ */
 
-use super::row_viewer::{SystemInStoreData, SystemType};
 use database::schema::prestashop::OrderType;
 use std::collections::HashMap;
 
@@ -407,14 +421,15 @@ pub async fn add_order_to_systems(
 }
 
 /// Process a single order into SystemInStoreData
-async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
+/// This function is public so it can be reused by other modules (e.g., receive_prestashop)
+pub async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
     let price: f64 = order.total_paid_tax_excl.parse().unwrap_or(0.0);
     
     // Determine system type from order type
     let system_type = SystemType::from_order_type_id(&order.id_order_type);
     
     // Extract model name from order rows (main product, usually laptop/desktop)
-    let model = extract_model_from_order(order);
+    let model = extract_model_from_order(order).await;
     
     // Extract specs (CPU, GPU, RAM) from order rows
     let (cpu, gpu, ram) = extract_specs_from_order(order).await;
@@ -430,6 +445,15 @@ async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
     
     let revenue = price - cost;
     
+    // Build ComputerData from the extracted specs
+    let computer_data = ComputerData {
+        cpu: cpu.clone(),
+        gpu: gpu.clone(),
+        ram: ram.clone(),
+        device_model: Some(model.clone()),
+        ..Default::default()
+    };
+    
     SystemInStoreData {
         order_id: order.id.clone(),
         model,
@@ -443,24 +467,57 @@ async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
         ram,
         warranty,
         store_id: order.id_store.clone(),
+        computer_data,
     }
 }
 
 /// Extract the main model name from order rows
-fn extract_model_from_order(order: &Order) -> String {
-    // Look for the main system product (LAP/, CASE/, BSD/, RCI/, R2R/, RTR/)
-    for row in order.associations.order_rows.iter() {
+/// For RCI orders: Returns the product_name directly
+/// For non-RCI orders: Fetches order_config to get the system name from the 'name' field
+async fn extract_model_from_order(order: &Order) -> String {
+    let is_rci = order.id_order_type == OrderType::Rci.to_id().to_string();
+    
+    // Find the main system product row
+    let main_row = order.associations.order_rows.iter().find(|row| {
         let r = row.product_reference.to_lowercase();
-        if r.starts_with("lap/") 
+        r.starts_with("lap/") 
             || (r.starts_with("case/") && !r.starts_with("case/15") && !r.starts_with("case/17"))
             || r.starts_with("bsd/")
             || r.starts_with("rci/")
             || r.starts_with("r2r/")
             || r.starts_with("rtr/")
-        {
+    });
+    
+    if let Some(row) = main_row {
+        if is_rci {
+            // For RCI orders, use the product_name directly
             return row.product_name.clone();
         }
+        
+        // For non-RCI orders, try to get order_config for the proper system name
+        if !row.id_order_config.is_empty() && row.id_order_config != "0" {
+            let presta = Prestashop::default();
+            match presta.request_subresources_by_id_wasm::<OrderConfigResponse>(
+                "order_configs",
+                "order_config",
+                &row.id_order_config
+            ).await {
+                Ok(config) => {
+                    if !config.order_config.name.is_empty() {
+                        info!("Got order_config name: {} for order {}", config.order_config.name, order.id);
+                        return config.order_config.name;
+                    }
+                }
+                Err(e) => {
+                    info!("Failed to fetch order_config {}: {:?}, falling back to product_name", row.id_order_config, e);
+                }
+            }
+        }
+        
+        // Fallback to product_name
+        return row.product_name.clone();
     }
+    
     // Fallback to first product
     order.associations.order_rows.first()
         .map(|r| r.product_name.clone())
@@ -497,16 +554,22 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
     // Step 2: For RCI systems, fetch OrderDetail and parse specs from detail_notes
     let is_rci = order.id_order_type == OrderType::Rci.to_id().to_string();
     if is_rci && (cpu.is_empty() || gpu.is_empty() || ram.is_empty()) {
-        info!("RCI order {} - looking for U/DESKTOP or U/LAPTOPS in {} order_serials", 
+        info!("RCI order {} - looking for U/DESKTOP, U/LAPTOPS, or RCI/ in {} order_serials", 
               order.id, order.associations.order_serial.len());
         
-        // Find U/DESKTOP or U/LAPTOPS in order_serial to get id_order_detail
+        // Find U/DESKTOP, U/LAPTOPS, or RCI-prefixed product in order_serial to get id_order_detail
         for serial in order.associations.order_serial.iter() {
             let ref_lower = serial.product_reference.to_lowercase();
             info!("  Checking serial: product_ref='{}', id_order_detail='{}'", 
                   serial.product_reference, serial.id_order_detail);
             
-            if ref_lower == "u/desktop" || ref_lower == "u/laptops" || ref_lower == "u/laptop" {
+            // Match U/DESKTOP, U/LAPTOPS, or any RCI/ prefixed products
+            let is_rci_product = ref_lower == "u/desktop" 
+                || ref_lower == "u/laptops" 
+                || ref_lower == "u/laptop"
+                || ref_lower.starts_with("rci/");
+            
+            if is_rci_product && !serial.id_order_detail.is_empty() && serial.id_order_detail != "0" {
                 info!("  Found matching serial, fetching OrderDetail id={}", serial.id_order_detail);
                 
                 // Fetch OrderDetail using id_order_detail
@@ -518,7 +581,9 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                 ).await {
                     Ok(detail) => {
                         info!("  OrderDetail fetched, detail_notes length={}", detail.detail_notes.len());
-                        info!("  detail_notes: {:?}", &detail.detail_notes[..detail.detail_notes.len().min(200)]);
+                        if !detail.detail_notes.is_empty() {
+                            info!("  detail_notes: {:?}", &detail.detail_notes[..detail.detail_notes.len().min(200)]);
+                        }
                         
                         // Parse detail_notes format: "Brand: DELL\r\nCPU: i7-10610U\r\nRAM: 16GB\r\n..."
                         let (parsed_cpu, parsed_gpu, parsed_ram) = parse_detail_notes(&detail.detail_notes);
@@ -533,12 +598,60 @@ async fn extract_specs_from_order(order: &Order) -> (String, String, String) {
                         if ram.is_empty() && !parsed_ram.is_empty() {
                             ram = parsed_ram;
                         }
+                        
+                        // If we found any specs, break out
+                        if !cpu.is_empty() || !gpu.is_empty() || !ram.is_empty() {
+                            break;
+                        }
                     }
                     Err(e) => {
                         info!("  Failed to fetch OrderDetail: {:?}", e);
                     }
                 }
-                break;
+            }
+        }
+        
+        // Fallback: If still missing specs, check ALL order_serial entries for detail_notes
+        if cpu.is_empty() || gpu.is_empty() || ram.is_empty() {
+            info!("RCI order {} - fallback: checking all order_serial entries for detail_notes", order.id);
+            for serial in order.associations.order_serial.iter() {
+                if serial.id_order_detail.is_empty() || serial.id_order_detail == "0" {
+                    continue;
+                }
+                
+                let presta = Prestashop::default();
+                match presta.request_subresources_by_id_wasm::<OrderDetail>(
+                    "order_details", 
+                    "order_detail", 
+                    &serial.id_order_detail
+                ).await {
+                    Ok(detail) => {
+                        if !detail.detail_notes.is_empty() {
+                            info!("  Found detail_notes in serial '{}': {:?}", 
+                                  serial.product_reference, 
+                                  &detail.detail_notes[..detail.detail_notes.len().min(200)]);
+                            
+                            let (parsed_cpu, parsed_gpu, parsed_ram) = parse_detail_notes(&detail.detail_notes);
+                            
+                            if cpu.is_empty() && !parsed_cpu.is_empty() {
+                                cpu = parsed_cpu;
+                            }
+                            if gpu.is_empty() && !parsed_gpu.is_empty() {
+                                gpu = parsed_gpu;
+                            }
+                            if ram.is_empty() && !parsed_ram.is_empty() {
+                                ram = parsed_ram;
+                            }
+                            
+                            if !cpu.is_empty() && !gpu.is_empty() && !ram.is_empty() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        info!("  Failed to fetch OrderDetail {}: {:?}", serial.id_order_detail, e);
+                    }
+                }
             }
         }
     }

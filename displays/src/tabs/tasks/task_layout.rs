@@ -421,7 +421,7 @@ impl TaskLayout {
                                         ui.add_space(20.0);
 
                                         if button.clicked(){
-                                            let _ = ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
+                                            let _ = ui_actions_tx.try_send(TaskUiActions::CreateTaskModal(None));
                                         }
 
                                         let selected = self.sort_by.entry(name.clone()).or_default();

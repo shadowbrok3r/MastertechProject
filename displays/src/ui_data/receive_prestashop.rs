@@ -47,38 +47,74 @@ impl SharedContext {
                 });
             }
 
-            
-            if OrderType::from_id_str(&data.order.order_type) == OrderType::SalesOrder 
-                || OrderType::from_id_str(&data.order.order_type) == OrderType::Bsd 
-                || OrderType::from_id_str(&data.order.order_type) == OrderType::ReadyToRoll 
-                || OrderType::from_id_str(&data.order.order_type) == OrderType::Rci 
+            // Extract computer specs from order rows using product_reference matching
+            // This follows similar logic to process_order_to_system_data in stock_operations
+            let order_type = OrderType::from_id_str(&data.order.order_type);
+            if order_type == OrderType::SalesOrder 
+                || order_type == OrderType::Bsd 
+                || order_type == OrderType::ReadyToRoll 
+                || order_type == OrderType::Rci 
             {
                 for details in data.order.associations.order_rows.iter() {
-                    match details.product_name.to_lowercase().as_str() {
-                        "cpu/" => { computer.cpu = details.product_name.clone(); }
-                        "ddr" => { computer.ram = details.product_name.clone(); }
-                        "gpu/" => { computer.gpu = details.product_name.clone(); }
-                        "m.2/" | "ssd/" => { 
-                            computer.add_disk(DriveData {
-                                drive_letter: details.product_name.clone(),
-                                drive_type: "SSD".to_string(),
-                                total_size: details.product_name.split('/').last().unwrap_or("").to_string(),
-                                space_left: "".to_string(),
-                            });
-                        }
-                        "hdd/" => { 
-                            computer.add_disk(DriveData {
-                                drive_letter: details.product_name.clone(),
-                                drive_type: "HDD".to_string(),
-                                total_size: details.product_name.split('/').last().unwrap_or("").to_string(),
-                                space_left: "".to_string(),
-                            });
-                        }
-                        "mb/" => { computer.motherboard_name = details.product_name.clone(); }
-                        "lap/" => { computer.ram = details.product_name.clone(); }
-                        "sw/win11" => { computer.operating_system = "Windows 11".to_string(); }
-                        _ => {}
+                    let r = details.product_reference.to_lowercase();
+                    
+                    // Extract CPU from product reference
+                    if r.starts_with("cpu/") {
+                        computer.cpu = details.product_name.clone();
                     }
+                    // Extract RAM
+                    else if r.starts_with("ddr") || r.starts_with("lap/ddr") {
+                        computer.ram = details.product_name.clone();
+                    }
+                    // Extract GPU
+                    else if r.starts_with("gpu/") {
+                        computer.gpu = details.product_name.clone();
+                    }
+                    // Extract drives (M.2, SSD, HDD)
+                    else if r.starts_with("m.2/") || r.starts_with("ssd/") {
+                        computer.add_disk(DriveData {
+                            drive_letter: details.product_name.clone(),
+                            drive_type: "SSD".to_string(),
+                            total_size: details.product_name.split('/').last().unwrap_or("").to_string(),
+                            space_left: "".to_string(),
+                        });
+                    }
+                    else if r.starts_with("hdd/") {
+                        computer.add_disk(DriveData {
+                            drive_letter: details.product_name.clone(),
+                            drive_type: "HDD".to_string(),
+                            total_size: details.product_name.split('/').last().unwrap_or("").to_string(),
+                            space_left: "".to_string(),
+                        });
+                    }
+                    // Extract motherboard
+                    else if r.starts_with("mb/") {
+                        computer.motherboard_name = details.product_name.clone();
+                    }
+                    // Extract device model (laptop/desktop)
+                    else if r.starts_with("lap/") || r.starts_with("case/") || r.starts_with("bsd/") 
+                        || r.starts_with("rci/") || r.starts_with("r2r/") || r.starts_with("rtr/") 
+                    {
+                        computer.device_model = Some(details.product_name.clone());
+                    }
+                    // Extract OS
+                    else if r.starts_with("sw/win") {
+                        if r.contains("11") {
+                            computer.operating_system = "Windows 11".to_string();
+                        } else if r.contains("10") {
+                            computer.operating_system = "Windows 10".to_string();
+                        }
+                    }
+                }
+            }
+            
+            // Get device info from service details if available
+            if let Some(service) = service_details.get(0) {
+                if computer.device_mfg.is_none() || computer.device_mfg.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                    computer.device_mfg = Some(service.device_mfg.clone());
+                }
+                if computer.device_model.is_none() || computer.device_model.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                    computer.device_model = Some(service.device_model.clone());
                 }
             }
 

@@ -1,4 +1,4 @@
-use database::schema::{get_data::get_services_by_status, helper_traits::{parse_email_user, EmployeeHelper}, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_TABLE, TICKET_TABLE};
+use database::schema::{ComputerData, CustomerData, TASK_TABLE, TICKET_TABLE, TaskNotePayload, TaskPayload, TicketPayload, User, get_data::get_services_by_status, helper_traits::{EmployeeHelper, parse_email_user}, prestashop::OrderState, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use itertools::Itertools;
@@ -31,7 +31,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 TaskAudit::CheckinShelf => {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("29", start_idx, start_idx+30, &id_store)
+                        .get_services_by_status(OrderState::CheckinShelf.to_id_str(), start_idx, start_idx+30, &id_store)
                         .await;
 
                     // Handle the fetched services
@@ -75,7 +75,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 TaskAudit::InRepair => {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("30", start_idx, start_idx+30, &id_store)
+                        .get_services_by_status(OrderState::InRepair.to_id_str(), start_idx, start_idx+30, &id_store)
                         .await;
 
                     // Handle the fetched services
@@ -97,7 +97,7 @@ impl TaskAuditViewer { // NEED TO LOOK INTO SOME NOTES THINKING THERE IS NOT A S
                 TaskAudit::DoneShelf => {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("40", start_idx, start_idx+30, &id_store)
+                        .get_services_by_status(OrderState::DoneShelf.to_id_str(), start_idx, start_idx+30, &id_store)
                         .await;
 
                     // Handle the fetched services

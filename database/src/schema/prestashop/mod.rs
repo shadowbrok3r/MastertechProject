@@ -849,6 +849,16 @@ impl OrderType {
         }
     }
 
+    pub fn to_id_str(&self) -> &str {
+        match self {
+            Self::SalesOrder => "1",
+            Self::ServiceOrder => "2",
+            Self::ReadyToRoll => "12",
+            Self::Bsd => "13",
+            Self::Rci => "14",
+        }
+    }
+
     pub fn from_id(id: i32) -> Self {
         match id {
             1 => Self::SalesOrder,

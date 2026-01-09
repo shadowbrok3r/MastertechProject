@@ -3,7 +3,7 @@ use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuanti
 use crate::channel_manager::ChannelManager;
 use crate::tabs::task_audit::row_viewer::BASE_URL;
 use crossbeam::channel::{Receiver, Sender};
-use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
+use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
 use database::schema::{Store, UserAuthorization};
 use egui_data_table::Renderer;
 use log::info;
@@ -81,8 +81,7 @@ impl Default for StockTable {
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
 
-        let mut systems_in_store_viewer = SystemInStoreViewer::default();
-        systems_in_store_viewer.task_create_tx = Some(systems_task_channel.0.clone());
+        let mut systems_in_store_viewer = SystemInStoreViewer::new(systems_task_channel.0.clone());
 
         // Check if current user is admin
         let is_admin = get_current_user_from_auth()
@@ -188,7 +187,6 @@ impl StockTable {
                                 76 => Store::RIV.as_str(),
                                 73 => Store::LTN.as_str(),
                                 74 => Store::MUR.as_str(),
-                                78 => Store::WJ.as_str(),
                                 75 => Store::ORE.as_str(),
                                 77 => Store::SAN.as_str(),
                                 _ => Store::RIV.as_str(),
@@ -200,7 +198,6 @@ impl StockTable {
                                     ui.selectable_value(selected, 76, "RIV");
                                     ui.selectable_value(selected, 73, "LTN");
                                     ui.selectable_value(selected, 74, "MUR");
-                                    ui.selectable_value(selected, 78, "WJ");
                                     ui.selectable_value(selected, 75, "ORE");
                                     ui.selectable_value(selected, 77, "SAN");
                                 });
@@ -232,6 +229,11 @@ impl StockTable {
                                 let sns = data_table.map(|r| r.1.clone()).collect::<Vec<String>>();
                                 PlatformSpawner::spawn(async move {
                                     let _res = find_attached_serials(sns, tx.clone()).await;
+                                    if let Err(e) = _res {
+                                        log::error!("S/N Info call error: {e:?}");
+                                    } else {
+                                        log::info!("S/N Info call ran ok");
+                                    }
                                 });
                             }
                         },
@@ -277,7 +279,6 @@ impl StockTable {
                                 7 => Store::RIV.as_str(),
                                 8 => Store::LTN.as_str(),
                                 10 => Store::MUR.as_str(),
-                                11 => Store::WJ.as_str(),
                                 12 => Store::SAN.as_str(),
                                 14 => Store::ORE.as_str(),
                                 _ => Store::RIV.as_str(),
@@ -289,7 +290,6 @@ impl StockTable {
                                     ui.selectable_value(selected, 7, "RIV");
                                     ui.selectable_value(selected, 8, "LTN");
                                     ui.selectable_value(selected, 10, "MUR");
-                                    ui.selectable_value(selected, 11, "WJ");
                                     ui.selectable_value(selected, 14, "ORE");
                                     ui.selectable_value(selected, 12, "SAN");
                                 });
@@ -543,7 +543,7 @@ impl StockTable {
         }
     }
 
-    pub fn receive(&mut self) {
+    pub fn receive(&mut self, ui_actions_tx: Sender<TaskUiActions>) {
         if let Ok(stock_data) = self.stock_channel.1.try_recv() {
             let data: Vec<SerialsData> = stock_data
                 .iter()
@@ -556,7 +556,6 @@ impl StockTable {
                             76 => Store::RIV.as_str(),
                             73 => Store::LTN.as_str(),
                             74 => Store::MUR.as_str(),
-                            78 => Store::WJ.as_str(),
                             75 => Store::ORE.as_str(),
                             77 => Store::SAN.as_str(),
                             _ => Store::RIV.as_str(),
@@ -653,10 +652,12 @@ impl StockTable {
             }
             self.systems_in_store_table.replace(data);
         }
-    }
-    
-    /// Get pending task creation request (if any)
-    pub fn get_pending_task_create(&mut self) -> Option<SystemInStoreData> {
-        self.systems_task_channel.1.try_recv().ok()
+
+        // Handle single system task creation
+        if let Ok(system_data) = self.systems_task_channel.1.try_recv() {
+            log::info!("Creating task for system: {}", system_data.order_id);
+            // Send the system data to the create task modal via TaskUiActions
+            let _ = ui_actions_tx.try_send(TaskUiActions::OpenCreateTaskModalFromSystem(system_data));
+        }
     }
 }

@@ -437,7 +437,6 @@ impl SharedContext {
                                 ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
                                 ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
                                 ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
-                                ui.selectable_value(selected, Store::WJ.into_store_id() as u64, Store::WJ.as_str());
                                 ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
                                 ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
                             });

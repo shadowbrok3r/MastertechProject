@@ -428,7 +428,6 @@ impl User {
             Store::RIV => 76,
             Store::LTN => 73,
             Store::MUR => 74,
-            Store::WJ => 78,
             Store::ORE => 75,
             Store::SAN => 77,
         };
@@ -445,7 +444,6 @@ impl User {
             76 => Store::RIV,
             73 => Store::LTN,
             74 => Store::MUR,
-            78 => Store::WJ,
             75 => Store::ORE,
             77 => Store::SAN,
             _ => Store::RIV,

@@ -1,6 +1,6 @@
 use database::schema::prestashop_schema::{self, MissedCallOrder, PrestashopPayload};
 use crossbeam::channel::{Receiver, Sender};
-use crate::{app_state::SharedContext, channel_manager::ChannelManager};
+use crate::{app_state::SharedContext, channel_manager::ChannelManager, TaskUiActions};
 use egui_data_table::DataTable;
 use row_viewer::TaskRowViewer;
 use std::collections::HashMap;
@@ -12,8 +12,8 @@ pub mod codec;
 pub mod row_viewer;
 
 impl SharedContext {
-    pub fn task_table_viewer(&mut self, ui: &mut Ui) {
-        self.task_audit_table.show(ui, self.current_user.clone());
+    pub fn task_table_viewer(&mut self, ui: &mut Ui, ui_actions_tx: Sender<TaskUiActions>) {
+        self.task_audit_table.show(ui, self.current_user.clone(), ui_actions_tx);
     }
 }
 
