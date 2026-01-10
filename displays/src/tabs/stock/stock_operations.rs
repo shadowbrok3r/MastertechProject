@@ -130,12 +130,6 @@ pub struct OdooCostResponse {
     pub result: Vec<OdooProductCost>,
 }
 
-/// Order config response from Prestashop for getting system name
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct OrderConfigResponse {
-    pub order_config: OrderConfigData,
-}
-
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct OrderConfigData {
     pub id: i64,
@@ -497,15 +491,15 @@ async fn extract_model_from_order(order: &Order) -> String {
         // For non-RCI orders, try to get order_config for the proper system name
         if !row.id_order_config.is_empty() && row.id_order_config != "0" {
             let presta = Prestashop::default();
-            match presta.request_subresources_by_id_wasm::<OrderConfigResponse>(
-                "order_configs",
+            match presta.request_subresources_by_id_wasm::<OrderConfigData>(
+                "order_config",
                 "order_config",
                 &row.id_order_config
             ).await {
                 Ok(config) => {
-                    if !config.order_config.name.is_empty() {
-                        info!("Got order_config name: {} for order {}", config.order_config.name, order.id);
-                        return config.order_config.name;
+                    if !config.name.is_empty() {
+                        info!("Got order_config name: {} for order {}", config.name, order.id);
+                        return config.name;
                     }
                 }
                 Err(e) => {
