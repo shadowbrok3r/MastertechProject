@@ -6,7 +6,7 @@ pub mod history_page;
 
 pub use ticket_page::display_ticket_page;
 pub use software_page::display_software_page;
-pub use computer_page::display_computer_page;
+pub use computer_page::{display_computer_page, display_computer_page_with_search, ComputerSearchData};
 pub use job_builder::display_job_builder_page;
 pub use history_page::display_history_page;
 

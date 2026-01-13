@@ -1,6 +1,6 @@
 use super::store_inventory_viewer::ExtraInventoryData;
 use super::row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData, SystemInStoreData, SystemType};
-use database::{DATABASE, schema::{ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}}};
+use database::{DATABASE, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -333,6 +333,20 @@ use std::collections::HashMap;
 
 /// Customer IDs for in-store systems (R2R inventory accounts)
 pub const INSTORE_CUSTOMER_IDS: [&str; 2] = ["148642", "128011"];
+pub const LTN_CUSTOMER_ID: &str = "20378";
+pub const MUR_CUSTOMER_IDS: [&str; 2] = ["162605", "147292"];
+pub const ORE_CUSTOMER_IDS: [&str; 2] = ["138100", "136515"];
+pub const SAN_CUSTOMER_IDS: [&str; 2] = ["59882", "136919"];
+
+pub fn get_customer_ids_for_store(store_id: u64) -> Vec<&'static str> {
+    match Store::from_presta_store_id(&store_id.to_string()) {
+        Store::RIV => INSTORE_CUSTOMER_IDS.to_vec(),
+        Store::LTN => vec![LTN_CUSTOMER_ID],
+        Store::MUR => MUR_CUSTOMER_IDS.to_vec(),
+        Store::ORE => ORE_CUSTOMER_IDS.to_vec(),
+        Store::SAN => SAN_CUSTOMER_IDS.to_vec(),
+    }
+}
 
 /// Fetch systems in-store for a given store
 pub async fn get_systems_in_store(
@@ -353,7 +367,7 @@ pub async fn get_systems_in_store(
     ];
     
     // Query for each customer ID and order type combination
-    for customer_id in INSTORE_CUSTOMER_IDS.iter() {
+    for customer_id in get_customer_ids_for_store(store_id) {
         for order_type in order_types.iter() {
             let mut query = HashMap::new();
             let store_id_str = store_id.to_string();
@@ -439,6 +453,9 @@ pub async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
     
     let revenue = price - cost;
     
+    // Fetch customer info
+    let (customer_id, customer_name) = get_customer_info(&order.id_customer).await;
+    
     // Build ComputerData from the extracted specs
     let computer_data = ComputerData {
         cpu: cpu.clone(),
@@ -450,6 +467,8 @@ pub async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
     
     SystemInStoreData {
         order_id: order.id.clone(),
+        customer_id,
+        customer_name,
         model,
         price,
         cost,
@@ -462,6 +481,29 @@ pub async fn process_order_to_system_data(order: &Order) -> SystemInStoreData {
         warranty,
         store_id: order.id_store.clone(),
         computer_data,
+    }
+}
+
+/// Fetch customer info (id and name) from Prestashop
+async fn get_customer_info(customer_id: &str) -> (String, String) {
+    if customer_id.is_empty() || customer_id == "0" {
+        return (String::new(), "Unknown".to_string());
+    }
+    
+    let presta = Prestashop::default();
+    match presta.request_subresources_by_id_wasm::<Customer>(
+        "customers", 
+        "customer", 
+        customer_id
+    ).await {
+        Ok(customer) => {
+            let name = format!("{} {}", customer.firstname, customer.lastname);
+            (customer_id.to_string(), name)
+        }
+        Err(e) => {
+            info!("Failed to fetch customer {}: {:?}", customer_id, e);
+            (customer_id.to_string(), "Unknown".to_string())
+        }
     }
 }
 

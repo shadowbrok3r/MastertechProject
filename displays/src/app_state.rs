@@ -112,6 +112,8 @@ pub struct SharedContext {
     #[serde(skip)]
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     #[serde(skip)]
+    pub specs_channel: (Sender<database::schema::prestashop::order::ExtractedOrderSpecs>, Receiver<database::schema::prestashop::order::ExtractedOrderSpecs>),
+    #[serde(skip)]
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
 
     // Notifications and App State
@@ -277,6 +279,7 @@ impl SharedContext {
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<Style>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
+        let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         
@@ -339,6 +342,7 @@ impl SharedContext {
             tur_channel,
             ai_thread_channel,
             seb_channel,
+            specs_channel,
             undock_client: HashMap::new(),
             wants_to_undock: false,
             clients: Vec::new(),

@@ -293,7 +293,11 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
         column: usize,
         resp: &eframe::egui::Response,
     ) -> Option<Box<PrestashopPayload>> {
-        if resp.clicked() {
+        // Skip interactive columns: 0 (Hyperlink), 3 (Status ComboBox), 4 (Sales Rep ComboBox), 
+        // 5 (Split Rep ComboBox), 10 (Create Task Button)
+        let is_interactive_column = matches!(column, 0 | 3 | 4 | 5 | 10);
+        
+        if resp.clicked() && !is_interactive_column {
             log::info!("Clicked Col/Row: {column}/{}", row.order.id);
             self.chat_view.messages.clear();
             self.selected = Some(row.clone());

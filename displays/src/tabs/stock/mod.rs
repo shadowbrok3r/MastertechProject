@@ -1,10 +1,10 @@
-use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Hyperlink, RichText, Spinner, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
+use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Order, RichText, Spinner, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::channel_manager::ChannelManager;
 use crate::tabs::task_audit::row_viewer::BASE_URL;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
-use database::schema::{Store, UserAuthorization};
+use database::schema::{Store, UserAuthorization, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
 use egui_data_table::Renderer;
 use log::info;
 
@@ -44,7 +44,24 @@ pub struct StockTable {
     pub systems_channel: (Sender<Vec<SystemInStoreData>>, Receiver<Vec<SystemInStoreData>>),
     pub systems_add_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
     pub systems_task_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
-    store_selection: u64
+    store_selection: u64,
+    // Customer change modal state
+    pub customer_change_channel: (Sender<CustomerChangeRequest>, Receiver<CustomerChangeRequest>),
+    pub customer_search_results_channel: (Sender<Vec<(Customer, Address)>>, Receiver<Vec<(Customer, Address)>>),
+    customer_modal_open: bool,
+    customer_modal_order_id: String,
+    customer_modal_current_name: String,
+    customer_search_query: String,
+    customer_search_type: CustomerSearchType,
+    customer_search_results: Vec<(Customer, Address)>,
+    customer_searching: bool,
+}
+
+#[derive(Default, PartialEq, Clone)]
+pub enum CustomerSearchType {
+    #[default]
+    Email,
+    Phone,
 }
 
 #[derive(Default, PartialEq)]
@@ -77,11 +94,16 @@ impl Default for StockTable {
         let systems_channel = <Vec<SystemInStoreData>>::create_unbounded_channel();
         let systems_add_channel = <SystemInStoreData>::create_unbounded_channel();
         let systems_task_channel = <SystemInStoreData>::create_unbounded_channel();
+        let customer_change_channel: (Sender<CustomerChangeRequest>, Receiver<CustomerChangeRequest>) = crossbeam::channel::unbounded();
+        let customer_search_results_channel: (Sender<Vec<(Customer, Address)>>, Receiver<Vec<(Customer, Address)>>) = crossbeam::channel::unbounded();
 
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
 
-        let mut systems_in_store_viewer = SystemInStoreViewer::new(systems_task_channel.0.clone());
+        let systems_in_store_viewer = SystemInStoreViewer::new(
+            systems_task_channel.0.clone(),
+            customer_change_channel.0.clone(),
+        );
 
         // Check if current user is admin
         let is_admin = get_current_user_from_auth()
@@ -115,6 +137,16 @@ impl Default for StockTable {
             systems_add_channel,
             systems_task_channel,
             store_selection: Store::RIV.into_store_id() as u64,
+            // Customer change modal
+            customer_change_channel,
+            customer_search_results_channel,
+            customer_modal_open: false,
+            customer_modal_order_id: String::new(),
+            customer_modal_current_name: String::new(),
+            customer_search_query: String::new(),
+            customer_search_type: CustomerSearchType::default(),
+            customer_search_results: Vec::new(),
+            customer_searching: false,
         }
     }
 }
@@ -275,23 +307,16 @@ impl StockTable {
                             let selected = &mut self.store_selection;
                             let current = *selected;
                             
-                            let selected_text = match *selected {
-                                7 => Store::RIV.as_str(),
-                                8 => Store::LTN.as_str(),
-                                10 => Store::MUR.as_str(),
-                                12 => Store::SAN.as_str(),
-                                14 => Store::ORE.as_str(),
-                                _ => Store::RIV.as_str(),
-                            };
+                            let selected_text = Store::from_presta_store_id(&selected.to_string());
                             
                             ComboBox::new("Systems_Store_Selection", "")
-                                .selected_text(selected_text)
+                                .selected_text(selected_text.as_str())
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(selected, 7, "RIV");
-                                    ui.selectable_value(selected, 8, "LTN");
-                                    ui.selectable_value(selected, 10, "MUR");
-                                    ui.selectable_value(selected, 14, "ORE");
-                                    ui.selectable_value(selected, 12, "SAN");
+                                    ui.selectable_value(selected, Store::RIV.into_store_id() as u64, Store::RIV.as_str());
+                                    ui.selectable_value(selected, Store::LTN.into_store_id() as u64, Store::LTN.as_str());
+                                    ui.selectable_value(selected, Store::MUR.into_store_id() as u64, Store::MUR.as_str());
+                                    ui.selectable_value(selected, Store::ORE.into_store_id() as u64, Store::ORE.as_str());
+                                    ui.selectable_value(selected, Store::SAN.into_store_id() as u64, Store::SAN.as_str());
                                 });
                             
                             // Trigger refresh when store changes
@@ -512,6 +537,9 @@ impl StockTable {
                         })
                         .ui(ui);
                     }
+                    
+                    // Show customer change modal if open
+                    self.show_customer_modal(ui);
                 },
             }
         });
@@ -659,5 +687,226 @@ impl StockTable {
             // Send the system data to the create task modal via TaskUiActions
             let _ = ui_actions_tx.try_send(TaskUiActions::OpenCreateTaskModalFromSystem(system_data));
         }
+
+        // Handle customer change request (open modal)
+        if let Ok(request) = self.customer_change_channel.1.try_recv() {
+            log::info!("Opening customer change modal for order: {}", request.order_id);
+            self.customer_modal_open = true;
+            self.customer_modal_order_id = request.order_id;
+            self.customer_modal_current_name = request.customer_name;
+            self.customer_search_query.clear();
+            self.customer_search_results.clear();
+        }
+
+        // Handle customer search results
+        if let Ok(results) = self.customer_search_results_channel.1.try_recv() {
+            log::info!("Received customer search results: {} customers", results.len());
+            self.customer_search_results = results;
+            self.customer_searching = false;
+        }
+    }
+
+    /// Show customer change modal
+    pub fn show_customer_modal(&mut self, ui: &mut Ui) {
+        if !self.customer_modal_open {
+            return;
+        }
+
+        // Dim background
+        let screen_rect = ui.ctx().screen_rect();
+        ui.painter().rect_filled(
+            screen_rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        );
+
+        Area::new(Id::new("customer_change_modal"))
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style())
+                    .fill(Color32::from_rgb(30, 30, 35))
+                    .inner_margin(20.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(400.0);
+                        ui.set_min_height(300.0);
+                        
+                        ui.vertical(|ui| {
+                            // Header
+                            ui.horizontal(|ui| {
+                                ui.heading(RichText::new("Change Customer").color(Color32::WHITE));
+                                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                    if ui.button("✕").clicked() {
+                                        self.customer_modal_open = false;
+                                    }
+                                });
+                            });
+                            
+                            ui.separator();
+                            
+                            ui.label(format!("Order: {}", self.customer_modal_order_id));
+                            ui.label(format!("Current Customer: {}", self.customer_modal_current_name));
+                            
+                            ui.add_space(10.0);
+                            
+                            // Search type selector
+                            ui.horizontal(|ui| {
+                                ui.label("Search by:");
+                                ui.selectable_value(&mut self.customer_search_type, CustomerSearchType::Email, "Email");
+                                ui.selectable_value(&mut self.customer_search_type, CustomerSearchType::Phone, "Phone");
+                            });
+                            
+                            ui.add_space(5.0);
+                            
+                            // Search input
+                            ui.horizontal(|ui| {
+                                let hint = match self.customer_search_type {
+                                    CustomerSearchType::Email => "Enter email address...",
+                                    CustomerSearchType::Phone => "Enter phone number...",
+                                };
+                                
+                                let response = TextEdit::singleline(&mut self.customer_search_query)
+                                    .hint_text(hint)
+                                    .desired_width(250.0)
+                                    .ui(ui);
+                                
+                                let can_search = !self.customer_search_query.is_empty() && !self.customer_searching;
+                                if ui.add_enabled(can_search, Button::new("Search")).clicked() || 
+                                   (response.lost_focus() && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) && can_search) 
+                                {
+                                    self.customer_searching = true;
+                                    let query = self.customer_search_query.clone();
+                                    let search_type = self.customer_search_type.clone();
+                                    let tx = self.customer_search_results_channel.0.clone();
+                                    
+                                    PlatformSpawner::spawn(async move {
+                                        let results = match search_type {
+                                            CustomerSearchType::Email => Customer::find_customer_by_email(&query).await,
+                                            CustomerSearchType::Phone => Customer::find_customer_by_phone(&query).await,
+                                        };
+                                        
+                                        match results {
+                                            Ok(customers) => { let _ = tx.try_send(customers); },
+                                            Err(e) => log::error!("Customer search error: {:?}", e),
+                                        }
+                                    });
+                                }
+                                
+                                if self.customer_searching {
+                                    Spinner::new().size(16.0).ui(ui);
+                                }
+                            });
+                            
+                            ui.add_space(10.0);
+                            
+                            // Search results
+                            if !self.customer_search_results.is_empty() {
+                                ui.label(RichText::new(format!("Found {} customers:", self.customer_search_results.len()))
+                                    .color(Color32::LIGHT_BLUE));
+                                
+                                eframe::egui::ScrollArea::vertical()
+                                    .max_height(200.0)
+                                    .show(ui, |ui| {
+                                        for (customer, address) in self.customer_search_results.iter() {
+                                            let name = format!("{} {}", customer.firstname, customer.lastname);
+                                            let addr_info = if !address.address1.is_empty() {
+                                                format!("{}, {}", address.address1, address.city)
+                                            } else {
+                                                "No address".to_string()
+                                            };
+                                            
+                                            ui.group(|ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.vertical(|ui| {
+                                                        // Show customer ID and name
+                                                        ui.label(RichText::new(format!("[{}] {}", customer.id, name)).strong());
+                                                        ui.label(RichText::new(&customer.email).small().color(Color32::GRAY));
+                                                        ui.label(RichText::new(&addr_info).small().color(Color32::GRAY));
+                                                    });
+                                                    
+                                                    ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                                        if ui.button("Select").clicked() {
+                                                            // Update the order with new customer
+                                                            let order_id = self.customer_modal_order_id.clone();
+                                                            let customer_id = customer.id.clone();
+                                                            let address_id = address.id.clone();
+                                                            let customer_name = name.clone();
+                                                            
+                                                            log::info!("Updating order {} with customer {} ({}), address {}", 
+                                                                      order_id, customer_name, customer_id, address_id);
+                                                            
+                                                            // Update the table immediately
+                                                            let mut data = self.systems_in_store_table.take();
+                                                            for system in data.iter_mut() {
+                                                                if system.order_id == order_id {
+                                                                    system.customer_id = customer_id.clone();
+                                                                    system.customer_name = customer_name.clone();
+                                                                }
+                                                            }
+                                                            self.systems_in_store_table.replace(data);
+                                                            
+                                                            // Async update to Prestashop
+                                                            PlatformSpawner::spawn(async move {
+                                                                update_order_customer(&order_id, &customer_id, &address_id).await;
+                                                            });
+                                                            
+                                                            self.customer_modal_open = false;
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                        }
+                                    });
+                            } else if !self.customer_searching && !self.customer_search_query.is_empty() {
+                                ui.label(RichText::new("No customers found.").color(Color32::GRAY));
+                            }
+                            
+                            ui.add_space(10.0);
+                            
+                            // Cancel button
+                            ui.horizontal(|ui| {
+                                if ui.button("Cancel").clicked() {
+                                    self.customer_modal_open = false;
+                                }
+                            });
+                        });
+                    });
+            });
+    }
+}
+
+/// Update order customer and address in Prestashop
+async fn update_order_customer(order_id: &str, customer_id: &str, address_id: &str) {
+    use database::schema::prestashop::Prestashop;
+    
+    let api = Prestashop::default();
+    
+    // Get the current order XML
+    match api.request_raw_resource_by_id("orders", order_id).await {
+        Ok(xml) => {
+            // Update id_customer
+            match modify_xml(&xml, "id_customer", customer_id) {
+                Ok(xml_with_customer) => {
+                    // Update id_address_invoice
+                    match modify_xml(&xml_with_customer, "id_address_invoice", address_id) {
+                        Ok(xml_with_address) => {
+                            // Remove tax_exempt tag (required for update)
+                            match remove_xml_tag(&xml_with_address, "tax_exempt") {
+                                Ok(final_xml) => {
+                                    match api.modify_prestashop_order(&final_xml).await {
+                                        Ok(_) => log::info!("Successfully updated order {} customer to {}", order_id, customer_id),
+                                        Err(e) => log::error!("Failed to update order {}: {:?}", order_id, e),
+                                    }
+                                }
+                                Err(e) => log::error!("Failed to remove tax_exempt from XML: {:?}", e),
+                            }
+                        }
+                        Err(e) => log::error!("Failed to modify id_address_invoice in XML: {:?}", e),
+                    }
+                }
+                Err(e) => log::error!("Failed to modify id_customer in XML: {:?}", e),
+            }
+        }
+        Err(e) => log::error!("Failed to get order XML for {}: {:?}", order_id, e),
     }
 }

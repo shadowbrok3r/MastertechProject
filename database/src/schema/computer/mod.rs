@@ -90,6 +90,16 @@ impl ComputerData {
         Ok(computer.unwrap_or_default())
     }
 
+    pub async fn get_computers_by_customer_id(customer_id: String) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let computers: Vec<Self> = DATABASE
+            .query("SELECT * FROM computer WHERE customer.cust_code == $customer_id")
+            .bind(("customer_id", customer_id))
+            .await?
+            .take(0)?;
+
+        Ok(computers)
+    }
+
     pub async fn get_computers(start: i32) -> anyhow::Result<Vec<Self>, anyhow::Error> {
         let computers: Vec<Self> = DATABASE
             .query("SELECT * FROM computer START $start LIMIT 200")

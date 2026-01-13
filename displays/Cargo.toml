@@ -10,10 +10,10 @@ wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
 structdiff = { version = "0.7.1", features = ["rustc_hash"] }
-reqwest = { version = "0.12", features = ["stream", "json"] }
+reqwest = { version = "0.13.1", features = ["stream", "json"] }
 compact_str = { version = "0.9.0", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
-rpc-router = "0.1"
+rpc-router = "0.2.0"
 derivative = "2"
 schemars = "1"
 zstd = "0.13"
