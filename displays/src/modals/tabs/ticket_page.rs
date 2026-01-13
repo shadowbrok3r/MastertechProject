@@ -1,9 +1,10 @@
 use eframe::egui::{Button, Color32, ComboBox, FontId, Grid, Hyperlink, Id, Margin, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::schema::{CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, Record, RecordIdExt, Status, TicketData, User};
-use database::schema::prestashop::{Prestashop, OrderState};
+use database::schema::prestashop::Prestashop;
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
-use database::schema::helper_traits::parse_email_user;
-use database::{DATABASE, ReqwestClient};
+// use database::schema::helper_traits::parse_email_user;
+use database::DATABASE;
+use reqwest::Client;
 use crate::{tabs::task_audit::row_viewer::BASE_URL, Interaction, PlatformSpawner, Spawner};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
@@ -263,7 +264,7 @@ pub fn display_ticket_page(
                                 let customer_email = customer.email.clone();
                                 PlatformSpawner::spawn(async move {
                                     log::info!("Checking SEB for customer: {}", customer_email);
-                                    let client = ReqwestClient::new();
+                                    let client = Client::new();
                                     let response = CarboniteResponse::default()
                                         .from_customer_email(customer_email, client)
                                         .await;

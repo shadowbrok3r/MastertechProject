@@ -25,9 +25,9 @@ default = [ "inline" ]
 inline = []
 
 [dependencies]
-eframe = { version="0.33", features=["persistence", "serde",  "default_fonts", "glow", "wayland"], default-features=false}
+eframe = { version="0.33", features=["persistence", "serde",  "default_fonts", "glow", "wayland"], default-features=false }
 displays = { path="../displays", features = ["tokio"] }
-reqwest = { version = "0.13.1", features = ["json", "stream", "cookies", "brotli"] }
+reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
 sysinfo = {version = "0.37.2", features = ["serde", "multithread"]}
 quick-xml = { version="0.39.0", features = ["serialize"] }

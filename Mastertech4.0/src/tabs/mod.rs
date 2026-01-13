@@ -98,7 +98,7 @@ impl TabViewer for MastertechContext {
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
-            "Task Audit" => self.shared_ctx.task_table_viewer(ui),
+            "Task Audit" => self.shared_ctx.task_table_viewer(ui, self.shared_ctx.ui_actions_tx.clone()),
             "Inventory" => self.shared_ctx.stock_tables.ui(ui),
             "Sales Tracker" => self.shared_ctx.sales_tracker.ui(ui),
             "Web Console" => self.shared_ctx.web_console.ui(ui),
