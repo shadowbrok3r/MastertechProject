@@ -279,6 +279,7 @@ impl crate::app_state::SharedContext {
         self.sales_tracker.receive();
         self.receive_client();
         self.receive_prestashop();
+        self.receive_extracted_specs();
         self.filesystem.receive();
         self.handle_viewports(ctx);
         self.handle_modals(ctx);

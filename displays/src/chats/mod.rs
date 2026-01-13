@@ -1,8 +1,8 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
-use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
+use crate::{get_current_user_from_auth, get_toast_sender, PlatformSpawner, Spawner, ToastMessage};
 use crossbeam::channel::{Receiver, Sender};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
@@ -277,7 +277,13 @@ impl ChatView {
                             PlatformSpawner::spawn(async move {
                                 match task_note.update_note().await {
                                     Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
-                                    Err(e) => error!("Error modifying note: {e:?}"),
+                                    Err(e) => {
+                                        error!("Error modifying note: {e:?}");
+                                        let tx = get_toast_sender();
+                                        let _ = tx.try_send(ToastMessage::Error(
+                                            format!("Failed to update note: {:?}", e)
+                                        ));
+                                    },
                                 }
                             });
                         }
@@ -292,7 +298,13 @@ impl ChatView {
                     PlatformSpawner::spawn(async move {
                         match item.delete_note().await{
                             Ok(_) => info!("chats/mod.rs -> Deleted Note"),
-                            Err(e) => error!("chats/mod.rs -> Error deleting note: {e:?}"),
+                            Err(e) => {
+                                error!("chats/mod.rs -> Error deleting note: {e:?}");
+                                let tx = get_toast_sender();
+                                let _ = tx.try_send(ToastMessage::Error(
+                                    format!("Failed to delete note: {:?}", e)
+                                ));
+                            },
                         }
                     })
                 },
@@ -373,9 +385,18 @@ impl ChatView {
 
                             error!("chats/mod.rs -> new_note: {new_note:#?}");
                             
+                            // Copy note to clipboard regardless of result
+                            let note_text = new_note.note.clone();
+                            ui.ctx().copy_text(note_text.clone());
+                            
                             PlatformSpawner::spawn(async move {
                                 if let Err(e) = new_note.handle_note_creation().await {
                                     error!("Failed to create task note: {:?}", e);
+                                    // Send error toast
+                                    let tx = get_toast_sender();
+                                    let _ = tx.try_send(ToastMessage::Error(
+                                        format!("Failed to send note: {:?}. Note copied to clipboard.", e)
+                                    ));
                                 } else {
                                     info!("chats/mod.rs -> Task note successfully created.");
                                 }

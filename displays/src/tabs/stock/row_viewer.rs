@@ -9,6 +9,37 @@ use crossbeam::channel::Sender;
 
 const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 
+/// Extract only relevant RAM info: DDR type (DDR4/DDR5), speed (MHz), and capacity (GB)
+fn format_ram_display(ram: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let upper = ram.to_uppercase();
+    
+    // Extract DDR type (DDR4, DDR5)
+    if let Some(caps) = Regex::new(r"DDR[45]").ok().and_then(|re| re.find(&upper)) {
+        parts.push(caps.as_str().to_string());
+    }
+    
+    // Extract capacity (e.g., 32GB, 16GB, 64GB)
+    if let Some(caps) = Regex::new(r"(\d+)\s*GB").ok().and_then(|re| re.captures(&upper)) {
+        if let Some(m) = caps.get(1) {
+            parts.push(format!("{}GB", m.as_str()));
+        }
+    }
+    
+    // Extract speed (e.g., 3200MHz, 6000MHz)
+    if let Some(caps) = Regex::new(r"(\d{4,5})\s*MHZ").ok().and_then(|re| re.captures(&upper)) {
+        if let Some(m) = caps.get(1) {
+            parts.push(format!("{}MHz", m.as_str()));
+        }
+    }
+    
+    if parts.is_empty() {
+        ram.to_string() // Fallback to original if no patterns matched
+    } else {
+        parts.join(" ")
+    }
+}
+
 #[derive(Default, Debug, Serialize, Deserialize, database::SurrealValue)]
 pub struct StockData {
     pub result: Vec<RawStockData>,
@@ -685,6 +716,8 @@ impl SystemType {
 #[derive(Default, Serialize, Deserialize, Clone, Debug)]
 pub struct SystemInStoreData {
     pub order_id: String,
+    pub customer_id: String,
+    pub customer_name: String,
     pub model: String,
     pub price: f64,
     pub cost: f64,
@@ -700,6 +733,13 @@ pub struct SystemInStoreData {
     pub computer_data: ComputerData,
 }
 
+/// Data for customer change request
+#[derive(Clone, Debug)]
+pub struct CustomerChangeRequest {
+    pub order_id: String,
+    pub customer_name: String,
+}
+
 /// Viewer for Systems In-Store table
 #[derive(Serialize)]
 pub struct SystemInStoreViewer {
@@ -708,14 +748,21 @@ pub struct SystemInStoreViewer {
     /// Callback sender for creating tasks
     #[serde(skip)]
     pub task_create_tx: Sender<SystemInStoreData>,
+    /// Callback sender for customer change requests (opens modal)
+    #[serde(skip)]
+    pub customer_change_tx: Sender<CustomerChangeRequest>,
 }
 
 impl SystemInStoreViewer {
-    pub fn new(task_create_tx: Sender<SystemInStoreData>) -> Self {
+    pub fn new(
+        task_create_tx: Sender<SystemInStoreData>,
+        customer_change_tx: Sender<CustomerChangeRequest>,
+    ) -> Self {
         Self {
             filter: Default::default(),
             row_protection: Default::default(),
             task_create_tx,
+            customer_change_tx,
         }
     }
 }
@@ -725,17 +772,17 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
         Some(SystemInStoreCodec) 
     }
 
-    fn num_columns(&mut self) -> usize { 12 }
+    fn num_columns(&mut self) -> usize { 13 }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
         [
-            "Order ID", "Model", "Price", "Cost", "Revenue", "Spiff",
+            "Order ID", "Customer", "Model", "Price", "Cost", "Revenue", "Spiff",
             "Type", "CPU", "GPU", "RAM", "Warranty", "Create Task"
         ][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        column < 11 // All columns except the button column
+        column < 12 // All columns except the button column
     }
 
     fn is_editable_cell(&mut self, _: usize, _row: usize, _row_value: &SystemInStoreData) -> bool { 
@@ -750,6 +797,7 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
             || row.model.to_uppercase().contains(filter)
             || row.cpu.to_uppercase().contains(filter)
             || row.gpu.to_uppercase().contains(filter)
+            || row.customer_name.to_uppercase().contains(filter)
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &SystemInStoreData, column: usize) {
@@ -767,9 +815,32 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 .open_in_new_tab(true)
                 .ui(ui);
             }
-            1 => { ui.label(&row.model); }
-            2 => { ui.label(format!("${:.2}", row.price)); }
-            3 => {
+            // Customer - clickable button to change customer (shows ID and name)
+            1 => {
+                let display_text = if row.customer_name.is_empty() {
+                    if row.customer_id.is_empty() {
+                        "Unknown".to_string()
+                    } else {
+                        format!("[{}]", row.customer_id)
+                    }
+                } else {
+                    format!("[{}] {}", row.customer_id, row.customer_name)
+                };
+                if Button::new(RichText::new(&display_text).color(Color32::from_rgb(180, 180, 255)))
+                    .frame(false)
+                    .ui(ui)
+                    .on_hover_text("Click to change customer")
+                    .clicked() 
+                {
+                    let _ = self.customer_change_tx.try_send(CustomerChangeRequest {
+                        order_id: row.order_id.clone(),
+                        customer_name: row.customer_name.clone(),
+                    });
+                }
+            }
+            2 => { ui.label(&row.model); }
+            3 => { ui.label(format!("${:.2}", row.price)); }
+            4 => {
                 let color = if row.cost > 0.0 {
                     Color32::from_rgb(200, 100, 100)
                 } else {
@@ -777,7 +848,7 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 };
                 ui.label(RichText::new(format!("${:.2}", row.cost)).color(color));
             }
-            4 => {
+            5 => {
                 let color = if row.revenue >= 0.0 {
                     Color32::LIGHT_GREEN
                 } else {
@@ -785,10 +856,10 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 };
                 ui.label(RichText::new(format!("${:.2}", row.revenue)).color(color));
             }
-            5 => {
+            6 => {
                 ui.label(RichText::new(format!("${:.2}", row.spiff)).color(Color32::GOLD));
             }
-            6 => {
+            7 => {
                 let (color, text) = match row.system_type {
                     SystemType::ReadyToRoll => (Color32::from_rgb(100, 200, 100), "R2R"),
                     SystemType::Rci => (Color32::from_rgb(200, 150, 50), "RCI"),
@@ -798,10 +869,10 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 };
                 ui.label(RichText::new(text).color(color));
             }
-            7 => { ui.label(&row.cpu); }
-            8 => { ui.label(&row.gpu); }
-            9 => { ui.label(&row.ram); }
-            10 => { 
+            8 => { ui.label(&row.cpu); }
+            9 => { ui.label(&row.gpu); }
+            10 => { ui.label(format_ram_display(&row.ram)); }
+            11 => { 
                 let color = if row.warranty.is_empty() || row.warranty == "None" {
                     Color32::GRAY
                 } else {
@@ -809,7 +880,7 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                 };
                 ui.label(RichText::new(&row.warranty).color(color)); 
             }
-            11 => {
+            12 => {
                 if Button::new("Create Task").ui(ui).clicked() {
                     let _ = self.task_create_tx.try_send(row.clone());
                 }
@@ -828,17 +899,18 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
             match column {
                 0 => Hyperlink::from_label_and_url(&row.order_id, format!("{}{}", BASE_URL, row.order_id))
                     .open_in_new_tab(true).ui(ui),
-                1 => ui.label(&row.model),
-                2 => ui.label(format!("${:.2}", row.price)),
-                3 => ui.label(format!("${:.2}", row.cost)),
-                4 => ui.label(format!("${:.2}", row.revenue)),
-                5 => ui.label(format!("${:.2}", row.spiff)),
-                6 => ui.label(row.system_type.as_str()),
-                7 => ui.label(&row.cpu),
-                8 => ui.label(&row.gpu),
-                9 => ui.label(&row.ram),
-                10 => ui.label(&row.warranty),
-                11 => ui.label(""),
+                1 => ui.label(&row.customer_name),
+                2 => ui.label(&row.model),
+                3 => ui.label(format!("${:.2}", row.price)),
+                4 => ui.label(format!("${:.2}", row.cost)),
+                5 => ui.label(format!("${:.2}", row.revenue)),
+                6 => ui.label(format!("${:.2}", row.spiff)),
+                7 => ui.label(row.system_type.as_str()),
+                8 => ui.label(&row.cpu),
+                9 => ui.label(&row.gpu),
+                10 => ui.label(format_ram_display(&row.ram)),
+                11 => ui.label(&row.warranty),
+                12 => ui.label(""),
                 _ => unreachable!(),
             }
             .into()
@@ -854,17 +926,21 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
     ) {
         match column {
             0 => dst.order_id = src.order_id.clone(),
-            1 => dst.model = src.model.clone(),
-            2 => dst.price = src.price,
-            3 => dst.cost = src.cost,
-            4 => dst.revenue = src.revenue,
-            5 => dst.spiff = src.spiff,
-            6 => dst.system_type = src.system_type.clone(),
-            7 => dst.cpu = src.cpu.clone(),
-            8 => dst.gpu = src.gpu.clone(),
-            9 => dst.ram = src.ram.clone(),
-            10 => dst.warranty = src.warranty.clone(),
-            11 => {}
+            1 => {
+                dst.customer_id = src.customer_id.clone();
+                dst.customer_name = src.customer_name.clone();
+            }
+            2 => dst.model = src.model.clone(),
+            3 => dst.price = src.price,
+            4 => dst.cost = src.cost,
+            5 => dst.revenue = src.revenue,
+            6 => dst.spiff = src.spiff,
+            7 => dst.system_type = src.system_type.clone(),
+            8 => dst.cpu = src.cpu.clone(),
+            9 => dst.gpu = src.gpu.clone(),
+            10 => dst.ram = src.ram.clone(),
+            11 => dst.warranty = src.warranty.clone(),
+            12 => {}
             _ => unreachable!(),
         }
     }
@@ -900,17 +976,18 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
         let col_config = TableColumnConfig::auto();
         match column {
             0 => col_config.resizable(true).at_least(80.).at_most(100.),   // Order ID
-            1 => col_config.resizable(true).at_least(150.).at_most(250.),  // Model
-            2 => col_config.resizable(true).at_least(70.).at_most(100.),   // Price
-            3 => col_config.resizable(true).at_least(70.).at_most(100.),   // Cost
-            4 => col_config.resizable(true).at_least(70.).at_most(100.),   // Revenue
-            5 => col_config.resizable(true).at_least(60.).at_most(80.),    // Spiff
-            6 => col_config.resizable(true).at_least(50.).at_most(70.),    // Type
-            7 => col_config.resizable(true).at_least(100.).at_most(180.),  // CPU
-            8 => col_config.resizable(true).at_least(80.).at_most(150.),   // GPU
-            9 => col_config.resizable(true).at_least(50.).at_most(80.),    // RAM
-            10 => col_config.resizable(true).at_least(150.).at_most(180.),  // Warranty
-            11 => col_config.resizable(false).at_least(70.).at_most(90.),  // Create Task button
+            1 => col_config.resizable(true).at_least(200.).at_most(220.),  // Customer
+            2 => col_config.resizable(true).at_least(200.).at_most(220.),  // Model
+            3 => col_config.resizable(true).at_least(70.).at_most(100.),   // Price
+            4 => col_config.resizable(true).at_least(70.).at_most(100.),   // Cost
+            5 => col_config.resizable(true).at_least(70.).at_most(100.),   // Revenue
+            6 => col_config.resizable(true).at_least(60.).at_most(80.),    // Spiff
+            7 => col_config.resizable(true).at_least(50.).at_most(70.),    // Type
+            8 => col_config.resizable(true).at_least(150.).at_most(200.),  // CPU
+            9 => col_config.resizable(true).at_least(150.).at_most(200.),   // GPU
+            10 => col_config.resizable(true).at_least(200.).at_most(200.),   // RAM
+            11 => col_config.resizable(true).at_least(150.).at_most(180.), // Warranty
+            12 => col_config.resizable(false).at_least(70.).at_most(90.),  // Create Task button
             _ => col_config,
         }
     }
@@ -924,17 +1001,18 @@ impl RowCodec<SystemInStoreData> for SystemInStoreCodec {
     fn encode_column(&mut self, src_row: &SystemInStoreData, column: usize, dst: &mut String) {
         match column {
             0 => dst.push_str(&src_row.order_id),
-            1 => dst.push_str(&src_row.model),
-            2 => dst.push_str(&format!("{}", src_row.price)),
-            3 => dst.push_str(&format!("{}", src_row.cost)),
-            4 => dst.push_str(&format!("{}", src_row.revenue)),
-            5 => dst.push_str(&format!("{}", src_row.spiff)),
-            6 => dst.push_str(src_row.system_type.as_str()),
-            7 => dst.push_str(&src_row.cpu),
-            8 => dst.push_str(&src_row.gpu),
-            9 => dst.push_str(&src_row.ram),
-            10 => dst.push_str(&src_row.warranty),
-            11 => {}
+            1 => dst.push_str(&src_row.customer_name),
+            2 => dst.push_str(&src_row.model),
+            3 => dst.push_str(&format!("{}", src_row.price)),
+            4 => dst.push_str(&format!("{}", src_row.cost)),
+            5 => dst.push_str(&format!("{}", src_row.revenue)),
+            6 => dst.push_str(&format!("{}", src_row.spiff)),
+            7 => dst.push_str(src_row.system_type.as_str()),
+            8 => dst.push_str(&src_row.cpu),
+            9 => dst.push_str(&src_row.gpu),
+            10 => dst.push_str(&src_row.ram),
+            11 => dst.push_str(&src_row.warranty),
+            12 => {}
             _ => unreachable!(),
         }
     }
@@ -947,23 +1025,24 @@ impl RowCodec<SystemInStoreData> for SystemInStoreCodec {
     ) -> Result<(), DecodeErrorBehavior> {
         match column {
             0 => dst_row.order_id = src_data.to_string(),
-            1 => dst_row.model = src_data.to_string(),
-            2 => dst_row.price = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            3 => dst_row.cost = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            4 => dst_row.revenue = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            5 => dst_row.spiff = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            6 => dst_row.system_type = match src_data {
+            1 => dst_row.customer_name = src_data.to_string(),
+            2 => dst_row.model = src_data.to_string(),
+            3 => dst_row.price = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst_row.cost = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            5 => dst_row.revenue = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            6 => dst_row.spiff = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            7 => dst_row.system_type = match src_data {
                 "R2R" => SystemType::ReadyToRoll,
                 "RCI" => SystemType::Rci,
                 "BSD" => SystemType::Bsd,
                 "Demo" => SystemType::Demo,
                 _ => SystemType::CustomBuild,
             },
-            7 => dst_row.cpu = src_data.to_string(),
-            8 => dst_row.gpu = src_data.to_string(),
-            9 => dst_row.ram = src_data.to_string(),
-            10 => dst_row.warranty = src_data.to_string(),
-            11 => {}
+            8 => dst_row.cpu = src_data.to_string(),
+            9 => dst_row.gpu = src_data.to_string(),
+            10 => dst_row.ram = src_data.to_string(),
+            11 => dst_row.warranty = src_data.to_string(),
+            12 => {}
             _ => unreachable!(),
         }
         Ok(())

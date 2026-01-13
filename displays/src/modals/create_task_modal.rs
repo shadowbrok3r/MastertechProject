@@ -1,12 +1,12 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType},DATABASE};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
 use database::schema::{Datetime, RecordId};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Sender, Receiver};
 use std::collections::BTreeSet;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,16 @@ pub struct CreateTaskModal {
     pub tur: Tur,
     #[serde(skip)]
     pub prestashop_api_tx: Option<Sender<PrestashopPayload>>,
-    user: User
+    user: User,
+    /// Flag indicating task creation is in progress
+    pub creating_task: bool,
+    /// Channel for receiving task creation result
+    #[serde(skip)]
+    pub creation_result_tx: Option<Sender<TaskCreationResult>>,
+    #[serde(skip)]
+    pub creation_result_rx: Option<Receiver<TaskCreationResult>>,
+    /// Text to copy to clipboard after successful creation
+    pub clipboard_text: Option<String>,
 }
 
 // TODO This is an ugly implementation
@@ -51,6 +60,7 @@ impl CreateTaskModal {
         store_users: Vec<User>,
         prestashop_api_tx: Sender<PrestashopPayload>,
     ) -> Self {
+        let (creation_result_tx, creation_result_rx) = crossbeam::channel::unbounded();
         Self {
             title: title.to_owned(),
             min_width: Some(500.0),
@@ -67,6 +77,10 @@ impl CreateTaskModal {
             } else {
                 User::default()
             },
+            creating_task: false,
+            creation_result_tx: Some(creation_result_tx),
+            creation_result_rx: Some(creation_result_rx),
+            clipboard_text: None,
             ..Default::default()
         }
     }
@@ -75,6 +89,11 @@ impl CreateTaskModal {
         self.tur = tur;
         let name = self.tur.customer_data.name.clone();
         let service_num = self.tur.ticket_data.service_number.clone();
+        let computer = &mut self.tur.computer_data;
+        if !computer.device_mfg.is_none() || !computer.device_serial.is_none() || !computer.cpu.is_empty() || !computer.gpu.is_empty() || !computer.ram.is_empty() {
+            self.tur.ticket_data.computer = Some(computer.id.clone());
+        }
+
         if !service_num.is_empty() && !name.is_empty()
         {
             self.task_name = format!(
@@ -88,6 +107,53 @@ impl CreateTaskModal {
 
 impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
+        // Check for creation result
+        if let Some(rx) = &self.creation_result_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.creating_task = false;
+                let toast_tx = get_toast_sender();
+                match result {
+                    TaskCreationResult::Created { service_number } => {
+                        let _ = toast_tx.try_send(ToastMessage::Success(
+                            format!("Task created for service #{service_number}")
+                        ));
+                        // Copy description to clipboard on success
+                        if let Some(text) = self.clipboard_text.take() {
+                            ui.ctx().copy_text(text);
+                        }
+                        self.current_page_state = ModalAction::Close;
+                    },
+                    TaskCreationResult::AlreadyExists { service_number } => {
+                        let _ = toast_tx.try_send(ToastMessage::Warning(
+                            format!("Task already exists for service #{service_number}")
+                        ));
+                        // Still copy to clipboard and close since task exists
+                        if let Some(text) = self.clipboard_text.take() {
+                            ui.ctx().copy_text(text);
+                        }
+                        self.current_page_state = ModalAction::Close;
+                    },
+                    TaskCreationResult::Updated { service_number } => {
+                        let _ = toast_tx.try_send(ToastMessage::Info(
+                            format!("Task updated for service #{service_number}")
+                        ));
+                        // Copy to clipboard on update
+                        if let Some(text) = self.clipboard_text.take() {
+                            ui.ctx().copy_text(text);
+                        }
+                        self.current_page_state = ModalAction::Close;
+                    },
+                    TaskCreationResult::Error { message } => {
+                        let _ = toast_tx.try_send(ToastMessage::Error(
+                            format!("Error creating task: {message}")
+                        ));
+                        // Don't close on error - let user try again
+                        self.clipboard_text = None;
+                    },
+                }
+            }
+        }
+        
         let avail_size = Vec2::new(500.0, 500.0);
         ui.set_min_size(avail_size);
         ui.set_max_size(avail_size);
@@ -144,14 +210,19 @@ impl DisplayModal for CreateTaskModal {
                     ModalAction::ImportTask => {
                         let store_users = self.store_users.clone();
                         let tur = &mut self.tur;
+                        let mut seb_checking = false; // Not used in create task modal
                         display_ticket_page(
                             ui,
                             &mut tur.task_data,
                             Some(&mut tur.ticket_data),
                             Some(&mut tur.customer_data),
+                            Some(&mut tur.computer_data),
                             avail_size,
                             &store_users,
-                            self.user.clone()
+                            self.user.clone(),
+                            None, // No SEB channel for create task
+                            &mut seb_checking,
+                            None, // No customer modal for create task
                         );
                     },
                     ModalAction::ComputerInfoPage => {
@@ -289,29 +360,39 @@ impl CreateTaskModal {
             let check = !self.task_name.is_empty() && !self.description.is_empty() && !self.assignee.is_empty();
 
             let enabled = if (pulling_ticket && check) || (check) { true } else { false };
+            let enabled = enabled && !self.creating_task;
+
+            // Show spinner when creating task
+            if self.creating_task {
+                Spinner::new().size(20.0).ui(ui);
+                ui.label(RichText::new("Creating...").color(Color32::LIGHT_BLUE));
+            }
 
             if ui.add_enabled(enabled, btn).clicked() {
-                // let service_num = self.ticket_data.service_number.clone();
-                // Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
-                // self.ticket_data = TicketPayload::default();
-                // self.task_data = TaskPayload::default();
-                // self.customer_data = CustomerData::default();
-                // // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
-                // self.ticket_data.service_number = service_num;
-
-                self.current_page_state = ModalAction::Close;
-                info!("ASSIGNEE: {:?}\nSTATE: {:?}", self.assignee.clone(), self.current_page_state);
+                info!("ASSIGNEE: {:?}", self.assignee.clone());
                 let assignee = self.assignee.clone();
                 let mut payload = self.tur.clone();                   
                 payload.task_data.priority = self.task_priority.clone();
                 payload.task_data.created_at = Utc::now().into();
                 payload.task_data.due_date = self.due_date.clone();
                 payload.task_data.completed = false;
-                payload.task_data.status = Status::Todo;
+                
+                // Set status to QC for non-service orders (sales orders, R2R, BSD, RCI)
+                let order_type = OrderType::from_id_str(&payload.data.order.id_order_type);
+                if order_type != OrderType::ServiceOrder {
+                    payload.task_data.status = Status::Qc;
+                    info!("Order type is {:?}, setting task status to QC", order_type);
+                } else {
+                    payload.task_data.status = Status::Todo;
+                }
+                
                 payload.task_data.task_name = self.task_name.clone();
                 payload.task_data.task_description = self.description.clone();
                 payload.task_data.service_number = Some(payload.ticket_data.service_number.clone());
                 
+                // Store the description to copy to clipboard after success
+                self.clipboard_text = Some(self.description.clone());
+                self.creating_task = true;
                 
                 let usr = &mut User::default();
                 for user in self.store_users.iter() {
@@ -322,8 +403,94 @@ impl CreateTaskModal {
                 }
 
                 let task = payload.task_data.clone();
-                let toast_tx = get_toast_sender();
+                let result_tx = self.creation_result_tx.clone();
+                let service_number = payload.ticket_data.service_number.clone();
+                
+                // Check if we have a service number but haven't pulled the order yet
+                // (customer name will be empty if not pulled)
+                let needs_pull = !service_number.is_empty() && payload.customer_data.name.is_empty();
+                
                 PlatformSpawner::spawn(async move {
+                    let mut payload = payload;
+                    
+                    // If service number is entered but data wasn't pulled, pull it now
+                    if needs_pull {
+                        info!("Service number entered but order not pulled, fetching now: {}", service_number);
+                        match get_prestashop_payload(&service_number).await {
+                            Ok(presta_data) => {
+                                info!("Successfully fetched prestashop data for order {}", service_number);
+                                // Update payload with fetched data
+                                payload.customer_data.name = presta_data.customer.name.clone();
+                                payload.customer_data.email = presta_data.customer.email.clone();
+                                payload.customer_data.phone_number = presta_data.customer.phone_number.clone();
+                                payload.customer_data.cust_code = presta_data.customer.cust_code.clone();
+                                payload.customer_data.id = presta_data.customer.id.clone();
+                                
+                                // Update ticket data
+                                let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
+                                let split_rep = presta_data.split_rep.clone().unwrap_or_default();
+                                let email = database::schema::helper_traits::parse_email_user(&sales_rep.email).to_string();
+                                let email_split_rep = database::schema::helper_traits::parse_email_user(&split_rep.email).to_string();
+                                
+                                payload.ticket_data.salesman = email_split_rep;
+                                payload.ticket_data.sales_rep = email.clone();
+                                payload.ticket_data.tech = email.clone();
+                                payload.ticket_data.customer = payload.customer_data.id.clone();
+                                payload.ticket_data.checkin_rep = email;
+                                payload.ticket_data.terms = presta_data.order.payment.clone();
+                                payload.ticket_data.ticket_total = presta_data.order.total_products_wt.clone();
+                                payload.ticket_data.doc_alias = presta_data.order.order_type.clone();
+                                
+                                if let Some(service) = presta_data.order.associations.order_service.first() {
+                                    payload.ticket_data.checkin_notes = service.check_in_notes.clone();
+                                }
+                                
+                                // Copy task notes
+                                for msg in presta_data.task_notes.iter() {
+                                    payload.task_notes.push(TaskNotePayload {
+                                        task_id: Some(payload.task_data.id.clone()),
+                                        ..msg.clone()
+                                    });
+                                }
+                                
+                                // Extract computer data using the Order's methods
+                                let model = presta_data.order.extract_model();
+                                if !model.is_empty() {
+                                    payload.computer_data.device_model = Some(model);
+                                }
+                                
+                                // Extract all specs including device serial and mfg
+                                let specs = presta_data.order.extract_specs().await;
+                                if !specs.cpu.is_empty() {
+                                    payload.computer_data.cpu = specs.cpu;
+                                }
+                                if !specs.gpu.is_empty() {
+                                    payload.computer_data.gpu = specs.gpu;
+                                }
+                                if !specs.ram.is_empty() {
+                                    payload.computer_data.ram = specs.ram;
+                                }
+                                if !specs.device_serial.is_empty() {
+                                    payload.computer_data.device_serial = Some(specs.device_serial);
+                                }
+                                if !specs.device_mfg.is_empty() {
+                                    payload.computer_data.device_mfg = Some(specs.device_mfg);
+                                }
+                                
+                                // Also update task status based on order type
+                                let order_type = OrderType::from_id_str(&presta_data.order.id_order_type);
+                                if order_type != OrderType::ServiceOrder {
+                                    payload.task_data.status = Status::Qc;
+                                    info!("Auto-pulled order type is {:?}, setting task status to QC", order_type);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to fetch prestashop data: {:?}", e);
+                                // Continue anyway with what we have
+                            }
+                        }
+                    }
+                    
                     if !payload.ticket_data.service_number.is_empty() {
 
                         if payload.ticket_data.salesman.is_empty() {
@@ -338,35 +505,16 @@ impl CreateTaskModal {
                         let create_task_result = create_full_task_payload(
                             payload.ticket_data.into(),
                             payload.customer_data.clone(),
-                            ComputerData::default(),
+                            payload.computer_data.clone(),
                             task.into(),
                             payload.task_notes,
-                            false,
+                            true,
                         ).await;
                         info!("create_task_result: {create_task_result:?}");
 
-                        // Send toast based on result
-                        match create_task_result {
-                            TaskCreationResult::Created { service_number } => {
-                                let _ = toast_tx.try_send(ToastMessage::Success(
-                                    format!("Task created for service #{service_number}")
-                                ));
-                            },
-                            TaskCreationResult::AlreadyExists { service_number } => {
-                                let _ = toast_tx.try_send(ToastMessage::Warning(
-                                    format!("Task already exists for service #{service_number}")
-                                ));
-                            },
-                            TaskCreationResult::Updated { service_number } => {
-                                let _ = toast_tx.try_send(ToastMessage::Info(
-                                    format!("Task updated for service #{service_number}")
-                                ));
-                            },
-                            TaskCreationResult::Error { message } => {
-                                let _ = toast_tx.try_send(ToastMessage::Error(
-                                    format!("Error creating task: {message}")
-                                ));
-                            },
+                        // Send result through channel
+                        if let Some(tx) = result_tx {
+                            let _ = tx.try_send(create_task_result);
                         }
 
                     } else {
@@ -384,23 +532,29 @@ impl CreateTaskModal {
                                 match query {
                                     Ok(mut res) => {
                                         let _: Option<database::schema::Record> = res.take(0).unwrap_or_default();
-                                        let _ = toast_tx.try_send(ToastMessage::Success(
-                                            "Task created successfully".to_string()
-                                        ));
+                                        if let Some(tx) = result_tx {
+                                            let _ = tx.try_send(TaskCreationResult::Created { 
+                                                service_number: "regular_task".to_string() 
+                                            });
+                                        }
                                     },
                                     Err(e) => {
                                         error!("Error creating task: {e:?}");
-                                        let _ = toast_tx.try_send(ToastMessage::Error(
-                                            format!("Error creating task: {e}")
-                                        ));
+                                        if let Some(tx) = result_tx {
+                                            let _ = tx.try_send(TaskCreationResult::Error { 
+                                                message: format!("{e}") 
+                                            });
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
                                 error!("Error getting user: {e:?}");
-                                let _ = toast_tx.try_send(ToastMessage::Error(
-                                    format!("Error getting user: {e}")
-                                ));
+                                if let Some(tx) = result_tx {
+                                    let _ = tx.try_send(TaskCreationResult::Error { 
+                                        message: format!("{e}") 
+                                    });
+                                }
                             },
                         }
                     }
@@ -430,12 +584,12 @@ impl Tur {
             ui.add_space(ui.available_width() / 3.5);
             if ui.add_enabled(check, button).clicked() {
                 let service_num = self.ticket_data.service_number.clone();
-                Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
                 self.ticket_data = TicketData::default();
                 self.task_data = LiveTaskPayload::default();
                 self.customer_data = CustomerData::default();
-                // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
                 self.ticket_data.service_number = service_num;
+                // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
+                Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
             }
         
             let upload = Button::new("Upload TUR")
