@@ -1,9 +1,6 @@
-use database::schema::{CarboniteResponse, DriveData, RecordId, TASK_TABLE, TICKET_TABLE, COMPUTER_TABLE, TaskNotePayload, helper_traits::parse_email_user, prestashop::OrderType};
-use database::schema::prestashop_schema::PrestashopPayload;
-use database::schema::prestashop::order::ExtractedOrderSpecs;
-use database::ReqwestClient;
+use database::schema::{CarboniteResponse, DriveData, RecordId, TASK_TABLE, TICKET_TABLE, COMPUTER_TABLE, TaskNotePayload, helper_traits::parse_email_user};
+use reqwest::Client;
 use crate::{app_state::SharedContext, modals::ModalType, PlatformSpawner, Spawner};
-use crossbeam::channel::Sender;
 use log::info;
 use uuid::Uuid;
 
@@ -24,7 +21,7 @@ impl SharedContext {
             let email = parse_email_user(&sales_rep.email).to_string();
             let email_split_rep = parse_email_user(&split_rep.email).to_string();
             let customer_email = data.customer.email.clone();
-            let client = ReqwestClient::new();
+            let client = Client::new();
             let carobonite_tx = self.seb_channel.0.clone();
             let mut services: Vec<RecordId> = Vec::new();
 

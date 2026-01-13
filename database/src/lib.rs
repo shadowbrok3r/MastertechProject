@@ -6,8 +6,6 @@ use surrealdb::{
 
 // Re-export SurrealValue from the correct location
 pub use surrealdb::types::SurrealValue;
-// Re-export reqwest Client to ensure consistent version usage across crates
-pub use reqwest::Client as ReqwestClient;
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::fmt::Debug;
