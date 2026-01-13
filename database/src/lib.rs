@@ -148,9 +148,9 @@ impl Database {
             let try_local = DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await;
             log::info!("Attempting to connect to local DB: {try_local:?}");
         } else {
-            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_BETA).await {
-                Ok(_) => log::info!("Connected to {DB_URL_BETA:?}"),
-                Err(e) => log::error!("Failed connecting to: {DB_URL_BETA:?}\n{e:?}"),
+            match DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await {
+                Ok(_) => log::info!("Connected to {DB_URL_DEV:?}"),
+                Err(e) => log::error!("Failed connecting to: {DB_URL_DEV:?}\n{e:?}"),
             }
         }
 
