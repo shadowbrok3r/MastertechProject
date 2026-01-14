@@ -272,7 +272,7 @@ impl SharedContext {
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
         let (live_user_tx, live_user_rx) = channel::unbounded::<(Action, User)>();
-        let (live_query_error_tx, live_query_error_rx) = channel::unbounded::<String>();
+        let (live_query_error_tx, live_query_error_rx) = channel::bounded::<String>(1);
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
@@ -282,7 +282,6 @@ impl SharedContext {
         let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
-        
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
