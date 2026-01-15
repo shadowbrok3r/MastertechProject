@@ -21,7 +21,7 @@ addresses = ["0.0.0.0"]
 # The port to serve on.
 port = 8080
 # Disable auto-reload in production (prevents random reloads from WebSocket timeout)
-# no_autoreload = true
+no_autoreload = true
 
 # Headers for WASM SharedArrayBuffer support and cache control
 [serve.headers]

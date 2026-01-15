@@ -85,18 +85,28 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopPayload, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
         let _ = match column {
             0 => { 
                 // ui.colored_label(ui.style().visuals.hyperlink_color, format!(" {}", row.order.id.clone())); 
                 let url = row.order.id.clone();
-                Hyperlink::from_label_and_url(
+                let res = Hyperlink::from_label_and_url(
                     format!(" {}", url), 
                     format!("{BASE_URL}{}", url)
                 )
                 .open_in_new_tab(true)
                 .ui(ui);
+
+                if res.clicked() {
+                    log::error!("Clicked on order: {}", row.order.id);
+                }
             },
-            1 => { ui.label(format!(" {}", row.customer.name.clone())); },
+            1 => { 
+                ui.label(format!(" {}", row.customer.name.clone())); 
+            },
             2 => {
                 // Parse the input into a NaiveDateTime
                 let naive_datetime = NaiveDateTime::parse_from_str(&row.order.date_add, "%Y-%m-%d %H:%M:%S").unwrap_or_default();
@@ -275,14 +285,22 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
         column: usize,
     ) -> Option<eframe::egui::Response> {
         match column {
-            0 => Some(
-                Hyperlink::from_label_and_url(
-                    format!(" {}", row.order.id.clone()), 
-                    format!("{BASE_URL}{}", row.order.id.clone())
-                )
-                .open_in_new_tab(true)
-                .ui(ui)
-            ),
+            0 => {
+                let resp = Some(
+                    Hyperlink::from_label_and_url(
+                        format!(" {}", row.order.id.clone()), 
+                        format!("{BASE_URL}{}", row.order.id.clone())
+                    )
+                    .open_in_new_tab(true)
+                    .ui(ui)
+                );
+                
+                if resp.is_some() {
+                    log::error!("Clicked on order: {}", row.order.id);
+                }
+
+                resp
+            },
             _ => None,
         }
     } ///////////// TODO

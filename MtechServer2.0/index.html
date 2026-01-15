@@ -65,7 +65,7 @@
     <base data-trunk-public-url />
 
     <link data-trunk rel="icon" href="assets/favicon.ico" />
-    <link data-trunk rel="copy-file" href="assets/sw.js" />
+    <!-- <link data-trunk rel="copy-file" href="assets/sw.js" /> -->
 
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <link data-trunk rel="copy-file" href="assets/pcllogo.png" />
@@ -179,14 +179,14 @@
     <!--Register Service Worker with automatic update handling -->
     <script>
       // Service worker registration with update handling
-      if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
-        window.addEventListener("load", async function () {
-          try {
-            const registration = await navigator.serviceWorker.register("sw.js", {
-              updateViaCache: 'none' // Always check for SW updates
-            });
+      // if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
+      //   window.addEventListener("load", async function () {
+      //     try {
+      //       const registration = await navigator.serviceWorker.register("sw.js", {
+      //         updateViaCache: 'none' // Always check for SW updates
+      //       });
             
-            console.log("[App] Service Worker registered");
+      //       console.log("[App] Service Worker registered");
             
             // // Check for updates periodically (every 5 minutes)
             // setInterval(() => {
@@ -221,11 +221,11 @@
             //   }
             // });
             
-          } catch (error) {
-            console.error("[App] Service Worker registration failed:", error);
-          }
-        });
-      }
+          // } catch (error) {
+          //   console.error("[App] Service Worker registration failed:", error);
+          // }
+      //   });
+      // }
     </script>
   </body>
 </html>
