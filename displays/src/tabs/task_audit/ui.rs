@@ -1,11 +1,12 @@
-use chrono::{DateTime, NaiveDateTime, Utc};
-use crossbeam::channel::Sender;
-use eframe::egui::{Color32, Grid, Style, scroll_area};
 use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Color32, Grid, Style, scroll_area};
+use database::schema::prestashop::OrderState;
+use crate::{PlatformSpawner, TaskUiActions};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use database::schema::{Store, User};
 use database::get_database_users;
+use crossbeam::channel::Sender;
 use egui_data_table::Renderer;
-use crate::{PlatformSpawner, TaskUiActions};
 use crate::Spawner;
 use log::info;
 
@@ -83,16 +84,9 @@ impl TaskAuditViewer {
                             .show(ui, |ui| {
                                 ui.colored_label(Color32::LIGHT_RED, " Status");
     
-                                let status = match order.order.current_state.as_str() {
-                                    "30" => "In Repair",
-                                    "40" => "Done Shelf",
-                                    "4" => "Shipped",
-                                    "29" => "Check-in Shelf",
-                                    "239" => "Accepted by Odoo",
-                                    _ => ""
-                                };
-    
-                                ui.label(status);
+                                let order_type = OrderState::from_id_str(order.order.current_state.as_str());
+
+                                ui.label(order_type);
                                 ui.end_row();
     
                                 ui.colored_label(Color32::LIGHT_RED, " Phone#");
@@ -153,17 +147,7 @@ impl TaskAuditViewer {
                 });
     
                 ui.with_layout(Layout::bottom_up(eframe::egui::Align::Min), |ui| {
-                    CollapsingHeader::new(
-                        RichText::new("Order Notes")
-                            .color(ui.style().visuals.error_fg_color)
-                            .monospace()
-                        )
-                        .default_open(true)
-                        .id_salt(format!("Order Notes - {}", header))
-                        .show_unindented(ui, |ui| 
-                    {
-                        self.services_viewer.chat_view.ui(ui);
-                    });
+                    self.services_viewer.chat_view.ui(ui);
                 });
             });
         }
@@ -271,51 +255,12 @@ impl TaskAuditViewer {
                     self.time = Some(web_time::Instant::now());
                     Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx, self.missed_calls_tx.clone(), self.services_viewer.store_selection.to_string());
                 }
-                ui.add_space(10.);
-                let label = if self.services_viewer.open_hotkeys {
-                    " Hide Hotkeys "
-                } else {
-                    " Show Hotkeys "
-                };
-
-                if Button::new(label).ui(ui).clicked() {
-                    self.services_viewer.open_hotkeys = !self.services_viewer.open_hotkeys;
-                }
                 
                 ui.add_space(10.);
 
                 if self.loading {
                     ui.ctx().request_repaint();
                     Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
-                }
-            });
-        });
-
-        TopBottomPanel::bottom(Id::new("Task Audit Hot Keys"))
-            .max_height(240.)
-            .show_animated_inside(ui, self.services_viewer.open_hotkeys, |ui| 
-        {
-            ui.vertical_centered(|ui| ui.heading("Hotkeys"));
-            ui.vertical_centered_justified(|ui| ui.separator());
-
-            ui.horizontal_wrapped(|ui| {
-                ui.style_mut().spacing.item_spacing.y = 5.0;
-                ui.add_space(2.);
-                let mut count = 0;
-                for (k, a) in &self.services_viewer.hotkeys {
-                    Button::new(format!("{a:?}"))
-                        .min_size(Vec2::new(280., 25.))
-                        .shortcut_text(
-                            RichText::new(ui.ctx().format_shortcut(k))
-                            .code()
-                            .color(ui.style().visuals.warn_fg_color)
-                        )
-                        .ui(ui);
-                    
-                    count += 1;
-                    if count % 4 == 0 {
-                        ui.end_row();
-                    }
                 }
             });
         });

@@ -25,8 +25,8 @@ bincode = { version="2", features = ["serde", "derive"] }
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 
-wasm-bindgen-futures = "0.4.56"
-wasm-bindgen = "0.2.106"
+wasm-bindgen-futures = "0.4.58"
+wasm-bindgen = "0.2.108"
 gloo-console = "0.3.0"
 wasm-cookies = "0.2"
 web-time = "1"

@@ -3,7 +3,7 @@ use eframe::egui::{Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Label, Wi
 use database::schema::{Store, TaskNotePayload, User, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{MissedCallOrder, PrestashopPayload}};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use egui_data_table::{viewer::{default_hotkeys, RowCodec, UiActionContext}, RowViewer, UiAction};
+use egui_data_table::{viewer::{RowCodec, UiActionContext}, RowViewer, UiAction};
 use crate::PlatformSpawner;
 use crossbeam::channel::{Receiver, Sender};
 use egui_extras::Column;
@@ -17,11 +17,8 @@ pub const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?cont
 pub struct TaskRowViewer {
     pub filter: String,
     row_protection: bool,
-    #[serde(skip)]
-    pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
     pub selected: Option<PrestashopPayload>,
     order_data: PrestashopPayload,
-    pub open_hotkeys: bool,
     pub chat_view: ChatView,
     #[serde(skip)]
     pub notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
@@ -47,9 +44,7 @@ impl Default for TaskRowViewer {
             create_task_channel,
             filter: Default::default(),
             row_protection: Default::default(),
-            hotkeys: Default::default(),
             selected: Default::default(),
-            open_hotkeys: Default::default(),
             chat_view: ChatView::default(),
             order_data: PrestashopPayload::default(),
             missed_calls: Vec::new(),
@@ -78,12 +73,6 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
         || row.split_rep.clone().unwrap_or_default().lastname.to_lowercase().contains(&self.filter)
     }
 
-    fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
-        let hotkeys = default_hotkeys(context);
-        self.hotkeys.clone_from(&hotkeys);
-        hotkeys
-    }
-
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopPayload, column: usize) {
         let style = ui.style_mut();
         style.interaction.multi_widget_text_select = false;
@@ -105,7 +94,19 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 }
             },
             1 => { 
-                ui.label(format!(" {}", row.customer.name.clone())); 
+                if ui.button(format!(" {} ⬈", row.customer.name.clone())).clicked() {
+                    log::error!("Clicked on customer: {}", row.customer.name);
+                    self.chat_view.messages.clear();
+                    self.selected = Some(row.clone());
+                    let notes_tx = self.notes_channel.0.clone();
+                    let service_number = row.order.id.clone();
+                    PlatformSpawner::spawn(async move {
+                        match Self::get_order_notes(service_number).await {
+                            Ok(notes) => notes_tx.try_send(notes).unwrap(),
+                            Err(e) => log::error!("Error {e:?}"),
+                        };
+                    });
+                }
             },
             2 => {
                 // Parse the input into a NaiveDateTime
