@@ -827,7 +827,6 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
                     format!("[{}] {}", row.customer_id, row.customer_name)
                 };
                 if Button::new(RichText::new(&display_text).color(Color32::from_rgb(180, 180, 255)))
-                    .frame(false)
                     .ui(ui)
                     .on_hover_text("Click to change customer")
                     .clicked() 

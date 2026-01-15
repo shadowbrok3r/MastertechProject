@@ -57,7 +57,6 @@ impl RowViewer<AllEmployeesTableData> for AllEmployeesRowViewer {
         }
     }
 
-    
     fn show_cell_editor(&mut self, _ui: &mut eframe::egui::Ui, _row: &mut AllEmployeesTableData, _column: usize) -> Option<eframe::egui::Response> { None }
 
     fn set_cell_value(&mut self, src: &AllEmployeesTableData, dst: &mut AllEmployeesTableData, _column: usize) { *dst = src.clone(); }

@@ -1,5 +1,5 @@
-use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, RecordIdExt, Status, Store, TaskNotePayload}};
-use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
+use database::{live_data::handle_live_data, schema::{get_data::get_associated_ticket, LiveTaskPayload, RecordIdExt, Status, Store, TaskHistory, TaskNotePayload}};
+use crate::{app_state::SharedContext, get_current_user_from_auth, PlatformSpawner, Spawner};
 
 impl SharedContext {
     pub fn receive_task(&mut self) {
@@ -94,6 +94,7 @@ impl SharedContext {
 
         if let Ok(new_task) = self.live_tasks_rx.try_recv() {
             log::info!("New Task Update: {:?}", new_task.0);
+            
             let tx = self.new_ticket_tx.clone();
             let notes_tx = self.associated_notes_tx.clone();
             if let Some(service_num) = new_task.clone().1.service_number {
@@ -112,10 +113,13 @@ impl SharedContext {
                 }
             }
 
-            match handle_live_data(new_task.to_owned(),&mut self.tasks) {
+            // Get existing task for diff comparison before applying changes
+            let task_id = new_task.1.id.key_string();
+            let existing_task: Option<LiveTaskPayload> = self.task_index.get(&task_id).cloned();
+
+            match handle_live_data(new_task.to_owned(), &mut self.tasks) {
                 Ok(_) => {
                     // Update task_index
-                    let task_id = new_task.1.id.key_string();
                     self.task_index.insert(task_id.clone(), new_task.1.clone().into());
                     // Update self.tasks to maintain consistency
                     if let Some(pos) = self.tasks.iter().position(|t| t.id.key_string() == task_id) {
@@ -123,6 +127,37 @@ impl SharedContext {
                     } else {
                         self.tasks.push(new_task.1.clone().into());
                     }
+                    
+                    // Create TaskHistory record if there were changes
+                    if let Some(old_task) = existing_task {
+                        let new_task_payload: LiveTaskPayload = new_task.1.clone().into();
+                        if old_task.has_changes_from(&new_task_payload) {
+                            let diff_json = old_task.diff_to_json(&new_task_payload);
+                            
+                            // Get current user for history record
+                            let (user_id, username) = if let Some(user) = get_current_user_from_auth() {
+                                (user.get_id(), user.get_username().to_string())
+                            } else {
+                                (new_task_payload.assignee.clone(), "System".to_string())
+                            };
+                            
+                            let history = TaskHistory::new(
+                                new_task_payload.id.clone(),
+                                user_id,
+                                username,
+                                diff_json,
+                            );
+                            
+                            // Save history record asynchronously
+                            PlatformSpawner::spawn(async move {
+                                match history.save().await {
+                                    Ok(_) => log::info!("Task history record saved successfully"),
+                                    Err(e) => log::error!("Error saving task history: {:?}", e),
+                                }
+                            });
+                        }
+                    }
+                    
                     log::info!("Task data was handled successfully");
                 }
                 Err(e) => {

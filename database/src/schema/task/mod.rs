@@ -82,26 +82,162 @@ impl Default for LiveTaskPayload {
 }
 
 impl TaskPayload {
-    // pub fn into_live_task_payload(&self) -> &mut LiveTaskPayload {
-    //     let task = &mut LiveTaskPayload {
-    //         id: self.id,
-    //         task_name: self.task_name,
-    //         service_ticket: Some(self.service_ticket.unwrap_or_default().id),
-    //         task_description: self.task_description,
-    //         assignee: self.assignee,
-    //         service_number: self.service_number,
-    //         due_date: self.due_date,
-    //         priority: self.priority,
-    //         completed: self.completed,
-    //         status: self.status,
-    //         created_at: self.created_at
-    //     };
-
-    //     task
-    // }
+    /// Creates a JSON diff representation comparing this task to another.
+    /// Returns a serde_json::Value with format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
+    pub fn diff_to_json(&self, other: &Self) -> serde_json::Value {
+        use serde_json::{json, Map, Value};
+        use super::RecordIdExt;
+        
+        let mut diff_map = Map::new();
+        
+        if self.task_name != other.task_name {
+            diff_map.insert("task_name".to_string(), json!({
+                "old": self.task_name,
+                "new": other.task_name
+            }));
+        }
+        if self.task_description != other.task_description {
+            diff_map.insert("task_description".to_string(), json!({
+                "old": self.task_description,
+                "new": other.task_description
+            }));
+        }
+        if self.assignee != other.assignee {
+            diff_map.insert("assignee".to_string(), json!({
+                "old": self.assignee.key_string(),
+                "new": other.assignee.key_string()
+            }));
+        }
+        if self.service_number != other.service_number {
+            diff_map.insert("service_number".to_string(), json!({
+                "old": self.service_number.clone().unwrap_or_default(),
+                "new": other.service_number.clone().unwrap_or_default()
+            }));
+        }
+        if self.due_date != other.due_date {
+            diff_map.insert("due_date".to_string(), json!({
+                "old": self.due_date.to_string(),
+                "new": other.due_date.to_string()
+            }));
+        }
+        if self.priority != other.priority {
+            diff_map.insert("priority".to_string(), json!({
+                "old": self.priority.as_str(),
+                "new": other.priority.as_str()
+            }));
+        }
+        if self.status != other.status {
+            diff_map.insert("status".to_string(), json!({
+                "old": self.status.as_str(),
+                "new": other.status.as_str()
+            }));
+        }
+        if self.completed != other.completed {
+            diff_map.insert("completed".to_string(), json!({
+                "old": self.completed,
+                "new": other.completed
+            }));
+        }
+        
+        Value::Object(diff_map)
+    }
+    
+    /// Returns true if this task has any differences from the other task.
+    pub fn has_changes_from(&self, other: &Self) -> bool {
+        self.task_name != other.task_name
+            || self.task_description != other.task_description
+            || self.assignee != other.assignee
+            || self.service_number != other.service_number
+            || self.due_date != other.due_date
+            || self.priority != other.priority
+            || self.status != other.status
+            || self.completed != other.completed
+    }
 }
 
 impl LiveTaskPayload {
+    /// Creates a JSON diff representation comparing this task to another.
+    /// Returns a serde_json::Value with format: { "field_name": { "old": "old_value", "new": "new_value" }, ... }
+    /// Uses structdiff's StructDiff trait under the hood.
+    pub fn diff_to_json(&self, other: &Self) -> serde_json::Value {
+        use serde_json::{json, Map, Value};
+        use super::RecordIdExt;
+        
+        let mut diff_map = Map::new();
+        
+        // Compare each field and add to diff if different
+        if self.task_name != other.task_name {
+            diff_map.insert("task_name".to_string(), json!({
+                "old": self.task_name,
+                "new": other.task_name
+            }));
+        }
+        if self.task_description != other.task_description {
+            diff_map.insert("task_description".to_string(), json!({
+                "old": self.task_description,
+                "new": other.task_description
+            }));
+        }
+        if self.assignee != other.assignee {
+            diff_map.insert("assignee".to_string(), json!({
+                "old": self.assignee.key_string(),
+                "new": other.assignee.key_string()
+            }));
+        }
+        if self.service_number != other.service_number {
+            diff_map.insert("service_number".to_string(), json!({
+                "old": self.service_number.clone().unwrap_or_default(),
+                "new": other.service_number.clone().unwrap_or_default()
+            }));
+        }
+        if self.service_ticket != other.service_ticket {
+            diff_map.insert("service_ticket".to_string(), json!({
+                "old": self.service_ticket.as_ref().map(|r| r.key_string()).unwrap_or_default(),
+                "new": other.service_ticket.as_ref().map(|r| r.key_string()).unwrap_or_default()
+            }));
+        }
+        if self.due_date != other.due_date {
+            diff_map.insert("due_date".to_string(), json!({
+                "old": self.due_date.to_string(),
+                "new": other.due_date.to_string()
+            }));
+        }
+        if self.priority != other.priority {
+            diff_map.insert("priority".to_string(), json!({
+                "old": self.priority.as_str(),
+                "new": other.priority.as_str()
+            }));
+        }
+        if self.status != other.status {
+            diff_map.insert("status".to_string(), json!({
+                "old": self.status.as_str(),
+                "new": other.status.as_str()
+            }));
+        }
+        if self.completed != other.completed {
+            diff_map.insert("completed".to_string(), json!({
+                "old": self.completed,
+                "new": other.completed
+            }));
+        }
+        
+        Value::Object(diff_map)
+    }
+    
+    /// Returns true if this task has any differences from the other task.
+    /// Excludes created_at from comparison (creation time should never change).
+    pub fn has_changes_from(&self, other: &Self) -> bool {
+        self.task_name != other.task_name
+            || self.task_description != other.task_description
+            || self.assignee != other.assignee
+            || self.service_number != other.service_number
+            || self.service_ticket != other.service_ticket
+            || self.due_date != other.due_date
+            || self.priority != other.priority
+            || self.status != other.status
+            || self.completed != other.completed
+    }
+
     pub async fn get_associated_computer(&self) -> anyhow::Result<ComputerData, anyhow::Error> {
         let computer: Option<ComputerData> = DATABASE
             .query("SELECT service_ticket FROM $id FETCH service_ticket.computer")
