@@ -65,7 +65,8 @@ fn render_diff_content(ui: &mut Ui, diff: &serde_json::Value) {
                 .num_columns(3)
                 .spacing([15.0, 6.0])
                 .striped(true)
-                .min_col_width(200.)
+                .min_col_width(150.)
+                .max_col_width(200.)
                 .show(ui, |ui| {
                     // Header row
                     ui.label(RichText::new("Field").strong().color(Color32::from_rgb(150, 180, 220)));
