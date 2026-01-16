@@ -238,7 +238,7 @@ pub fn display_ticket_page(
                 ui.end_row();
 
                 ui.colored_label(Color32::LIGHT_RED, "Total on Order");
-                ui.label(&ticket.ticket_total);
+                ui.label(&format!("${:.2}", ticket.ticket_total));
                 ui.colored_label(Color32::LIGHT_RED, "Email");
                 ui.label(&customer.email);
                 ui.end_row();
