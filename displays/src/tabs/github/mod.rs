@@ -270,7 +270,7 @@ pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Resul
 
         let resp = client
             .get(&asset_url)
-            .bearer_auth(database::DOWNLOAD_TOKEN)
+            // .bearer_auth(database::DOWNLOAD_TOKEN)
             .header(ACCEPT, "application/octet-stream")
             .header(CONTENT_TYPE, "application/octet-stream")
             .header(USER_AGENT, "shadowbrok3r")

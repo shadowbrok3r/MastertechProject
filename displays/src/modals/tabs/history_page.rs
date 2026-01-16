@@ -9,9 +9,6 @@ use eframe::egui::{
 /// Displays the task history page with collapsible entries showing diffs
 pub fn display_history_page(ui: &mut Ui, history: &[TaskHistory], _avail_size: Vec2) {
     ui.vertical(|ui| {
-        ui.heading("Task History");
-        ui.add_space(10.0);
-
         if history.is_empty() {
             ui.colored_label(
                 Color32::from_rgb(150, 150, 150),

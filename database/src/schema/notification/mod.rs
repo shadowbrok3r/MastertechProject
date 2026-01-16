@@ -3,6 +3,7 @@ use std::fmt::Display;
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::Value;
+use surrealdb_types::Datetime;
 
 use crate::DATABASE;
 
@@ -20,6 +21,10 @@ pub struct Notification {
     pub notification_type: String,
     /// Has the notification been read?
     pub status: String,
+    /// Has the notification been read?
+    pub created_at: Datetime,
+    /// Time the notification was accessed
+    pub accessed_at: Datetime,
 }
 
 impl Default for Notification {
@@ -29,7 +34,9 @@ impl Default for Notification {
             user: random_record_id(USER_TABLE),
             notification_description: Default::default(),
             notification_type: Default::default(),
-            status: Default::default()
+            status: Default::default(),
+            created_at: Datetime::now(),
+            accessed_at: Datetime::now(),
         }
     }
 }
