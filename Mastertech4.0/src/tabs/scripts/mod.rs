@@ -443,6 +443,7 @@ impl EguiScriptsTab {
         if let Some(so_num) = service_number {
             #[cfg(target_os = "windows")]
             {
+                
                 // Kill any running SAS processes first
                 if let Ok(processes) = get_running_processes() {
                     for process in processes {
