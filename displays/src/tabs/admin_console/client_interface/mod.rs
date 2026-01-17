@@ -4,6 +4,7 @@ use ewebsock::{WsMessage, WsReceiver, WsSender};
 use filesystem_helper::WebSocketHelperDelegate;
 use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
+use remote_explorer::RemoteExplorer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ui::WsDisplayState;
@@ -20,6 +21,7 @@ pub mod receive;
 pub mod tabs;
 pub mod ui;
 pub mod filesystem_helper;
+pub mod remote_explorer;
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -96,6 +98,10 @@ pub struct WebSocketClient {
     pub last_input_change_time: Option<Instant>,
     #[cfg(not(target_arch="wasm32"))]
     pub pending_completion: Option<String>,
+    /// Track if live stats (resource monitor) is actively streaming data
+    pub live_stats_active: bool,
+    /// Remote filesystem explorer (websocket-based)
+    pub remote_explorer: RemoteExplorer,
 }
 
 impl Drop for WebSocketClient {
@@ -211,6 +217,8 @@ Get-WmiObject")
             last_input_change_time: None,
             #[cfg(not(target_arch="wasm32"))]
             pending_completion: None,
+            live_stats_active: false,
+            remote_explorer: RemoteExplorer::new(),
         }
     }
 

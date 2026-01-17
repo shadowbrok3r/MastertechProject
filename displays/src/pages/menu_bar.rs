@@ -143,6 +143,46 @@ impl SharedContext {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(8.0);
+                        
+                        // Notification count badges
+                        let unread_count = self.notification_center.unread_count();
+                        let alert_count = self.notification_center.alert_count();
+                        
+                        // Alert badge (red, shown first/rightmost)
+                        if alert_count > 0 {
+                            let alert_badge = RichText::new(format!("⚠ {}", alert_count))
+                                .color(Color32::WHITE)
+                                .small()
+                                .strong();
+                            ui.add(
+                                Button::new(alert_badge)
+                                    .fill(Color32::from_rgb(220, 50, 50))
+                                    .corner_radius(10.0)
+                                    .min_size(vec2(28.0, 18.0))
+                            ).on_hover_text(format!("{} unread alerts", alert_count));
+                            ui.add_space(4.0);
+                        }
+                        
+                        // General unread badge (teal)
+                        if unread_count > 0 {
+                            let badge_text = if unread_count > 99 {
+                                "99+".to_string()
+                            } else {
+                                unread_count.to_string()
+                            };
+                            let unread_badge = RichText::new(format!("🔔 {}", badge_text))
+                                .color(Color32::WHITE)
+                                .small()
+                                .strong();
+                            ui.add(
+                                Button::new(unread_badge)
+                                    .fill(Color32::from_rgb(42, 162, 142))
+                                    .corner_radius(10.0)
+                                    .min_size(vec2(28.0, 18.0))
+                            ).on_hover_text(format!("{} unread notifications", unread_count));
+                            ui.add_space(4.0);
+                        }
+                        
                         let txt = RichText::new(format!(" {} ", user.get_name())).color(ui.style().visuals.error_fg_color).strong().underline();
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);

@@ -4,12 +4,25 @@ use eframe::egui::*;
 
 use crate::{PlatformSpawner, Spawner};
 
+/// Known notification categories
+pub const NOTIFICATION_CATEGORIES: &[&str] = &[
+    "All",
+    "Task Update",
+    "Task Created", 
+    "ALERT",
+    "Admin",
+    "System",
+];
+
 #[derive(Default, serde::Serialize)]
 pub struct NotificationCenter {
     pub notifications: Vec<Notification>,
     pub read_notifications: bool,
     pub show_notifications: bool,
     pub search_query: String,
+    /// Selected category filter (None = "All")
+    #[serde(skip)]
+    pub selected_category: Option<String>,
 }
 
 impl NotificationCenter {
@@ -42,13 +55,79 @@ impl NotificationCenter {
             }
         });
 
+        // Category filter buttons
+        ui.add_space(5.0);
+        ui.horizontal_wrapped(|ui| {
+            // "All" button
+            let all_selected = self.selected_category.is_none();
+            let all_color = if all_selected {
+                Color32::from_rgb(42, 222, 192)
+            } else {
+                ui.style().visuals.text_color()
+            };
+            if ui.add(
+                Button::new(RichText::new("All").color(all_color).small())
+                    .stroke(if all_selected { 
+                        Stroke::new(1.0, Color32::from_rgb(42, 222, 192)) 
+                    } else { 
+                        ui.style().visuals.noninteractive().fg_stroke 
+                    })
+                    .fill(ui.style().visuals.noninteractive().bg_fill)
+            ).clicked() {
+                self.selected_category = None;
+            }
+
+            // Dynamic category buttons based on what's in notifications
+            let categories = self.get_categories();
+            for cat in &categories {
+                let is_selected = self.selected_category.as_ref() == Some(cat);
+                let unread_in_cat = self.unread_count_for_category(cat);
+                
+                // Color alert category differently
+                let cat_color = if cat == "ALERT" {
+                    Color32::from_rgb(243, 139, 168) // Red-ish for alerts
+                } else if is_selected {
+                    Color32::from_rgb(42, 222, 192)
+                } else {
+                    ui.style().visuals.text_color()
+                };
+                
+                let label = if unread_in_cat > 0 {
+                    format!("{} ({})", cat, unread_in_cat)
+                } else {
+                    cat.clone()
+                };
+                
+                if ui.add(
+                    Button::new(RichText::new(label).color(cat_color).small())
+                        .stroke(if is_selected { 
+                            Stroke::new(1.0, cat_color) 
+                        } else { 
+                            ui.style().visuals.noninteractive().fg_stroke 
+                        })
+                        .fill(ui.style().visuals.noninteractive().bg_fill)
+                ).clicked() {
+                    self.selected_category = Some(cat.clone());
+                }
+            }
+        });
+        ui.add_space(5.0);
+
         // Build filtered index list so mutations apply to the real data
         let query = self.search_query.trim().to_lowercase();
+        let selected_cat = self.selected_category.clone();
         let filtered_indices: Vec<usize> = self
             .notifications
             .iter()
             .enumerate()
             .filter_map(|(idx, n)| {
+                // Category filter
+                if let Some(ref cat) = selected_cat {
+                    if &n.notification_type != cat {
+                        return None;
+                    }
+                }
+                
                 let matches_query = if query.is_empty() {
                     true
                 } else {
@@ -207,5 +286,40 @@ impl NotificationCenter {
                 }
             }
         }
+    }
+
+    /// Get total count of unread notifications
+    pub fn unread_count(&self) -> usize {
+        self.notifications.iter().filter(|n| n.status == "Unread").count()
+    }
+
+    /// Get count of unread notifications for a specific category
+    pub fn unread_count_for_category(&self, category: &str) -> usize {
+        self.notifications
+            .iter()
+            .filter(|n| n.status == "Unread" && n.notification_type == category)
+            .count()
+    }
+
+    /// Get count of unread ALERT notifications
+    pub fn alert_count(&self) -> usize {
+        self.unread_count_for_category("ALERT")
+    }
+
+    /// Get all unique notification categories present in the notifications
+    pub fn get_categories(&self) -> Vec<String> {
+        let mut categories: Vec<String> = self.notifications
+            .iter()
+            .map(|n| n.notification_type.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        categories.sort();
+        categories
+    }
+
+    /// Set category filter (None = show all)
+    pub fn set_category_filter(&mut self, category: Option<String>) {
+        self.selected_category = category;
     }
 }
