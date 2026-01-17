@@ -38,7 +38,8 @@ pub struct ResourceMonitor {
     disk_usage_plot: LinePlot,
     network_interface_plot: LinePlot,
     start_time: Instant,
-    process_table_viewer: ProcessTableViewer,
+    /// Process table viewer for displaying running processes
+    pub process_table_viewer: ProcessTableViewer,
 }
 
 impl Default for ResourceMonitor {

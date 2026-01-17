@@ -247,7 +247,34 @@ pub enum Cmd {
     QuitInteractive,
     ReadEvents,
     Quit,
+    /// Kill a process by PID
+    KillProcess(u32),
+    /// Open a process location in file explorer
+    OpenProcessInExplorer(String),
+    /// Request directory listing from remote machine
+    ListDirectory(String),
+    /// Response with directory listing
+    DirectoryListing(Vec<RemoteDirEntry>),
+    /// Request to download a file from remote machine
+    DownloadRemoteFile(String),
+    /// File data chunk response (data, is_last_chunk)
+    FileChunk(Vec<u8>, bool),
     None,
+}
+
+/// A remote directory entry for filesystem browsing
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RemoteDirEntry {
+    /// File or folder name
+    pub name: String,
+    /// Full path on remote machine
+    pub path: String,
+    /// Whether this is a directory
+    pub is_directory: bool,
+    /// File size in bytes (None for directories)
+    pub size: Option<u64>,
+    /// Last modified timestamp (ISO 8601 format)
+    pub modified: Option<String>,
 }
 
 /// Shell command type for cross-platform shell execution

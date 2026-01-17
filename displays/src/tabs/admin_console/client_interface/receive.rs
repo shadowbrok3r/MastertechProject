@@ -1,4 +1,4 @@
-use crate::{tabs::admin_console::client_interface::serialize_command, virtual_filesystem::FileSysHelper, Cmd, FileSystemAction};
+use crate::{tabs::admin_console::client_interface::serialize_command, virtual_filesystem::FileSysHelper, Cmd, FileSystemAction, RemoteDirEntry};
 use database::schema::{Node, SystemInformation};
 use ewebsock::{WsEvent, WsMessage};
 use eframe::egui::Context;
@@ -239,6 +239,15 @@ impl WebSocketClient {
                 self.interactive = false;
                 self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
             },
+            Cmd::ListDirectory(path) => {
+                log::info!("Requesting directory listing for: {}", path);
+                self.remote_explorer.loading = true;
+                self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ListDirectory(path))));
+            },
+            Cmd::DirectoryListing(entries) => {
+                log::info!("Received directory listing with {} entries", entries.len());
+                self.remote_explorer.set_entries(entries);
+            },
             _ => self.ws_sender.send(WsMessage::Binary(serialize_command(&command)))
         }
     }
@@ -257,7 +266,13 @@ impl WebSocketClient {
             },
             _ => {
                 if let Some(cmd) = deserializer::<Cmd>(&bin){
-                    let _ = self.receive_cmd_tx.try_send(cmd);
+                    // Handle DirectoryListing directly here for the remote explorer
+                    if let Cmd::DirectoryListing(entries) = &cmd {
+                        log::info!("Received directory listing with {} entries", entries.len());
+                        self.remote_explorer.set_entries(entries.clone());
+                    } else {
+                        let _ = self.receive_cmd_tx.try_send(cmd);
+                    }
                 } else if bin.len() > 0 {
                     self.loading = false;
                     let msg = String::from_utf8_lossy(&bin).to_string();
