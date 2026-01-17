@@ -31,19 +31,30 @@ impl WebSocketClient {
                     if Button::new(RichText::new("Explorer").color(btn_color)).ui(ui).clicked(){
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
                         self.notifications = 0;
-                        // if we are already in an interactive mode, then we dont want to quit that session,
+                        // Request directory listing using the new websocket-based explorer
                         if !self.interactive {
-                            if self.explorer.current_prefix.is_empty() {
-                                let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
+                            let path = if self.remote_explorer.current_path.is_empty() {
+                                "current".to_string()
                             } else {
-                                let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
-                            }
+                                self.remote_explorer.current_path.clone()
+                            };
+                            let _ = self.send_cmd_tx.try_send(Cmd::ListDirectory(path));
+                            self.remote_explorer.loading = true;
                         }
                     }
 
-                    if Button::new(RichText::new("Charts").color(btn_color)).ui(ui).clicked(){
-                        let _ = self.display_state_channel.0.try_send(WsDisplayState::LiveStats);
-                        let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
+                    // Show "Charts" or "Stop Charts" based on live stats state
+                    if self.live_stats_active {
+                        if Button::new(RichText::new("■ Stop Charts").color(Color32::RED)).ui(ui).clicked(){
+                            let _ = self.send_cmd_tx.try_send(Cmd::Quit);
+                            self.live_stats_active = false;
+                        }
+                    } else {
+                        if Button::new(RichText::new("Charts").color(btn_color)).ui(ui).clicked(){
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::LiveStats);
+                            let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
+                            self.live_stats_active = true;
+                        }
                     }
 
                     if Button::new(RichText::new("Mastertech TUI").color(btn_color)).ui(ui).clicked(){
@@ -103,7 +114,10 @@ impl WebSocketClient {
 
         match self.state {
             WsDisplayState::LiveStats => self.show_live_stats(ui),
-            WsDisplayState::Explorer => ui.group(|ui| self.explorer.display(ui)).inner,
+            WsDisplayState::Explorer => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                ui.group(|ui| self.remote_explorer.display(ui, &cmd_tx)).inner
+            },
             WsDisplayState::ToolBox => ui.group(|ui| self.toolbox.display(ui)).inner,
             WsDisplayState::Shell => self.show_shell(ui),
             WsDisplayState::Terminal => {

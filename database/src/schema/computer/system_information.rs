@@ -130,7 +130,9 @@ pub struct Process {
     pub user_id: Option<String>,
     pub memory: f32,
     pub cpu_usage: f32,
-    pub process_disk_usage: ProcessDiskUsage
+    pub process_disk_usage: ProcessDiskUsage,
+    /// Path to the executable (if available)
+    pub exe_path: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, PartialEq, Default)]

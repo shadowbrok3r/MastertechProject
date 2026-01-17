@@ -1,5 +1,5 @@
 
-use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, ProgressBar, RichText, Separator, Stroke, TopBottomPanel, Vec2, Widget};
+use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, ProgressBar, RichText, Separator, Stroke, TopBottomPanel, Vec2, Widget, vec2};
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
@@ -64,6 +64,46 @@ impl MasterTechApp {
                     
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);
+                        
+                        // Notification count badges
+                        let unread_count = self.context.shared_ctx.notification_center.unread_count();
+                        let alert_count = self.context.shared_ctx.notification_center.alert_count();
+                        
+                        // Alert badge (red, shown first/rightmost)
+                        if alert_count > 0 {
+                            let alert_badge = RichText::new(format!("⚠ {}", alert_count))
+                                .color(Color32::WHITE)
+                                .small()
+                                .strong();
+                            ui.add(
+                                Button::new(alert_badge)
+                                    .fill(Color32::from_rgb(220, 50, 50))
+                                    .corner_radius(10.0)
+                                    .min_size(vec2(28.0, 18.0))
+                            ).on_hover_text(format!("{} unread alerts", alert_count));
+                            ui.add_space(4.0);
+                        }
+                        
+                        // General unread badge (teal)
+                        if unread_count > 0 {
+                            let badge_text = if unread_count > 99 {
+                                "99+".to_string()
+                            } else {
+                                unread_count.to_string()
+                            };
+                            let unread_badge = RichText::new(format!("🔔 {}", badge_text))
+                                .color(Color32::WHITE)
+                                .small()
+                                .strong();
+                            ui.add(
+                                Button::new(unread_badge)
+                                    .fill(Color32::from_rgb(42, 162, 142))
+                                    .corner_radius(10.0)
+                                    .min_size(vec2(28.0, 18.0))
+                            ).on_hover_text(format!("{} unread notifications", unread_count));
+                            ui.add_space(4.0);
+                        }
+                        
                         let txt = RichText::new(usr.get_username()).color(Color32::from_rgb(191, 33, 101));
 
                         MenuButton::new(txt).config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {

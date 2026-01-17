@@ -1,5 +1,5 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
-use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, FileSystemAction};
+use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, FileSystemAction, RemoteDirEntry};
 use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
@@ -352,6 +352,165 @@ impl TerminalWebsocketClient {
                 }
                 if let Some(handle) = self.join_handle.take() {
                     let _ = handle.await;
+                }
+            }
+            Cmd::KillProcess(pid) => {
+                log::info!("websockets -> Killing process with PID: {}", pid);
+                #[cfg(target_os = "windows")]
+                {
+                    let output = tokio::process::Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if out.status.success() {
+                                log::info!("Successfully killed process {}", pid);
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to kill process {}: {}", pid, stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing taskkill: {}", e),
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let output = tokio::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if out.status.success() {
+                                log::info!("Successfully killed process {}", pid);
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to kill process {}: {}", pid, stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing kill: {}", e),
+                    }
+                }
+            }
+            Cmd::OpenProcessInExplorer(path) => {
+                log::info!("websockets -> Opening path in explorer: {}", path);
+                #[cfg(target_os = "windows")]
+                {
+                    // Get parent directory if path is a file
+                    let target_path = Path::new(&path);
+                    let dir_path = if target_path.is_file() {
+                        target_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| target_path.to_path_buf())
+                    } else {
+                        target_path.to_path_buf()
+                    };
+                    
+                    // Use explorer.exe to open and select the file
+                    if target_path.exists() {
+                        let _ = tokio::process::Command::new("explorer.exe")
+                            .args(["/select,", &path])
+                            .spawn();
+                    } else {
+                        // If file doesn't exist, just open the directory
+                        let _ = tokio::process::Command::new("explorer.exe")
+                            .arg(dir_path)
+                            .spawn();
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let target_path = Path::new(&path);
+                    if target_path.exists() {
+                        let _ = tokio::process::Command::new("open")
+                            .args(["-R", &path])
+                            .spawn();
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let target_path = Path::new(&path);
+                    let dir_path = if target_path.is_file() {
+                        target_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| target_path.to_path_buf())
+                    } else {
+                        target_path.to_path_buf()
+                    };
+                    let _ = tokio::process::Command::new("xdg-open")
+                        .arg(dir_path)
+                        .spawn();
+                }
+            }
+            Cmd::ListDirectory(path_str) => {
+                log::info!("websockets -> Listing directory: {}", path_str);
+                
+                // Determine the actual path to list
+                let target_path = if path_str == "current" {
+                    std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf())
+                } else {
+                    Path::new(&path_str).to_path_buf()
+                };
+                
+                let mut entries: Vec<RemoteDirEntry> = Vec::new();
+                
+                if target_path.is_dir() {
+                    match std::fs::read_dir(&target_path) {
+                        Ok(dir_iter) => {
+                            for entry in dir_iter.flatten() {
+                                let path = entry.path();
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                let is_directory = path.is_dir();
+                                let size = if is_directory {
+                                    None
+                                } else {
+                                    entry.metadata().ok().map(|m| m.len())
+                                };
+                                let modified = entry.metadata().ok()
+                                    .and_then(|m| m.modified().ok())
+                                    .map(|t| {
+                                        let datetime: chrono::DateTime<chrono::Local> = t.into();
+                                        datetime.to_rfc3339()
+                                    });
+                                
+                                entries.push(RemoteDirEntry {
+                                    name,
+                                    path: path.to_string_lossy().to_string(),
+                                    is_directory,
+                                    size,
+                                    modified,
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Error reading directory: {}", e);
+                        }
+                    }
+                }
+                
+                // Send the directory listing back
+                let response = Cmd::DirectoryListing(entries);
+                let payload = encode_to_vec(&response, standard()).expect("Failed to serialize DirectoryListing");
+                sender.send(WsMessage::Binary(payload));
+            }
+            Cmd::DownloadRemoteFile(path_str) => {
+                log::info!("websockets -> Download request for: {}", path_str);
+                
+                let path = Path::new(&path_str);
+                if path.is_file() {
+                    match std::fs::read(path) {
+                        Ok(data) => {
+                            // Send file data as a chunk
+                            let response = Cmd::FileChunk(data, true);
+                            let payload = encode_to_vec(&response, standard()).expect("Failed to serialize FileChunk");
+                            sender.send(WsMessage::Binary(payload));
+                        }
+                        Err(e) => {
+                            log::error!("Error reading file for download: {}", e);
+                            sender.send(WsMessage::Text(format!("Error: {}", e)));
+                        }
+                    }
+                } else {
+                    sender.send(WsMessage::Text("Error: Path is not a file".to_string()));
                 }
             }
             Cmd::None => {},

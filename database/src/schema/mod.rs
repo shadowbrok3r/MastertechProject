@@ -28,6 +28,7 @@ pub mod client;
 pub mod sales_tracker;
 pub mod everest;
 pub mod duplicate_check;
+pub mod file_storage;
 
 pub use task::*;
 pub use task_note::*;
@@ -41,6 +42,7 @@ pub use sales_tracker::*;
 pub use everest::*;
 pub use utilities::TaskCreationResult;
 pub use duplicate_check::*;
+pub use file_storage::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
