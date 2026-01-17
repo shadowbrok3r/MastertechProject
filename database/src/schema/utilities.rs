@@ -602,24 +602,55 @@ pub async fn check_for_duplicates(
             let product_serial = new_comp.product_serial.clone();
             let motherboard_serial = new_comp.motherboard_serial.clone();
             
-            let computer_query = r#"
-                SELECT * FROM computer WHERE 
-                    (hostname == $hostname AND hostname != "") OR
-                    (product_serial == $product_serial AND product_serial != "") OR
-                    (motherboard_serial == $motherboard_serial AND motherboard_serial != "")
-                LIMIT 1
-            "#;
-            
-            let existing_computers: Vec<ComputerData> = DATABASE
-                .query(computer_query)
-                .bind(("hostname", hostname))
-                .bind(("product_serial", product_serial))
-                .bind(("motherboard_serial", motherboard_serial))
-                .await?
-                .take(0)?;
+            // If we found a customer match, first try to find a computer belonging to THAT customer
+            // This prevents matching computers from unrelated customers that happen to share 
+            // common values like hostname="Owner-PC" or motherboard_serial="Standard"
+            let existing_computer = if let Some(ref customer_dup) = result.customer {
+                // First, try to find a matching computer owned by this specific customer
+                let customer_id = customer_dup.existing.id.clone();
+                let customer_scoped_query = r#"
+                    SELECT * FROM computer WHERE 
+                        customer == $customer_id AND (
+                            (hostname == $hostname AND hostname != "") OR
+                            (product_serial == $product_serial AND product_serial != "") OR
+                            (motherboard_serial == $motherboard_serial AND motherboard_serial != "" AND motherboard_serial != "Standard")
+                        )
+                    LIMIT 1
+                "#;
+                
+                let scoped_computers: Vec<ComputerData> = DATABASE
+                    .query(customer_scoped_query)
+                    .bind(("customer_id", customer_id))
+                    .bind(("hostname", hostname.clone()))
+                    .bind(("product_serial", product_serial.clone()))
+                    .bind(("motherboard_serial", motherboard_serial.clone()))
+                    .await?
+                    .take(0)?;
+                
+                scoped_computers.first().cloned()
+            } else {
+                // No customer match found - only look for computers with highly unique identifiers
+                // (product_serial or motherboard_serial, but NOT common values like "Standard")
+                // Avoid hostname-only matches as they're not unique enough without customer context
+                let strict_computer_query = r#"
+                    SELECT * FROM computer WHERE 
+                        (product_serial == $product_serial AND product_serial != "" AND product_serial != "System Serial Number" AND product_serial != "Default string") OR
+                        (motherboard_serial == $motherboard_serial AND motherboard_serial != "" AND motherboard_serial != "Standard" AND motherboard_serial != "Default string")
+                    LIMIT 1
+                "#;
+                
+                let strict_computers: Vec<ComputerData> = DATABASE
+                    .query(strict_computer_query)
+                    .bind(("product_serial", product_serial.clone()))
+                    .bind(("motherboard_serial", motherboard_serial.clone()))
+                    .await?
+                    .take(0)?;
+                
+                strict_computers.first().cloned()
+            };
         
-            if let Some(existing) = existing_computers.first() {
-                result.computer = Some(DuplicatePair::new(existing.clone(), new_comp.clone()));
+            if let Some(existing) = existing_computer {
+                result.computer = Some(DuplicatePair::new(existing, new_comp.clone()));
             }
         }
     }
