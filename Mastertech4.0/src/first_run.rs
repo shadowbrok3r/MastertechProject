@@ -58,6 +58,7 @@ impl MasterTechApp {
         self.receive_database(ctx, frame);
         self.receive_github(ctx);
         self.viewport_loader(ctx);
+        self.context.scripts_tab.receive();
         // self.context.file_browser.try_lock()
         // ctx.request_repaint_after_secs(0.5);
 

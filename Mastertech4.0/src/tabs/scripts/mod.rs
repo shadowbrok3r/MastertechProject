@@ -106,6 +106,9 @@ pub struct EguiScriptsTab {
     /// Channel for robocopy messages
     pub robocopy_rx: Receiver<RobocopyMessage>,
     pub robocopy_tx: Sender<RobocopyMessage>,
+    /// Channel for install progress (used by install_webroot, install_sas, etc.)
+    pub install_progress_rx: Receiver<(u64, u64)>,
+    pub install_progress_tx: Sender<(u64, u64)>,
     /// Windows update channel
     #[cfg(target_os = "windows")]
     pub windows_update_rx: Receiver<crate::utilities::windows::windows_update::WindowsUpdateEvent>,
@@ -129,6 +132,7 @@ impl EguiScriptsTab {
     pub fn new() -> Self {
         let (data_transfer_tx, data_transfer_rx) = crossbeam::channel::unbounded();
         let (robocopy_tx, robocopy_rx) = crossbeam::channel::unbounded();
+        let (install_progress_tx, install_progress_rx) = crossbeam::channel::unbounded();
         #[cfg(target_os = "windows")]
         let (windows_update_tx, windows_update_rx) = crossbeam::channel::unbounded();
         
@@ -146,6 +150,8 @@ impl EguiScriptsTab {
             data_transfer_tx,
             robocopy_rx,
             robocopy_tx,
+            install_progress_rx,
+            install_progress_tx,
             #[cfg(target_os = "windows")]
             windows_update_rx,
             #[cfg(target_os = "windows")]
@@ -165,6 +171,14 @@ impl EguiScriptsTab {
 
         // Receive progress updates
         while let Ok((_script_id, current, total)) = self.channels.progress_rx.try_recv() {
+            self.download_progress = Some((current, total));
+            if current >= total {
+                self.download_progress = None;
+            }
+        }
+
+        // Receive install progress updates (from install_webroot, install_sas, etc.)
+        while let Ok((current, total)) = self.install_progress_rx.try_recv() {
             self.download_progress = Some((current, total));
             if current >= total {
                 self.download_progress = None;
@@ -447,9 +461,9 @@ impl EguiScriptsTab {
                 }
             }
             
-            // Create a simple progress channel for the install functions
-            let (simple_progress_tx, _simple_progress_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
-            let simple_progress_tx2 = simple_progress_tx.clone();
+            // Use the persistent install progress channel from self
+            let install_progress_tx = self.install_progress_tx.clone();
+            let install_progress_tx2 = self.install_progress_tx.clone();
             
             tokio::spawn(async move {
                 let _ = log_tx.try_send(ScriptLogEntry::info(
@@ -466,7 +480,7 @@ impl EguiScriptsTab {
                         ));
                         
                         #[cfg(target_os = "windows")]
-                        match install_webroot(key.webroot_key.clone(), client.clone(), simple_progress_tx).await {
+                        match install_webroot(key.webroot_key.clone(), client.clone(), install_progress_tx).await {
                             Ok(_) => {
                                 let _ = log_tx.try_send(ScriptLogEntry::success(
                                     category.clone(), &script_name, "Webroot installed successfully"
@@ -485,7 +499,7 @@ impl EguiScriptsTab {
                         ));
                         
                         #[cfg(target_os = "windows")]
-                        match install_sas(key.superanti_key, client, simple_progress_tx2).await {
+                        match install_sas(key.superanti_key, client, install_progress_tx2).await {
                             Ok(_) => {
                                 let _ = log_tx.try_send(ScriptLogEntry::success(
                                     category, &script_name, "SuperAntiSpyware installed successfully"
@@ -531,13 +545,14 @@ impl EguiScriptsTab {
         if let Some(email) = customer_email {
             #[cfg(target_os = "windows")]
             {
-                let (simple_progress_tx, _) = crossbeam::channel::unbounded::<(u64, u64)>();
+                // Use the persistent install progress channel from self
+                let install_progress_tx = self.install_progress_tx.clone();
                 tokio::spawn(async move {
                     let _ = log_tx.try_send(ScriptLogEntry::info(
                         category.clone(), &script_name, format!("Installing SuperEasyBackup for {}...", email)
                     ));
                     
-                    match install_supereasybackup(email, client, simple_progress_tx).await {
+                    match install_supereasybackup(email, client, install_progress_tx).await {
                         Ok(_) => {
                             let _ = log_tx.try_send(ScriptLogEntry::success(
                                 category, &script_name, "SuperEasyBackup installed successfully"
@@ -736,10 +751,11 @@ impl EguiScriptsTab {
         
         #[cfg(target_os = "windows")]
         {
-            let (simple_progress_tx, _) = crossbeam::channel::unbounded::<(u64, u64)>();
+            // Use the persistent install progress channel from self
+            let install_progress_tx = self.install_progress_tx.clone();
             tokio::spawn(async move {
                 let download_url = "https://ninite.com/libreoffice/ninite.exe";
-                match install_program(download_url.to_string(), client, simple_progress_tx).await {
+                match install_program(download_url.to_string(), client, install_progress_tx).await {
                     Ok(_) => {
                         let _ = log_tx.try_send(ScriptLogEntry::success(
                             category, &script_name, "LibreOffice installed successfully"
@@ -1507,8 +1523,6 @@ impl MastertechContext {
         if !self.customer_data.email.is_empty() {
             self.scripts_tab.customer_email = Some(self.customer_data.email.clone());
         }
-
-        self.scripts_tab.receive();
 
         // Show data transfer UI if needed
         if self.scripts_tab.show_data_transfer_ui {
