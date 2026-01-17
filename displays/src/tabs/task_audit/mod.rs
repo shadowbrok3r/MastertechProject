@@ -14,7 +14,7 @@ pub mod row_viewer;
 impl SharedContext {
     pub fn task_table_viewer(&mut self, ui: &mut Ui, ui_actions_tx: Sender<TaskUiActions>) {
         self.task_audit_table.show(ui, self.current_user.clone(), ui_actions_tx);
-    }
+    } 
 }
 
 pub struct TaskAuditViewer {
