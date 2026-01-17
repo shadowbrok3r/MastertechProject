@@ -113,7 +113,7 @@ impl MasterTechApp {
                 device_mfg: Some(device.device_mfg),
                 device_model: Some(device.device_model),
                 device_serial: Some(device.device_serial),
-                customer: Some(customer.id.clone()),
+                customer: customer.id.clone(),
                 ..computer.clone()
             };
 

@@ -1,4 +1,4 @@
-use crate::{schema::COMPUTER_TABLE, DATABASE};
+use crate::{DATABASE, schema::{COMPUTER_TABLE, CUSTOMER_TABLE}};
 use structdiff::{Difference, StructDiff};
 use serde_json::Value;
 
@@ -13,7 +13,7 @@ pub use seb::*;
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct ComputerData {
     pub id: RecordId,
-    pub customer: Option<RecordId>,
+    pub customer: RecordId,
     pub seb_info: Option<LocalSebData>,
     pub hostname: String,
     pub operating_system: String,
@@ -42,7 +42,7 @@ impl Default for ComputerData {
     fn default() -> Self {
         Self {
             id: random_record_id(COMPUTER_TABLE),
-            customer: Default::default(),
+            customer: random_record_id(CUSTOMER_TABLE),
             seb_info: Default::default(),
             hostname: Default::default(),
             operating_system: Default::default(),

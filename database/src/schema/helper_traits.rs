@@ -432,6 +432,13 @@ impl EmployeeHelper for Employee {
             .request_subresources_by_id_wasm("addresses", "address", &order.id_address_invoice)
             .await?;
 
+        // Use phone if available, otherwise fall back to phone_mobile
+        let phone_number = if !address.phone.is_empty() {
+            address.phone.clone()
+        } else {
+            address.phone_mobile.clone()
+        };
+
         let customer = CustomerData {
             id: RecordId::new(
                 CUSTOMER_TABLE,
@@ -439,8 +446,9 @@ impl EmployeeHelper for Employee {
             ),
             cust_code: order.id_customer.clone(),
             name: format!("{} {}", &cust.firstname, &cust.lastname),
-            phone_number: address.phone.clone().to_string(),
+            phone_number,
             email: cust.email,
+            phone_number_2: address.phone_mobile.clone(),
             ..Default::default()
         };
 
@@ -503,14 +511,14 @@ impl ComputerDataHelper for ComputerData {
 
     async fn find_associated_customer(&mut self) -> Result<CustomerData, Error> {
         DATABASE
-            .set("cust_id", self.customer.clone().unwrap())
+            .set("cust_id", self.customer.clone())
             .await?;
         let customer: Option<CustomerData> = DATABASE
             .query("SELECT * FROM customer WHERE id == $cust_id")
             .await?
             .take(0)?;
         debug!("customer: {:?}", customer);
-        Ok(customer.unwrap())
+        Ok(customer.unwrap_or_default())
     }
 
     async fn find_associated_prestashop_orders(

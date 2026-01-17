@@ -1,7 +1,7 @@
 use displays::{PlatformSpawner, Spawner, app_state::{AppState, MainPages}, pages::login_page::HASH, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use database::{create_guest_notification, schema::{NOTIFICATION_TABLE, Notification, USER_TABLE, random_record_id}};
 use crate::{app_state::MasterTechApp, utilities::{load_encrypted_user_data, save_encrypted_user_data}};
-use surrealdb::types::RecordId;
+use surrealdb::types::{Datetime, RecordId};
 use eframe::egui::Context;
 
 impl MasterTechApp {
@@ -120,6 +120,8 @@ impl MasterTechApp {
                                 notification_description: msg,
                                 notification_type: "ALERT".to_string(),
                                 status: "Unread".to_string(),
+                                created_at: Datetime::now(),
+                                accessed_at: None,
                             };
                             let res = create_guest_notification(notification).await;
                             match res {

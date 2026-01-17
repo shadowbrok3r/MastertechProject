@@ -15,6 +15,21 @@ impl SharedContext {
             // Initialize layout_configs if store_users is available
             self.init_layout_configs();
 
+            // Update the task audit sidepanel's chat view if service number matches
+            if let Some(note_service_number) = &note.service_number {
+                if let Some(selected_order) = &self.task_audit_table.services_viewer.selected {
+                    if selected_order.order.id == *note_service_number {
+                        info!("receive_notes -> Inserting note into task audit sidepanel chat view for service {}", note_service_number);
+                        let mut note_clone = note.clone();
+                        if action == Action::Delete {
+                            self.task_audit_table.services_viewer.chat_view.delete_note(&note_clone);
+                        } else {
+                            self.task_audit_table.services_viewer.chat_view.insert_note(&mut note_clone);
+                        }
+                    }
+                }
+            }
+
             // Update modals
             for (_title, modal) in self.opened_modals.iter_mut() {
                 if let Some(note_task_id) = &note.task_id {

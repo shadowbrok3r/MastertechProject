@@ -136,7 +136,7 @@ impl Default for StockTable {
             systems_channel,
             systems_add_channel,
             systems_task_channel,
-            store_selection: Store::RIV.into_store_id() as u64,
+            store_selection: Store::RIV.into_odoo_store_id() as u64,
             // Customer change modal
             customer_change_channel,
             customer_search_results_channel,
@@ -214,24 +214,16 @@ impl StockTable {
         
                             let selected = &mut self.store_selection;
                             let current = selected.clone();
-        
-                            let selected_text = match selected {
-                                76 => Store::RIV.as_str(),
-                                73 => Store::LTN.as_str(),
-                                74 => Store::MUR.as_str(),
-                                75 => Store::ORE.as_str(),
-                                77 => Store::SAN.as_str(),
-                                _ => Store::RIV.as_str(),
-                            };
+                            let selected_text = Store::from_odoo_store_id(&selected.to_string()).as_str().to_string();
         
                             ComboBox::new("Store_Selection", "")
                                 .selected_text(selected_text)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(selected, 76, "RIV");
-                                    ui.selectable_value(selected, 73, "LTN");
-                                    ui.selectable_value(selected, 74, "MUR");
-                                    ui.selectable_value(selected, 75, "ORE");
-                                    ui.selectable_value(selected, 77, "SAN");
+                                    ui.selectable_value(selected, Store::RIV.into_odoo_store_id() as u64, Store::RIV.as_str());
+                                    ui.selectable_value(selected, Store::LTN.into_odoo_store_id() as u64, Store::LTN.as_str());
+                                    ui.selectable_value(selected, Store::MUR.into_odoo_store_id() as u64, Store::MUR.as_str());
+                                    ui.selectable_value(selected, Store::ORE.into_odoo_store_id() as u64, Store::ORE.as_str());
+                                    ui.selectable_value(selected, Store::SAN.into_odoo_store_id() as u64, Store::SAN.as_str());
                                 });
         
                             if *selected != current {
@@ -580,15 +572,7 @@ impl StockTable {
                         stock_data.product_id.clone().1.clone(),
                         stock_data.lot_id.clone().1.parse::<String>().unwrap(),
                         "S/N Info ⮫".to_string(),
-                        match stock_data.location_id.0 {
-                            76 => Store::RIV.as_str(),
-                            73 => Store::LTN.as_str(),
-                            74 => Store::MUR.as_str(),
-                            75 => Store::ORE.as_str(),
-                            77 => Store::SAN.as_str(),
-                            _ => Store::RIV.as_str(),
-                        }
-                        .to_string(),
+                        Store::from_odoo_store_id(&stock_data.location_id.0.to_string()).as_str().to_string(),
                         false,
                     )
                 })

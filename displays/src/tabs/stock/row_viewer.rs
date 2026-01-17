@@ -1,11 +1,11 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
 use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
-use database::SurrealValue;
-use database::schema::ComputerData;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
+use database::schema::ComputerData;
 use crossbeam::channel::Sender;
+use database::SurrealValue;
+use regex::Regex;
 
 const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 
@@ -81,6 +81,7 @@ pub struct ProductID(pub i32, pub String);
 // Don't need to implement any trait on row data itself.
 #[derive(Default, Serialize, Clone)]
 pub struct SerialsData(pub String, pub String, pub String, pub String, pub bool);
+
 /// Every logic is defined in `Viewer`
 #[derive(Default, Serialize)]
 pub struct SerialsViewer {
@@ -125,6 +126,10 @@ impl RowViewer<SerialsData> for SerialsViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &SerialsData, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+
         let _ = match column {
             0 => {
                 ui.horizontal_centered(|ui| {
@@ -181,9 +186,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
             3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
             2 => {
                 ui.vertical_centered_justified(|ui| {
-                    let color = if &row.2 == "Not Attached" {
-                        Color32::from_rgb(191, 33, 101)
-                    } else if &row.2 == "S/N Info ⮫" {
+                    let color = if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫"{
                         Color32::from_rgb(191, 33, 101)
                     } else {
                         Color32::from_rgb(51, 255, 189)
@@ -196,10 +199,9 @@ impl RowViewer<SerialsData> for SerialsViewer {
                 })
                 .inner
             }
-            4 => {
-                ui.vertical_centered_justified(|ui| ui.checkbox(&mut { row.4 }, ""))
-                    .inner
-            }
+            4 => ui.vertical_centered_justified(|ui| 
+                    ui.checkbox(&mut { row.4 }, "")
+                ).inner,
             _ => unreachable!(),
         };
     }
@@ -211,14 +213,12 @@ impl RowViewer<SerialsData> for SerialsViewer {
         column: usize,
     ) -> Option<Response> {
         match column {
-            0 => Some(ui.label(format!("{}", row.0))),
-            1 => Some(ui.label(format!("{}", row.1))),
             2 => {
-                if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫"{
+                if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫" {
                     None
                 } else {
                     let url = row.2.clone();
-                    Hyperlink::from_label_and_url(
+                    let res = Hyperlink::from_label_and_url(
                         format!(" {}", row.2.clone()), 
                         format!("{BASE_URL}{}", last_n(&url, 7))
                     )
@@ -227,10 +227,9 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     // .clicked() {
                     //     OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
                     // }
-                    None
+                    Some(res)
                 }
             },
-            3 => Some(ui.label(format!("{}", row.3))),
             _ => None
         }
     }
@@ -383,10 +382,11 @@ impl RowCodec<SerialsData> for Codec {
     }
 }
 
-use serde::de::Deserializer;
+use serde::de::{Deserializer, MapAccess, Visitor};
+use serde::ser::Serializer;
 use std::fmt;
 
-#[derive(Debug, Serialize, Clone, database::SurrealValue)]
+#[derive(Debug, Clone)]
 pub enum BoolOrString {
     Bool(bool),
     String(String),
@@ -398,6 +398,44 @@ impl Default for BoolOrString {
     }
 }
 
+// Manual SurrealValue implementation for BoolOrString
+impl database::SurrealValue for BoolOrString {
+    fn kind_of() -> surrealdb::types::Kind {
+        // Can be either bool or string, so use Any
+        surrealdb::types::Kind::Any
+    }
+
+    fn into_value(self) -> surrealdb::types::Value {
+        match self {
+            BoolOrString::Bool(b) => surrealdb::types::Value::Bool(b),
+            BoolOrString::String(s) => surrealdb::types::Value::String(s),
+        }
+    }
+
+    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
+        match value {
+            surrealdb::types::Value::Bool(b) => Ok(BoolOrString::Bool(b)),
+            surrealdb::types::Value::String(s) => Ok(BoolOrString::String(s)),
+            surrealdb::types::Value::None | surrealdb::types::Value::Null => Ok(BoolOrString::Bool(false)),
+            other => anyhow::bail!("Expected bool or string for BoolOrString, got {:?}", other),
+        }
+    }
+}
+
+// Custom Serialize to output raw values (not tagged enum format)
+// This ensures round-trip compatibility with SurrealDB
+impl Serialize for BoolOrString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            BoolOrString::Bool(b) => serializer.serialize_bool(*b),
+            BoolOrString::String(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for BoolOrString {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -405,11 +443,11 @@ impl<'de> Deserialize<'de> for BoolOrString {
     {
         struct BoolOrStringVisitor;
 
-        impl<'de> serde::de::Visitor<'de> for BoolOrStringVisitor {
+        impl<'de> Visitor<'de> for BoolOrStringVisitor {
             type Value = BoolOrString;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a bool or a string")
+                formatter.write_str("a bool, a string, or a tagged enum {\"Bool\": bool} / {\"String\": string}")
             }
 
             fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
@@ -428,6 +466,28 @@ impl<'de> Deserialize<'de> for BoolOrString {
                 E: serde::de::Error,
             {
                 Ok(BoolOrString::String(value))
+            }
+
+            // Handle tagged enum format from SurrealDB: {"Bool": false} or {"String": "value"}
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                if let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "Bool" => {
+                            let value: bool = map.next_value()?;
+                            Ok(BoolOrString::Bool(value))
+                        }
+                        "String" => {
+                            let value: String = map.next_value()?;
+                            Ok(BoolOrString::String(value))
+                        }
+                        _ => Err(serde::de::Error::unknown_variant(&key, &["Bool", "String"])),
+                    }
+                } else {
+                    Err(serde::de::Error::custom("expected a non-empty map"))
+                }
             }
         }
 

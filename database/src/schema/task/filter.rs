@@ -131,8 +131,8 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
             .map(|task| (task.id.key_string(), task))
             .collect();
 
-        // Collect tasks with their best match scores
-        let mut task_scores = vec![];
+        // Collect tasks with their best match scores and completion status
+        let mut task_scores: Vec<(String, i64, bool)> = vec![];
         let mut seen_ids = std::collections::HashSet::with_capacity(self.len());
 
         for (output, input_score, _) in match_results {
@@ -146,19 +146,30 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
                 // Compute fuzzy match score for task_name only
                 if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
                     let combined_score = task_score.max(input_score);
-                    task_scores.push((task_id.clone(), combined_score));
+                    // Store (task_id, score, is_completed)
+                    task_scores.push((task_id.clone(), combined_score, task.completed));
                     seen_ids.insert(task_id);
                 }
             }
         }
 
-        // Sort tasks by score in descending order
-        task_scores.sort_by_key(|&(_, score)| Reverse(score));
+        // Sort tasks: non-completed first (completed=false before completed=true),
+        // then by score in descending order within each group
+        task_scores.sort_by(|a, b| {
+            // First compare by completion status: false (non-completed) comes before true (completed)
+            match a.2.cmp(&b.2) {
+                std::cmp::Ordering::Equal => {
+                    // If same completion status, sort by score descending
+                    b.1.cmp(&a.1)
+                }
+                other => other,
+            }
+        });
 
         // Collect unique tasks, avoiding clones
         task_scores
             .into_iter()
-            .filter_map(|(task_id, _)| task_map.get(&task_id).map(|task| *task))
+            .filter_map(|(task_id, _, _)| task_map.get(&task_id).map(|task| *task))
             .cloned()
             .collect::<Vec<LiveTaskPayload>>()
     }
@@ -247,8 +258,8 @@ impl FilterTasks for Vec<TaskPayload> {
             .map(|task| (task.id.key_string(), task))
             .collect();
 
-        // Collect tasks with their best match scores
-        let mut task_scores = vec![];
+        // Collect tasks with their best match scores and completion status
+        let mut task_scores: Vec<(String, i64, bool)> = vec![];
         let mut seen_ids = std::collections::HashSet::with_capacity(self.len());
 
         for (output, input_score, _) in match_results {
@@ -262,19 +273,30 @@ impl FilterTasks for Vec<TaskPayload> {
                 // Compute fuzzy match score for task_name only
                 if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
                     let combined_score = task_score.max(input_score);
-                    task_scores.push((task_id.clone(), combined_score));
+                    // Store (task_id, score, is_completed)
+                    task_scores.push((task_id.clone(), combined_score, task.completed));
                     seen_ids.insert(task_id);
                 }
             }
         }
 
-        // Sort tasks by score in descending order
-        task_scores.sort_by_key(|&(_, score)| Reverse(score));
+        // Sort tasks: non-completed first (completed=false before completed=true),
+        // then by score in descending order within each group
+        task_scores.sort_by(|a, b| {
+            // First compare by completion status: false (non-completed) comes before true (completed)
+            match a.2.cmp(&b.2) {
+                std::cmp::Ordering::Equal => {
+                    // If same completion status, sort by score descending
+                    b.1.cmp(&a.1)
+                }
+                other => other,
+            }
+        });
 
         // Collect unique tasks, avoiding clones
         task_scores
             .into_iter()
-            .filter_map(|(task_id, _)| task_map.get(&task_id).map(|task| *task))
+            .filter_map(|(task_id, _, _)| task_map.get(&task_id).map(|task| *task))
             .cloned()
             .collect::<Vec<TaskPayload>>()
     }

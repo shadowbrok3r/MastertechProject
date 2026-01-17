@@ -24,7 +24,7 @@ pub struct Notification {
     /// Has the notification been read?
     pub created_at: Datetime,
     /// Time the notification was accessed
-    pub accessed_at: Datetime,
+    pub accessed_at: Option<Datetime>,
 }
 
 impl Default for Notification {
@@ -36,7 +36,7 @@ impl Default for Notification {
             notification_type: Default::default(),
             status: Default::default(),
             created_at: Datetime::now(),
-            accessed_at: Datetime::now(),
+            accessed_at: None,
         }
     }
 }

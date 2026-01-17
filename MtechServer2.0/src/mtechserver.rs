@@ -9,9 +9,6 @@ impl eframe::App for MtechServer {
         // Branch out all the different crossbeam channels to receive
         // in their own methods to clean up a lot of boilerplate code
         // as well as being able to find specific code a lot easier
-        // self.receive() is the same thing but those crossbeam channels
-        // being received have literally one line in them that i dont want to
-        // justify creating a separate file / module for
         self.receive(frame, ctx);
         self.shared_ctx.menu_bar(ctx); // , &mut self.open_tabs, &mut self.tree
 

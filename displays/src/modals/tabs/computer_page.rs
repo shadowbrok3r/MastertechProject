@@ -129,11 +129,9 @@ pub fn display_computer_page_with_search(
                     ui.label(computer.id.key_string());
                     ui.end_row();
                     
-                    if let Some(cust) = &computer.customer {
-                        ui.colored_label(Color32::LIGHT_RED, "Linked Customer");
-                        ui.label(cust.key_string());
-                        ui.end_row();
-                    }
+                    ui.colored_label(Color32::LIGHT_RED, "Linked Customer");
+                    ui.label(computer.customer.key_string());
+                    ui.end_row();
 
                     ui.colored_label(Color32::LIGHT_RED, "Hostname");
                     TextEdit::singleline(&mut computer.hostname).desired_width(avail_size.x / 2.14).ui(ui);
