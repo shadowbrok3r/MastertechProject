@@ -23,8 +23,16 @@ pub async fn get_associated_ticket(
 ) -> Result<(), Error> {
     debug!("get_associated_ticket");
     let service_num = new_task.1.clone().service_number.unwrap_or_default();
-    DATABASE.set("service_num", service_num).await?;
-    let ticket: Option<TicketPayload> = DATABASE.query(format!("SELECT * FROM service_order WHERE service_number == $service_num FETCH computer, customer")).await?.take(0)?;
+    let ticket: Option<TicketPayload> = DATABASE
+        .query(
+            "SELECT * FROM service_order WHERE service_number == $service_num FETCH computer, customer"
+        )
+        .bind(
+            ("service_num", service_num)
+        )
+        .await?
+        .take(0)?;
+
     debug!("ticket: {:?}", ticket);
     let new_ticket = ticket.unwrap_or_default();
     let chnnl = NewTicketChannel {

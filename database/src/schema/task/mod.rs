@@ -629,6 +629,27 @@ impl Store {
         }
     }
 
+    pub fn from_odoo_store_id(store_id: &str) -> Self {
+        match store_id {
+            "76" => Self::RIV,
+            "73" => Self::LTN,
+            "74" => Self::MUR,
+            "75" => Self::ORE,
+            "77" => Self::SAN,
+            _ => Self::RIV,
+        }
+    }
+
+    pub fn into_odoo_store_id(&self) -> i32 {
+        match self {
+            Self::RIV => 76,
+            Self::LTN => 73,
+            Self::MUR => 74,
+            Self::ORE => 75,
+            Self::SAN => 77,
+        }
+    }
+
     pub const VALUES: [Self; 5] = [
         Self::RIV,
         Self::LTN,

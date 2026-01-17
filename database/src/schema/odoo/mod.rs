@@ -168,12 +168,13 @@ pub struct ExtraInventoryData {
     pub name: String,
 }
 
-use serde::de::Deserializer;
+use serde::de::{Deserializer, MapAccess, Visitor};
+use serde::ser::Serializer;
 use std::fmt;
 
 use crate::ODOO_API_KEY;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Clone)]
 pub enum BoolOrString {
     Bool(bool),
     String(String),
@@ -185,6 +186,20 @@ impl Default for BoolOrString {
     }
 }
 
+// Custom Serialize to output raw values (not tagged enum format)
+// This ensures compatibility with Odoo API responses and SurrealDB round-trips
+impl Serialize for BoolOrString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            BoolOrString::Bool(b) => serializer.serialize_bool(*b),
+            BoolOrString::String(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for BoolOrString {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -192,11 +207,11 @@ impl<'de> Deserialize<'de> for BoolOrString {
     {
         struct BoolOrStringVisitor;
 
-        impl<'de> serde::de::Visitor<'de> for BoolOrStringVisitor {
+        impl<'de> Visitor<'de> for BoolOrStringVisitor {
             type Value = BoolOrString;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a bool or a string")
+                formatter.write_str("a bool, a string, or a tagged enum {\"Bool\": bool} / {\"String\": string}")
             }
 
             fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
@@ -215,6 +230,28 @@ impl<'de> Deserialize<'de> for BoolOrString {
                 E: serde::de::Error,
             {
                 Ok(BoolOrString::String(value))
+            }
+
+            // Handle tagged enum format: {"Bool": false} or {"String": "value"}
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                if let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "Bool" => {
+                            let value: bool = map.next_value()?;
+                            Ok(BoolOrString::Bool(value))
+                        }
+                        "String" => {
+                            let value: String = map.next_value()?;
+                            Ok(BoolOrString::String(value))
+                        }
+                        _ => Err(serde::de::Error::unknown_variant(&key, &["Bool", "String"])),
+                    }
+                } else {
+                    Err(serde::de::Error::custom("expected a non-empty map"))
+                }
             }
         }
 

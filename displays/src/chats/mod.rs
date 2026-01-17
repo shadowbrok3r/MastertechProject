@@ -160,19 +160,37 @@ impl ChatView {
     }
 
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
-        // todo!("I need to check that ALL ID's MATCH, not just one, including id_customer_thread, task_id");
-        let all_notes_match = self
-            .messages
-            .iter()
-            .all(|n| 
-                n.id_customer_thread == new_note.id_customer_thread.clone()
-                && n.service_number == new_note.service_number.clone()
-                && n.task_id == new_note.task_id.clone()
-            );
+        // Check that the note belongs to this chat view by matching task_id and service_number.
+        // For id_customer_thread, we need to handle private notes specially:
+        // - Private notes have id_customer_thread: None even when the task has a thread
+        // - Non-private notes should match id_customer_thread with existing notes
+        let note_belongs_to_chat = if self.messages.is_empty() {
+            // If no messages yet, check if note matches our task_id and service_number
+            new_note.task_id.as_ref() == Some(&self.task_id)
+                && new_note.service_number == self.service_number
+        } else {
+            self.messages.iter().all(|n| {
+                // Task ID must match
+                let task_matches = n.task_id == new_note.task_id;
+                // Service number must match
+                let service_matches = n.service_number == new_note.service_number;
+                // For id_customer_thread: 
+                // - If new note is private, it won't have a thread, so skip this check
+                // - If existing notes are private (no thread), also skip
+                // - Otherwise, threads should match
+                let thread_matches = new_note.private 
+                    || n.private 
+                    || n.id_customer_thread.is_none() 
+                    || new_note.id_customer_thread.is_none()
+                    || n.id_customer_thread == new_note.id_customer_thread;
+                
+                task_matches && service_matches && thread_matches
+            })
+        };
 
-        if all_notes_match {
-            log::info!("chats/mod.rs -> id_customer_thread, service_number, task_id all match");
-            if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
+        if note_belongs_to_chat {
+            log::info!("chats/mod.rs -> Note belongs to this chat (task_id, service_number match)");
+            if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id.clone()) {
                 // Apply diffs to the existing note
                 let diffs = existing_note.diff(&new_note);
                 existing_note.apply_mut(diffs);
@@ -183,8 +201,15 @@ impl ChatView {
             }
             self.edit_text.insert(new_note.id.key_string(), new_note.clone());
         } else {
-            log::warn!("chats/mod.rs -> id_customer_thread, service_number, or task_id do not match\nOr self.messages is empty");
-            log::error!("chats/mod.rs -> Removed elements: {new_note:#?}");
+            log::warn!(
+                "chats/mod.rs -> Note does not belong to this chat.\n\
+                Note task_id: {:?}, chat task_id: {:?}\n\
+                Note service_number: {:?}, chat service_number: {:?}\n\
+                Note is private: {}", 
+                new_note.task_id, self.task_id,
+                new_note.service_number, self.service_number,
+                new_note.private
+            );
         }
     }
 

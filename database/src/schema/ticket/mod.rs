@@ -1,8 +1,7 @@
-use crate::DATABASE;
-
 use super::{random_record_id, ComputerData, CustomerData, Datetime, HardwareTests, Job, RecordId, SurrealValue, CUSTOMER_TABLE, TICKET_TABLE};
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
+use crate::DATABASE;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct TicketPayload {

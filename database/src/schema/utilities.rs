@@ -384,20 +384,18 @@ pub async fn create_full_task_payload(
     match update_customer {
         Ok(record) => {
             log::info!("Updated Customer {record:?}");
+            // Always ensure computer has the customer linked
             if let Some(record_id) = record {
-                if computer_data.customer.is_none() {
-                    computer_data.customer = Some(record_id.id);
-                }
+                computer_data.customer = record_id.id;
             } else {
-                if computer_data.customer.is_none() {
-                    computer_data.customer = Some(customer_id);
-                } 
+                computer_data.customer = customer_id.clone();
             }
         },
         Err(e) => {
             log::warn!("Error updating Customer {e:?}");
-            // if i have a customer from everest, i will need to delete
-            // and recreate the record.. 
+            // Even if customer update failed (e.g., duplicate email), 
+            // we still need to link the computer to the customer
+            computer_data.customer = customer_id.clone();
         }
     }
 
@@ -417,6 +415,7 @@ pub async fn create_full_task_payload(
         .upsert(ticket_id)
         .content(ticket_data)
         .await;
+    
     match service_ticket_record {
         Ok(record) => info!("schema/utilities.rs -> service_ticket_record: {record:?}"),
         Err(e) => return TaskCreationResult::Error { message: format!("Failed to create service ticket: {e}") },
