@@ -1,7 +1,7 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
-use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User}; // buckets::list_buckets, 
+use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User, file_storage}; 
 use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
@@ -20,6 +20,74 @@ use log::info;
 use std::path::PathBuf;
 
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
+
+/// Storage backend type
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum StorageBackend {
+    /// Use SurrealDB file storage (recommended for new implementations)
+    #[default]
+    SurrealDb,
+    /// Use S3/MinIO storage (legacy)
+    S3,
+}
+
+/// Fetcher implementation for SurrealDB file storage
+#[derive(Debug, Clone)]
+pub struct SurrealDbFetcher {
+    bucket_name: String,
+}
+
+impl SurrealDbFetcher {
+    /// Creates a new `SurrealDbFetcher` for the given bucket (typically the username)
+    pub fn new(bucket_name: &str) -> Self {
+        Self {
+            bucket_name: bucket_name.to_string(),
+        }
+    }
+    
+    /// Request contents of a directory from SurrealDB bucket
+    pub async fn request_bucket_contents(&self, prefix: &str) -> anyhow::Result<Node, anyhow::Error> {
+        let entries = file_storage::list_files(&self.bucket_name, prefix).await?;
+        
+        // Build a Node tree from the file entries
+        let mut children: HashMap<String, Node> = HashMap::new();
+        
+        for entry in entries {
+            let key = entry.key.clone();
+            // Extract the file/folder name from the full path
+            let name = key.rsplit('/').next().unwrap_or(&key).to_string();
+            
+            if entry.is_directory {
+                children.insert(name.clone(), Node::Folder(key, HashMap::new()));
+            } else {
+                children.insert(name.clone(), Node::File((key.clone(), name)));
+            }
+        }
+        
+        let folder_path = if prefix.is_empty() { "/" } else { prefix };
+        Ok(Node::Folder(folder_path.to_string(), children))
+    }
+    
+    /// Upload a file to SurrealDB bucket
+    pub async fn upload_file(&self, path: &str, data: Vec<u8>) -> anyhow::Result<(), anyhow::Error> {
+        file_storage::put_file(&self.bucket_name, path, data).await
+    }
+    
+    /// Download a file from SurrealDB bucket
+    pub async fn download_file(&self, path: &str) -> anyhow::Result<Option<Vec<u8>>, anyhow::Error> {
+        file_storage::get_file(&self.bucket_name, path).await
+    }
+    
+    /// Delete a file from SurrealDB bucket
+    pub async fn delete_file(&self, path: &str) -> anyhow::Result<(), anyhow::Error> {
+        file_storage::delete_file(&self.bucket_name, path).await
+    }
+    
+    /// Check if a file exists
+    pub async fn file_exists(&self, path: &str) -> anyhow::Result<bool, anyhow::Error> {
+        file_storage::file_exists(&self.bucket_name, path).await
+    }
+}
 
 
 // /// Fetcher implementation for S3.
@@ -137,7 +205,8 @@ impl Clone for FileSystem {
             current_action: self.current_action.clone(),
             file_preview_channel: self.file_preview_channel.clone(),
             previewed_file: self.previewed_file.clone(),
-            file_editor: self.file_editor.clone()
+            file_editor: self.file_editor.clone(),
+            storage_backend: self.storage_backend.clone(),
         }
     }
     
@@ -170,7 +239,7 @@ pub struct FileSystem {
     pub progress: f32,
     /// File to execute on Mastertech
     pub execute_file: String,
-    /// Credentials for API calls to Minio
+    /// Credentials for API calls to Minio (legacy) or username for SurrealDB
     pub user: User,
     /// Editable Current path used by a 
     /// TextEdit for manual navigation
@@ -180,7 +249,9 @@ pub struct FileSystem {
     pub current_action: Option<FileSystemAction>,
     pub helper_delegate: Option<Box<dyn ClonableFileSysHelper>>,
     pub previewed_file: Option<String>,
-    pub file_editor: FileViewer
+    pub file_editor: FileViewer,
+    /// Storage backend to use (SurrealDB or S3)
+    pub storage_backend: StorageBackend,
 }
 
 impl FileSystem {
@@ -218,7 +289,28 @@ impl FileSystem {
             helper_delegate: None,
             previewed_file: Default::default(),
             file_editor,
+            storage_backend: StorageBackend::default(),
         }
+    }
+    
+    /// Create a new FileSystem with SurrealDB backend
+    pub fn new_surrealdb() -> Self {
+        let mut fs = Self::new();
+        fs.storage_backend = StorageBackend::SurrealDb;
+        fs
+    }
+    
+    /// Create a new FileSystem with S3 backend (legacy)
+    pub fn new_s3() -> Self {
+        let mut fs = Self::new();
+        fs.storage_backend = StorageBackend::S3;
+        fs
+    }
+    
+    /// Set the storage backend
+    pub fn with_backend(mut self, backend: StorageBackend) -> Self {
+        self.storage_backend = backend;
+        self
     }
 
     pub fn receive(&mut self) { // , ctx: &Context
@@ -598,16 +690,31 @@ impl FileSystem {
     pub fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
         let folder_pref = folder_prefix.trim_start_matches('/').to_string();
         let tx = self.paths_channel.0.clone();
-        let access_key = self.user.get_minio_access_key().unwrap_or_default();
-        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        PlatformSpawner::spawn(async move {
-            let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &name);
-            match s3_fetcher.request_bucket_contents(&folder_pref).await {
-                Ok(node) => { let _ = tx.send(node); },
-                Err(e) => log::warn!("Error getting node: {e:?}"),
+        let backend = self.storage_backend.clone();
+        
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    match fetcher.request_bucket_contents(&folder_pref).await {
+                        Ok(node) => { let _ = tx.send(node); },
+                        Err(e) => log::warn!("Error getting node from SurrealDB: {e:?}"),
+                    }
+                });
             }
-        });
+            StorageBackend::S3 => {
+                let access_key = self.user.get_minio_access_key().unwrap_or_default();
+                let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+                PlatformSpawner::spawn(async move {
+                    let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &name);
+                    match s3_fetcher.request_bucket_contents(&folder_pref).await {
+                        Ok(node) => { let _ = tx.send(node); },
+                        Err(e) => log::warn!("Error getting node from S3: {e:?}"),
+                    }
+                });
+            }
+        }
 
         Ok(())
     }
@@ -750,21 +857,45 @@ impl FileSystem {
 
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
-        let access_key = self.user.get_minio_access_key().unwrap_or_default();
-        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
+        let backend = self.storage_backend.clone();
 
-        PlatformSpawner::spawn(async move {
-            let result = Self::perform_upload(
-                &name.clone(),
-                &access_key.clone(),
-                &secret_key.clone(),
-                path.clone(),
-                task
-            ).await;
-
-            info!("Result: {result:?}");
-        });
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    if let Some(files) = task.await {
+                        let fetcher = SurrealDbFetcher::new(&name);
+                        for file_handle in files {
+                            let file_name = file_handle.file_name();
+                            let file_path = if path.ends_with('/') {
+                                format!("{}{}", path, file_name)
+                            } else {
+                                format!("{}/{}", path, file_name)
+                            };
+                            let data = file_handle.read().await;
+                            match fetcher.upload_file(&file_path, data).await {
+                                Ok(_) => info!("Uploaded {} to SurrealDB", file_path),
+                                Err(e) => log::error!("Error uploading to SurrealDB: {e:?}"),
+                            }
+                        }
+                    }
+                });
+            }
+            StorageBackend::S3 => {
+                let access_key = self.user.get_minio_access_key().unwrap_or_default();
+                let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+                PlatformSpawner::spawn(async move {
+                    let result = Self::perform_upload(
+                        &name.clone(),
+                        &access_key.clone(),
+                        &secret_key.clone(),
+                        path.clone(),
+                        task
+                    ).await;
+                    info!("Result: {result:?}");
+                });
+            }
+        }
     }
 
     #[cfg(feature="tokio")]
@@ -772,7 +903,7 @@ impl FileSystem {
         let _task = rfd::AsyncFileDialog::new().pick_folders();
         let _access_key = self.user.get_minio_access_key().unwrap_or_default();
         let _secret_key = self.user.get_minio_secret_key().unwrap_or_default();
-        let name = self.user.get_username().to_string();
+        let _name = self.user.get_username().to_string();
         // tokio::spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
@@ -788,89 +919,158 @@ impl FileSystem {
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
-        let access_key = self.user.get_minio_access_key().unwrap_or_default();
-        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        PlatformSpawner::spawn(async move {
-            let result = Self::perform_download(
-                &name.clone(),
-                &access_key,
-                &secret_key,
-                tx.clone(),
-                &path,
-                &filename,
-                task
-            ).await;
-
-            info!("Result: {result:?}");
-        });
+        let backend = self.storage_backend.clone();
+        
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    match fetcher.download_file(&path).await {
+                        Ok(Some(data)) => {
+                            // Report progress
+                            let total = data.len() as u64;
+                            let _ = tx.send((0, total));
+                            
+                            // Save to file using rfd
+                            if let Some(file_handle) = task.await {
+                                match file_handle.write(&data).await {
+                                    Ok(_) => {
+                                        info!("Downloaded {} bytes to {}", total, filename);
+                                        let _ = tx.send((total, total));
+                                    }
+                                    Err(e) => log::error!("Error writing file: {e:?}"),
+                                }
+                            }
+                        }
+                        Ok(None) => log::warn!("File not found in SurrealDB: {path}"),
+                        Err(e) => log::warn!("Error downloading file from SurrealDB: {e:?}"),
+                    }
+                });
+            }
+            StorageBackend::S3 => {
+                let access_key = self.user.get_minio_access_key().unwrap_or_default();
+                let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+                PlatformSpawner::spawn(async move {
+                    let result = Self::perform_download(
+                        &name.clone(),
+                        &access_key,
+                        &secret_key,
+                        tx.clone(),
+                        &path,
+                        &filename,
+                        task
+                    ).await;
+                    info!("Result: {result:?}");
+                });
+            }
+        }
     }
 
     pub fn preview_selection(&self, path: String) {
         let tx = self.bytes_tx.clone();
         let preview_tx = self.file_preview_channel.0.clone();
-        let access_key = self.user.get_minio_access_key().unwrap_or_default();
-        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        PlatformSpawner::spawn(async move {
-            let result = Self::preview_file(
-                tx.clone(),
-                &name.clone(),
-                &access_key,
-                &secret_key,
-                &path
-            ).await;
-
-            match result {
-                Ok(file) => { let _ = preview_tx.send(file); },
-                Err(e) => log::warn!("Error getting file to preview: {e:?}"),
+        let backend = self.storage_backend.clone();
+        
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    match fetcher.download_file(&path).await {
+                        Ok(Some(data)) => {
+                            // Try to convert bytes to UTF-8 string for preview
+                            match String::from_utf8(data) {
+                                Ok(content) => { let _ = preview_tx.send(content); },
+                                Err(e) => log::warn!("Error converting file to string: {e:?}"),
+                            }
+                        }
+                        Ok(None) => log::warn!("File not found in SurrealDB: {path}"),
+                        Err(e) => log::warn!("Error getting file from SurrealDB: {e:?}"),
+                    }
+                });
             }
-        });
+            StorageBackend::S3 => {
+                let access_key = self.user.get_minio_access_key().unwrap_or_default();
+                let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+                PlatformSpawner::spawn(async move {
+                    let result = Self::preview_file(
+                        tx.clone(),
+                        &name.clone(),
+                        &access_key,
+                        &secret_key,
+                        &path
+                    ).await;
+
+                    match result {
+                        Ok(file) => { let _ = preview_tx.send(file); },
+                        Err(e) => log::warn!("Error getting file to preview: {e:?}"),
+                    }
+                });
+            }
+        }
     }
 
     fn delete_selection(&self, path: String) {
-        // let tx = self.bytes_tx.clone();
-        let access_key = self.user.get_minio_access_key().unwrap_or_default();
-        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_username().to_string();
-        let parsed = name.split_once('@').unwrap_or_default().0.to_string();
+        let backend = self.storage_backend.clone();
+        let fs_tx = self.fs_actions_channel.0.clone();
+        let current_prefix = self.current_prefix.clone();
     
-        PlatformSpawner::spawn(async move {
-            let region = database::REGION;
-            let bucket = Bucket::new(
-                STORAGE_URL.to_string().parse::<Url>().unwrap(), 
-                rusty_s3::UrlStyle::Path, 
-                parsed, 
-                region,
-            )
-            .expect("Url has a valid scheme and host");
-    
-            let credentials = Credentials::new(access_key, secret_key);
-    
-            // Create the DeleteObject action
-            let action = rusty_s3::actions::DeleteObject::new(
-                &bucket, 
-                Some(&credentials), 
-                &path
-            );
-            let signed_url = action.sign(ONE_HOUR);
-    
-            let client = Client::new();
-            match client.delete(signed_url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    info!("File '{path}' successfully deleted.");
-                }
-                Ok(response) => {
-                    log::warn!(
-                        "Failed to delete file '{}': {}",
-                        path,
-                        response.status()
-                    );
-                }
-                Err(err) => {log::warn!("Error deleting '{path}': {}", err);}
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    match fetcher.delete_file(&path).await {
+                        Ok(_) => info!("File '{path}' successfully deleted from SurrealDB."),
+                        Err(e) => log::warn!("Error deleting '{path}' from SurrealDB: {e:?}"),
+                    }
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
             }
-        });
-        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
+            StorageBackend::S3 => {
+                let access_key = self.user.get_minio_access_key().unwrap_or_default();
+                let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+                let parsed = name.split_once('@').unwrap_or_default().0.to_string();
+            
+                PlatformSpawner::spawn(async move {
+                    let region = database::REGION;
+                    let bucket = Bucket::new(
+                        STORAGE_URL.to_string().parse::<Url>().unwrap(), 
+                        rusty_s3::UrlStyle::Path, 
+                        parsed, 
+                        region,
+                    )
+                    .expect("Url has a valid scheme and host");
+            
+                    let credentials = Credentials::new(access_key, secret_key);
+            
+                    // Create the DeleteObject action
+                    let action = rusty_s3::actions::DeleteObject::new(
+                        &bucket, 
+                        Some(&credentials), 
+                        &path
+                    );
+                    let signed_url = action.sign(ONE_HOUR);
+            
+                    let client = Client::new();
+                    match client.delete(signed_url).send().await {
+                        Ok(response) if response.status().is_success() => {
+                            info!("File '{path}' successfully deleted from S3.");
+                        }
+                        Ok(response) => {
+                            log::warn!(
+                                "Failed to delete file '{}': {}",
+                                path,
+                                response.status()
+                            );
+                        }
+                        Err(err) => {log::warn!("Error deleting '{path}': {}", err);}
+                    }
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
+            }
+        }
     }
 
     async fn perform_upload(

@@ -126,7 +126,7 @@ impl WebSocketClient {
                 }
             });
 
-            let text_edit_out = TextEdit::multiline(&mut self.input)
+            let text_edit_out = TextEdit::singleline(&mut self.input)
                 .hint_text("Use Wisely.. (Press Tab for AI suggestions)")
                 .margin(Margin::symmetric(10, 4))
                 .desired_width(ui.available_width())

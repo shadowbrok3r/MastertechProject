@@ -1,7 +1,6 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, DuplicateResolution, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
-use displays::modals::DuplicateMergeModal;
+use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
 use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
-use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::task_modal::SpecialPartOrder, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
@@ -29,8 +28,6 @@ pub struct MastertechContext {
     #[cfg(target_os = "windows")]
     pub minidump_app: MiniDumpApp,
     pub file_browser: Arc<Mutex<FileBrowser>>,
-    // pub terminal_frontend: Option<TerminalFrontend>,
-    // pub terminal: Terminal<RataguiBackend>,
     pub keys: GetKeysResponse,
     pub client: reqwest::Client,
     /// Sends requests and retrieves data from scaffold
