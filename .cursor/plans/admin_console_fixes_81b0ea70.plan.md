@@ -1,26 +1,3 @@
----
-name: Admin Console Fixes
-overview: "Fix multiple issues in the admin console: resource monitor stop button, process table context menus, and rewrite \"My Tools\" to use SurrealDB files API and \"Explorer\" to use a websocket-based remote filesystem browsing approach."
-todos:
-  - id: fix-stop-button
-    content: Fix resource monitor stop button to send Cmd::Quit to Mastertech client
-    status: completed
-  - id: process-context-menu
-    content: Implement process table context menu items (Kill Process, Open in Explorer)
-    status: completed
-  - id: process-refresh-rate
-    content: Add configurable refresh rate slider/dropdown for process table
-    status: completed
-  - id: mytools-surrealdb
-    content: Rewrite My Tools using SurrealDB files API instead of S3/Minio
-    status: completed
-  - id: explorer-rewrite
-    content: Rewrite Explorer with websocket-based remote filesystem browsing
-    status: completed
-    dependencies:
-      - fix-stop-button
----
-
 # Admin Console Fixes Plan
 
 ## Architecture Overview

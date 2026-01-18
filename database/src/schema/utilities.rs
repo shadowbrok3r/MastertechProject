@@ -301,12 +301,14 @@ impl NotificationMod for Notification {
 
     async fn mark_notification(&mut self, read: bool) -> Result<(), Error> {
         let query: Option<Record> = DATABASE
-            .query("UPDATE notification SET status = '$read' WHERE id == $id")
+            .query("UPDATE notification SET status = $read WHERE id == $id")
             .bind(("id", self.id.clone()))
             .bind(("read", if read { "Read" } else { "Unread" }))
             .await?
             .take(0)?;
+        
         info!("schema/utilities.rs -> Updated notification: {query:?}");
+
         Ok(())
     }
 }

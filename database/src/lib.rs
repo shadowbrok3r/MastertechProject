@@ -157,6 +157,8 @@ impl Database {
             Err(e) => log::error!("Failed Using NS: {NS:?}\nFailed Using DB: {DB:?}\nE: {e:?}"),
         }
 
+        log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+        
         match jwt {
             Some(jwt) => {
                 info!("Have a JWT, attempting token auth");
@@ -311,6 +313,100 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
     }).await?;
 
     Ok(())
+}
+
+/// Check if the database connection is alive by running a simple query
+/// Returns true if connected, false if connection is dead
+pub async fn is_db_connected() -> bool {
+    // Try a simple query to check connection health
+    match DATABASE.query("RETURN true").await {
+        Ok(mut response) => {
+            let result: Option<bool> = response.take(0).unwrap_or(None);
+            result.unwrap_or(false)
+        }
+        Err(e) => {
+            log::warn!("Database connection check failed: {}", e);
+            false
+        }
+    }
+}
+
+/// Ensure database connection is alive, attempt to reconnect if not
+/// This is useful for operations that may fail due to dropped WebSocket connections
+/// 
+/// # Returns
+/// - `Ok(())` if connection is alive or was successfully re-established
+/// - `Err(...)` if reconnection failed
+pub async fn ensure_db_connected() -> anyhow::Result<(), anyhow::Error> {
+    // First, try a simple health check
+    if is_db_connected().await {
+        return Ok(());
+    }
+    
+    log::warn!("Database connection lost, attempting to reconnect...");
+    
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    // Connection is dead, try to reconnect
+    // First invalidate the old connection
+    let _ = DATABASE.invalidate().await;
+    
+    // Reconnect
+    if cfg!(debug_assertions) {
+        DATABASE.connect::<surrealdb::engine::remote::ws::Ws>(DB_URL_LOCAL).await?;
+        log::info!("Reconnected to local DB: {}", DB_URL_LOCAL);
+    } else {
+        DATABASE.connect::<surrealdb::engine::remote::ws::Wss>(DB_URL_DEV).await?;
+        log::info!("Reconnected to: {}", DB_URL_DEV);
+    }
+    
+    // Re-select namespace and database
+    DATABASE.use_ns(NS).use_db(DB).await?;
+    
+    // Check if we had a user (don't hold MutexGuard across await)
+    let had_user = CURRENT_USER_INFO.try_lock().map(|g| g.is_some()).unwrap_or(false);
+    
+    if had_user {
+        // We had a user, need to re-authenticate
+        // For now, sign in as guest - the actual re-auth should happen through the app's login flow
+        log::warn!("Re-authenticating as guest after reconnect. User should re-login for full access.");
+        DATABASE.signin(SurrealRec {
+            namespace: NS.to_string(),
+            database: DB.to_string(),
+            access: "guest".to_string(),
+            params: Credentials {
+                username: "guest".to_string(),
+                password: "toor10!9".to_string()
+            }
+        }).await?;
+    }
+    
+    log::info!("Database reconnection successful");
+    Ok(())
+}
+
+/// Check if an error is a connection-related error
+pub fn is_connection_error(error: &anyhow::Error) -> bool {
+    let error_str = error.to_string();
+    error_str.contains("uninitialised") || 
+    error_str.contains("Connection") ||
+    error_str.contains("WebSocket") ||
+    error_str.contains("disconnected")
+}
+
+/// Macro-free way to retry a database operation with reconnect
+/// 
+/// Call this before making database queries to ensure connection is alive.
+/// If the connection was dead and reconnection succeeded, returns true.
+/// If connection was already alive, returns false.
+/// If reconnection failed, returns an error.
+pub async fn ensure_connected_or_reconnect() -> anyhow::Result<bool, anyhow::Error> {
+    if is_db_connected().await {
+        return Ok(false); // Already connected
+    }
+    
+    log::warn!("Database connection lost, attempting to reconnect...");
+    ensure_db_connected().await?;
+    Ok(true) // Reconnected
 }
 
 /// Debug test for WASM time issues - call this to narrow down which DB operation fails
