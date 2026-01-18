@@ -2,59 +2,122 @@
 //! 
 //! This module provides file storage operations using SurrealDB's built-in bucket/file system.
 //! Requires SurrealDB 3.0.0-beta.1 or later.
+//!
+//! ## Bucket Setup
+//! Before using file operations, define a bucket:
+//! ```surql
+//! DEFINE BUCKET default_bucket BACKEND "file:/path/to/storage/";
+//! ```
+//!
+//! ## Usage Examples
+//! ```rust
+//! // Put a file
+//! file_storage::put_file("default_bucket", "/test.txt", b"Hello World".to_vec()).await?;
+//! 
+//! // Get a file
+//! let data = file_storage::get_file("default_bucket", "/test.txt").await?;
+//! 
+//! // List files
+//! let entries = file_storage::list_files("default_bucket", "/").await?;
+//! ```
 
-use crate::DATABASE;
+use crate::{DATABASE, ensure_connected_or_reconnect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use chrono::{DateTime, Utc};
 
 /// File metadata returned by file::head
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileMetadata {
     pub key: String,
     pub size: Option<u64>,
+    #[serde(rename = "e_tag")]
     pub etag: Option<String>,
-    pub content_type: Option<String>,
-    pub last_modified: Option<String>,
+    pub last_modified: Option<DateTime<Utc>>,
+    pub version: Option<String>,
 }
 
-/// A file entry for directory listings
+/// A file entry for directory listings (matches SurrealDB's file::list output)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FileEntry {
+    /// The file pointer (e.g., f"bucket:/path/to/file")
+    pub file: Option<String>,
+    /// The key/path within the bucket
+    #[serde(default)]
     pub key: String,
-    pub is_directory: bool,
+    /// File size in bytes
     pub size: Option<u64>,
+    /// Last updated timestamp
+    pub updated: Option<DateTime<Utc>>,
+    /// Whether this is a directory (derived from key ending with '/')
+    #[serde(default)]
+    pub is_directory: bool,
 }
 
-/// Initialize a bucket for a user (should be called when user signs up or first uses storage)
-pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Error> {
-    let bucket_name = sanitize_bucket_name(username);
-    let query = format!("DEFINE BUCKET IF NOT EXISTS {}", bucket_name);
+impl FileEntry {
+    /// Extract the filename from the file pointer or key
+    pub fn filename(&self) -> String {
+        let path = self.file.as_deref().unwrap_or(&self.key);
+        // Parse f"bucket:/path/to/file.txt" to get "file.txt"
+        path.rsplit('/').next().unwrap_or(path).to_string()
+    }
+    
+    /// Extract the full path from the file pointer
+    pub fn path(&self) -> String {
+        if let Some(file) = &self.file {
+            // Parse f"bucket:/path/to/file.txt" to get "/path/to/file.txt"
+            if let Some(pos) = file.find(":/") {
+                return file[pos + 1..].trim_end_matches('"').to_string();
+            }
+        }
+        self.key.clone()
+    }
+}
+
+/// Define or initialize a bucket
+/// 
+/// # Arguments
+/// * `bucket_name` - The bucket name
+/// * `backend` - The backend path (e.g., "file:/path/to/storage/" or "memory")
+pub async fn define_bucket(bucket_name: &str, backend: &str) -> anyhow::Result<(), anyhow::Error> {
+    let sanitized = sanitize_bucket_name(bucket_name);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    let query = format!(r#"DEFINE BUCKET IF NOT EXISTS {} BACKEND "{}""#, sanitized, backend);
     DATABASE.query(&query).await?;
-    log::info!("Initialized bucket: {}", bucket_name);
+    log::info!("Defined bucket: {} with backend: {}", sanitized, backend);
     Ok(())
 }
 
-/// Put a file into the user's bucket
+/// Initialize a bucket for a user (should be called when user signs up or first uses storage)
+/// Uses a file backend at the default storage location
+pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Error> {
+    let bucket_name = sanitize_bucket_name(username);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    // Use memory backend for user buckets by default (can be changed to file backend)
+    let query = format!(r#"DEFINE BUCKET IF NOT EXISTS {} BACKEND "memory""#, bucket_name);
+    DATABASE.query(&query).await?;
+    log::info!("Initialized user bucket: {}", bucket_name);
+    Ok(())
+}
+
+/// Put a file into the bucket
 /// 
 /// # Arguments
-/// * `bucket` - The bucket name (typically the username)
-/// * `path` - The path within the bucket (e.g., "Scripts/myscript.ps1")
+/// * `bucket` - The bucket name (e.g., "default_bucket" or username)
+/// * `path` - The path within the bucket (e.g., "/Scripts/myscript.ps1")
 /// * `data` - The file contents as bytes
 pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    
-    // Create the file reference string
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_path);
-    
-    // Use query with parameters to safely pass the binary data
-    let query = format!("RETURN file::put({}, $data)", file_ref);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    // SurrealQL method syntax: f"bucket:/path".put(data)
+    let query = format!(r#"f"{}:{}".put($data)"#, bucket_name, normalized_path);
     DATABASE
         .query(&query)
         .bind(("data", data))
         .await?;
     
-    log::info!("Put file: {}:{}", bucket_name, normalized_path);
+    log::info!("file_storage::put_file -> {}:{}", bucket_name, normalized_path);
     Ok(())
 }
 
@@ -63,29 +126,57 @@ pub async fn put_file_if_not_exists(bucket: &str, path: &str, data: Vec<u8>) -> 
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
     
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_path);
-    let query = format!("RETURN file::put_if_not_exists({}, $data)", file_ref);
-    
+    // SurrealQL method syntax: f"bucket:/path".put_if_not_exists(data)
+    let query = format!(r#"f"{}:{}".put_if_not_exists($data)"#, bucket_name, normalized_path);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
     DATABASE
         .query(&query)
         .bind(("data", data))
         .await?;
     
+    log::info!("file_storage::put_file_if_not_exists -> {}:{}", bucket_name, normalized_path);
     Ok(true)
 }
 
-/// Get a file from the user's bucket
+/// Get a file from the bucket
 /// 
 /// Returns None if the file doesn't exist
 pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
     
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_path);
-    let query = format!("RETURN file::get({})", file_ref);
+    // Ensure connection is alive before querying
+    if let Err(e) = ensure_connected_or_reconnect().await {
+        log::warn!("file_storage::get_file -> Connection check failed: {e}");
+    }
+    
+    // SurrealQL method syntax: f"bucket:/path".get()
+    let query = format!(r#"f"{}:{}".get()"#, bucket_name, normalized_path);
     
     let mut response = DATABASE.query(&query).await?;
     let data: Option<Vec<u8>> = response.take(0)?;
+    
+    log::debug!("file_storage::get_file -> {}:{} (found: {})", bucket_name, normalized_path, data.is_some());
+    Ok(data)
+}
+
+/// Get a file as a string (convenience method for text files)
+pub async fn get_file_as_string(bucket: &str, path: &str) -> anyhow::Result<Option<String>, anyhow::Error> {
+    let bucket_name = sanitize_bucket_name(bucket);
+    let normalized_path = normalize_path(path);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    
+    // Ensure connection is alive before querying
+    if let Err(e) = ensure_connected_or_reconnect().await {
+        log::warn!("file_storage::get_file_as_string -> Connection check failed: {e}");
+    }
+    
+    // SurrealQL: <string>f"bucket:/path".get() casts bytes to string
+    let query = format!(r#"<string>f"{}:{}".get()"#, bucket_name, normalized_path);
+    
+    let mut response = DATABASE.query(&query).await?;
+    let data: Option<String> = response.take(0)?;
     
     Ok(data)
 }
@@ -94,9 +185,9 @@ pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>
 pub async fn head_file(bucket: &str, path: &str) -> anyhow::Result<Option<FileMetadata>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_path);
-    let query = format!("RETURN file::head({})", file_ref);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    // SurrealQL method syntax: f"bucket:/path".head()
+    let query = format!(r#"f"{}:{}".head()"#, bucket_name, normalized_path);
     
     let mut response = DATABASE.query(&query).await?;
     let metadata: Option<Value> = response.take(0)?;
@@ -110,17 +201,17 @@ pub async fn head_file(bucket: &str, path: &str) -> anyhow::Result<Option<FileMe
     }
 }
 
-/// Delete a file from the user's bucket
+/// Delete a file from the bucket
 pub async fn delete_file(bucket: &str, path: &str) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_path);
-    let query = format!("RETURN file::delete({})", file_ref);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    // SurrealQL method syntax: f"bucket:/path".delete()
+    let query = format!(r#"f"{}:{}".delete()"#, bucket_name, normalized_path);
     
     DATABASE.query(&query).await?;
     
-    log::info!("Deleted file: {}:{}", bucket_name, normalized_path);
+    log::info!("file_storage::delete_file -> {}:{}", bucket_name, normalized_path);
     Ok(())
 }
 
@@ -128,9 +219,9 @@ pub async fn delete_file(bucket: &str, path: &str) -> anyhow::Result<(), anyhow:
 pub async fn file_exists(bucket: &str, path: &str) -> anyhow::Result<bool, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_path);
-    let query = format!("RETURN file::exists({})", file_ref);
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    // SurrealQL method syntax: f"bucket:/path".exists()
+    let query = format!(r#"f"{}:{}".exists()"#, bucket_name, normalized_path);
     
     let mut response = DATABASE.query(&query).await?;
     let exists: Option<bool> = response.take(0)?;
@@ -138,23 +229,122 @@ pub async fn file_exists(bucket: &str, path: &str) -> anyhow::Result<bool, anyho
     Ok(exists.unwrap_or(false))
 }
 
-/// List files in a directory/prefix
+/// List files in a bucket
 /// 
 /// # Arguments
 /// * `bucket` - The bucket name
-/// * `prefix` - The directory prefix to list (e.g., "Scripts/" or "")
+/// * `prefix` - Optional prefix to filter results (e.g., "scripts" to only show files starting with "scripts")
 /// 
-/// Returns a list of file entries
+/// # Returns
+/// A list of file entries with metadata (file pointer, size, updated timestamp)
+/// 
+/// # Example
+/// ```rust
+/// let files = file_storage::list_files("default_bucket", "").await?;
+/// for entry in files {
+///     println!("File: {} ({} bytes)", entry.filename(), entry.size.unwrap_or(0));
+/// }
+/// ```
 pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEntry>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
-    let normalized_prefix = if prefix.is_empty() {
-        "/".to_string()
+    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    
+    // Ensure connection is alive before querying
+    if let Err(e) = ensure_connected_or_reconnect().await {
+        log::warn!("file_storage::list_files -> Connection check failed: {e}");
+        // Continue anyway, the query itself will fail if connection is truly dead
+    }
+    
+    // file::list takes the bucket name as a string, with optional options object
+    // file::list("bucket_name") or file::list("bucket_name", { prefix: "...", limit: N })
+    let query = if prefix.is_empty() || prefix == "/" {
+        format!(r#"file::list("{}")"#, bucket_name)
     } else {
-        normalize_path(prefix)
+        // Clean up prefix - remove leading/trailing slashes for the prefix filter
+        let clean_prefix = prefix.trim_matches('/');
+        format!(r#"file::list("{}", {{ prefix: "{}" }})"#, bucket_name, clean_prefix)
     };
     
-    let file_ref = format!(r#"f"{}:{}""#, bucket_name, normalized_prefix);
-    let query = format!("RETURN file::list({})", file_ref);
+    log::debug!("file_storage::list_files -> query: {}", query);
+    
+    let mut response = DATABASE.query(&query).await?;
+    let entries: Option<Vec<Value>> = response.take(0)?;
+    
+    log::debug!("file_storage::list_files -> raw response: {:?}", entries);
+    
+    match entries {
+        Some(list) => {
+            let file_entries: Vec<FileEntry> = list
+                .into_iter()
+                .filter_map(|v| {
+                    // file::list returns objects with: { file: f"bucket:/path", size: N, updated: datetime }
+                    if let Ok(mut entry) = serde_json::from_value::<FileEntry>(v.clone()) {
+                        // Extract key from file pointer if present
+                        if let Some(file_ptr) = &entry.file {
+                            entry.key = extract_key_from_file_pointer(file_ptr);
+                            entry.is_directory = entry.key.ends_with('/');
+                        }
+                        Some(entry)
+                    } else if let Some(file_str) = v.as_str() {
+                        // Fallback: just a file string
+                        let key = extract_key_from_file_pointer(file_str);
+                        Some(FileEntry {
+                            file: Some(file_str.to_string()),
+                            key: key.clone(),
+                            is_directory: key.ends_with('/'),
+                            size: None,
+                            updated: None,
+                        })
+                    } else {
+                        log::warn!("file_storage::list_files -> Couldn't parse entry: {:?}", v);
+                        None
+                    }
+                })
+                .collect();
+            
+            log::info!("file_storage::list_files -> {} files in bucket '{}' (prefix: '{}')", 
+                file_entries.len(), bucket_name, prefix);
+            Ok(file_entries)
+        }
+        None => {
+            log::info!("file_storage::list_files -> No files in bucket '{}' (prefix: '{}')", 
+                bucket_name, prefix);
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// List files with additional options (limit, start cursor)
+pub async fn list_files_with_options(
+    bucket: &str, 
+    prefix: Option<&str>,
+    limit: Option<u32>,
+    start: Option<&str>,
+) -> anyhow::Result<Vec<FileEntry>, anyhow::Error> {
+    let bucket_name = sanitize_bucket_name(bucket);
+    
+    // Build the options object
+    let mut options = Vec::new();
+    if let Some(p) = prefix {
+        let clean = p.trim_matches('/');
+        if !clean.is_empty() {
+            options.push(format!(r#"prefix: "{}""#, clean));
+        }
+    }
+    if let Some(l) = limit {
+        options.push(format!("limit: {}", l));
+    }
+    if let Some(s) = start {
+        options.push(format!(r#"start: "{}""#, s));
+    }
+    
+    let query = if options.is_empty() {
+        format!(r#"file::list("{}")"#, bucket_name)
+    } else {
+        format!(r#"file::list("{}", {{ {} }})"#, bucket_name, options.join(", "))
+    };
+    
+    log::debug!("file_storage::list_files_with_options -> query: {}", query);
     
     let mut response = DATABASE.query(&query).await?;
     let entries: Option<Vec<Value>> = response.take(0)?;
@@ -164,14 +354,11 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
             let file_entries: Vec<FileEntry> = list
                 .into_iter()
                 .filter_map(|v| {
-                    // The list returns file references, we need to parse them
-                    if let Some(key) = v.as_str() {
-                        Some(FileEntry {
-                            key: key.to_string(),
-                            is_directory: key.ends_with('/'),
-                            size: None,
-                        })
-                    } else if let Ok(entry) = serde_json::from_value::<FileEntry>(v) {
+                    if let Ok(mut entry) = serde_json::from_value::<FileEntry>(v.clone()) {
+                        if let Some(file_ptr) = &entry.file {
+                            entry.key = extract_key_from_file_pointer(file_ptr);
+                            entry.is_directory = entry.key.ends_with('/');
+                        }
                         Some(entry)
                     } else {
                         None
@@ -184,27 +371,61 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
     }
 }
 
-/// Copy a file within or between buckets
+/// Extract the key/path from a SurrealDB file pointer string
+/// e.g., `f"bucket:/path/to/file.txt"` -> `/path/to/file.txt`
+fn extract_key_from_file_pointer(file_ptr: &str) -> String {
+    // Remove the f" prefix and trailing "
+    let clean = file_ptr
+        .trim_start_matches("f\"")
+        .trim_start_matches("f'")
+        .trim_end_matches('"')
+        .trim_end_matches('\'');
+    
+    // Find the :/ separator and extract path after it
+    if let Some(pos) = clean.find(":/") {
+        clean[pos + 1..].to_string()
+    } else {
+        clean.to_string()
+    }
+}
+
+/// Copy a file to a new location (within the same bucket)
+/// Note: The destination is just the new filename/path, not a full file reference
 pub async fn copy_file(
-    src_bucket: &str, 
+    bucket: &str, 
     src_path: &str, 
-    dst_bucket: &str, 
     dst_path: &str
 ) -> anyhow::Result<(), anyhow::Error> {
-    let src_bucket_name = sanitize_bucket_name(src_bucket);
-    let dst_bucket_name = sanitize_bucket_name(dst_bucket);
+    let bucket_name = sanitize_bucket_name(bucket);
     let src_normalized = normalize_path(src_path);
-    let dst_normalized = normalize_path(dst_path);
+    // For copy, the destination is just the new key name (without bucket prefix)
+    let dst_key = dst_path.trim_start_matches('/');
     
-    let src_ref = format!(r#"f"{}:{}""#, src_bucket_name, src_normalized);
-    let dst_ref = format!(r#"f"{}:{}""#, dst_bucket_name, dst_normalized);
-    let query = format!("RETURN file::copy({}, {})", src_ref, dst_ref);
+    // SurrealQL method syntax: f"bucket:/path".copy("new_name")
+    let query = format!(r#"f"{}:{}".copy("{}")"#, bucket_name, src_normalized, dst_key);
     
     DATABASE.query(&query).await?;
     
-    log::info!("Copied file from {}:{} to {}:{}", 
-        src_bucket_name, src_normalized, 
-        dst_bucket_name, dst_normalized);
+    log::info!("file_storage::copy_file -> {}:{} to {}", bucket_name, src_normalized, dst_key);
+    Ok(())
+}
+
+/// Copy a file only if the destination doesn't exist
+pub async fn copy_file_if_not_exists(
+    bucket: &str, 
+    src_path: &str, 
+    dst_path: &str
+) -> anyhow::Result<(), anyhow::Error> {
+    let bucket_name = sanitize_bucket_name(bucket);
+    let src_normalized = normalize_path(src_path);
+    let dst_key = dst_path.trim_start_matches('/');
+    
+    // SurrealQL method syntax: f"bucket:/path".copy_if_not_exists("new_name")
+    let query = format!(r#"f"{}:{}".copy_if_not_exists("{}")"#, bucket_name, src_normalized, dst_key);
+    
+    DATABASE.query(&query).await?;
+    
+    log::info!("file_storage::copy_file_if_not_exists -> {}:{} to {}", bucket_name, src_normalized, dst_key);
     Ok(())
 }
 
@@ -216,18 +437,51 @@ pub async fn rename_file(
 ) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let old_normalized = normalize_path(old_path);
-    let new_normalized = normalize_path(new_path);
+    // For rename, the destination is just the new key name (without bucket prefix)
+    let new_key = new_path.trim_start_matches('/');
     
-    let old_ref = format!(r#"f"{}:{}""#, bucket_name, old_normalized);
-    let new_ref = format!(r#"f"{}:{}""#, bucket_name, new_normalized);
-    let query = format!("RETURN file::rename({}, {})", old_ref, new_ref);
+    // SurrealQL method syntax: f"bucket:/path".rename("new_name")
+    let query = format!(r#"f"{}:{}".rename("{}")"#, bucket_name, old_normalized, new_key);
     
     DATABASE.query(&query).await?;
     
-    log::info!("Renamed file from {}:{} to {}:{}", 
-        bucket_name, old_normalized, 
-        bucket_name, new_normalized);
+    log::info!("file_storage::rename_file -> {}:{} to {}", bucket_name, old_normalized, new_key);
     Ok(())
+}
+
+/// Rename a file only if the destination doesn't exist
+pub async fn rename_file_if_not_exists(
+    bucket: &str,
+    old_path: &str,
+    new_path: &str
+) -> anyhow::Result<(), anyhow::Error> {
+    let bucket_name = sanitize_bucket_name(bucket);
+    let old_normalized = normalize_path(old_path);
+    let new_key = new_path.trim_start_matches('/');
+    
+    // SurrealQL method syntax: f"bucket:/path".rename_if_not_exists("new_name")
+    let query = format!(r#"f"{}:{}".rename_if_not_exists("{}")"#, bucket_name, old_normalized, new_key);
+    
+    DATABASE.query(&query).await?;
+    
+    log::info!("file_storage::rename_file_if_not_exists -> {}:{} to {}", bucket_name, old_normalized, new_key);
+    Ok(())
+}
+
+/// Get the bucket name from a file pointer
+pub async fn get_bucket_name(file_pointer: &str) -> anyhow::Result<String, anyhow::Error> {
+    let query = format!(r#"file::bucket({})"#, file_pointer);
+    let mut response = DATABASE.query(&query).await?;
+    let bucket: Option<String> = response.take(0)?;
+    bucket.ok_or_else(|| anyhow::anyhow!("Could not get bucket name from file pointer"))
+}
+
+/// Get the key (path) from a file pointer
+pub async fn get_file_key(file_pointer: &str) -> anyhow::Result<String, anyhow::Error> {
+    let query = format!(r#"file::key({})"#, file_pointer);
+    let mut response = DATABASE.query(&query).await?;
+    let key: Option<String> = response.take(0)?;
+    key.ok_or_else(|| anyhow::anyhow!("Could not get key from file pointer"))
 }
 
 /// Sanitize a bucket name to ensure it's valid
@@ -264,6 +518,201 @@ fn normalize_path(path: &str) -> String {
     normalized
 }
 
+// ============================================================================
+// SurrealFile - Convenient file handle for easy operations
+// ============================================================================
+
+/// A handle to a file in a SurrealDB bucket, providing a convenient API for file operations
+/// 
+/// # Example
+/// ```rust
+/// let file = SurrealFile::new("default_bucket", "/scripts/myscript.ps1");
+/// 
+/// // Write content
+/// file.put(b"Write-Host 'Hello World'".to_vec()).await?;
+/// 
+/// // Read content
+/// if let Some(data) = file.get().await? {
+///     let content = String::from_utf8_lossy(&data);
+///     println!("Content: {}", content);
+/// }
+/// 
+/// // Check if exists
+/// if file.exists().await? {
+///     println!("File exists!");
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct SurrealFile {
+    bucket: String,
+    path: String,
+}
+
+impl SurrealFile {
+    /// Create a new file handle
+    pub fn new(bucket: &str, path: &str) -> Self {
+        Self {
+            bucket: sanitize_bucket_name(bucket),
+            path: normalize_path(path),
+        }
+    }
+    
+    /// Get the bucket name
+    pub fn bucket(&self) -> &str {
+        &self.bucket
+    }
+    
+    /// Get the file path
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+    
+    /// Get the filename (last component of the path)
+    pub fn filename(&self) -> &str {
+        self.path.rsplit('/').next().unwrap_or(&self.path)
+    }
+    
+    /// Get the SurrealQL file reference string (e.g., `f"bucket:/path"`)
+    pub fn file_ref(&self) -> String {
+        format!(r#"f"{}:{}""#, self.bucket, self.path)
+    }
+    
+    /// Put data into the file (overwrites if exists)
+    pub async fn put(&self, data: Vec<u8>) -> anyhow::Result<()> {
+        put_file(&self.bucket, &self.path, data).await
+    }
+    
+    /// Put string data into the file
+    pub async fn put_string(&self, content: &str) -> anyhow::Result<()> {
+        put_file(&self.bucket, &self.path, content.as_bytes().to_vec()).await
+    }
+    
+    /// Put data only if file doesn't exist
+    pub async fn put_if_not_exists(&self, data: Vec<u8>) -> anyhow::Result<bool> {
+        put_file_if_not_exists(&self.bucket, &self.path, data).await
+    }
+    
+    /// Get file contents as bytes
+    pub async fn get(&self) -> anyhow::Result<Option<Vec<u8>>> {
+        get_file(&self.bucket, &self.path).await
+    }
+    
+    /// Get file contents as string
+    pub async fn get_string(&self) -> anyhow::Result<Option<String>> {
+        get_file_as_string(&self.bucket, &self.path).await
+    }
+    
+    /// Delete the file
+    pub async fn delete(&self) -> anyhow::Result<()> {
+        delete_file(&self.bucket, &self.path).await
+    }
+    
+    /// Check if file exists
+    pub async fn exists(&self) -> anyhow::Result<bool> {
+        file_exists(&self.bucket, &self.path).await
+    }
+    
+    /// Get file metadata
+    pub async fn head(&self) -> anyhow::Result<Option<FileMetadata>> {
+        head_file(&self.bucket, &self.path).await
+    }
+    
+    /// Copy to a new path
+    pub async fn copy_to(&self, new_path: &str) -> anyhow::Result<()> {
+        copy_file(&self.bucket, &self.path, new_path).await
+    }
+    
+    /// Rename/move to a new path
+    pub async fn rename_to(&self, new_path: &str) -> anyhow::Result<()> {
+        rename_file(&self.bucket, &self.path, new_path).await
+    }
+}
+
+// ============================================================================
+// SurrealBucket - Convenient bucket handle for directory operations
+// ============================================================================
+
+/// A handle to a SurrealDB bucket for listing and managing files
+/// 
+/// # Example
+/// ```rust
+/// let bucket = SurrealBucket::new("default_bucket");
+/// 
+/// // List all files
+/// for entry in bucket.list("").await? {
+///     println!("{}: {} bytes", entry.filename(), entry.size.unwrap_or(0));
+/// }
+/// 
+/// // Get a file handle
+/// let file = bucket.file("/test.txt");
+/// file.put_string("Hello World").await?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct SurrealBucket {
+    name: String,
+}
+
+impl SurrealBucket {
+    /// Create a new bucket handle
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: sanitize_bucket_name(name),
+        }
+    }
+    
+    /// Get the bucket name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    
+    /// Define/initialize this bucket with the given backend
+    pub async fn define(&self, backend: &str) -> anyhow::Result<()> {
+        define_bucket(&self.name, backend).await
+    }
+    
+    /// Define this bucket with a memory backend
+    pub async fn define_memory(&self) -> anyhow::Result<()> {
+        define_bucket(&self.name, "memory").await
+    }
+    
+    /// Define this bucket with a file backend at the given path
+    pub async fn define_file(&self, path: &str) -> anyhow::Result<()> {
+        define_bucket(&self.name, &format!("file:{}", path)).await
+    }
+    
+    /// Get a file handle for a path within this bucket
+    pub fn file(&self, path: &str) -> SurrealFile {
+        SurrealFile::new(&self.name, path)
+    }
+    
+    /// List files in this bucket
+    pub async fn list(&self, prefix: &str) -> anyhow::Result<Vec<FileEntry>> {
+        list_files(&self.name, prefix).await
+    }
+    
+    /// List files with options
+    pub async fn list_with_options(
+        &self,
+        prefix: Option<&str>,
+        limit: Option<u32>,
+        start: Option<&str>,
+    ) -> anyhow::Result<Vec<FileEntry>> {
+        list_files_with_options(&self.name, prefix, limit, start).await
+    }
+}
+
+// ============================================================================
+// Default bucket constant
+// ============================================================================
+
+/// The default bucket name used for general file storage
+pub const DEFAULT_BUCKET: &str = "default_bucket";
+
+/// Get a handle to the default bucket
+pub fn default_bucket() -> SurrealBucket {
+    SurrealBucket::new(DEFAULT_BUCKET)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +722,7 @@ mod tests {
         assert_eq!(sanitize_bucket_name("john@example.com"), "john");
         assert_eq!(sanitize_bucket_name("John Doe"), "john_doe");
         assert_eq!(sanitize_bucket_name("user-name"), "user-name");
+        assert_eq!(sanitize_bucket_name("default_bucket"), "default_bucket");
     }
     
     #[test]
@@ -281,5 +731,44 @@ mod tests {
         assert_eq!(normalize_path("/scripts/test.ps1"), "/scripts/test.ps1");
         assert_eq!(normalize_path("scripts\\test.ps1"), "/scripts/test.ps1");
         assert_eq!(normalize_path("scripts//test.ps1"), "/scripts/test.ps1");
+        assert_eq!(normalize_path("test.txt"), "/test.txt");
+    }
+    
+    #[test]
+    fn test_extract_key_from_file_pointer() {
+        assert_eq!(
+            extract_key_from_file_pointer(r#"f"bucket:/path/to/file.txt""#), 
+            "/path/to/file.txt"
+        );
+        assert_eq!(
+            extract_key_from_file_pointer(r#"f"default_bucket:/test.txt""#), 
+            "/test.txt"
+        );
+        assert_eq!(
+            extract_key_from_file_pointer("bucket:/simple.txt"), 
+            "/simple.txt"
+        );
+    }
+    
+    #[test]
+    fn test_surreal_file_creation() {
+        let file = SurrealFile::new("default_bucket", "/test/file.txt");
+        assert_eq!(file.bucket(), "default_bucket");
+        assert_eq!(file.path(), "/test/file.txt");
+        assert_eq!(file.filename(), "file.txt");
+        assert_eq!(file.file_ref(), r#"f"default_bucket:/test/file.txt""#);
+    }
+    
+    #[test]
+    fn test_file_entry_methods() {
+        let entry = FileEntry {
+            file: Some(r#"f"bucket:/path/to/document.pdf""#.to_string()),
+            key: String::new(),
+            size: Some(1024),
+            updated: None,
+            is_directory: false,
+        };
+        assert_eq!(entry.filename(), "document.pdf");
+        assert_eq!(entry.path(), "/path/to/document.pdf");
     }
 }

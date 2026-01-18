@@ -1,7 +1,7 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
-use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User, file_storage}; 
+use database::{DATABASE, schema::{Node, User, buckets::{list_buckets, normalize_prefix}, file_storage}}; 
 use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
@@ -32,30 +32,68 @@ pub enum StorageBackend {
 }
 
 /// Fetcher implementation for SurrealDB file storage
+/// 
+/// Uses SurrealDB's built-in bucket/file system (requires SurrealDB 3.0.0-beta.1+)
+/// 
+/// # Example
+/// ```rust
+/// let fetcher = SurrealDbFetcher::new("my_bucket");
+/// 
+/// // List files
+/// let node = fetcher.request_bucket_contents("/scripts").await?;
+/// 
+/// // Upload a file
+/// fetcher.upload_file("/scripts/test.ps1", b"Write-Host 'Hello'".to_vec()).await?;
+/// ```
 #[derive(Debug, Clone)]
 pub struct SurrealDbFetcher {
-    bucket_name: String,
+    bucket: file_storage::SurrealBucket,
 }
 
 impl SurrealDbFetcher {
-    /// Creates a new `SurrealDbFetcher` for the given bucket (typically the username)
+    /// Creates a new `SurrealDbFetcher` for the given bucket
+    /// 
+    /// # Arguments
+    /// * `bucket_name` - The bucket name (e.g., "default_bucket" or username)
     pub fn new(bucket_name: &str) -> Self {
         Self {
-            bucket_name: bucket_name.to_string(),
+            bucket: file_storage::SurrealBucket::new(bucket_name),
         }
+    }
+    
+    /// Creates a fetcher using the default bucket
+    pub fn default_bucket() -> Self {
+        Self {
+            bucket: file_storage::default_bucket(),
+        }
+    }
+    
+    /// Get the bucket name
+    pub fn bucket_name(&self) -> &str {
+        self.bucket.name()
+    }
+    
+    /// Ensure the bucket is defined (call once during initialization)
+    pub async fn ensure_bucket_exists(&self, backend: &str) -> anyhow::Result<(), anyhow::Error> {
+        self.bucket.define(backend).await
     }
     
     /// Request contents of a directory from SurrealDB bucket
     pub async fn request_bucket_contents(&self, prefix: &str) -> anyhow::Result<Node, anyhow::Error> {
-        let entries = file_storage::list_files(&self.bucket_name, prefix).await?;
+        let entries = self.bucket.list(prefix).await?;
         
         // Build a Node tree from the file entries
         let mut children: HashMap<String, Node> = HashMap::new();
         
         for entry in entries {
-            let key = entry.key.clone();
+            // Use the extracted key/path
+            let key = entry.path();
             // Extract the file/folder name from the full path
-            let name = key.rsplit('/').next().unwrap_or(&key).to_string();
+            let name = entry.filename();
+            
+            if name.is_empty() {
+                continue;
+            }
             
             if entry.is_directory {
                 children.insert(name.clone(), Node::Folder(key, HashMap::new()));
@@ -64,28 +102,53 @@ impl SurrealDbFetcher {
             }
         }
         
-        let folder_path = if prefix.is_empty() { "/" } else { prefix };
+        let folder_path = if prefix.is_empty() || prefix == "/" { "/" } else { prefix };
         Ok(Node::Folder(folder_path.to_string(), children))
     }
     
     /// Upload a file to SurrealDB bucket
     pub async fn upload_file(&self, path: &str, data: Vec<u8>) -> anyhow::Result<(), anyhow::Error> {
-        file_storage::put_file(&self.bucket_name, path, data).await
+        self.bucket.file(path).put(data).await
+    }
+    
+    /// Upload a text file to SurrealDB bucket
+    pub async fn upload_text(&self, path: &str, content: &str) -> anyhow::Result<(), anyhow::Error> {
+        self.bucket.file(path).put_string(content).await
     }
     
     /// Download a file from SurrealDB bucket
     pub async fn download_file(&self, path: &str) -> anyhow::Result<Option<Vec<u8>>, anyhow::Error> {
-        file_storage::get_file(&self.bucket_name, path).await
+        self.bucket.file(path).get().await
+    }
+    
+    /// Download a text file from SurrealDB bucket
+    pub async fn download_text(&self, path: &str) -> anyhow::Result<Option<String>, anyhow::Error> {
+        self.bucket.file(path).get_string().await
     }
     
     /// Delete a file from SurrealDB bucket
     pub async fn delete_file(&self, path: &str) -> anyhow::Result<(), anyhow::Error> {
-        file_storage::delete_file(&self.bucket_name, path).await
+        self.bucket.file(path).delete().await
     }
     
     /// Check if a file exists
     pub async fn file_exists(&self, path: &str) -> anyhow::Result<bool, anyhow::Error> {
-        file_storage::file_exists(&self.bucket_name, path).await
+        self.bucket.file(path).exists().await
+    }
+    
+    /// Get file metadata
+    pub async fn get_file_metadata(&self, path: &str) -> anyhow::Result<Option<file_storage::FileMetadata>, anyhow::Error> {
+        self.bucket.file(path).head().await
+    }
+    
+    /// Rename a file
+    pub async fn rename_file(&self, old_path: &str, new_path: &str) -> anyhow::Result<(), anyhow::Error> {
+        self.bucket.file(old_path).rename_to(new_path).await
+    }
+    
+    /// Copy a file
+    pub async fn copy_file(&self, src_path: &str, dst_path: &str) -> anyhow::Result<(), anyhow::Error> {
+        self.bucket.file(src_path).copy_to(dst_path).await
     }
 }
 
@@ -695,11 +758,40 @@ impl FileSystem {
         
         match backend {
             StorageBackend::SurrealDb => {
+                // Note: PlatformSpawner::spawn on native uses tokio::task::spawn which
+                // can run on a different thread. The SurrealDB SDK sometimes reports
+                // "Connection uninitialised" from spawned tasks even when the connection
+                // is established. This appears to be a timing/synchronization issue.
+                // We use retry logic as a workaround.
                 PlatformSpawner::spawn(async move {
                     let fetcher = SurrealDbFetcher::new(&name);
-                    match fetcher.request_bucket_contents(&folder_pref).await {
-                        Ok(node) => { let _ = tx.send(node); },
-                        Err(e) => log::warn!("Error getting node from SurrealDB: {e:?}"),
+                    
+                    // Retry up to 3 times with small delays (native only)
+                    let mut attempts = 0;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let max_attempts = 3;
+                    #[cfg(target_arch = "wasm32")]
+                    let max_attempts = 1; // No retry on WASM
+                    
+                    loop {
+                        attempts += 1;
+                        match fetcher.request_bucket_contents(&folder_pref).await {
+                            Ok(node) => {
+                                let _ = tx.send(node);
+                                break;
+                            },
+                            Err(e) => {
+                                let err_str = e.to_string();
+                                if err_str.contains("uninitialised") && attempts < max_attempts {
+                                    log::warn!("SurrealDB connection not ready (attempt {}/{}), retrying...", attempts, max_attempts);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    tokio::time::sleep(std::time::Duration::from_millis(100 * attempts as u64)).await;
+                                } else {
+                                    log::warn!("Error getting node from SurrealDB after {} attempts: {e:?}", attempts);
+                                    break;
+                                }
+                            },
+                        }
                     }
                 });
             }

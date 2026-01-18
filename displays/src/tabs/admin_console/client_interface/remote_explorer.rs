@@ -206,6 +206,11 @@ impl RemoteExplorer {
                         }
                     });
                 } else {
+                    // Track deferred actions to avoid borrow conflicts
+                    let mut navigate_to_path: Option<String> = None;
+                    let mut should_refresh = false;
+                    let mut new_selected_idx: Option<usize> = None;
+                    
                     ScrollArea::vertical()
                         .max_height(size.y - 80.)
                         .auto_shrink(false)
@@ -232,28 +237,29 @@ impl RemoteExplorer {
                                         }
                                         
                                         if response.clicked() {
-                                            self.selected_idx = Some(idx);
+                                            new_selected_idx = Some(idx);
                                         }
                                         
                                         // Double-click to navigate into directories
-                                        if response.double_clicked() {
-                                            if entry.is_directory {
-                                                self.navigate_to(entry.path.clone(), cmd_tx);
-                                            }
+                                        if response.double_clicked() && entry.is_directory {
+                                            navigate_to_path = Some(entry.path.clone());
                                         }
                                         
-                                        // Context menu
+                                        // Context menu - capture entry data for deferred action
+                                        let entry_path = entry.path.clone();
+                                        let entry_is_directory = entry.is_directory;
+                                        
                                         response.context_menu(|ui| {
                                             ui.set_min_width(150.0);
                                             
-                                            if entry.is_directory {
+                                            if entry_is_directory {
                                                 if ui.button("📂 Open").clicked() {
-                                                    self.navigate_to(entry.path.clone(), cmd_tx);
+                                                    navigate_to_path = Some(entry_path.clone());
                                                     ui.close();
                                                 }
                                             } else {
                                                 if ui.button("📥 Download").clicked() {
-                                                    let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(entry.path.clone()));
+                                                    let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(entry_path.clone()));
                                                     ui.close();
                                                 }
                                             }
@@ -262,9 +268,9 @@ impl RemoteExplorer {
                                             
                                             if ui.button("🗑 Delete").clicked() {
                                                 let _ = cmd_tx.try_send(Cmd::FileSystemAction(
-                                                    crate::FileSystemAction::Delete(entry.path.clone())
+                                                    crate::FileSystemAction::Delete(entry_path.clone())
                                                 ));
-                                                self.refresh(cmd_tx);
+                                                should_refresh = true;
                                                 ui.close();
                                             }
                                         });
@@ -272,6 +278,17 @@ impl RemoteExplorer {
                                 }
                             );
                         });
+                    
+                    // Apply deferred actions after the borrow ends
+                    if let Some(idx) = new_selected_idx {
+                        self.selected_idx = Some(idx);
+                    }
+                    if let Some(path) = navigate_to_path {
+                        self.navigate_to(path, cmd_tx);
+                    }
+                    if should_refresh {
+                        self.refresh(cmd_tx);
+                    }
                 }
             });
     }
