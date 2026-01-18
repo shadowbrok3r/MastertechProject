@@ -206,10 +206,9 @@ impl TaskNotePayload {
                 return Err(anyhow::anyhow!("Task ID is empty"));
             } else {
                 log::info!("task_note/mod.rs -> handle_note_creation -> This better be a private note or some bullshit i swear to god\nPS: if you see this message, probably dont tell me about it (jk pls do, but very carefully)");
-                match self.create_task_note_in_db().await {
-                    Ok(_) => log::info!("task_note/mod.rs -> handle_note_creation -> Task note created successfully in DB"),
-                    Err(e) => log::error!("task_note/mod.rs -> handle_note_creation -> Failed to create task note in DB: {e:?}"),
-                }
+                // BUG FIX: Actually return the error instead of just logging it!
+                self.create_task_note_in_db().await?;
+                log::info!("task_note/mod.rs -> handle_note_creation -> Task note created successfully in DB");
             }
         } 
         self.check_tagged_user_in_note().await?;
