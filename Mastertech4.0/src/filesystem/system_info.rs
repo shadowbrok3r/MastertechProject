@@ -481,6 +481,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
                 total_written_bytes,
                 written_bytes,
             },
+            exe_path: Some(std::env::current_exe().unwrap_or_default().to_string_lossy().to_string()),
         });
     }
 
@@ -642,6 +643,7 @@ pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::E
                 total_written_bytes,
                 written_bytes,
             },
+            exe_path: Some(std::env::current_exe().unwrap_or_default().to_string_lossy().to_string()),
         });
     }
 
