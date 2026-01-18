@@ -50,6 +50,9 @@ regex = { workspace=true }
 rfd = { workspace = true }
 log = { workspace=true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
+workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}
 tokio = { workspace = true, optional = true }

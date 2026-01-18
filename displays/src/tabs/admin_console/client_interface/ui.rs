@@ -40,6 +40,11 @@ impl WebSocketClient {
                             };
                             let _ = self.send_cmd_tx.try_send(Cmd::ListDirectory(path));
                             self.remote_explorer.loading = true;
+                            
+                            // Also request drives if we don't have them yet
+                            if self.remote_explorer.drives.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::GetDrives);
+                            }
                         }
                     }
 

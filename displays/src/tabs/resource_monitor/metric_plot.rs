@@ -74,6 +74,10 @@ impl MetricPlot {
 
 
     pub fn ui(&mut self, ui: &mut Ui, plot_name: &str, color: Color32) -> Response {
+        self.ui_with_height(ui, plot_name, color, 150.0)
+    }
+    
+    pub fn ui_with_height(&mut self, ui: &mut Ui, plot_name: &str, color: Color32, height: f32) -> Response {
         let x_label = RichText::new(&self.x_label).size(14.0).strong();
         let y_label = RichText::new(&self.y_label).size(14.0).strong();
 
@@ -86,6 +90,9 @@ impl MetricPlot {
         }
         
         let line_chart = self.line(plot_name, color);
+        
+        // Use fixed height for consistent sizing
+        let plot_width = ui.available_width() - 20.0;
 
         Plot::new(plot_name)
             .legend(
@@ -98,8 +105,8 @@ impl MetricPlot {
                 )
                 .background_alpha(0.90)
             )
-            .width(ui.available_size_before_wrap().x/1.5)
-            .height(ui.available_size_before_wrap().y/1.5)
+            .width(plot_width)
+            .height(height)
             .allow_drag(false)
             .show_background(false)
             .x_axis_label(x_label)

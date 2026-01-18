@@ -80,7 +80,8 @@ impl ProcessTableViewer {
             action_rx,
             action_tx,
             refresh_rate_ms: 1000, // Default to 1 second
-            last_update: Instant::now(),
+            // Initialize to epoch so first update always goes through
+            last_update: Instant::now() - std::time::Duration::from_secs(10),
             refresh_rate_idx: 1, // Index of "1 second" option
         }
     }
@@ -245,33 +246,33 @@ impl RowViewer<Process> for ProcessRowViewer {
         hotkeys
     }
 
-    // fn custom_context_menu_items(
-    //     &mut self,
-    //     _context: &UiActionContext,
-    //     _selection: &egui_data_table::SelectionSnapshot<'_, Process>,
-    // ) -> Vec<egui_data_table::CustomMenuItem> {
-    //     vec![
-    //         egui_data_table::CustomMenuItem::new("Kill Process", UiAction::KillProcess),
-    //         egui_data_table::CustomMenuItem::new("Open Process in File Explorer", UiAction::OpenProcessInFileExplorer),
-    //     ]
-    // }
+    fn custom_context_menu_items(
+        &mut self,
+        _context: &UiActionContext,
+        _selection: &egui_data_table::SelectionSnapshot<'_, Process>,
+    ) -> Vec<egui_data_table::CustomMenuItem> {
+        vec![
+            egui_data_table::CustomMenuItem::new("Kill Process", UiAction::KillProcess),
+            egui_data_table::CustomMenuItem::new("Open Process in File Explorer", UiAction::OpenProcessInFileExplorer),
+        ]
+    }
 
-    // fn on_custom_action_ex(
-    //     &mut self,
-    //     action_id: &'static str,
-    //     ctx: &egui_data_table::viewer::CustomActionContext<'_, Process>,
-    //     editor: &mut egui_data_table::viewer::CustomActionEditor<Process>,
-    // ) {
-    //     match action_id {
-    //         "Kill Process" => {
-    //             ctx.row.kill_process();
-    //         },
-    //         "Open Process in File Explorer" => {
-    //             ctx.row.open_process_in_file_explorer();
-    //         },
-    //     }
-    //     editor.close();
-    // }
+    fn on_custom_action_ex(
+        &mut self,
+        action_id: &'static str,
+        ctx: &egui_data_table::viewer::CustomActionContext<'_, Process>,
+        editor: &mut egui_data_table::viewer::CustomActionEditor<Process>,
+    ) {
+        match action_id {
+            "Kill Process" => {
+                ctx.row.kill_process();
+            },
+            "Open Process in File Explorer" => {
+                ctx.row.open_process_in_file_explorer();
+            },
+        }
+        editor.close();
+    }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &Process, column: usize) {
         let _ = match column {
