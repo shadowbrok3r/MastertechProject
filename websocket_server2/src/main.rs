@@ -175,30 +175,8 @@ impl ChatServer {
                             .await?;
                         break;
                     }
-                    Message::Ping(bytes) => {
-                        server_clone
-                            .handle_message(ChatMessage::Send {
-                                from: session_id_clone.clone(),
-                                room_id: room_id_clone.clone(),
-                                text: String::new(),
-                                bin: None,
-                                ping: Some(bytes.to_vec()), // Add a ping field
-                                pong: None,
-                            })
-                            .await;
-                    },
-                    Message::Pong(bytes) => {
-                        server_clone
-                            .handle_message(ChatMessage::Send {
-                                from: session_id_clone.clone(),
-                                room_id: room_id_clone.clone(),
-                                text: String::new(),
-                                bin: None,
-                                ping: None,
-                                pong: Some(bytes.to_vec()),
-                            })
-                            .await;
-                    },
+                    Message::Ping(_bytes) => {},
+                    Message::Pong(_bytes) => {},
                 }
             }
             server_clone
@@ -275,36 +253,10 @@ impl ChatServer {
                             }
                         }
                     } else {
-                        // No target session found - the other party isn't connected
-                        // Notify the sender that the target is unavailable
-                        log::warn!("No target session found in room {} - notifying sender", room_id);
-                        
-                        // Get the sender's session to notify them
-                        let sender_session = if self.is_session_match(room.master.as_ref(), &from).await {
-                            room.master.clone()
-                        } else if self.is_session_match(room.client.as_ref(), &from).await {
-                            room.client.clone()
-                        } else {
-                            None
-                        };
-                        
-                        if let Some(session) = sender_session {
-                            let mut session = session.lock().await;
-                            let _ = session.send(Message::Text(
-                                format!("ERROR: Target not connected in room {}", room_id).into()
-                            )).await;
-                        }
-                        
-                        // Mark the client as disconnected in the database since the other side isn't there
-                        let room_id_clone = room_id.clone();
-                        tokio::spawn(async move {
-                            let _: Result<Option<ConnectedClient>, _> = DATABASE
-                                .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $room_id")
-                                .bind(("room_id", room_id_clone.clone()))
-                                .await
-                                .and_then(|mut r| r.take(0));
-                            log::info!("Marked client {} as disconnected due to missing target session", room_id_clone);
-                        });
+                        // No target session found - the other party isn't connected yet
+                        // This is normal - just means the master hasn't connected to this room yet
+                        // Don't mark the client as disconnected - they're still connected, just waiting
+                        log::debug!("No target session in room {} - target may not have connected yet", room_id);
                     }
                 } else {
                     info!("Room {} not found", room_id);

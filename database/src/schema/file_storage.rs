@@ -25,6 +25,7 @@ use crate::{DATABASE, ensure_connected_or_reconnect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use chrono::{DateTime, Utc};
+use surrealdb_types::{SurrealValue, Bytes as SurrealBytes};
 
 /// File metadata returned by file::head
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -52,6 +53,17 @@ pub struct FileEntry {
     /// Whether this is a directory (derived from key ending with '/')
     #[serde(default)]
     pub is_directory: bool,
+}
+
+/// A file entry for directory listings (matches SurrealDB's file::list output)
+#[derive(Debug, Clone, Serialize, Deserialize, Default, SurrealValue)]
+pub struct SurrealFileEntry {
+    /// The file pointer (e.g., f"bucket:/path/to/file")
+    pub file: surrealdb_types::File,
+    /// File size in bytes
+    pub size: u64,
+    /// Last updated timestamp
+    pub updated: surrealdb_types::Datetime,
 }
 
 impl FileEntry {
@@ -94,7 +106,7 @@ pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Erro
     let bucket_name = sanitize_bucket_name(username);
     log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
     // Use memory backend for user buckets by default (can be changed to file backend)
-    let query = format!(r#"DEFINE BUCKET IF NOT EXISTS {} BACKEND "memory""#, bucket_name);
+    let query = format!(r#"DEFINE BUCKET IF NOT EXISTS {} "#, bucket_name);
     DATABASE.query(&query).await?;
     log::info!("Initialized user bucket: {}", bucket_name);
     Ok(())
@@ -109,16 +121,44 @@ pub async fn init_user_bucket(username: &str) -> anyhow::Result<(), anyhow::Erro
 pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
     let normalized_path = normalize_path(path);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
+    let data_len = data.len();
+    log::info!("file_storage::put_file -> Starting upload: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
+    
+    // Ensure connection is alive before querying
+    if let Err(e) = ensure_connected_or_reconnect().await {
+        log::warn!("file_storage::put_file -> Connection check failed: {e}");
+    }
+    
+    // Use tokio::time::timeout to prevent hanging on large files
+    let timeout_duration = std::time::Duration::from_secs(60); // 60 second timeout for uploads
+    
     // SurrealQL method syntax: f"bucket:/path".put(data)
     let query = format!(r#"f"{}:{}".put($data)"#, bucket_name, normalized_path);
-    DATABASE
-        .query(&query)
-        .bind(("data", data))
-        .await?;
+    log::debug!("file_storage::put_file -> Query: {}", query);
     
-    log::info!("file_storage::put_file -> {}:{}", bucket_name, normalized_path);
-    Ok(())
+    let result = tokio::time::timeout(
+        timeout_duration,
+        DATABASE
+            .query(&query)
+            .bind(("data", data))
+    ).await;
+    
+    match result {
+        Ok(Ok(_)) => {
+            log::info!("file_storage::put_file -> SUCCESS: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            log::error!("file_storage::put_file -> FAILED: {}:{} - {}", bucket_name, normalized_path, e);
+            Err(e.into())
+        }
+        Err(_) => {
+            log::error!("file_storage::put_file -> TIMEOUT after {} seconds: {}:{} ({} bytes)", 
+                timeout_duration.as_secs(), bucket_name, normalized_path, data_len);
+            Err(anyhow::anyhow!("Upload timeout after {} seconds for file {} ({} bytes)", 
+                timeout_duration.as_secs(), normalized_path, data_len))
+        }
+    }
 }
 
 /// Put a file only if it doesn't already exist
@@ -151,14 +191,19 @@ pub async fn get_file(bucket: &str, path: &str) -> anyhow::Result<Option<Vec<u8>
         log::warn!("file_storage::get_file -> Connection check failed: {e}");
     }
     
-    // SurrealQL method syntax: f"bucket:/path".get()
-    let query = format!(r#"f"{}:{}".get()"#, bucket_name, normalized_path);
+    // SurrealQL method syntax: f"bucket:/path".get() returns bytes type
+    // Use RETURN to wrap the result properly
+    let query = format!(r#"RETURN f"{}:{}".get()"#, bucket_name, normalized_path);
     
     let mut response = DATABASE.query(&query).await?;
-    let data: Option<Vec<u8>> = response.take(0)?;
+    // Use surrealdb_types::Bytes for proper deserialization of SurrealDB bytes type
+    let data: Option<SurrealBytes> = response.take(0)?;
     
-    log::debug!("file_storage::get_file -> {}:{} (found: {})", bucket_name, normalized_path, data.is_some());
-    Ok(data)
+    // Convert SurrealBytes to Vec<u8>
+    let result = data.map(|b| b.into_inner().to_vec());
+    
+    log::debug!("file_storage::get_file -> {}:{} (found: {})", bucket_name, normalized_path, result.is_some());
+    Ok(result)
 }
 
 /// Get a file as a string (convenience method for text files)
@@ -247,71 +292,53 @@ pub async fn file_exists(bucket: &str, path: &str) -> anyhow::Result<bool, anyho
 /// ```
 pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEntry>, anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);
-    log::info!("About to query DB. DATABASE ptr: {:p}", &*DATABASE);
     
     // Ensure connection is alive before querying
     if let Err(e) = ensure_connected_or_reconnect().await {
         log::warn!("file_storage::list_files -> Connection check failed: {e}");
-        // Continue anyway, the query itself will fail if connection is truly dead
     }
     
-    // file::list takes the bucket name as a string, with optional options object
-    // file::list("bucket_name") or file::list("bucket_name", { prefix: "...", limit: N })
+    // file::list returns array<object> with: { file: File, size: u64, updated: Datetime }
+    // Using SurrealFileEntry with native surrealdb_types for proper deserialization
+    // See: https://surrealdb.com/docs/3.x/surrealql/functions/database/file#filelist
     let query = if prefix.is_empty() || prefix == "/" {
-        format!(r#"file::list("{}")"#, bucket_name)
+        format!(r#"RETURN file::list("{}")"#, bucket_name)
     } else {
-        // Clean up prefix - remove leading/trailing slashes for the prefix filter
         let clean_prefix = prefix.trim_matches('/');
-        format!(r#"file::list("{}", {{ prefix: "{}" }})"#, bucket_name, clean_prefix)
+        format!(r#"RETURN file::list("{}", {{ prefix: "{}" }})"#, bucket_name, clean_prefix)
     };
     
     log::debug!("file_storage::list_files -> query: {}", query);
     
     let mut response = DATABASE.query(&query).await?;
-    let entries: Option<Vec<Value>> = response.take(0)?;
+    let entries: Vec<SurrealFileEntry> = response.take(0)?;
     
-    log::debug!("file_storage::list_files -> raw response: {:?}", entries);
-    
-    match entries {
-        Some(list) => {
-            let file_entries: Vec<FileEntry> = list
-                .into_iter()
-                .filter_map(|v| {
-                    // file::list returns objects with: { file: f"bucket:/path", size: N, updated: datetime }
-                    if let Ok(mut entry) = serde_json::from_value::<FileEntry>(v.clone()) {
-                        // Extract key from file pointer if present
-                        if let Some(file_ptr) = &entry.file {
-                            entry.key = extract_key_from_file_pointer(file_ptr);
-                            entry.is_directory = entry.key.ends_with('/');
-                        }
-                        Some(entry)
-                    } else if let Some(file_str) = v.as_str() {
-                        // Fallback: just a file string
-                        let key = extract_key_from_file_pointer(file_str);
-                        Some(FileEntry {
-                            file: Some(file_str.to_string()),
-                            key: key.clone(),
-                            is_directory: key.ends_with('/'),
-                            size: None,
-                            updated: None,
-                        })
-                    } else {
-                        log::warn!("file_storage::list_files -> Couldn't parse entry: {:?}", v);
-                        None
-                    }
-                })
-                .collect();
-            
-            log::info!("file_storage::list_files -> {} files in bucket '{}' (prefix: '{}')", 
-                file_entries.len(), bucket_name, prefix);
-            Ok(file_entries)
-        }
-        None => {
-            log::info!("file_storage::list_files -> No files in bucket '{}' (prefix: '{}')", 
-                bucket_name, prefix);
-            Ok(Vec::new())
-        }
+    if entries.is_empty() {
+        log::info!("file_storage::list_files -> No files in bucket '{}' (prefix: '{}')", 
+            bucket_name, prefix);
+        return Ok(Vec::new());
     }
+    
+    // Convert SurrealFileEntry to FileEntry
+    let file_entries: Vec<FileEntry> = entries
+        .into_iter()
+        .map(|entry| {
+            let key = entry.file.key.clone();
+            let is_directory = key.ends_with('/');
+            let file_ptr = format!("{}:{}", entry.file.bucket, entry.file.key);
+            FileEntry {
+                file: Some(file_ptr),
+                key,
+                size: Some(entry.size),
+                updated: Some(entry.updated.into_inner()),
+                is_directory,
+            }
+        })
+        .collect();
+    
+    log::info!("file_storage::list_files -> {} files in bucket '{}' (prefix: '{}')", 
+        file_entries.len(), bucket_name, prefix);
+    Ok(file_entries)
 }
 
 /// List files with additional options (limit, start cursor)
@@ -338,43 +365,48 @@ pub async fn list_files_with_options(
         options.push(format!(r#"start: "{}""#, s));
     }
     
+    // Use native SurrealDB types for proper deserialization
     let query = if options.is_empty() {
-        format!(r#"file::list("{}")"#, bucket_name)
+        format!(r#"RETURN file::list("{}")"#, bucket_name)
     } else {
-        format!(r#"file::list("{}", {{ {} }})"#, bucket_name, options.join(", "))
+        format!(r#"RETURN file::list("{}", {{ {} }})"#, bucket_name, options.join(", "))
     };
     
     log::debug!("file_storage::list_files_with_options -> query: {}", query);
     
     let mut response = DATABASE.query(&query).await?;
-    let entries: Option<Vec<Value>> = response.take(0)?;
+    let entries: Vec<SurrealFileEntry> = response.take(0)?;
     
-    match entries {
-        Some(list) => {
-            let file_entries: Vec<FileEntry> = list
-                .into_iter()
-                .filter_map(|v| {
-                    if let Ok(mut entry) = serde_json::from_value::<FileEntry>(v.clone()) {
-                        if let Some(file_ptr) = &entry.file {
-                            entry.key = extract_key_from_file_pointer(file_ptr);
-                            entry.is_directory = entry.key.ends_with('/');
-                        }
-                        Some(entry)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            Ok(file_entries)
-        }
-        None => Ok(Vec::new())
+    if entries.is_empty() {
+        return Ok(Vec::new());
     }
+    
+    // Convert SurrealFileEntry to FileEntry
+    let file_entries: Vec<FileEntry> = entries
+        .into_iter()
+        .map(|entry| {
+            let key = entry.file.key.clone();
+            let is_directory = key.ends_with('/');
+            let file_ptr = format!("{}:{}", entry.file.bucket, entry.file.key);
+            FileEntry {
+                file: Some(file_ptr),
+                key,
+                size: Some(entry.size),
+                updated: Some(entry.updated.into_inner()),
+                is_directory,
+            }
+        })
+        .collect();
+    Ok(file_entries)
 }
 
 /// Extract the key/path from a SurrealDB file pointer string
-/// e.g., `f"bucket:/path/to/file.txt"` -> `/path/to/file.txt`
+/// Handles both formats:
+/// - Raw file pointer: `f"bucket:/path/to/file.txt"` -> `/path/to/file.txt`
+/// - String-cast file: `bucket:/path/to/file.txt` -> `/path/to/file.txt`
+#[cfg(test)]
 fn extract_key_from_file_pointer(file_ptr: &str) -> String {
-    // Remove the f" prefix and trailing "
+    // Remove the f" prefix and trailing quotes if present (raw file pointer)
     let clean = file_ptr
         .trim_start_matches("f\"")
         .trim_start_matches("f'")
@@ -382,6 +414,7 @@ fn extract_key_from_file_pointer(file_ptr: &str) -> String {
         .trim_end_matches('\'');
     
     // Find the :/ separator and extract path after it
+    // e.g., "logan_lees:/test.txt" -> "/test.txt"
     if let Some(pos) = clean.find(":/") {
         clean[pos + 1..].to_string()
     } else {

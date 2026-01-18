@@ -664,11 +664,11 @@ fn setup_custom_fonts(ctx: &Context) {
         .unwrap()
         .insert(0, "UbuntuMonoNerdFont".to_owned()); // "Monaspace"
 
-    fonts
-        .families
-        .get_mut(&FontFamily::Monospace)
-        .unwrap()
-        .insert(1, "CascadiaMono".to_owned()); // "Monaspace"
+    // fonts
+    //     .families
+    //     .get_mut(&FontFamily::Name("CascadiaMono".into()))
+    //     .unwrap()
+    //     .insert(0, "CascadiaMono".to_owned()); // "Monaspace"
 
     fonts.font_data.insert(
         "Regular".to_owned(),
@@ -679,6 +679,11 @@ fn setup_custom_fonts(ctx: &Context) {
     fonts.families.insert(
         FontFamily::Name("Regular".into()),
         vec!["Regular".to_owned()],
+    );
+
+    fonts.families.insert(
+        FontFamily::Name("CascadiaMono".into()),
+        vec!["CascadiaMono".to_owned()],
     );
     fonts.font_data.insert(
         "Bold".to_owned(),
