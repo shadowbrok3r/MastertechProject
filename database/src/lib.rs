@@ -17,7 +17,7 @@ pub mod schema;
 
 pub use platform::PlatformSpawner;
 
-use crate::schema::{NOTIFICATION_TABLE, Notification};
+use crate::schema::{NOTIFICATION_TABLE, Notification, file_storage};
 
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
@@ -39,6 +39,9 @@ pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
 pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
 pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");
+pub const BUCKET_DEV_WINDOWS_URL: &str = "D:/SurrealBuckets/";
+pub const BUCKET_DEV_LINUX_URL: &str = "/home/shadowbroker/Documents/SurrealKV";
+pub const BUCKET_URL: &str = "/SurrealBuckets";
 
 // JWT token type - in v3.0 this is just a String
 pub type Jwt = String;
@@ -206,9 +209,27 @@ impl Database {
                     }
                 }
 
-                if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
-                    // log::warn!("SET THE USER: {:?}", user_info_guard.clone());
-                    *user_info_guard = user.clone(); // Set the user info
+                if let Some(u) = user.clone() {
+                    if cfg!(debug_assertions)  {
+                        if cfg!(target_os = "windows") {
+                            let bucket_url = format!("{}{}", BUCKET_DEV_WINDOWS_URL, u.get_user_bucket_name());
+                            let _ = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await;
+                        } else if cfg!(target_os = "linux") {
+                            let bucket_url = format!("{}{}", BUCKET_DEV_LINUX_URL, u.get_user_bucket_name());
+                            let _ = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await;
+                        }
+                    } else {
+                        let bucket_url = format!("{}{}", BUCKET_URL, u.get_user_bucket_name());
+                        let _ = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await;
+                    }
+                    if let Err(e) = file_storage::init_user_bucket(&u.get_user_bucket_name()).await {
+                        log::warn!("Failed to initialize user bucket: {e}");
+                    }
+                
+                    // lock only after await
+                    if let Ok(mut user_info_guard) = CURRENT_USER_INFO.try_lock() {
+                        *user_info_guard = Some(u);
+                    }
                 }
 
                 Ok( Self { jwt: Some(jwt.access.as_insecure_token().to_string()), user } )

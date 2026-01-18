@@ -1,4 +1,4 @@
-use database::{live_data::{handle_live_delete, update_or_insert_anything}, schema::ConnectedClient};
+use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::ConnectedClient};
 use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use eframe::egui::{Color32, RichText};
 use std::collections::BTreeMap;
@@ -8,63 +8,92 @@ use database::live_data::Action;
 
 impl SharedContext {
     pub fn receive_client(&mut self) {
+        // Process only ONE notification per frame to avoid duplicates
         if let Ok((action, new_client)) = self.live_clients_rx.try_recv() {
-            log::info!("new_client: {action:?} // {new_client:?}");
+            log::info!("new_client: {action:?} // connected={} // {}", new_client.connected, new_client.connection_string);
 
-            if let (Some(usr), Some(current_user)) =
-                (&new_client.assigned_user, &self.current_user)
-            {
+            // Check if this is a meaningful change (Create action or actual connection state change)
+            let should_notify = if let (Some(usr), Some(current_user)) = (&new_client.assigned_user, &self.current_user) {
                 if usr == &current_user.get_id() {
-                    let toast = &mut self.toasts;
-                    let txt = match action {
-                        Action::Create => RichText::new(format!(
-                            "Client has connected: {}",
-                            &new_client.connection_string
-                        ))
-                        .color(Color32::LIGHT_GREEN),
-                        // Action::Update => RichText::new(
-                        //     format!("Client update: {:#?}", &new_client.clone())
-                        // ).color(Color32::LIGHT_BLUE),
-                        Action::Delete => RichText::new(format!(
-                            "Client has disconnected: {}",
-                            &new_client.connection_string
-                        ))
-                        .color(Color32::LIGHT_RED),
-                        _ => RichText::new(format!(
-                            "Client has connected: {}",
-                            &new_client.connection_string
-                        ))
-                        .color(Color32::LIGHT_GREEN),
-                    };
-                    let toast_opts = ToastOptions::default()
-                        .show_progress(true)
-                        .duration_in_seconds(5.0);
-
-                    let client_connected_toast = Toast {
-                        kind: ToastKind::Success,
-                        text: txt.into(),
-                        options: toast_opts,
-                        style: ToastStyle::default(),
-                    };
-
-                    toast.add(client_connected_toast);
+                    // For Create action, always notify (new client)
+                    // For Update action, only notify if connection state actually changed
+                    // For Delete action, always notify (client removed)
+                    match action {
+                        Action::Create => true,
+                        Action::Update => {
+                            // Check if this client's connection state changed
+                            let old_connected = self.clients.iter()
+                                .find(|c| c.connection_string == new_client.connection_string)
+                                .map(|c| c.connected);
+                            
+                            // Only notify if connected state actually changed
+                            old_connected != Some(new_client.connected)
+                        }
+                        Action::Delete => true,
+                    }
+                } else {
+                    false
                 }
+            } else {
+                false
+            };
+
+            if should_notify {
+                let toast = &mut self.toasts;
+                
+                // Use the `connected` field to determine the message, not the action
+                let (txt, kind) = if action == Action::Delete {
+                    (
+                        RichText::new(format!("Client removed: {}", &new_client.connection_string))
+                            .color(Color32::LIGHT_RED),
+                        ToastKind::Warning
+                    )
+                } else if new_client.connected {
+                    (
+                        RichText::new(format!("Client connected: {}", &new_client.connection_string))
+                            .color(Color32::LIGHT_GREEN),
+                        ToastKind::Success
+                    )
+                } else {
+                    (
+                        RichText::new(format!("Client disconnected: {}", &new_client.connection_string))
+                            .color(Color32::LIGHT_RED),
+                        ToastKind::Warning
+                    )
+                };
+                
+                let toast_opts = ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(5.0);
+
+                let client_toast = Toast {
+                    kind,
+                    text: txt.into(),
+                    options: toast_opts,
+                    style: ToastStyle::default(),
+                };
+
+                toast.add(client_toast);
             }
 
             match action {
-                Action::Create => {
-                    update_or_insert_anything(&mut self.clients, new_client.clone())
-                        .unwrap_or(())
-                }
-                Action::Update => {
-                    update_or_insert_anything(&mut self.clients, new_client.clone())
+                Action::Create | Action::Update => {
+                    update_or_insert_client(&mut self.clients, new_client.clone())
                         .unwrap_or(())
                 }
                 Action::Delete => {
-                    handle_live_delete(&mut self.clients, new_client.clone()).unwrap_or(())
+                    handle_live_delete_client(&mut self.clients, new_client.clone()).unwrap_or(())
                 }
-                _ => (),
             };
+            
+            // Update the admin console's client list
+            let connected: Vec<ConnectedClient> = self.clients.iter().filter(|c| c.connected).cloned().collect();
+            let disconnected: Vec<ConnectedClient> = self.clients.iter().filter(|c| !c.connected).cloned().collect();
+            let mut client_map = BTreeMap::new();
+            client_map.insert("Connected".to_string(), connected.clone());
+            client_map.insert("Disconnected".to_string(), disconnected);
+            self.web_console_layout.clients = connected;
+            self.web_console_layout.client_map = client_map;
         }
 
         if let Ok(connected_clients) = self.connected_clients_rx.try_recv() {

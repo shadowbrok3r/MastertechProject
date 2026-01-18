@@ -201,6 +201,12 @@ impl User {
         &self.email.split('@').next().unwrap_or(self.email.as_str())
     }
 
+    pub fn get_user_bucket_name(&self) -> String {
+        let username = self.get_username();
+        let bucket = username.replace('.', "_");
+        bucket
+    }   
+
     pub fn get_email(&self) -> &str {
         &self.email
     }

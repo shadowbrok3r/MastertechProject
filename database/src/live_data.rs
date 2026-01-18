@@ -1,4 +1,4 @@
-use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, RecordIdExt, TaskNotePayload, TaskPayload}};
+use super::{DATABASE, schema::{utilities::LiveUpdate, ConnectedClient, LiveTaskPayload, RecordIdExt, TaskNotePayload, TaskPayload}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
@@ -82,6 +82,17 @@ pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug + Parti
     Ok(())
 }
 
+/// Delete a ConnectedClient by comparing connection_string (unique identifier)
+pub fn handle_live_delete_client(existing_clients: &mut Vec<ConnectedClient>, client_to_delete: ConnectedClient) -> anyhow::Result<(), anyhow::Error> {
+    debug!("Client was Deleted: {:?}", client_to_delete);
+    let index = existing_clients.iter().position(|x| x.connection_string == client_to_delete.connection_string);
+    if let Some(idx) = index {
+        info!("Deleting client @ {idx}");
+        existing_clients.remove(idx);
+    }
+    Ok(())
+}
+
 impl LiveUpdate for LiveTaskPayload {
     fn handle_live_create(self, existing_tasks: &mut Vec<LiveTaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Created: {:?}", self);
@@ -146,6 +157,30 @@ pub fn update_or_insert_anything<T: StructDiff + PartialEq + Debug>(current_data
     }
     if !updated {
         current_data.push(new_data);
+    }
+    Ok(())
+}
+
+/// Update or insert a ConnectedClient by comparing connection_string (unique identifier)
+/// This is needed because ConnectedClient's PartialEq compares all fields, 
+/// causing false negatives when last_update differs
+pub fn update_or_insert_client(current_clients: &mut Vec<ConnectedClient>, new_client: ConnectedClient) 
+    -> anyhow::Result<(), anyhow::Error>
+{
+    let mut updated = false;
+    for existing_client in current_clients.iter_mut() {
+        // Compare by connection_string which is the unique identifier
+        if existing_client.connection_string == new_client.connection_string {
+            debug!("Updating existing client: {}", new_client.connection_string);
+            let diffs = existing_client.diff(&new_client);
+            existing_client.apply_mut(diffs);
+            updated = true;
+            break;
+        } 
+    }
+    if !updated {
+        debug!("Inserting new client: {}", new_client.connection_string);
+        current_clients.push(new_client);
     }
     Ok(())
 }

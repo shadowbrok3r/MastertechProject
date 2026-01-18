@@ -88,63 +88,66 @@ impl ResourceMonitor {
     }
 
     pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) {
-        match self.state {
-            ResourceMonitorState::Stop => {},
-            ResourceMonitorState::RequestingData => {
-                self.cpu_usage_chart.data.clear();
-                self.cpu_clock_chart.data.clear();
-                self.ram_usage_chart.data.clear();
-                self.gpu_temp_chart.data.clear();
-                self.gpu_mem_chart.data.clear();
-                self.component_temp_plot.data.clear();
-                self.disk_usage_plot.data.clear();
-                self.network_interface_plot.data.clear();
+        // When in RequestingData state, clear old data and switch to normal update mode
+        if matches!(self.state, ResourceMonitorState::RequestingData) {
+            self.cpu_usage_chart.data.clear();
+            self.cpu_clock_chart.data.clear();
+            self.ram_usage_chart.data.clear();
+            self.gpu_temp_chart.data.clear();
+            self.gpu_mem_chart.data.clear();
+            self.component_temp_plot.data.clear();
+            self.disk_usage_plot.data.clear();
+            self.network_interface_plot.data.clear();
+            // Switch to Cpu state to start updating
+            self.state = ResourceMonitorState::Cpu;
+        }
+        
+        // Only update charts if not stopped
+        if !matches!(self.state, ResourceMonitorState::Stop) {
+            let wrapped_time = self.start_time.elapsed().as_secs_f32();
+
+            // Update charts with continuous time
+            let continuous_time = wrapped_time;
+
+            self.cpu_usage_chart.update(sysinfo.cpu_percentage);
+            // Normalize MHz
+            self.cpu_clock_chart.update(normalize(sysinfo.cpu_clock, 0.0, 100.0));
+            // Convert MB to GB
+            self.ram_usage_chart.update(if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); 
+
+            // Update component temperatures
+            for (component, &temp) in &sysinfo.component_temps {
+                self.component_temp_plot.update_line(component, continuous_time, temp);
             }
-            _ => {
-                let wrapped_time = self.start_time.elapsed().as_secs_f32();
 
-                // Update charts with continuous time
-                let continuous_time = wrapped_time;
+            for (gpu, gpu_usage) in sysinfo.gpu_info.card.iter().zip(sysinfo.gpu_info.usage.iter()) {
+                self.gpu_temp_chart.update(gpu.temperature as f32);
+                self.gpu_mem_chart.update(gpu_usage.memory_usage as f32);
+            }
 
-                self.cpu_usage_chart.update(sysinfo.cpu_percentage);
-                // Normalize MHz
-                self.cpu_clock_chart.update(normalize(sysinfo.cpu_clock, 0.0, 100.0));
-                // Convert MB to GB
-                self.ram_usage_chart.update(if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); 
+            // Update disk usage
+            for disk_info in &sysinfo.disks {
+                let used = if disk_info.available_space > 0 {
+                    disk_info.total_space as f32 / disk_info.available_space as f32
+                } else {
+                    0.0
+                };
+                self.disk_usage_plot.update_line(&disk_info.device_name, continuous_time, used);
+            }
 
-                // Update component temperatures
-                for (component, &temp) in &sysinfo.component_temps {
-                    self.component_temp_plot.update_line(component, continuous_time, temp);
-                }
-
-                for (gpu, gpu_usage) in sysinfo.gpu_info.card.iter().zip(sysinfo.gpu_info.usage.iter()) {
-                    self.gpu_temp_chart.update(gpu.temperature as f32);
-                    self.gpu_mem_chart.update(gpu_usage.memory_usage as f32);
-                    // self.gpu_mem_chart.update(continuous_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); 
-                    // self.gpu_plot.update_line(&gpu.name, continuous_time, gpu.temperature as f32);
-                    // for x in &gpu_usage.processes { self.gpu_plot.update_line(&gpu.name, continuous_time, x.memory as f32); }
-                }
-
-                // Update disk usage
-                for disk_info in sysinfo.disks {
-                    let used = disk_info.total_space / disk_info.available_space;
-                    
-                    // let used_gb = used as f32 / 1e9;
-                    self.disk_usage_plot.update_line(&disk_info.device_name, continuous_time, used as f32);
-                    
-                }
-
-                // Update network interfaces
-                for interface in &sysinfo.network_interfaces {
-                    log::info!("interface: {interface:?}");
-                    let rx_gb = interface.total_received as f32;
-                    let tx_gb = interface.total_transmitted as f32;
-                    self.network_interface_plot.update_line(&interface.interface_name, continuous_time, rx_gb + tx_gb);
-                }
+            // Update network interfaces
+            for interface in &sysinfo.network_interfaces {
+                log::debug!("interface: {interface:?}");
+                let rx_gb = interface.total_received as f32;
+                let tx_gb = interface.total_transmitted as f32;
+                self.network_interface_plot.update_line(&interface.interface_name, continuous_time, rx_gb + tx_gb);
             }
         }
+        
+        // Always update process table (unless stopped)
+        if !matches!(self.state, ResourceMonitorState::Stop) {
             self.process_table_viewer.set_data(sysinfo.processes);
-
+        }
     }
 
     pub fn display(&mut self, ui: &mut Ui) {

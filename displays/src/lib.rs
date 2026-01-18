@@ -253,12 +253,32 @@ pub enum Cmd {
     OpenProcessInExplorer(String),
     /// Request directory listing from remote machine
     ListDirectory(String),
-    /// Response with directory listing
-    DirectoryListing(Vec<RemoteDirEntry>),
+    /// Response with directory listing (entries, resolved_path)
+    DirectoryListing(Vec<RemoteDirEntry>, Option<String>),
+    /// Request available drives
+    GetDrives,
+    /// Response with available drives
+    DriveList(Vec<String>),
     /// Request to download a file from remote machine
     DownloadRemoteFile(String),
     /// File data chunk response (data, is_last_chunk)
     FileChunk(Vec<u8>, bool),
+    /// Execute/open a file on the remote machine
+    ExecuteRemoteFile(String),
+    /// Request file content for text preview
+    PreviewRemoteFile(String),
+    /// Response with file content for preview (path, content)
+    FilePreviewContent(String, String),
+    /// Upload a file to the remote client (destination_path, data)
+    UploadToClient(String, Vec<u8>),
+    /// Request a thumbnail for an image file
+    RequestThumbnail(String),
+    /// Response with thumbnail data (path, png_bytes)
+    ThumbnailResponse(String, Vec<u8>),
+    /// Save edited file content to remote (path, content)
+    SaveRemoteFile(String, String),
+    /// Response indicating save result
+    SaveResult(bool, String),
     None,
 }
 
@@ -305,6 +325,12 @@ pub enum FileSystemAction {
     GetNode(Node),
     RequestNewContents(String),
     NavigateHome,
+    /// Create a new folder at the given path
+    CreateFolder(String),
+    /// Create a new file at the given path
+    CreateFile(String),
+    /// Rename a file/folder: (old_path, new_name)
+    Rename(String, String),
 }
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {

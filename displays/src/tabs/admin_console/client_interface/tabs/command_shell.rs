@@ -515,7 +515,8 @@ impl WebSocketClient {
                                         Align::Center,
                                     ), |ui| {
                                         ui.set_width(ui.available_width());
-                                        crate::markdown_editor::viewer::easy_mark(ui, &item.message);
+                                        // crate::markdown_editor::viewer::easy_mark(ui, &item.message);
+                                        ui.label(RichText::new(&item.message).monospace());
                                     });
                                 });
                             });

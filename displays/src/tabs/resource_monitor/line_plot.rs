@@ -73,7 +73,15 @@ impl LinePlot {
     }
     
     pub fn ui(&self, ui: &mut Ui, plot_name: &str, colors: &mut HashMap<String, Color32>) -> Response {
-        log::info!("self.data: {:?}", self.data);
+        self.ui_with_height(ui, plot_name, colors, 150.0)
+    }
+    
+    pub fn ui_with_height(&self, ui: &mut Ui, plot_name: &str, colors: &mut HashMap<String, Color32>, height: f32) -> Response {
+        log::debug!("LinePlot {} data: {:?}", plot_name, self.data.keys().collect::<Vec<_>>());
+        
+        // Use fixed height for consistent sizing
+        let plot_width = ui.available_width() - 20.0;
+        
         let plot = Plot::new(plot_name)
         .legend(
             Legend::default()
@@ -85,8 +93,8 @@ impl LinePlot {
             )
             .background_alpha(0.90)
         )
-        .width(ui.available_width()/1.1)
-        .height(ui.available_height()/1.1)
+        .width(plot_width)
+        .height(height)
         .allow_drag(false)
         .show_background(false);
 

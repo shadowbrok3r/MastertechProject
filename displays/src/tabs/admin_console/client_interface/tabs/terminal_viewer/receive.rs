@@ -35,7 +35,7 @@ impl RemoteTerminal {
                 let total_latency = current_time.saturating_sub(sent_timestamp);
                 let network_latency = total_latency.saturating_sub(encode_duration as u128 + decode_duration);
 
-                log::info!(
+                log::debug!(
                     r#"
                     Received buffer, 
                     frame_count={}, 
