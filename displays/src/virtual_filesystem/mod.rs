@@ -1,7 +1,9 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+#[allow(deprecated)]
+use eframe::egui::popup_below_widget;
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
-use database::{DATABASE, schema::{Node, User, buckets::{list_buckets, normalize_prefix}, file_storage}}; 
+use database::schema::{Node, User, buckets::{list_buckets, normalize_prefix}, file_storage}; 
 use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
@@ -205,11 +207,6 @@ impl FileSysHelper for FileSystem {
                 self.preview_selection(label.clone());
             },
             FileSystemAction::EnterDirectory(directory) => {
-                if cfg!(target_os="linux") && !self.current_prefix.ends_with('/'){
-                    self.current_prefix.push('/');
-                } else if cfg!(target_os="windows") && !self.current_prefix.ends_with('\\') {
-                    self.current_prefix.push('\\');
-                }
                 info!("directory double clicked: {directory:?}");
                 self.double_click_folder(&directory);
             }
@@ -217,6 +214,8 @@ impl FileSysHelper for FileSystem {
             FileSystemAction::NavigateHome => {
                 self.navigation_stack.clear();
                 self.current_prefix.clear();
+                // Also refresh root contents
+                let _ = self.request_contents("");
             },
             FileSystemAction::GetNode(new_node) => {
                 log::info!("GetNode");
@@ -228,6 +227,15 @@ impl FileSysHelper for FileSystem {
             },
             FileSystemAction::Delete(file_path) => {
                 self.delete_selection(file_path.clone());
+            },
+            FileSystemAction::CreateFolder(folder_path) => {
+                self.create_folder(folder_path.clone());
+            },
+            FileSystemAction::CreateFile(file_path) => {
+                self.create_file(file_path.clone());
+            },
+            FileSystemAction::Rename(old_path, new_name) => {
+                self.rename_item(old_path.clone(), new_name.clone());
             },
             _ => {}
         }
@@ -270,6 +278,11 @@ impl Clone for FileSystem {
             previewed_file: self.previewed_file.clone(),
             file_editor: self.file_editor.clone(),
             storage_backend: self.storage_backend.clone(),
+            show_create_folder_dialog: self.show_create_folder_dialog,
+            new_folder_name: self.new_folder_name.clone(),
+            show_rename_dialog: self.show_rename_dialog,
+            rename_source_path: self.rename_source_path.clone(),
+            rename_new_name: self.rename_new_name.clone(),
         }
     }
     
@@ -315,6 +328,16 @@ pub struct FileSystem {
     pub file_editor: FileViewer,
     /// Storage backend to use (SurrealDB or S3)
     pub storage_backend: StorageBackend,
+    /// Show the create folder dialog
+    pub show_create_folder_dialog: bool,
+    /// New folder name input
+    pub new_folder_name: String,
+    /// Show the rename dialog
+    pub show_rename_dialog: bool,
+    /// Path of item being renamed
+    pub rename_source_path: String,
+    /// New name for the renamed item
+    pub rename_new_name: String,
 }
 
 impl FileSystem {
@@ -353,6 +376,11 @@ impl FileSystem {
             previewed_file: Default::default(),
             file_editor,
             storage_backend: StorageBackend::default(),
+            show_create_folder_dialog: false,
+            new_folder_name: String::new(),
+            show_rename_dialog: false,
+            rename_source_path: String::new(),
+            rename_new_name: String::new(),
         }
     }
     
@@ -475,47 +503,48 @@ impl FileSystem {
 
         TopBottomPanel::top("FileBrowserTop")
             .frame(top_panel_frame)
-            // .show_separator_line(false)
-            .exact_height(50.)
+            .exact_height(40.)
             .show_inside(ui, |ui| 
         {
-            ui.vertical_centered(|ui| {
-                let pre_modified_path = self.current_prefix.clone();
-                let response = TextEdit::singleline(&mut self.current_prefix)
-                    .desired_width(size.x/1.2)
-                    .ui(ui);
-
-                if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
-                    info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
-                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
+            ui.horizontal_centered(|ui| {
+                // Navigation buttons on the left
+                let home_res = ui.button(RichText::new("🏠")).on_hover_text("Home");
+                if home_res.clicked(){
+                    info!("Home clicked. root: {:?}", self.root);
+                    let send = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
+                    info!("Sending FS Action: {send:?}");
                 }
 
-                ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    ui.add_space(5.);
+                let parent_res = ui.button(RichText::new("⬆")).on_hover_text("Parent Folder");
+                if parent_res.clicked() {
+                    let navigate_up = self.navigate_up();
+                    info!("Navigating up: {navigate_up:?}");
+                }
+                
+                let force_refresh = ui.button(RichText::new("⟲")).on_hover_text("Refresh Current Directory Contents");
+                if force_refresh.clicked() {
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
+                }
+                
+                ui.add_space(8.);
+                
+                // Bucket name as prefix label
+                let bucket_name = self.user.get_user_bucket_name();
+                ui.label(RichText::new(format!("{}:/", bucket_name)).color(Color32::GRAY).monospace());
+                
+                // Path textedit - takes remaining space
+                let pre_modified_path = self.current_prefix.clone();
+                let response = TextEdit::singleline(&mut self.current_prefix)
+                    .desired_width(ui.available_width() - 10.0)
+                    .hint_text("path/to/folder")
+                    .ui(ui);
 
-                    let force_refresh = ui.button(RichText::new("⟲").heading()).on_hover_text("Refresh Current Directory Contents");
-                    if force_refresh.clicked() {
-                        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
-                    }
-
-                    ui.add_space(5.);
-    
-                    let home_res = ui.button(RichText::new("🏠").heading()).on_hover_text("Home");
-                    if home_res.clicked(){
-                        info!("Home clicked. root: {:?}", self.root);
-                        let send = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
-                        info!("Sending FS Action: {send:?}");
-                    }
-    
-                    ui.add_space(5.);
-
-                    let parent_res = ui.button(RichText::new("⬆").heading()).on_hover_text("Parent Folder");
-                    if parent_res.clicked() {
-                        let navigate_up = self.navigate_up();
-                        info!("Navigating up: {navigate_up:?}");
-                    }
-                    ui.add_space(5.);
-                });
+                if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
+                    // Ensure path uses forward slashes
+                    self.current_prefix = self.current_prefix.replace('\\', "/");
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
+                }
             });
         });
 
@@ -551,7 +580,69 @@ impl FileSystem {
         }
         ui.add_space(5.0);
 
-        CentralPanel::default().frame(panel_frame)
+        // Create Folder Dialog
+        if self.show_create_folder_dialog {
+            eframe::egui::Window::new("Create New Folder")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(eframe::egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Folder name:");
+                        ui.text_edit_singleline(&mut self.new_folder_name);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Create").clicked() && !self.new_folder_name.is_empty() {
+                            // Build the full path for the new folder
+                            let base_path = if self.current_prefix.is_empty() { 
+                                String::new() 
+                            } else { 
+                                format!("{}/", self.current_prefix.trim_matches('/'))
+                            };
+                            let folder_path = format!("{}{}", base_path, self.new_folder_name);
+                            let _ = self.fs_actions_channel.0.try_send(FileSystemAction::CreateFolder(folder_path));
+                            self.new_folder_name.clear();
+                            self.show_create_folder_dialog = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.new_folder_name.clear();
+                            self.show_create_folder_dialog = false;
+                        }
+                    });
+                });
+        }
+
+        // Rename Dialog
+        if self.show_rename_dialog {
+            eframe::egui::Window::new("Rename")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(eframe::egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!("Renaming: {}", self.rename_source_path));
+                    ui.horizontal(|ui| {
+                        ui.label("New name:");
+                        ui.text_edit_singleline(&mut self.rename_new_name);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Rename").clicked() && !self.rename_new_name.is_empty() {
+                            let _ = self.fs_actions_channel.0.try_send(
+                                FileSystemAction::Rename(self.rename_source_path.clone(), self.rename_new_name.clone())
+                            );
+                            self.rename_source_path.clear();
+                            self.rename_new_name.clear();
+                            self.show_rename_dialog = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.rename_source_path.clear();
+                            self.rename_new_name.clear();
+                            self.show_rename_dialog = false;
+                        }
+                    });
+                });
+        }
+
+        let central_response = CentralPanel::default().frame(panel_frame)
             .show_inside(ui, |ui| 
         {
             ScrollArea::vertical()
@@ -568,6 +659,29 @@ impl FileSystem {
                     );
                 });
             });
+        });
+        
+        // Background context menu (right-click on empty area of the central panel)
+        central_response.response.context_menu(|ui| {
+            if ui.button("📁 New Folder").clicked() {
+                self.show_create_folder_dialog = true;
+                ui.close();
+            }
+            if ui.button("📄 New File").clicked() {
+                self.show_create_folder_dialog = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("⟲ Refresh").clicked() {
+                let _ = self.fs_actions_channel.0.try_send(
+                    FileSystemAction::RequestNewContents(self.current_prefix.clone())
+                );
+                ui.close();
+            }
+            if ui.button("📤 Upload File").clicked() {
+                self.upload(self.current_prefix.clone());
+                ui.close();
+            }
         });
         
     }
@@ -753,7 +867,7 @@ impl FileSystem {
     pub fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
         let folder_pref = folder_prefix.trim_start_matches('/').to_string();
         let tx = self.paths_channel.0.clone();
-        let name = self.user.get_username().to_string();
+        let name = self.user.get_user_bucket_name();
         let backend = self.storage_backend.clone();
         
         match backend {
@@ -949,7 +1063,7 @@ impl FileSystem {
 
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
-        let name = self.user.get_username().to_string();
+        let name = self.user.get_user_bucket_name().to_string();
         let backend = self.storage_backend.clone();
 
         match backend {
@@ -995,7 +1109,7 @@ impl FileSystem {
         let _task = rfd::AsyncFileDialog::new().pick_folders();
         let _access_key = self.user.get_minio_access_key().unwrap_or_default();
         let _secret_key = self.user.get_minio_secret_key().unwrap_or_default();
-        let _name = self.user.get_username().to_string();
+        let _name = self.user.get_user_bucket_name().to_string();
         // tokio::spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
@@ -1011,7 +1125,7 @@ impl FileSystem {
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
-        let name = self.user.get_username().to_string();
+        let name = self.user.get_user_bucket_name().to_string();
         let backend = self.storage_backend.clone();
         
         match backend {
@@ -1062,7 +1176,7 @@ impl FileSystem {
     pub fn preview_selection(&self, path: String) {
         let tx = self.bytes_tx.clone();
         let preview_tx = self.file_preview_channel.0.clone();
-        let name = self.user.get_username().to_string();
+        let name = self.user.get_user_bucket_name().to_string();
         let backend = self.storage_backend.clone();
         
         match backend {
@@ -1104,7 +1218,7 @@ impl FileSystem {
     }
 
     fn delete_selection(&self, path: String) {
-        let name = self.user.get_username().to_string();
+        let name = self.user.get_user_bucket_name().to_string();
         let backend = self.storage_backend.clone();
         let fs_tx = self.fs_actions_channel.0.clone();
         let current_prefix = self.current_prefix.clone();
@@ -1161,6 +1275,105 @@ impl FileSystem {
                     }
                     let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
                 });
+            }
+        }
+    }
+
+    /// Create a new folder in SurrealDB by creating a placeholder file and deleting it
+    /// This leaves behind the folder structure
+    fn create_folder(&self, folder_path: String) {
+        let name = self.user.get_user_bucket_name().to_string();
+        let backend = self.storage_backend.clone();
+        let fs_tx = self.fs_actions_channel.0.clone();
+        let current_prefix = self.current_prefix.clone();
+        
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    
+                    // Create a placeholder file to create the folder, then delete it
+                    let placeholder_path = format!("{}/.placeholder", folder_path.trim_matches('/'));
+                    info!("Creating folder via placeholder: {placeholder_path}");
+                    
+                    // Put an empty file
+                    match fetcher.upload_text(&placeholder_path, "").await {
+                        Ok(_) => {
+                            info!("Placeholder created, now deleting to leave folder...");
+                            // Delete the placeholder, leaving the folder behind
+                            let _ = fetcher.delete_file(&placeholder_path).await;
+                            info!("Folder '{}' created successfully.", folder_path);
+                        }
+                        Err(e) => log::warn!("Error creating folder '{}': {e:?}", folder_path),
+                    }
+                    
+                    // Refresh the contents
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
+            }
+            StorageBackend::S3 => {
+                log::warn!("Folder creation not yet implemented for S3 backend");
+            }
+        }
+    }
+
+    /// Create a new empty file
+    fn create_file(&self, file_path: String) {
+        let name = self.user.get_user_bucket_name().to_string();
+        let backend = self.storage_backend.clone();
+        let fs_tx = self.fs_actions_channel.0.clone();
+        let current_prefix = self.current_prefix.clone();
+        
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    
+                    match fetcher.upload_text(&file_path, "").await {
+                        Ok(_) => info!("File '{}' created successfully.", file_path),
+                        Err(e) => log::warn!("Error creating file '{}': {e:?}", file_path),
+                    }
+                    
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
+            }
+            StorageBackend::S3 => {
+                log::warn!("File creation not yet implemented for S3 backend");
+            }
+        }
+    }
+
+    /// Rename a file or folder
+    fn rename_item(&self, old_path: String, new_name: String) {
+        let name = self.user.get_user_bucket_name().to_string();
+        let backend = self.storage_backend.clone();
+        let fs_tx = self.fs_actions_channel.0.clone();
+        let current_prefix = self.current_prefix.clone();
+        
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    
+                    // Build the new path by replacing the filename in the old path
+                    let new_path = if let Some(pos) = old_path.rfind('/') {
+                        format!("{}/{}", &old_path[..pos], new_name)
+                    } else {
+                        new_name.clone()
+                    };
+                    
+                    info!("Renaming '{}' to '{}'", old_path, new_path);
+                    
+                    match fetcher.rename_file(&old_path, &new_path).await {
+                        Ok(_) => info!("Renamed '{}' to '{}' successfully.", old_path, new_path),
+                        Err(e) => log::warn!("Error renaming '{}': {e:?}", old_path),
+                    }
+                    
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
+            }
+            StorageBackend::S3 => {
+                log::warn!("Renaming not yet implemented for S3 backend");
             }
         }
     }
@@ -1255,7 +1468,7 @@ impl FileSystem {
     pub fn upload_script(&self, file_name: String, script_contents: String) {
         let access_key = self.user.get_minio_access_key().unwrap_or_default();
         let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
-        let name = self.user.get_username().to_string();
+        let name = self.user.get_user_bucket_name().to_string();
         let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
 
         let new_name = if file_name.contains(' ') {

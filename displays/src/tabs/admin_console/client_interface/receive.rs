@@ -1,4 +1,4 @@
-use crate::{tabs::admin_console::client_interface::serialize_command, virtual_filesystem::FileSysHelper, Cmd, FileSystemAction, RemoteDirEntry};
+use crate::{tabs::admin_console::client_interface::serialize_command, virtual_filesystem::FileSysHelper, Cmd, FileSystemAction};
 use database::schema::{Node, SystemInformation};
 use ewebsock::{WsEvent, WsMessage};
 use eframe::egui::Context;
@@ -100,7 +100,7 @@ impl WebSocketClient {
             match event{
                 WsEvent::Message(msg) => {
                     match msg{
-                        WsMessage::Binary(bin) => self.handle_binary_message(bin),
+                        WsMessage::Binary(bin) => self.handle_binary_message(bin, ctx),
                         WsMessage::Text(text) => self.handle_text_message(text),
                         WsMessage::Pong(_) => {
                             // Update pong time and connection status
@@ -244,15 +244,15 @@ impl WebSocketClient {
                 self.remote_explorer.loading = true;
                 self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ListDirectory(path))));
             },
-            Cmd::DirectoryListing(entries) => {
-                log::info!("Received directory listing with {} entries", entries.len());
-                self.remote_explorer.set_entries(entries);
+            Cmd::DirectoryListing(entries, path) => {
+                log::info!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
+                self.remote_explorer.set_entries(entries, path);
             },
             _ => self.ws_sender.send(WsMessage::Binary(serialize_command(&command)))
         }
     }
 
-    fn handle_binary_message(&mut self, bin: Vec<u8>) {
+    fn handle_binary_message(&mut self, bin: Vec<u8>, ctx: &Context) {
         match self.state {
             WsDisplayState::LiveStats => {
                 // let bin = &self.handle_binary_message(bin);
@@ -267,9 +267,66 @@ impl WebSocketClient {
             _ => {
                 if let Some(cmd) = deserializer::<Cmd>(&bin){
                     // Handle DirectoryListing directly here for the remote explorer
-                    if let Cmd::DirectoryListing(entries) = &cmd {
-                        log::info!("Received directory listing with {} entries", entries.len());
-                        self.remote_explorer.set_entries(entries.clone());
+                    if let Cmd::DirectoryListing(entries, path) = &cmd {
+                        log::info!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
+                        self.remote_explorer.set_entries(entries.clone(), path.clone());
+                    } else if let Cmd::DriveList(drives) = &cmd {
+                        log::info!("Received drive list with {} drives", drives.len());
+                        self.remote_explorer.set_drives(drives.clone());
+                    } else if let Cmd::FileChunk(data, is_last) = cmd {
+                        log::info!("Received file chunk: {} bytes, is_last: {}", data.len(), is_last);
+                        
+                        // Check if this is for "Copy to My Tools"
+                        if let Some((path, buffer)) = &mut self.remote_explorer.pending_tool_upload {
+                            buffer.extend_from_slice(&data);
+                            if is_last {
+                                let path_clone = path.clone();
+                                let data_clone = std::mem::take(buffer);
+                                self.remote_explorer.copy_to_my_tools(&path_clone, data_clone);
+                                self.remote_explorer.pending_tool_upload = None;
+                                self.history.push(History {
+                                    from: "System".to_string(),
+                                    message: format!("Copied to My Tools: {}", path_clone),
+                                    timestamp: chrono::Local::now().to_rfc3339(),
+                                });
+                            }
+                        } else {
+                            // Normal file download
+                            match self.remote_explorer.handle_file_download(data, is_last, &mut self.download_buffer) {
+                                Ok(Some(msg)) => {
+                                    self.history.push(History {
+                                        from: "System".to_string(),
+                                        message: msg,
+                                        timestamp: chrono::Local::now().to_rfc3339(),
+                                    });
+                                }
+                                Ok(None) => {}
+                                Err(msg) => {
+                                    self.download_buffer.clear();
+                                    self.history.push(History {
+                                        from: "System".to_string(),
+                                        message: format!("Download failed: {}", msg),
+                                        timestamp: chrono::Local::now().to_rfc3339(),
+                                    });
+                                }
+                            }
+                        }
+                    } else if let Cmd::FilePreviewContent(path, content) = cmd {
+                        log::info!("Received file preview content for: {}", path);
+                        self.remote_explorer.handle_preview_content(path, content);
+                    } else if let Cmd::ThumbnailResponse(path, png_data) = cmd {
+                        log::info!("Received thumbnail for: {} ({} bytes)", path, png_data.len());
+                        self.remote_explorer.handle_thumbnail(path, png_data, ctx);
+                    } else if let Cmd::SaveResult(success, message) = cmd {
+                        log::info!("Save result: {} - {}", success, message);
+                        if success {
+                            self.remote_explorer.preview.modified = false;
+                        }
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message,
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }

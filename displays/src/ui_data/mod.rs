@@ -1,4 +1,4 @@
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, User, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, User, CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::Style;
@@ -24,6 +24,7 @@ impl crate::app_state::SharedContext {
         let notes_tx = self.notes_tx.clone();
         let live_notif_tx = self.live_notification_tx.clone();        
         let live_user_tx = self.live_user_tx.clone();
+        let live_clients_tx = self.live_clients_tx.clone();
         self.store_selection = std::convert::Into::<u64>::into(user.get_store());
         let user = user.clone();
         let name = user.get_name();
@@ -78,6 +79,7 @@ impl crate::app_state::SharedContext {
         let error_tx_users = self.live_query_error_tx.clone();
         let error_tx_tasks = self.live_query_error_tx.clone();
         let error_tx_notifs = self.live_query_error_tx.clone();
+        let error_tx_clients = self.live_query_error_tx.clone();
         
         PlatformSpawner::spawn(async move {
             let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
@@ -116,6 +118,16 @@ impl crate::app_state::SharedContext {
                 let error_msg = e.to_string();
                 log::error!("Live query error (notifications): {}", error_msg);
                 let _ = error_tx_notifs.try_send(error_msg);
+            }
+        });
+
+        PlatformSpawner::spawn(async move {
+            let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
+            log::info!("listen_connected_clients: {listen_data:?}");
+            if let Err(e) = listen_data {
+                let error_msg = e.to_string();
+                log::error!("Live query error (connected_clients): {}", error_msg);
+                let _ = error_tx_clients.try_send(error_msg);
             }
         });
 

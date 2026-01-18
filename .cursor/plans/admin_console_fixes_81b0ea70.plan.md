@@ -1,3 +1,9 @@
+---
+name: ""
+overview: ""
+todos: []
+---
+
 # Admin Console Fixes Plan
 
 ## Architecture Overview

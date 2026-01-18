@@ -11,6 +11,73 @@ use super::{data::LocalTermEvent, TerminalApp};
 
 pub mod command;
 
+/// Resolve special folder paths using Windows API or fallback to environment variables
+#[cfg(target_os = "windows")]
+fn resolve_special_path(path: &str) -> String {
+    // Check for special folder keywords
+    let lower_path = path.to_lowercase();
+    
+    // Try to use Windows API for known special folders
+    if let Ok(user_data) = windows::Storage::UserDataPaths::GetDefault() {
+        let resolved = match lower_path.as_str() {
+            "desktop" | "%userprofile%\\desktop" => user_data.Desktop().ok().map(|p| p.to_string()),
+            "documents" | "%userprofile%\\documents" => user_data.Documents().ok().map(|p| p.to_string()),
+            "downloads" | "%userprofile%\\downloads" => user_data.Downloads().ok().map(|p| p.to_string()),
+            "pictures" | "%userprofile%\\pictures" => user_data.Pictures().ok().map(|p| p.to_string()),
+            "music" | "%userprofile%\\music" => user_data.Music().ok().map(|p| p.to_string()),
+            "videos" | "%userprofile%\\videos" => user_data.Videos().ok().map(|p| p.to_string()),
+            "appdata" | "%appdata%" => user_data.RoamingAppData().ok().map(|p| p.to_string()),
+            "localappdata" | "%localappdata%" => user_data.LocalAppData().ok().map(|p| p.to_string()),
+            _ => None,
+        };
+        
+        if let Some(resolved_path) = resolved {
+            log::info!("Resolved '{}' to '{}'", path, resolved_path);
+            return resolved_path;
+        }
+    }
+    
+    // Fallback to environment variable expansion
+    expand_env_vars(path)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_special_path(path: &str) -> String {
+    expand_env_vars(path)
+}
+
+/// Expand environment variables like %USERPROFILE%, $HOME, etc.
+fn expand_env_vars(path: &str) -> String {
+    let mut result = path.to_string();
+    
+    // Windows-style environment variables
+    let env_vars = [
+        "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", 
+        "TEMP", "TMP", "USERNAME", "HOMEDRIVE", "HOMEPATH",
+        "PROGRAMFILES", "PROGRAMFILES(X86)", "SYSTEMROOT",
+        "WINDIR", "SYSTEMDRIVE"
+    ];
+    
+    for var_name in env_vars {
+        let pattern = format!("%{}%", var_name);
+        if result.contains(&pattern) {
+            if let Ok(value) = std::env::var(var_name) {
+                result = result.replace(&pattern, &value);
+            }
+        }
+    }
+    
+    // Unix-style environment variables (e.g., $HOME)
+    if result.starts_with('$') {
+        let var_name = result.trim_start_matches('$').split('/').next().unwrap_or("");
+        if let Ok(value) = std::env::var(var_name) {
+            result = result.replacen(&format!("${}", var_name), &value, 1);
+        }
+    }
+    
+    result
+}
+
 pub struct TerminalWebsocketClient {
     // explorer: FileSystem, 
     bin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, 
@@ -331,14 +398,16 @@ impl TerminalWebsocketClient {
             Cmd::LiveData => {
                 // If already running, do nothing
                 if self.join_handle.is_some() {
+                    log::info!("websockets -> LiveData already running, ignoring request");
                     return;
                 }
+                log::info!("websockets -> Starting live stats task");
                 let tx = self.sysinfo_tx.clone();
                 let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
                 self.live_stats_stop_tx = Some(stop_tx);
                 self.join_handle = Some(tokio::spawn(async move {
                     let res = live_computer_stats(tx, stop_rx).await;
-                    log::info!("live_computer_stats: {res:?}");
+                    log::info!("live_computer_stats completed: {res:?}");
                 }));
             }
             Cmd::TaskManager => todo!(),
@@ -346,12 +415,20 @@ impl TerminalWebsocketClient {
             // Cmd::PullKeys(_) => todo!(),
             // Cmd::PullTicket(_) => todo!(),
             Cmd::Quit => {
+                log::info!("websockets -> Received Cmd::Quit, stopping live stats");
                 // Signal the live stats task to stop and await it
                 if let Some(stop_tx) = self.live_stats_stop_tx.take() {
+                    log::info!("websockets -> Sending stop signal to live stats task");
                     let _ = stop_tx.send(true);
+                } else {
+                    log::warn!("websockets -> No live stats stop channel found");
                 }
                 if let Some(handle) = self.join_handle.take() {
+                    log::info!("websockets -> Waiting for live stats task to complete");
                     let _ = handle.await;
+                    log::info!("websockets -> Live stats task completed");
+                } else {
+                    log::warn!("websockets -> No live stats join handle found");
                 }
             }
             Cmd::KillProcess(pid) => {
@@ -444,13 +521,17 @@ impl TerminalWebsocketClient {
             Cmd::ListDirectory(path_str) => {
                 log::info!("websockets -> Listing directory: {}", path_str);
                 
+                // Resolve special folder paths using Windows API or expand environment variables
+                let expanded_path = resolve_special_path(&path_str);
+                
                 // Determine the actual path to list
                 let target_path = if path_str == "current" {
                     std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf())
                 } else {
-                    Path::new(&path_str).to_path_buf()
+                    Path::new(&expanded_path).to_path_buf()
                 };
                 
+                let resolved_path = target_path.to_string_lossy().to_string();
                 let mut entries: Vec<RemoteDirEntry> = Vec::new();
                 
                 if target_path.is_dir() {
@@ -487,9 +568,24 @@ impl TerminalWebsocketClient {
                     }
                 }
                 
-                // Send the directory listing back
-                let response = Cmd::DirectoryListing(entries);
+                // Send the directory listing back with resolved path
+                let response = Cmd::DirectoryListing(entries, Some(resolved_path));
                 let payload = encode_to_vec(&response, standard()).expect("Failed to serialize DirectoryListing");
+                sender.send(WsMessage::Binary(payload));
+            }
+            Cmd::GetDrives => {
+                log::info!("websockets -> Getting drives");
+                use sysinfo::Disks;
+                
+                let disks = Disks::new_with_refreshed_list();
+                let drives: Vec<String> = disks.iter()
+                    .filter_map(|disk| disk.mount_point().to_str().map(|s| s.to_string()))
+                    .collect();
+                
+                log::info!("websockets -> Found {} drives: {:?}", drives.len(), drives);
+                
+                let response = Cmd::DriveList(drives);
+                let payload = encode_to_vec(&response, standard()).expect("Failed to serialize DriveList");
                 sender.send(WsMessage::Binary(payload));
             }
             Cmd::DownloadRemoteFile(path_str) => {
@@ -497,12 +593,70 @@ impl TerminalWebsocketClient {
                 
                 let path = Path::new(&path_str);
                 if path.is_file() {
+                    // Check file size first to avoid reading huge files into memory
+                    let metadata = match std::fs::metadata(path) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            log::error!("Error getting file metadata: {}", e);
+                            sender.send(WsMessage::Text(format!("Error: Cannot read file metadata - {}", e)));
+                            return;
+                        }
+                    };
+                    
+                    let file_size = metadata.len();
+                    const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB limit
+                    
+                    if file_size > MAX_FILE_SIZE {
+                        log::warn!("File too large for download: {} bytes", file_size);
+                        sender.send(WsMessage::Text(format!("Error: File too large ({} MB). Maximum is 100 MB.", file_size / 1024 / 1024)));
+                        return;
+                    }
+                    
+                    log::info!("Reading file: {} ({} bytes)", path_str, file_size);
+                    
                     match std::fs::read(path) {
                         Ok(data) => {
-                            // Send file data as a chunk
-                            let response = Cmd::FileChunk(data, true);
-                            let payload = encode_to_vec(&response, standard()).expect("Failed to serialize FileChunk");
-                            sender.send(WsMessage::Binary(payload));
+                            log::info!("File read successfully, {} bytes", data.len());
+                            
+                            // For large files, send in chunks to avoid memory issues
+                            const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4 MB chunks
+                            
+                            if data.len() > CHUNK_SIZE {
+                                // Send in multiple chunks
+                                let chunks: Vec<&[u8]> = data.chunks(CHUNK_SIZE).collect();
+                                let total_chunks = chunks.len();
+                                
+                                for (i, chunk) in chunks.into_iter().enumerate() {
+                                    let is_last = i == total_chunks - 1;
+                                    let response = Cmd::FileChunk(chunk.to_vec(), is_last);
+                                    match encode_to_vec(&response, standard()) {
+                                        Ok(payload) => {
+                                            log::info!("Sending chunk {}/{} ({} bytes)", i + 1, total_chunks, payload.len());
+                                            sender.send(WsMessage::Binary(payload));
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to serialize file chunk {}: {}", i, e);
+                                            sender.send(WsMessage::Text(format!("Error: Failed to serialize chunk {} - {}", i, e)));
+                                            return;
+                                        }
+                                    }
+                                }
+                                log::info!("All {} chunks sent successfully", total_chunks);
+                            } else {
+                                // Small file - send in one chunk
+                                let response = Cmd::FileChunk(data, true);
+                                match encode_to_vec(&response, standard()) {
+                                    Ok(payload) => {
+                                        log::info!("Serialized payload size: {} bytes", payload.len());
+                                        sender.send(WsMessage::Binary(payload));
+                                        log::info!("File chunk sent successfully");
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to serialize file chunk: {}", e);
+                                        sender.send(WsMessage::Text(format!("Error: Failed to serialize file - {}", e)));
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             log::error!("Error reading file for download: {}", e);
@@ -510,13 +664,292 @@ impl TerminalWebsocketClient {
                         }
                     }
                 } else {
+                    log::warn!("Path is not a file: {}", path_str);
                     sender.send(WsMessage::Text("Error: Path is not a file".to_string()));
+                }
+            }
+            Cmd::ExecuteRemoteFile(path_str) => {
+                log::info!("websockets -> Execute request for: {}", path_str);
+                let path = Path::new(&path_str);
+                
+                if path.exists() {
+                    #[cfg(target_os = "windows")]
+                    {
+                        // Use ShellExecuteW to open/execute the file
+                        let _ = tokio::process::Command::new("cmd")
+                            .args(["/c", "start", "", &path_str])
+                            .spawn();
+                        log::info!("Executed file: {}", path_str);
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = tokio::process::Command::new("open")
+                            .arg(&path_str)
+                            .spawn();
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = tokio::process::Command::new("xdg-open")
+                            .arg(&path_str)
+                            .spawn();
+                    }
+                } else {
+                    log::warn!("File does not exist: {}", path_str);
+                    sender.send(WsMessage::Text(format!("Error: File not found: {}", path_str)));
+                }
+            }
+            Cmd::PreviewRemoteFile(path_str) => {
+                log::info!("websockets -> Preview request for: {}", path_str);
+                let path = Path::new(&path_str);
+                
+                if path.is_file() {
+                    // Check file size - don't preview huge files
+                    let max_preview_size: u64 = 5 * 1024 * 1024; // 5 MB
+                    
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        if metadata.len() > max_preview_size {
+                            sender.send(WsMessage::Text(format!("Error: File too large for preview ({} MB)", metadata.len() / 1024 / 1024)));
+                            return;
+                        }
+                    }
+                    
+                    match std::fs::read_to_string(path) {
+                        Ok(content) => {
+                            let response = Cmd::FilePreviewContent(path_str, content);
+                            match encode_to_vec(&response, standard()) {
+                                Ok(payload) => {
+                                    sender.send(WsMessage::Binary(payload));
+                                    log::info!("Sent file preview content");
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to serialize preview content: {}", e);
+                                    sender.send(WsMessage::Text(format!("Error: {}", e)));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // May be binary - try reading as lossy UTF-8
+                            if let Ok(bytes) = std::fs::read(path) {
+                                let content = String::from_utf8_lossy(&bytes).to_string();
+                                let response = Cmd::FilePreviewContent(path_str, content);
+                                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                                    sender.send(WsMessage::Binary(payload));
+                                    return;
+                                }
+                            }
+                            log::error!("Error reading file for preview: {}", e);
+                            sender.send(WsMessage::Text(format!("Error reading file: {}", e)));
+                        }
+                    }
+                } else {
+                    sender.send(WsMessage::Text("Error: Path is not a file".to_string()));
+                }
+            }
+            Cmd::UploadToClient(dest_path, data) => {
+                log::info!("websockets -> Upload to client: {} ({} bytes)", dest_path, data.len());
+                
+                match std::fs::write(&dest_path, &data) {
+                    Ok(_) => {
+                        log::info!("Successfully wrote file to: {}", dest_path);
+                        let response = Cmd::SaveResult(true, format!("File saved: {}", dest_path));
+                        if let Ok(payload) = encode_to_vec(&response, standard()) {
+                            sender.send(WsMessage::Binary(payload));
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to write file: {}", e);
+                        let response = Cmd::SaveResult(false, format!("Failed to save: {}", e));
+                        if let Ok(payload) = encode_to_vec(&response, standard()) {
+                            sender.send(WsMessage::Binary(payload));
+                        }
+                    }
+                }
+            }
+            Cmd::RequestThumbnail(path_str) => {
+                log::info!("websockets -> Thumbnail request for: {}", path_str);
+                
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::ffi::OsStrExt;
+                    use windows::{
+                        Win32::{
+                            Foundation::SIZE,
+                            System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, IBindCtx},
+                            UI::Shell::{IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF},
+                            Graphics::Gdi::*,
+                        },
+                        core::{Interface, PCWSTR},
+                    };
+                    
+                    // Initialize COM
+                    unsafe {
+                        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                    }
+                    
+                    let path = Path::new(&path_str);
+                    let result: Result<Vec<u8>, String> = (|| -> Result<Vec<u8>, String> {
+                        unsafe {
+                            let wide: Vec<u16> = path
+                                .as_os_str()
+                                .encode_wide()
+                                .chain(std::iter::once(0))
+                                .collect();
+                            
+                            let shell_item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None::<&IBindCtx>)
+                                .map_err(|e| format!("SHCreateItemFromParsingName: {e}"))?;
+                            let factory: IShellItemImageFactory = shell_item
+                                .cast()
+                                .map_err(|e| format!("cast IShellItemImageFactory: {e}"))?;
+                            let hbmp: HBITMAP = factory
+                                .GetImage(SIZE { cx: 256, cy: 256 }, SIIGBF(0))
+                                .map_err(|e| format!("GetImage: {e}"))?;
+                            
+                            // Convert HBITMAP to PNG bytes
+                            hbitmap_to_png_bytes(hbmp)
+                        }
+                    })();
+                    
+                    match result {
+                        Ok(png_bytes) => {
+                            let response = Cmd::ThumbnailResponse(path_str, png_bytes);
+                            match encode_to_vec(&response, standard()) {
+                                Ok(payload) => {
+                                    sender.send(WsMessage::Binary(payload));
+                                    log::info!("Sent thumbnail");
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to serialize thumbnail: {}", e);
+                                    sender.send(WsMessage::Text(format!("Error: {}", e)));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to generate thumbnail: {}", e);
+                            sender.send(WsMessage::Text(format!("Error generating thumbnail: {}", e)));
+                        }
+                    }
+                }
+                
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // Use image crate as fallback
+                    if let Ok(img) = image::open(&path_str) {
+                        let thumb = img.thumbnail(256, 256);
+                        let mut buf = Vec::new();
+                        if thumb.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).is_ok() {
+                            let response = Cmd::ThumbnailResponse(path_str, buf);
+                            if let Ok(payload) = encode_to_vec(&response, standard()) {
+                                sender.send(WsMessage::Binary(payload));
+                            }
+                        }
+                    } else {
+                        sender.send(WsMessage::Text("Error: Could not load image".to_string()));
+                    }
+                }
+            }
+            Cmd::SaveRemoteFile(path_str, content) => {
+                log::info!("websockets -> Save file request: {}", path_str);
+                
+                match std::fs::write(&path_str, &content) {
+                    Ok(_) => {
+                        log::info!("Successfully saved file: {}", path_str);
+                        let response = Cmd::SaveResult(true, format!("File saved: {}", path_str));
+                        if let Ok(payload) = encode_to_vec(&response, standard()) {
+                            sender.send(WsMessage::Binary(payload));
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to save file: {}", e);
+                        let response = Cmd::SaveResult(false, format!("Failed to save: {}", e));
+                        if let Ok(payload) = encode_to_vec(&response, standard()) {
+                            sender.send(WsMessage::Binary(payload));
+                        }
+                    }
                 }
             }
             Cmd::None => {},
             _ => {}
         }
     }
+}
+
+/// Convert HBITMAP to PNG bytes (Windows only)
+#[cfg(target_os = "windows")]
+fn hbitmap_to_png_bytes(
+    hbmp: windows::Win32::Graphics::Gdi::HBITMAP,
+) -> Result<Vec<u8>, String> {
+    use windows::Win32::Graphics::Gdi::*;
+    
+    let mut bmp = BITMAP::default();
+    if unsafe { GetObjectW(
+        HGDIOBJ(hbmp.0),
+        std::mem::size_of::<BITMAP>() as i32,
+        Some(&mut bmp as *mut _ as *mut _),
+    ) } == 0
+    {
+        let _ = unsafe { DeleteObject(HGDIOBJ(hbmp.0)) };
+        return Err("GetObjectW failed".into());
+    }
+    
+    let width = bmp.bmWidth as i32;
+    let height = bmp.bmHeight as i32;
+    let mut bi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height, // Top-down DIB
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: 0,
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        },
+        bmiColors: Default::default(),
+    };
+    
+    let stride = (width * 4) as usize;
+    let mut buffer = vec![0u8; stride * height as usize];
+    let hdc: HDC = unsafe { CreateCompatibleDC(None) };
+    
+    if hdc.0.is_null() {
+        let _ = unsafe { DeleteObject(HGDIOBJ(hbmp.0)) };
+        return Err("CreateCompatibleDC failed".into());
+    }
+    
+    let _old = unsafe { SelectObject(hdc, HGDIOBJ(hbmp.0)) };
+    let got = unsafe { GetDIBits(
+        hdc,
+        hbmp,
+        0,
+        height as u32,
+        Some(buffer.as_mut_ptr() as *mut _),
+        &mut bi as *mut _,
+        DIB_RGB_COLORS,
+    ) };
+    
+    let _ = unsafe { DeleteDC(hdc) };
+    let _ = unsafe { DeleteObject(HGDIOBJ(hbmp.0)) };
+    
+    if got == 0 {
+        return Err("GetDIBits failed".into());
+    }
+    
+    // Convert BGRA to RGBA
+    for px in buffer.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    
+    let img = image::RgbaImage::from_raw(width as u32, height as u32, buffer)
+        .ok_or("rgba from raw failed")?;
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    
+    Ok(png)
 }
 
 pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, mut stop_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<(), anyhow::Error> {

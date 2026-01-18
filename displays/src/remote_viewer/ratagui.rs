@@ -104,7 +104,7 @@ impl Widget for &mut RataguiBackend {
                 .map(|y| self.build_row_job(ui, y, available_chars_width))
                 .collect::<Vec<_>>());
             self.buffer_changed = false;
-            log::info!("Rebuilt LayoutJob: frame_index={}", self.frame_index);
+            log::debug!("Rebuilt LayoutJob: frame_index={}", self.frame_index);
         }
 
         // Handle keyboard input

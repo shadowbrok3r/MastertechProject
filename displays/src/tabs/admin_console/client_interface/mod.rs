@@ -102,6 +102,10 @@ pub struct WebSocketClient {
     pub live_stats_active: bool,
     /// Remote filesystem explorer (websocket-based)
     pub remote_explorer: RemoteExplorer,
+    /// Pending file download - stores the filename being downloaded
+    pub pending_download_filename: Option<String>,
+    /// Buffer for accumulating file chunks during download
+    pub download_buffer: Vec<u8>,
 }
 
 impl Drop for WebSocketClient {
@@ -218,7 +222,16 @@ Get-WmiObject")
             #[cfg(not(target_arch="wasm32"))]
             pending_completion: None,
             live_stats_active: false,
-            remote_explorer: RemoteExplorer::new(),
+            remote_explorer: {
+                let mut explorer = RemoteExplorer::new();
+                // Set the bucket name from the current user for My Tools
+                if let Some(user) = crate::get_current_user_from_auth() {
+                    explorer.set_bucket_name(&user.get_user_bucket_name());
+                }
+                explorer
+            },
+            pending_download_filename: None,
+            download_buffer: Vec::new(),
         }
     }
 
