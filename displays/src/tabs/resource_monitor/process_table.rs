@@ -246,33 +246,16 @@ impl RowViewer<Process> for ProcessRowViewer {
         hotkeys
     }
 
-    fn custom_context_menu_items(
-        &mut self,
-        _context: &UiActionContext,
-        _selection: &egui_data_table::SelectionSnapshot<'_, Process>,
-    ) -> Vec<egui_data_table::CustomMenuItem> {
-        vec![
-            egui_data_table::CustomMenuItem::new("Kill Process", UiAction::KillProcess),
-            egui_data_table::CustomMenuItem::new("Open Process in File Explorer", UiAction::OpenProcessInFileExplorer),
-        ]
-    }
-
-    fn on_custom_action_ex(
-        &mut self,
-        action_id: &'static str,
-        ctx: &egui_data_table::viewer::CustomActionContext<'_, Process>,
-        editor: &mut egui_data_table::viewer::CustomActionEditor<Process>,
-    ) {
-        match action_id {
-            "Kill Process" => {
-                ctx.row.kill_process();
-            },
-            "Open Process in File Explorer" => {
-                ctx.row.open_process_in_file_explorer();
-            },
-        }
-        editor.close();
-    }
+    // TODO: Custom context menu items are not currently supported by egui_data_table
+    // The following methods were removed because CustomMenuItem, CustomActionContext,
+    // and CustomActionEditor don't exist in the current egui_data_table API:
+    // - custom_context_menu_items
+    // - on_custom_action_ex
+    // 
+    // To implement process kill/open in explorer functionality, consider:
+    // 1. Using on_cell_view_response to handle right-click actions
+    // 2. Adding buttons directly in show_cell_view
+    // 3. Using the action channel (process_action_tx) with external UI
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &Process, column: usize) {
         let _ = match column {

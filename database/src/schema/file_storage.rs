@@ -129,35 +129,47 @@ pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result
         log::warn!("file_storage::put_file -> Connection check failed: {e}");
     }
     
-    // Use tokio::time::timeout to prevent hanging on large files
-    let timeout_duration = std::time::Duration::from_secs(60); // 60 second timeout for uploads
-    
     // SurrealQL method syntax: f"bucket:/path".put(data)
     let query = format!(r#"f"{}:{}".put($data)"#, bucket_name, normalized_path);
     log::debug!("file_storage::put_file -> Query: {}", query);
     
-    let result = tokio::time::timeout(
-        timeout_duration,
+    // On native, use timeout to prevent hanging. On WASM, just await directly.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let timeout_duration = std::time::Duration::from_secs(60); // 60 second timeout for uploads
+        let result = tokio::time::timeout(
+            timeout_duration,
+            DATABASE
+                .query(&query)
+                .bind(("data", data))
+        ).await;
+        
+        match result {
+            Ok(Ok(_)) => {
+                log::info!("file_storage::put_file -> SUCCESS: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                log::error!("file_storage::put_file -> FAILED: {}:{} - {}", bucket_name, normalized_path, e);
+                Err(e.into())
+            }
+            Err(_) => {
+                log::error!("file_storage::put_file -> TIMEOUT after {} seconds: {}:{} ({} bytes)", 
+                    timeout_duration.as_secs(), bucket_name, normalized_path, data_len);
+                Err(anyhow::anyhow!("Upload timeout after {} seconds for file {} ({} bytes)", 
+                    timeout_duration.as_secs(), normalized_path, data_len))
+            }
+        }
+    }
+    
+    #[cfg(target_arch = "wasm32")]
+    {
         DATABASE
             .query(&query)
             .bind(("data", data))
-    ).await;
-    
-    match result {
-        Ok(Ok(_)) => {
-            log::info!("file_storage::put_file -> SUCCESS: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
-            Ok(())
-        }
-        Ok(Err(e)) => {
-            log::error!("file_storage::put_file -> FAILED: {}:{} - {}", bucket_name, normalized_path, e);
-            Err(e.into())
-        }
-        Err(_) => {
-            log::error!("file_storage::put_file -> TIMEOUT after {} seconds: {}:{} ({} bytes)", 
-                timeout_duration.as_secs(), bucket_name, normalized_path, data_len);
-            Err(anyhow::anyhow!("Upload timeout after {} seconds for file {} ({} bytes)", 
-                timeout_duration.as_secs(), normalized_path, data_len))
-        }
+            .await?;
+        log::info!("file_storage::put_file -> SUCCESS: {}:{} ({} bytes)", bucket_name, normalized_path, data_len);
+        Ok(())
     }
 }
 

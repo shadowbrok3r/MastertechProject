@@ -161,12 +161,33 @@ impl TerminalWebsocketClient {
                                 match ws_message {
                                     WsMessage::Pong(_) => { let _ = connection_state_tx.send((true, "Pong".to_string())); },
                                     WsMessage::Text(txt) => {
+                                        // Handle master presence notifications
+                                        if txt == "MASTER_CONNECTED" {
+                                            log::info!("Master connected - resuming data transmission");
+                                            let _ = connection_state_tx.send((true, "Master Connected".to_string()));
+                                            // If we were waiting for master, mark as ready
+                                            if !*ready {
+                                                let _ = start_tx.send(true);
+                                                *ready = true;
+                                            }
+                                            continue;
+                                        } else if txt == "MASTER_DISCONNECTED" {
+                                            log::info!("Master disconnected - pausing data transmission");
+                                            let _ = connection_state_tx.send((true, "Master Disconnected - Waiting...".to_string()));
+                                            // Don't set ready to false - keep the connection alive
+                                            // but the render system will check master_connected before sending
+                                            continue;
+                                        } else if txt == "CLIENT_CONNECTED" || txt == "CLIENT_DISCONNECTED" {
+                                            // These are for master-side, ignore on client
+                                            continue;
+                                        }
+                                        
                                         if !*ready && txt == "READY".to_string() {
                                             let _ = start_tx.send(true);
                                             *ready = true;
                                             log::info!("WebSocket sender marked as ready");
                                         } else if *ready && txt != "READY".to_string() {
-                                            log::error!("GOT TEXT: {txt:?}");
+                                            log::info!("GOT TEXT: {txt:?}");
                                             // Check if we need to start a persistent shell
                                             if self.persistent_shell.is_none() {
                                                 log::error!("persistent_shell IS NONE");
