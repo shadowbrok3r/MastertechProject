@@ -3,6 +3,10 @@ use ratatui::style::Color;
 use super::{Catppuccin, CATPPUCCIN};
 const COLORS: Catppuccin = Catppuccin::new();
 
+/// The consistent app-wide background color (very dark, almost black)
+/// Use this everywhere for background to ensure consistency across different terminals
+pub const APP_BACKGROUND: Color = Color::Rgb(6, 6, 10);
+
 pub static BASE_COLORS: [Color; 14] = [
     COLORS.rosewater,
     COLORS.flamingo,

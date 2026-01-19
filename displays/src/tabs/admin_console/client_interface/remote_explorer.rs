@@ -862,7 +862,10 @@ impl RemoteExplorer {
                     self.preview.modified = true;
                 }
             });
-        } else if let Some(texture) = &self.preview.texture {
+        } 
+        // Image preview (native only - texture field is cfg-gated)
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(texture) = &self.preview.texture {
             // Image preview - show at original size, scrollable
             ScrollArea::both()
                 .id_salt("preview_image_scroll")

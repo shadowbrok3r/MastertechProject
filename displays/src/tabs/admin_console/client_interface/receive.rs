@@ -276,7 +276,8 @@ impl WebSocketClient {
                     } else if let Cmd::FileChunk(data, is_last) = cmd {
                         log::info!("Received file chunk: {} bytes, is_last: {}", data.len(), is_last);
                         
-                        // Check if this is for "Copy to My Tools"
+                        // Check if this is for "Copy to My Tools" (native only)
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some((path, buffer)) = &mut self.remote_explorer.pending_tool_upload {
                             buffer.extend_from_slice(&data);
                             if is_last {
@@ -290,7 +291,10 @@ impl WebSocketClient {
                                     timestamp: chrono::Local::now().to_rfc3339(),
                                 });
                             }
-                        } else {
+                        } else
+                        
+                        // Always handle normal file downloads
+                        {
                             // Normal file download
                             match self.remote_explorer.handle_file_download(data, is_last, &mut self.download_buffer) {
                                 Ok(Some(msg)) => {
@@ -371,6 +375,38 @@ impl WebSocketClient {
     fn handle_text_message(&mut self, text: String) {
         if text.eq("Closed") {
             self.ws_sender.close();
+            return;
+        }
+        
+        // Handle connection state notifications from WebSocket server
+        match text.as_str() {
+            "CLIENT_CONNECTED" => {
+                log::info!("Client reconnected to room");
+                self.is_connected = true;
+                self.connection_status = "Client Connected".to_string();
+                self.history.push(History {
+                    from: "System".to_string(),
+                    message: "Client reconnected".to_string(),
+                    timestamp: chrono::Local::now().to_rfc3339(),
+                });
+                return;
+            }
+            "CLIENT_DISCONNECTED" => {
+                log::info!("Client disconnected from room");
+                self.is_connected = false;
+                self.connection_status = "Client Disconnected".to_string();
+                self.history.push(History {
+                    from: "System".to_string(),
+                    message: "Client disconnected".to_string(),
+                    timestamp: chrono::Local::now().to_rfc3339(),
+                });
+                return;
+            }
+            "MASTER_CONNECTED" | "MASTER_DISCONNECTED" => {
+                // These are for client-side, ignore on master
+                return;
+            }
+            _ => {}
         }
         
         self.loading = false;
