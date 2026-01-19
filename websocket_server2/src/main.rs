@@ -68,10 +68,50 @@ impl ChatServer {
         // Assign session, overwriting stale entries
         match role.as_str() {
             "master" => {
+                // If there was an old master, notify it's being replaced (shouldn't happen often)
+                if entry.master.is_some() {
+                    info!("Replacing stale master session in room {}", room_id);
+                }
+                
+                // Notify client that a master has connected
+                let mut client_stale = false;
+                if let Some(client_tx) = entry.client.clone() {
+                    match client_tx.lock().await.send(Message::Text("MASTER_CONNECTED".into())).await {
+                        Ok(_) => info!("Notified client in room {} that master connected", room_id),
+                        Err(e) => {
+                            info!("Failed to notify client in room {} (may be stale): {:?}", room_id, e);
+                            client_stale = true;
+                        }
+                    }
+                }
+                // Client connection is stale, remove it
+                if client_stale {
+                    entry.client = None;
+                }
                 entry.master = Some(ws_tx.clone());
                 info!("Master session {} assigned to room {}", session_id, room_id);
             }
             "client" => {
+                // If there was an old client, notify it's being replaced
+                if entry.client.is_some() {
+                    info!("Replacing stale client session in room {}", room_id);
+                }
+                
+                // Notify master that a client has connected
+                let mut master_stale = false;
+                if let Some(master_tx) = entry.master.clone() {
+                    match master_tx.lock().await.send(Message::Text("CLIENT_CONNECTED".into())).await {
+                        Ok(_) => info!("Notified master in room {} that client connected", room_id),
+                        Err(e) => {
+                            info!("Failed to notify master in room {} (may be stale): {:?}", room_id, e);
+                            master_stale = true;
+                        }
+                    }
+                }
+                // Master connection is stale, remove it
+                if master_stale {
+                    entry.master = None;
+                }
                 entry.client = Some(ws_tx.clone());
                 info!("Client session {} assigned to room {}", session_id, room_id);
             }
@@ -80,7 +120,9 @@ impl ChatServer {
                 return;
             }
         }
-
+        
+        // Release rooms lock before spawning tasks
+        drop(rooms);
 
         // Update ConnectedClient in SurrealDB for this connection
         let room_id_clone2 = room_id.clone();
@@ -411,6 +453,8 @@ impl ChatServer {
         let mut rooms = self.rooms.lock().await;
         let mut session_map = self.session_map.lock().await;
         let mut user_map = self.user_map.lock().await;
+        
+        // Update connected status in database
         let client: Option<ConnectedClient> = DATABASE
             .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $connection_id")
             .bind(("connection_id", room_id.clone()))
@@ -419,7 +463,19 @@ impl ChatServer {
 
         log::info!("Connected Client Updated: {client:?}");
 
-        if session_map.remove(session_id).is_none() && user_map.remove(session_id).is_none() {
+        // Check if already cleaned up
+        let was_in_session_map = session_map.remove(session_id).is_some();
+        let was_in_user_map = user_map.remove(session_id).is_some();
+        
+        if !was_in_session_map && !was_in_user_map {
+            // Double-check: maybe the room entry is stale
+            if let Some(room) = rooms.get_mut(room_id) {
+                match role {
+                    "master" => room.master = None,
+                    "client" => room.client = None,
+                    _ => {}
+                }
+            }
             return Ok(()); // Already cleaned up
         }
 
@@ -429,10 +485,24 @@ impl ChatServer {
             match role {
                 "master" if room.master.is_some() => {
                     room.master = None;
+                    // Notify client that master has disconnected
+                    if let Some(client_tx) = &room.client {
+                        let send_result = client_tx.lock().await.send(Message::Text("MASTER_DISCONNECTED".into())).await;
+                        if send_result.is_ok() {
+                            info!("Notified client in room {} that master disconnected", room_id);
+                        }
+                    }
                     info!("Master session {} removed from room {}", session_id, room_id);
                 }
                 "client" if room.client.is_some() => {
                     room.client = None;
+                    // Notify master that client has disconnected
+                    if let Some(master_tx) = &room.master {
+                        let send_result = master_tx.lock().await.send(Message::Text("CLIENT_DISCONNECTED".into())).await;
+                        if send_result.is_ok() {
+                            info!("Notified master in room {} that client disconnected", room_id);
+                        }
+                    }
                     info!("Client session {} removed from room {}", session_id, room_id);
                 }
                 _ => {}
