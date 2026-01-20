@@ -1,5 +1,5 @@
 use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, List, ListItem, Widget, WidgetRef}};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, DEEPPINK}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, DEEPPINK, APP_BACKGROUND}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use super::{button::{ButtonState, Theme}, ButtonType};
@@ -212,7 +212,7 @@ impl<'a> AutoCompleteInput<'a> {
             self.content_y.replace(None);
             return;
         }
-        let popup_bg = Color::Rgb(8, 8, 12);
+        let popup_bg = APP_BACKGROUND;
         let selected_bg = CATPPUCCIN.surface1;
         let num_items = match_r.len().min(self.max_suggestions);
         let max_width = match_r.iter().take(self.max_suggestions).map(|(s, _, _)| s.len()).max().unwrap_or(10) + 4;

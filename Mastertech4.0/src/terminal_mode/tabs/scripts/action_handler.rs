@@ -188,6 +188,9 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     ApiEvent::GetSebResponse(_carbonite_response) => {
                         
                     },
+                    // These events are handled by ServiceFormTab, not ScriptsTab
+                    ApiEvent::DuplicateCheckResponse(_) => {},
+                    ApiEvent::TaskCreationResponse(_) => {},
                 }
             }
             WidgetEvent::Active { widget_id } => {self.log_message(&format!("{widget_id:?}"));}

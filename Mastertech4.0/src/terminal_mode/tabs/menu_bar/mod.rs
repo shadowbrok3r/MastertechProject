@@ -34,23 +34,24 @@ pub struct MenuBar<'a> {
 
 impl<'a> MenuBar<'a> {
     pub fn new(ctx: Arc<Mutex<TerminalContext>>, manual_start_tx: tokio::sync::mpsc::UnboundedSender<bool>) -> Self {
-
+        // Create tab buttons with .as_tab() to enable proper effect handling
+        let mut ticket_tab = Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME).as_tab();
+        ticket_tab.set_selected(true); // Default selected tab
+        
         Self {
             ctx,
             connection_state: (false, String::new()),
             manual_start_tx,
-            // tabs,
             client_title: String::new(),
-            // effect_stage: EffectStage::default(),
             current_tab: RefCell::new(Tab::TurSheet),
-            ticket_tab: Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME),
-            scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN),
-            system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK),
-            ncdu_tab: Button::new("NCDU", WidgetId("Ncdu".to_owned())).theme(DARKORANGE),
-            webconsole_tab: Button::new("Webconsole", WidgetId("Webconsole".to_owned())).theme(CATPPUCCINTHEME),
-            tasks_tab: Button::new("Tasks", WidgetId("Tasks".to_owned())).theme(CYAN),
-            logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DEEPPINK),
-            login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(DARKORANGE),
+            ticket_tab,
+            scripts_tab: Button::new("Scripts", WidgetId("Scripts".to_owned())).theme(CYAN).as_tab(),
+            system_tab: Button::new("System", WidgetId("System".to_owned())).theme(DEEPPINK).as_tab(),
+            ncdu_tab: Button::new("NCDU", WidgetId("Ncdu".to_owned())).theme(DARKORANGE).as_tab(),
+            webconsole_tab: Button::new("Webconsole", WidgetId("Webconsole".to_owned())).theme(CATPPUCCINTHEME).as_tab(),
+            tasks_tab: Button::new("Tasks", WidgetId("Tasks".to_owned())).theme(CYAN).as_tab(),
+            logs_tab: Button::new("Logs", WidgetId("Logs".to_owned())).theme(DEEPPINK).as_tab(),
+            login_tab: Button::new("Login", WidgetId("Login".to_owned())).theme(DARKORANGE).as_tab(),
             connect_ws_btn: Button::new("Connect WS", WidgetId("Connect".to_owned())).theme(SPRINGGREEN),
         }
     }
@@ -80,6 +81,28 @@ impl<'a> MenuBar<'a> {
     }
 
     pub fn set_active_tab(&self, tab: Tab) {
+        // Clear all tab selections
+        self.ticket_tab.set_selected(false);
+        self.scripts_tab.set_selected(false);
+        self.system_tab.set_selected(false);
+        self.ncdu_tab.set_selected(false);
+        self.tasks_tab.set_selected(false);
+        self.webconsole_tab.set_selected(false);
+        self.logs_tab.set_selected(false);
+        self.login_tab.set_selected(false);
+        
+        // Set the new tab as selected
+        match tab {
+            Tab::TurSheet => self.ticket_tab.set_selected(true),
+            Tab::Scripts => self.scripts_tab.set_selected(true),
+            Tab::SystemInfo => self.system_tab.set_selected(true),
+            Tab::Ncdu => self.ncdu_tab.set_selected(true),
+            Tab::Tasks => self.tasks_tab.set_selected(true),
+            Tab::Webconsole => self.webconsole_tab.set_selected(true),
+            Tab::Logs => self.logs_tab.set_selected(true),
+            Tab::Login => self.login_tab.set_selected(true),
+        }
+        
         self.current_tab.replace(tab);
     }
 
