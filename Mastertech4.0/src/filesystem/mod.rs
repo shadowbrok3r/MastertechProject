@@ -6,6 +6,8 @@ use sysinfo::System;
 pub mod system_info;
 #[cfg(target_os = "windows")]
 pub mod oa_serial;
+#[cfg(target_os = "windows")]
+pub mod customer_lookup;
 pub mod machine;
 
 // Wrap the Nvml instance in lazy_static

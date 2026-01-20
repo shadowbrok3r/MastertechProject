@@ -50,7 +50,7 @@ pub fn get_oa_style_serial() -> anyhow::Result<String, anyhow::Error> {
 // Prefer exact-structure parse when possible; otherwise fall back to a generic transform.
 // ----------------------------------------------------
 pub fn to_oa3_13digit(input: &str) -> Result<String, anyhow::Error> {
-    println!("Raw OA3 Key: {input}");
+    log::info!("Raw OA3 Key: {input}");
 
     let s = input.trim();
 
@@ -64,7 +64,7 @@ pub fn to_oa3_13digit(input: &str) -> Result<String, anyhow::Error> {
             if p0.len() >= 2 {
                 let candidate: String = p0.chars().skip(2).chain(p1.chars()).chain(p2.chars()).collect();
                 if candidate.len() == 13 && candidate.chars().all(|c| c.is_ascii_digit()) {
-                    println!("parsed13: {candidate}");
+                    log::info!("parsed13: {candidate}");
                     return Ok(candidate);
                 }
             }
@@ -84,7 +84,7 @@ pub fn to_oa3_13digit(input: &str) -> Result<String, anyhow::Error> {
     if !candidate.chars().all(|c| c.is_ascii_digit()) {
         return Err(anyhow::anyhow!("Parsed serial contains non-digit characters"));
     }
-    println!("Parsed Windows S/N: {candidate}");
+    log::info!("Parsed Windows S/N: {candidate}");
     Ok(candidate)
 }
 

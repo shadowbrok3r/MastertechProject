@@ -168,7 +168,7 @@ pub async fn send_assistant_msg(
             | RunStatus::InProgress
             | RunStatus::Cancelling
             | RunStatus::Incomplete => {
-                println!("--- Run In Progress ...");
+                log::info!("--- Run In Progress ...");
                 sleep(web_time::Duration::from_secs(1)).await;
             }
             RunStatus::Cancelled | RunStatus::Expired | RunStatus::RequiresAction => {
