@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent}, layout::{Constraint, Direction, Layout, Position, Rect, Size}, prelude::{Backend, StatefulWidget}, style::{Color, Style}, widgets::{Block, Borders, WidgetRef}, Frame};
-use crate::terminal_mode::{styling::CATPPUCCIN, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
+use crate::terminal_mode::{styling::{CATPPUCCIN, APP_BACKGROUND}, widgets::{button::ButtonState, ButtonType, HandleWidget, ShrinkArea, SHORTCUT_SET}};
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollView;
 use super::ServiceFormTab;
 
@@ -21,103 +21,107 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
         };
 
         let mut scroll_view = ScrollView::new(virtual_size);
-        scroll_view.buf_mut().set_style(area, Style::new().bg(Color::Black));
-        // Updated constraints: Larger row 8, product/price starts at row 9
+        scroll_view.buf_mut().set_style(area, Style::new().bg(APP_BACKGROUND));
+        
+        // Calculate centered content area (60% of total width, centered)
+        let content_width_percent = 60;
+        let side_margin_percent = (100 - content_width_percent) / 2;
+        
+        // Outer layout to center the content horizontally
+        let centered_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(side_margin_percent as u16),  // Left margin
+                Constraint::Percentage(content_width_percent as u16), // Centered content
+                Constraint::Percentage(side_margin_percent as u16),  // Right margin
+            ])
+            .split(area);
+        
+        let content_area = centered_layout[1];
+        
+        // Updated constraints: Compact layout without product rows
         let constraints = vec![
             Constraint::Length(3),  // Row 1: Get Ticket | Submit
-            Constraint::Length(3),  // Row 2: Service Number | Device Name | Device Mfg
-            Constraint::Length(3),  // Row 3: Customer Email | Device Model | Device Serial
-            Constraint::Length(3),  // Row 4: Customer Name | Customer Phone | Device Password | Device Powersupply
-            Constraint::Length(3),  // Row 5: Salesman | Technician | Carbonite Device Name | Device ID
-            Constraint::Length(3),  // Row 6: Get Keys | Check SEB | Activation Code | Recurly Id
-            Constraint::Length(3),  // Row 7: Webroot Key | SuperAnti Key | Usage (Gb) | (empty)
-            Constraint::Length(8),  // Row 8: CheckIn Notes | Recommendations | (empty) | (empty)
-            Constraint::Max(10),    // Row 9+: product_name | product_price rows
+            Constraint::Length(3),  // Row 2: Service Number | Customer Email
+            Constraint::Length(3),  // Row 3: Customer Name | Customer Phone | Device Name | Device Mfg
+            Constraint::Length(3),  // Row 4: Salesman | Technician | Device Model | Device Serial
+            Constraint::Length(3),  // Row 5: Get Keys | Check SEB | Device Password | Device Power
+            Constraint::Length(3),  // Row 6: Carbonite Name | Device ID | Activation Code | Recurly
+            Constraint::Length(3),  // Row 7: Webroot Key | SuperAnti Key
+            Constraint::Length(8),  // Row 8: CheckIn Notes | Recommendations
+            Constraint::Min(1),     // Spacer
         ];
 
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints.as_slice())
-            .split(area);
+            .split(content_area);
 
-        // Row 1: Get Ticket | Submit
+        // Row 1: Get Ticket | Submit - buttons centered
         let row1 = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25); 4])
+            .constraints([
+                Constraint::Percentage(25),  // Get Ticket
+                Constraint::Percentage(25),  // Submit
+                Constraint::Percentage(50),  // Spacer
+            ])
             .split(rows[0]);
-        let get_ticket_btn_area = row1[0].shrink(4, 0);
+        let get_ticket_btn_area = row1[0].shrink(2, 0);
         self.get_ticket_btn.render_ref(get_ticket_btn_area, scroll_view.buf_mut());
-        let submit_btn_area = row1[1].shrink(4, 0);
+        let submit_btn_area = row1[1].shrink(2, 0);
         self.submit_btn.render_ref(submit_btn_area, scroll_view.buf_mut());
 
-        // Row 2: Service Number (2 cells) | Device Name | Device Mfg
+        // Row 2: Service Number | Customer Email (50% each in content area)
         let row2 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
+                Constraint::Percentage(50),  // Service Number
+                Constraint::Percentage(50),  // Customer Email
             ])
             .split(rows[1]);
-
         self.order_number.render_ref(row2[0], scroll_view.buf_mut());
-        if self.other_fields.len() > 1 {
-            self.other_fields[1].render_ref(row2[1], scroll_view.buf_mut());
-        }
-        if self.other_fields.len() > 2 {
-            self.other_fields[2].render_ref(row2[2], scroll_view.buf_mut());
+        if !self.other_fields.is_empty() {
+            self.other_fields[0].render_ref(row2[1], scroll_view.buf_mut()); // Customer Email
         }
 
-        // Row 3: Customer Email (2 cells) | Device Model | Device Serial
+        // Row 3: Customer Name | Customer Phone | Device Name | Device Mfg (25% each)
         let row3 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(50),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
                 Constraint::Percentage(25),
                 Constraint::Percentage(25),
             ])
             .split(rows[2]);
-        
-        if !self.other_fields.is_empty() {
-            self.other_fields[0].render_ref(row3[0], scroll_view.buf_mut());
+        self.customer_name.render_ref(row3[0], scroll_view.buf_mut());
+        self.customer_phone.render_ref(row3[1], scroll_view.buf_mut());
+        if self.other_fields.len() > 1 {
+            self.other_fields[1].render_ref(row3[2], scroll_view.buf_mut()); // Device Name
         }
-        if self.other_fields.len() > 3 {
-            self.other_fields[3].render_ref(row3[1], scroll_view.buf_mut());
-        }
-        if self.other_fields.len() > 4 {
-            self.other_fields[4].render_ref(row3[2], scroll_view.buf_mut());
+        if self.other_fields.len() > 2 {
+            self.other_fields[2].render_ref(row3[3], scroll_view.buf_mut()); // Device Mfg
         }
 
-        // Row 4: Customer Name | Customer Phone | Device Password | Device Powersupply
+        // Row 4: Salesman | Technician | Device Model | Device Serial (25% each)
         let row4 = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25); 4])
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
             .split(rows[3]);
-        self.customer_name.render_ref(row4[0], scroll_view.buf_mut());
-        self.customer_phone.render_ref(row4[1], scroll_view.buf_mut());
-        if self.other_fields.len() > 5 {
-            self.other_fields[5].render_ref(row4[2], scroll_view.buf_mut());
-        }
-        if self.other_fields.len() > 6 {
-            self.other_fields[6].render_ref(row4[3], scroll_view.buf_mut());
-        }
-
-        // Row 5: Salesman | Technician | Carbonite Device Name | Device ID
-        let row5 = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25); 4])
-            .split(rows[4]);
 
         let salesman = &self.salesman_name;
         let tech = &self.technician_name;
-        // Set the total offset for autocomplete coordinate adjustment
         salesman.set_total_offset(total_offset);
         tech.set_total_offset(total_offset);
 
         if let (Ok(mut suggestions), Ok(mut tech_suggestions)) = (salesman.suggestions.try_borrow_mut(), tech.suggestions.try_borrow_mut()) {
             if suggestions.is_empty() {
                 if let Ok(ctx) = self.ctx.try_lock() {
-                    // let my_usr = ;
                     if !ctx.store_users.is_empty() {
                         let users = ctx.store_users.iter().filter(|u| u.get_store() == ctx.user.get_store()).map(|u| u.get_username().to_string()).collect::<Vec<String>>();
                         *tech_suggestions = users.clone();
@@ -127,27 +131,54 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             }
         }
 
-        salesman.render_ref(row5[0], scroll_view.buf_mut());
-        salesman.set_on_screen_area(row5[0]);
-        tech.render_ref(row5[1], scroll_view.buf_mut());
-        tech.set_on_screen_area(row5[1]);
-        
-        if self.seb_fields.len() > 0 {
-            self.seb_fields[0].render_ref(row5[2], scroll_view.buf_mut()); // Carbonite Device Name
+        salesman.render_ref(row4[0], scroll_view.buf_mut());
+        salesman.set_on_screen_area(row4[0]);
+        tech.render_ref(row4[1], scroll_view.buf_mut());
+        tech.set_on_screen_area(row4[1]);
+        if self.other_fields.len() > 3 {
+            self.other_fields[3].render_ref(row4[2], scroll_view.buf_mut()); // Device Model
         }
-        if self.seb_fields.len() > 1 {
-            self.seb_fields[1].render_ref(row5[3], scroll_view.buf_mut()); // Device ID
+        if self.other_fields.len() > 4 {
+            self.other_fields[4].render_ref(row4[3], scroll_view.buf_mut()); // Device Serial
         }
 
-        // Row 6: Get Keys | Check SEB | Activation Code | Recurly Id
+        // Row 5: Get Keys | Check SEB | Device Password | Device Power (25% each)
+        let row5 = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
+            .split(rows[4]);
+        let get_keys_btn_area = row5[0].shrink(2, 0);
+        self.get_keys_btn.render_ref(get_keys_btn_area, scroll_view.buf_mut());
+        let check_seb_btn_area = row5[1].shrink(2, 0);
+        self.check_seb_btn.render_ref(check_seb_btn_area, scroll_view.buf_mut());
+        if self.other_fields.len() > 5 {
+            self.other_fields[5].render_ref(row5[2], scroll_view.buf_mut()); // Device Password
+        }
+        if self.other_fields.len() > 6 {
+            self.other_fields[6].render_ref(row5[3], scroll_view.buf_mut()); // Device Powersupply
+        }
+
+        // Row 6: Carbonite Name | Device ID | Activation Code | Recurly (25% each)
         let row6 = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25); 4])
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
             .split(rows[5]);
-        let get_keys_btn_area = row6[0].shrink(4, 0);
-        self.get_keys_btn.render_ref(get_keys_btn_area, scroll_view.buf_mut());
-        let check_seb_btn_area = row6[1].shrink(4, 0);
-        self.check_seb_btn.render_ref(check_seb_btn_area, scroll_view.buf_mut());
+        if !self.seb_fields.is_empty() {
+            self.seb_fields[0].render_ref(row6[0], scroll_view.buf_mut()); // Carbonite Device Name
+        }
+        if self.seb_fields.len() > 1 {
+            self.seb_fields[1].render_ref(row6[1], scroll_view.buf_mut()); // Device ID
+        }
         if self.seb_fields.len() > 2 {
             self.seb_fields[2].render_ref(row6[2], scroll_view.buf_mut()); // Activation Code
         }
@@ -155,40 +186,31 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             self.seb_fields[3].render_ref(row6[3], scroll_view.buf_mut()); // Recurly Id
         }
 
-        // Row 7: Webroot Key | SuperAnti Key | Usage (Gb) | (empty)
+        // Row 7: Webroot Key | SuperAnti Key (50% each - stays wide for long keys)
         let row7 = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25); 4])
+            .constraints([
+                Constraint::Percentage(50),  // Webroot Key - wide for long keys
+                Constraint::Percentage(50),  // SuperAnti Key - wide for long keys
+            ])
             .split(rows[6]);
-        let webroot_key_btn_area = row7[0].shrink(4, 0);
+        let webroot_key_btn_area = row7[0].shrink(2, 0);
         self.webroot_key_btn.render_ref(webroot_key_btn_area, scroll_view.buf_mut());
-        let superanti_key_btn_area = row7[1].shrink(4, 0);
+        let superanti_key_btn_area = row7[1].shrink(2, 0);
         self.superanti_key_btn.render_ref(superanti_key_btn_area, scroll_view.buf_mut());
-        if self.seb_fields.len() > 4 {
-            self.seb_fields[4].render_ref(row7[2], scroll_view.buf_mut()); // Usage (Gb)
-        }
 
-        // Row 8: CheckIn Notes | Recommendations | (empty) | (empty)
+        // Row 8: CheckIn Notes | Recommendations (50% each)
         let row8 = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25); 4])
+            .constraints([
+                Constraint::Percentage(50),  // CheckIn Notes
+                Constraint::Percentage(50),  // Recommendations
+            ])
             .split(rows[7]);
         self.checkin_notes.render_ref(row8[0], scroll_view.buf_mut());
         self.recommendations.render_ref(row8[1], scroll_view.buf_mut());
-        // No rendering in row8[2] or row8[3] to keep them empty
 
-        // Row 9+: (empty) | (empty) | product_name | product_price
-        for (i, (name_field, price_field)) in self.order_row_fields.iter().enumerate() {
-            let row_idx = 8 + i; // Start at row 9 (index 8)
-            if row_idx < rows.len() {
-                let extra_row = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(25); 4])
-                    .split(rows[row_idx]);
-                name_field.render_ref(extra_row[2], scroll_view.buf_mut());
-                price_field.render_ref(extra_row[3], scroll_view.buf_mut());
-            }
-        }
+        // No more product rows - removed
 
         scroll_view.render(area, f.buffer_mut(), &mut self.scroll_state.borrow_mut());
 
@@ -219,14 +241,43 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                     f.set_cursor_position(Position::new(pos.x, adjusted_y));
                 }
             }
-            // Hide terminal cursor after rendering to avoid flying around
-            // f.set_cursor_position(Position::new(0, 0)); // Off-screen position
         }
         salesman.render_popup(f.buffer_mut());
         tech.render_popup(f.buffer_mut());
+
+        // Draw the duplicate merge modal if it's open
+        if let Some(ref modal) = *self.duplicate_modal.borrow() {
+            modal.draw(f, area);
+        }
     } 
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        // Handle modal mouse events first if modal is open
+        if let Ok(mut modal_opt) = self.duplicate_modal.try_borrow_mut() {
+            if let Some(ref mut modal) = *modal_opt {
+                if modal.is_open {
+                    if modal.handle_mouse_event(mouse_event) {
+                        // Check if modal was confirmed or cancelled
+                        if modal.is_confirmed() {
+                            log::info!("Modal confirmed, submitting with resolution");
+                            let resolution = Some(modal.get_resolution().clone());
+                            drop(modal_opt); // Release borrow before accessing ctx
+                            if let Ok(mut ctx) = self.ctx.try_lock() {
+                                ctx.service_data.submit_after_resolution(resolution);
+                            }
+                            self.duplicate_modal.replace(None);
+                        } else if modal.is_cancelled() {
+                            log::info!("Modal cancelled");
+                            drop(modal_opt);
+                            self.duplicate_modal.replace(None);
+                        }
+                        return;
+                    }
+                    return; // Modal is open, consume event
+                }
+            }
+        }
+
         // Handle popup mouse events first, as they are on top
         if self.salesman_name.handle_popup_mouse(mouse_event) {
             return;
@@ -296,6 +347,32 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
+        // Handle modal key events first if modal is open
+        if let Ok(mut modal_opt) = self.duplicate_modal.try_borrow_mut() {
+            if let Some(ref mut modal) = *modal_opt {
+                if modal.is_open {
+                    if modal.handle_key_event(key_event) {
+                        // Check if modal was confirmed or cancelled
+                        if modal.is_confirmed() {
+                            log::info!("Modal confirmed via keyboard, submitting with resolution");
+                            let resolution = Some(modal.get_resolution().clone());
+                            drop(modal_opt); // Release borrow before accessing ctx
+                            if let Ok(mut ctx) = self.ctx.try_lock() {
+                                ctx.service_data.submit_after_resolution(resolution);
+                            }
+                            self.duplicate_modal.replace(None);
+                        } else if modal.is_cancelled() {
+                            log::info!("Modal cancelled via keyboard");
+                            drop(modal_opt);
+                            self.duplicate_modal.replace(None);
+                        }
+                        return true;
+                    }
+                    return true; // Modal is open, consume event
+                }
+            }
+        }
+
         let shift_pressed = key_event.modifiers.contains(KeyModifiers::SHIFT);
         if shift_pressed {
             if let KeyCode::Tab = key_event.code {

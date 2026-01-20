@@ -27,12 +27,40 @@ impl<'a> ActionHandler for MenuBar<'a> {
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::ButtonClick { widget_id , button: _, source: _} => {
+                // Helper to update tab selection state on all buttons
+                let update_tab_selection = |new_tab: Tab, menu: &Self| {
+                    menu.ticket_tab.set_selected(matches!(new_tab, Tab::TurSheet));
+                    menu.scripts_tab.set_selected(matches!(new_tab, Tab::Scripts));
+                    menu.system_tab.set_selected(matches!(new_tab, Tab::SystemInfo));
+                    menu.ncdu_tab.set_selected(matches!(new_tab, Tab::Ncdu));
+                    menu.tasks_tab.set_selected(matches!(new_tab, Tab::Tasks));
+                    menu.webconsole_tab.set_selected(matches!(new_tab, Tab::Webconsole));
+                    menu.logs_tab.set_selected(matches!(new_tab, Tab::Logs));
+                    menu.login_tab.set_selected(matches!(new_tab, Tab::Login));
+                };
+                
                 let mut current_tab = self.current_tab.borrow_mut();
                 match widget_id.0.as_str() {
-                    "Ticket" => { *current_tab = Tab::TurSheet; }
-                    "Scripts" => { *current_tab = Tab::Scripts; }
-                    "System" => { *current_tab = Tab::SystemInfo; }
-                    "Ncdu" => { *current_tab = Tab::Ncdu; }
+                    "Ticket" => { 
+                        *current_tab = Tab::TurSheet;
+                        drop(current_tab);
+                        update_tab_selection(Tab::TurSheet, self);
+                    }
+                    "Scripts" => { 
+                        *current_tab = Tab::Scripts;
+                        drop(current_tab);
+                        update_tab_selection(Tab::Scripts, self);
+                    }
+                    "System" => { 
+                        *current_tab = Tab::SystemInfo;
+                        drop(current_tab);
+                        update_tab_selection(Tab::SystemInfo, self);
+                    }
+                    "Ncdu" => { 
+                        *current_tab = Tab::Ncdu;
+                        drop(current_tab);
+                        update_tab_selection(Tab::Ncdu, self);
+                    }
                     "Tasks" => { 
                         if let Ok(ctx) = self.ctx.try_lock() {
                             let tx = ctx.tasks_tx.clone();
@@ -45,6 +73,8 @@ impl<'a> ActionHandler for MenuBar<'a> {
                             }
                         }
                         *current_tab = Tab::Tasks;
+                        drop(current_tab);
+                        update_tab_selection(Tab::Tasks, self);
                      }
                     "Webconsole" => { 
                         if *current_tab == Tab::Webconsole {
@@ -56,11 +86,21 @@ impl<'a> ActionHandler for MenuBar<'a> {
                                 }
                             );
                         } else {
-                            *current_tab = Tab::Webconsole
+                            *current_tab = Tab::Webconsole;
+                            drop(current_tab);
+                            update_tab_selection(Tab::Webconsole, self);
                         }
                      }
-                    "Logs" => { *current_tab = Tab::Logs; }
-                    "Login" => { *current_tab = Tab::Login; }
+                    "Logs" => { 
+                        *current_tab = Tab::Logs;
+                        drop(current_tab);
+                        update_tab_selection(Tab::Logs, self);
+                    }
+                    "Login" => { 
+                        *current_tab = Tab::Login;
+                        drop(current_tab);
+                        update_tab_selection(Tab::Login, self);
+                    }
                     "Connect" => { let _ = self.manual_start_tx.send(true); }
                     _ => {}
                 }

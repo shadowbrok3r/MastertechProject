@@ -1,10 +1,10 @@
 use crate::{
     tabs::tur_sheet::get_ticket::SendRequest, 
-    terminal_mode::{events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent, WidgetId}, systems::notification_system::{Notification, NotificationType}}
+    terminal_mode::{events::action_handler::{get_event_sender, ActionHandler, ApiEvent, WidgetEvent, WidgetId}, modals::DuplicateMergeModal, systems::notification_system::{Notification, NotificationType}}
 };
 
 use database::schema::{
-    prestashop_schema::ServiceOrder, utilities::{get_local_seb_data, PhoneNumberFormatter}, CarboniteResponse, ExtendedSeb, GetKeysResponse, LocalSebData
+    prestashop_schema::ServiceOrder, utilities::{get_local_seb_data, PhoneNumberFormatter}, CarboniteResponse, ExtendedSeb, GetKeysResponse, LocalSebData, TaskCreationResult
 };
 
 use super::ServiceFormTab;
@@ -40,7 +40,6 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
             WidgetId("CarboniteDeviceId".to_string()),
             WidgetId("ActivationCode".to_string()),
             WidgetId("RecurlyId".to_string()),
-            WidgetId("UsageGb".to_string()),
             // Add any other widget IDs handled by this tab
         ]
     }
@@ -188,11 +187,8 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                 match api_event {
                     ApiEvent::GetTicketResponse(presta_data) => {
                         log::info!("GetTicketResponse");
-                        let order_rows = presta_data.order.associations.order_rows.clone();
-                        if !order_rows.is_empty() {
-                            self.set_order_rows(order_rows);
-                        }
-
+                        // Note: order_rows/product rows are no longer displayed
+                        
                         if let Ok(ctx) = &mut self.ctx.try_lock() {
                             let _ = ctx.service_data.receive(presta_data.clone());
                             
@@ -411,14 +407,79 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                     input.cut();
                                     input.insert_str(carbonite.id_recurly_account);
                                 }
-                                "UsageGb" => {
-                                    let mut input = field.input.borrow_mut();
-                                    input.select_all();
-                                    input.cut();
-                                    input.insert_str(carbonite.usage_gb);
-                                }
                                 _ => {}
                             }
+                        }
+                    },
+                    ApiEvent::DuplicateCheckResponse(check_result) => {
+                        log::info!("Received duplicate check response for SO#{}", check_result.service_number);
+                        *self.awaiting_duplicate_check.borrow_mut() = false;
+                        
+                        if check_result.has_conflicts() && !check_result.all_identical() {
+                            // Show the duplicate merge modal
+                            log::info!("Conflicts found, opening duplicate merge modal");
+                            let modal = DuplicateMergeModal::new(check_result.clone());
+                            self.duplicate_modal.replace(Some(modal));
+                            
+                            if let Ok(ctx) = self.ctx.try_lock() {
+                                let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                    NotificationType::Warning, 
+                                    "Duplicate Records Found", 
+                                    "Please resolve conflicts in the popup", 
+                                    5
+                                )));
+                            }
+                        } else {
+                            // No conflicts or all identical - proceed with submission
+                            log::info!("No conflicts, proceeding with submission");
+                            if let Ok(mut ctx) = self.ctx.try_lock() {
+                                ctx.service_data.submit_after_resolution(None);
+                            }
+                        }
+                    },
+                    ApiEvent::TaskCreationResponse(result) => {
+                        log::info!("Task creation response: {:?}", result);
+                        match result {
+                            TaskCreationResult::Created { service_number } => {
+                                if let Ok(ctx) = self.ctx.try_lock() {
+                                    let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                        NotificationType::Info, 
+                                        "Task Created Successfully", 
+                                        &format!("Service Order: {}", service_number), 
+                                        5
+                                    )));
+                                }
+                            },
+                            TaskCreationResult::Updated { service_number } => {
+                                if let Ok(ctx) = self.ctx.try_lock() {
+                                    let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                        NotificationType::Info, 
+                                        "Task Updated", 
+                                        &format!("SO#{} was updated", service_number), 
+                                        5
+                                    )));
+                                }
+                            },
+                            TaskCreationResult::AlreadyExists { service_number } => {
+                                if let Ok(ctx) = self.ctx.try_lock() {
+                                    let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                        NotificationType::Warning, 
+                                        "Task Already Exists", 
+                                        &format!("SO#{} already has a task", service_number), 
+                                        5
+                                    )));
+                                }
+                            },
+                            TaskCreationResult::Error { message } => {
+                                if let Ok(ctx) = self.ctx.try_lock() {
+                                    let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                        NotificationType::Error, 
+                                        "Task Creation Failed", 
+                                        &message, 
+                                        5
+                                    )));
+                                }
+                            },
                         }
                     },
                 }

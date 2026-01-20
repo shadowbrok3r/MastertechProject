@@ -1,6 +1,6 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
-use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
+use database::schema::{prestashop_schema::OrderRow, GetKeysResponse, DuplicateCheckResult};
 use ratatui::{layout::Rect, style::Style};
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
 use reqwest::Client;
@@ -53,6 +53,10 @@ pub struct ServiceFormTab<'a> {
     ctx: Arc<Mutex<TerminalContext>>,
     service_form_area: Rc<RefCell<Option<Rect>>>,
     total_offset: Rc<RefCell<u16>>,
+    /// Duplicate merge modal for resolving conflicts
+    pub duplicate_modal: RefCell<Option<DuplicateMergeModal>>,
+    /// Whether we're waiting for a duplicate check result
+    pub awaiting_duplicate_check: RefCell<bool>,
 }
 
 impl<'a> ServiceFormTab<'a> {
@@ -75,7 +79,6 @@ impl<'a> ServiceFormTab<'a> {
             InputField::new("Device ID", WidgetId("CarboniteDeviceId".to_string())),
             InputField::new("Activation Code", WidgetId("ActivationCode".to_string())),
             InputField::new("Recurly Id", WidgetId("RecurlyId".to_string())),
-            InputField::new("Usage (Gb)", WidgetId("UsageGb".to_string())),
         ];
 
         Self {
@@ -103,6 +106,8 @@ impl<'a> ServiceFormTab<'a> {
             seb_fields,
             client,
             ctx,
+            duplicate_modal: RefCell::new(None),
+            awaiting_duplicate_check: RefCell::new(false),
         }
     }
 

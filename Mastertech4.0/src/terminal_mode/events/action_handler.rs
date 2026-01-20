@@ -1,4 +1,4 @@
-use database::schema::{prestashop_schema::PrestashopPayload, CarboniteResponse};
+use database::schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, DuplicateCheckResult, TaskCreationResult};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
@@ -27,10 +27,14 @@ pub fn get_update_sender() -> Sender<WidgetId> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WidgetId(pub String);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum ApiEvent {
     GetTicketResponse(PrestashopPayload),
-    GetSebResponse(Vec<CarboniteResponse>)
+    GetSebResponse(Vec<CarboniteResponse>),
+    /// Response from duplicate check before task creation
+    DuplicateCheckResponse(DuplicateCheckResult),
+    /// Response from task creation attempt
+    TaskCreationResponse(TaskCreationResult),
 }
 
 #[derive(Debug, Clone, PartialEq)]
