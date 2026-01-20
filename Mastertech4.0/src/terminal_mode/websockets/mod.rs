@@ -1025,6 +1025,45 @@ impl<'a> TerminalApp<'a> {
 pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<(), anyhow::Error> {
     client.connected = true;
     
+    // Attempt to lookup customer by OA3 serial number (Windows only)
+    #[cfg(target_os = "windows")]
+    {
+        use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
+        use crate::filesystem::customer_lookup::lookup_customer_by_serial;
+        
+        // 1) Get OA-style serial from WMI
+        match get_oa_style_serial() {
+            Ok(raw_serial) => {
+                log::info!("websockets -> Raw OA serial: {}", raw_serial);
+                
+                // 2) Convert to 13-digit format
+                match to_oa3_13digit(&raw_serial) {
+                    Ok(serial13) => {
+                        log::info!("websockets -> 13-digit serial: {}", serial13);
+                        
+                        // 3) Lookup customer via PrestaShop/Everest
+                        match lookup_customer_by_serial(&serial13).await {
+                            Ok(customer_string) => {
+                                log::info!("websockets -> Customer found: {}", customer_string);
+                                client.friendly_name = Some(customer_string);
+                            }
+                            Err(e) => {
+                                log::warn!("websockets -> Customer lookup failed: {:?}", e);
+                                // Leave friendly_name as None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("websockets -> Failed to convert serial to 13-digit: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("websockets -> Failed to get OA serial: {:?}", e);
+            }
+        }
+    }
+    
     // log::info!("Client: {client:?}");
     
     let query_id = query_id::<ConnectedClient>(
@@ -1043,6 +1082,15 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<(), an
     
     if let Ok(Some(_)) = query_id {
         log::info!("WE HAVE A CLIENT");
+        // Update existing client with new friendly_name if we found one
+        if client.friendly_name.is_some() {
+            let res: Option<ConnectedClient> = DATABASE
+                .upsert(client.id.clone())
+                .content(client)
+                .await?
+                .take();
+            log::info!("websockets -> Updated existing client with friendly_name: {res:?}");
+        }
     } else {
         let res: Option<ConnectedClient> = DATABASE
             .upsert(client.id.clone())
