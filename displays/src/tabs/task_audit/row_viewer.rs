@@ -409,9 +409,14 @@ async fn update_order_field(order_id: &str, field: &str, new_value: &str) {
             match modify_xml(&xml, field, new_value) {
                 Ok(new_xml) => {
                     log::info!("new_xml: {new_xml}");
-                    match api.modify_prestashop_order(&new_xml).await {
-                        Ok(_) => info!("Successfully updated {} to {} for order {}", field, new_value, order_id),
-                        Err(e) => log::error!("Error modifying prestashop order: {e:?}"),
+                    match remove_xml_tag(&new_xml, "tax_exempt") {
+                        Ok(final_xml) => {
+                            match api.modify_prestashop_order(&final_xml).await {
+                                Ok(_) => info!("Successfully updated {} to {} for order {}", field, new_value, order_id),
+                                Err(e) => log::error!("Error modifying prestashop order: {e:?}"),
+                            }
+                        }
+                        Err(e) => log::error!("Error removing tax_exempt tag: {:?}", e),
                     }
                 }
                 Err(e) => log::error!("Error modifying XML: {e:?}")

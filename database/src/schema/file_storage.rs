@@ -685,7 +685,7 @@ impl SurrealFile {
 /// 
 /// // List all files
 /// for entry in bucket.list("").await? {
-///     println!("{}: {} bytes", entry.filename(), entry.size.unwrap_or(0));
+///     log::info!("{}: {} bytes", entry.filename(), entry.size.unwrap_or(0));
 /// }
 /// 
 /// // Get a file handle

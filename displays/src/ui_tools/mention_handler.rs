@@ -162,7 +162,7 @@ impl Widget for MentionHandler {
         // Handle normal text input
         if text_response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
             // Process the message or send it
-            println!("Final message: {}", self.input_text);
+            log::info!("Final message: {}", self.input_text);
             self.input_text.clear(); // Clear the input after sending
         }
 
