@@ -32,7 +32,7 @@ pub async fn search_open_orders_for_product(product: &str, store: &str) -> anyho
         }
     }
 
-    println!("Order Details To Check: {order_details_to_check:?}");
+    log::info!("Order Details To Check: {order_details_to_check:?}");
 
     Ok(())
 }

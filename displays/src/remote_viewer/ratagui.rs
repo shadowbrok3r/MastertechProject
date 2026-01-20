@@ -280,7 +280,7 @@ impl RataguiBackend {
         let mut view = fonts.with_pixels_per_point(1.0);
 
         let width = view.glyph_width(&fid, ' ');
-        // println!("widik is {:#?}",width);
+        // log::info!("widik is {:#?}",width);
         width
     }
 
