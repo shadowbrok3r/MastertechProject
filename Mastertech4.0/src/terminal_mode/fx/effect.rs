@@ -15,6 +15,10 @@ pub enum UniqueEffectId {
     #[default]
     SelectedCategory,
     KeyCapOutline,
+    /// For animated borders on specific named areas
+    BorderEffect(String),
+    /// For tab selection effect
+    SelectedTab,
 }
 
 /// Creates an animated border effect for the selected category using color cycling.
@@ -242,4 +246,94 @@ pub fn outline_selected_cells(
     ]);
 
     stage.unique(UniqueEffectId::KeyCapOutline, fx)
+}
+
+/// Creates a simple animated border effect for any rectangular area.
+/// This is a lighter-weight version suitable for page sections.
+///
+/// # Arguments
+/// * `base_color` - The primary color for the border animation
+/// * `area` - The rectangular area to animate the border around
+/// * `speed` - Animation speed (cells per second), default ~30
+///
+/// # Returns
+/// An Effect that animates a border around the specified area
+pub fn animated_border(base_color: Color, area: Rect, speed: f32) -> Effect {
+    let color_cycle = select_category_color_cycle(base_color, 1);
+
+    fx::effect_fn_buf(Instant::now(), u32::MAX, move |started_at, ctx, buf| {
+        let elapsed = started_at.elapsed().as_secs_f32();
+        let idx = (elapsed * speed) as usize;
+        let area = ctx.area;
+
+        let mut update_cell = |(x, y): (u16, u16), idx: usize| {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_fg(*color_cycle.color_at(idx));
+            }
+        };
+
+        // Top edge
+        (area.x..area.right()).enumerate().for_each(|(i, x)| {
+            update_cell((x, area.y), idx + i);
+        });
+
+        let cell_idx_offset = area.width as usize;
+        if area.bottom() > 0 && area.right() > 0 {
+            // Right edge
+            (area.y + 1..area.bottom() - 1).enumerate().for_each(|(i, y)| {
+                update_cell((area.right() - 1, y), idx + i + cell_idx_offset);
+            });
+        
+            let cell_idx_offset = cell_idx_offset + area.height.saturating_sub(2) as usize;
+            // Bottom edge (reversed)
+            (area.x..area.right()).rev().enumerate().for_each(|(i, x)| {
+                update_cell((x, area.bottom() - 1), idx + i + cell_idx_offset);
+            });
+        }
+
+        let cell_idx_offset = cell_idx_offset + area.width as usize;
+        // Left edge (reversed)
+        (area.y + 1..area.bottom()).rev().enumerate().for_each(|(i, y)| {
+            update_cell((area.x, y), idx + i + cell_idx_offset);
+        });
+    }).with_area(area)
+}
+
+/// Creates a unique animated border effect that can be identified and replaced.
+///
+/// # Arguments
+/// * `stage` - Effect stage for managing the animation
+/// * `name` - Unique identifier for this border effect
+/// * `base_color` - The primary color for the border animation
+/// * `area` - The rectangular area to animate the border around
+///
+/// # Returns
+/// A unique Effect that can be replaced when called again with the same name
+pub fn unique_border_effect(
+    stage: &mut EffectStage<UniqueEffectId>,
+    name: &str,
+    base_color: Color,
+    area: Rect,
+) -> Effect {
+    let fx = animated_border(base_color, area, 25.0);
+    stage.unique(UniqueEffectId::BorderEffect(name.to_string()), fx)
+}
+
+/// Creates an effect for the currently selected tab button.
+/// This should only be called for the tab that is currently selected.
+///
+/// # Arguments
+/// * `stage` - Effect stage for managing the animation  
+/// * `base_color` - The primary color for the tab effect
+/// * `area` - The rectangular area of the selected tab
+///
+/// # Returns
+/// A unique Effect that replaces any previous selected tab effect
+pub fn selected_tab_effect(
+    stage: &mut EffectStage<UniqueEffectId>,
+    base_color: Color,
+    area: Rect,
+) -> Effect {
+    let fx = animated_border(base_color, area, 35.0);
+    stage.unique(UniqueEffectId::SelectedTab, fx)
 }

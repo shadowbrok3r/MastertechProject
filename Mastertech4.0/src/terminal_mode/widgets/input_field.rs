@@ -1,11 +1,14 @@
 use ratatui::{buffer::Buffer, crossterm::event::{KeyCode, KeyModifiers}, layout::{Position, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Widget, WidgetRef}};
-use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME}};
+use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEvent, WidgetId}, styling::{CATPPUCCIN, CATPPUCCINTHEME, APP_BACKGROUND}};
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use super::tui_textarea::{CursorMove, TextArea};
 use std::{cell::RefCell, rc::Rc};
 use crossbeam::channel::Sender;
 use textwrap::refill;
+
+/// Minimum height required for an InputField to be visible (borders + 1 line of text)
+pub const INPUT_FIELD_MIN_HEIGHT: u16 = 3;
 
 // ---------------------------------------------------------------------------
 // InputField: A wrapper around tui_input::Input for our form fields.
@@ -293,35 +296,64 @@ impl <'a> WidgetRef for InputField <'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (_background, text_color, _shadow, highlight) = self.colors();
         
-        // self.add_effect(*buf.area());
+        // Ensure consistent background
+        buf.set_style(area, Style::default().bg(APP_BACKGROUND));
         
-        // ----- Process TachyonFX Effects -----
-        // Create a tachyonfx Duration (e.g. 16ms per frame for ~60FPS).
-        // let fx_duration = tachyonfx::Duration::from_millis(16);
-        // Process all effects added to our effect_stage. They will update and render onto f's buffer.
-        // self.effect_stage.borrow_mut().process_effects(fx_duration, buf, *buf.area());
-
-        // buf.set_style(area, Style::default().bg(background).fg(text_color));
+        // Check if area is too small to render properly
+        if area.height < INPUT_FIELD_MIN_HEIGHT {
+            // If height is too small, render a compact version with just the title
+            // This prevents the text from being invisible
+            let compact_block = Block::default()
+                .borders(Borders::LEFT | Borders::RIGHT)
+                .border_type(BorderType::Rounded)
+                .title(Line::raw(format!("{}: ", self.title)).fg(text_color))
+                .style(Style::default().fg(highlight).bg(APP_BACKGROUND));
+            
+            // Render the block
+            compact_block.render(area, buf);
+            
+            // Try to render at least the first line of text
+            if let Ok(input) = self.input.try_borrow() {
+                if let Some(first_line) = input.lines().first() {
+                    let title_len = self.title.len() + 3; // ": " and left border
+                    let text_area = Rect {
+                        x: area.x + 1 + title_len as u16,
+                        y: area.y,
+                        width: area.width.saturating_sub(2 + title_len as u16),
+                        height: 1,
+                    };
+                    // Truncate if needed
+                    let display_text: String = first_line.chars().take(text_area.width as usize).collect();
+                    buf.set_string(text_area.x, text_area.y, &display_text, Style::default().fg(CATPPUCCIN.text).bg(APP_BACKGROUND));
+                }
+            }
+            
+            self.set_area(area);
+            return;
+        }
+        
         // Save the area for later use.
         self.set_area(area);
         self.check_text_wrapping(area);
 
-        // Draw a bordered block with the field’s title.
+        // Draw a bordered block with the field's title.
         let default_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .title(Line::raw(self.title).fg(text_color))
-            .style(Style::default().fg(highlight));
+            .style(Style::default().fg(highlight).bg(APP_BACKGROUND));
 
         let input = self.input.try_borrow_mut();
 
         if let Ok(mut input) = input {
             let block = if let Some(block) = self.block.borrow().clone(){
-                block
+                block.style(Style::default().fg(highlight).bg(APP_BACKGROUND))
             } 
             else { 
                 default_block 
             };
+            // Set background style on the text area itself
+            input.set_style(Style::default().fg(CATPPUCCIN.text).bg(APP_BACKGROUND));
             input.set_block(block);
             input.render(area, buf);
         }
