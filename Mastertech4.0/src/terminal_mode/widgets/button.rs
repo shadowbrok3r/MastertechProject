@@ -3,9 +3,10 @@ use ratatui::{
     buffer::Buffer, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Position, Rect}, style::{Color, Style}, text::Line, widgets::{Widget, WidgetRef}
 };
 use tachyonfx::{CellFilter, Effect};
-use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::TURQUOISE}};
+use crate::{filesystem::get_client_hash, terminal_mode::{events::action_handler::{get_event_sender, WidgetButton, WidgetEvent, WidgetId}, fx::{effect::{outline_selected_cells, UniqueEffectId}, EffectStage}, styling::{TURQUOISE, APP_BACKGROUND}}};
 use std::{cell::RefCell, fmt::{Debug, Display}};
 use super::{ButtonType, SHORTCUT_SET};
+use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
 
 
 /// ------------------------------
@@ -32,6 +33,12 @@ pub struct Button<'a> {
     effect_stage: RefCell<EffectStage<UniqueEffectId>>,
     init: RefCell<bool>,
     event_sender: Sender<WidgetEvent>,
+    /// If true, this button acts as a tab button - effects only show when selected
+    is_tab_button: bool,
+    /// If true, this tab is currently selected (only relevant for tab buttons)
+    is_selected_tab: RefCell<bool>,
+    /// Whether to show animated effects on this button
+    effects_enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -63,7 +70,10 @@ impl<'a> Button<'a> {
             area: RefCell::new(None),
             effect_stage: RefCell::new(EffectStage::default()),
             init: RefCell::new(true),
-            event_sender: get_event_sender() // on_click: Arc::new(RefCell::new(None)),
+            event_sender: get_event_sender(),
+            is_tab_button: false,
+            is_selected_tab: RefCell::new(false),
+            effects_enabled: true,
         }
     }
 
@@ -74,6 +84,47 @@ impl<'a> Button<'a> {
     pub const fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
+    }
+    
+    /// Mark this button as a tab button - effects will only show when selected
+    pub fn as_tab(mut self) -> Self {
+        self.is_tab_button = true;
+        self
+    }
+    
+    /// Enable or disable effects on this button
+    pub fn with_effects(mut self, enabled: bool) -> Self {
+        self.effects_enabled = enabled;
+        self
+    }
+    
+    /// Set whether this tab is currently selected (only for tab buttons)
+    pub fn set_selected(&self, selected: bool) {
+        *self.is_selected_tab.borrow_mut() = selected;
+        // Reset init to trigger effect recreation with new area if now selected
+        if selected {
+            *self.init.borrow_mut() = true;
+        }
+    }
+    
+    /// Check if this tab button is currently selected
+    pub fn is_selected(&self) -> bool {
+        *self.is_selected_tab.borrow()
+    }
+    
+    /// Returns true if effects should be shown for this button
+    fn should_show_effects(&self) -> bool {
+        if !self.effects_enabled {
+            return false;
+        }
+        
+        if self.is_tab_button {
+            // Tab buttons only show effects when selected
+            *self.is_selected_tab.borrow()
+        } else {
+            // Regular buttons show effects in Active or Hovered state
+            matches!(*self.state.borrow(), ButtonState::Active | ButtonState::Hovered | ButtonState::Selected)
+        }
     }
 
     pub fn _set_effect(&self, effect: Effect) {
@@ -180,8 +231,11 @@ impl <'a> WidgetRef for Button<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();
 
-        buf.set_style(area, Style::default().fg(text));
-        // block.render_ref(area, buf);
+        buf.set_style(area, Style::default().fg(text).bg(APP_BACKGROUND));
+        
+        // Horizontal padding inside the button (space between text and borders)
+        const HORIZONTAL_PADDING: u16 = 1;
+        
         // Draw top border with rounded corners
         if area.height > 1 {
             let mut top_str = String::new();
@@ -193,7 +247,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 area.y,
                 top_str,
-                Style::default().fg(highlight).bg(Color::Black), // No background spill
+                Style::default().fg(highlight).bg(APP_BACKGROUND),
             );
         }
 
@@ -208,7 +262,7 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 y,
                 SHORTCUT_SET.vertical_left,
-                Style::default().fg(highlight).bg(Color::Black),
+                Style::default().fg(highlight).bg(APP_BACKGROUND),
             );
 
             // Background fill (inside the borders)
@@ -218,14 +272,14 @@ impl <'a> WidgetRef for Button<'a> {
                 width: area.width.saturating_sub(2),
                 height: 1,  // Exactly 1 row per iteration
             };
-            buf.set_style(inner_rect, Style::default().fg(text).bg(Color::Black)); // .bg(background)
+            buf.set_style(inner_rect, Style::default().fg(text).bg(APP_BACKGROUND));
 
             // Right border
             buf.set_string(
                 area.x + area.width - 1,
                 y,
                 SHORTCUT_SET.vertical_right,
-                Style::default().fg(highlight).bg(Color::Black),
+                Style::default().fg(highlight).bg(APP_BACKGROUND),
             );
         }
 
@@ -240,32 +294,81 @@ impl <'a> WidgetRef for Button<'a> {
                 area.x,
                 area.y + area.height - 1,
                 bot_str,
-                Style::default().fg(shadow).bg(Color::Black),
+                Style::default().fg(shadow).bg(APP_BACKGROUND),
             );
         }
 
-        // Center the label inside the background
-        let label_x = area.x + (area.width.saturating_sub(self.label.width() as u16)) / 2;
+        // Calculate available inner width for the label (subtract borders and padding)
+        let inner_width = area.width.saturating_sub(2 + HORIZONTAL_PADDING * 2) as usize;
+        
+        // Get the label text and truncate if necessary
+        let label_text = self.title.clone();
+        let label_width = label_text.width();
+        
+        let display_text = if label_width > inner_width && inner_width > 3 {
+            // Truncate and add ellipsis
+            let mut truncated = String::new();
+            let mut current_width = 0;
+            for ch in label_text.chars() {
+                let ch_width = ch.width().unwrap_or(1);
+                if current_width + ch_width + 2 > inner_width { // +2 for ".."
+                    break;
+                }
+                truncated.push(ch);
+                current_width += ch_width;
+            }
+            truncated.push_str("..");
+            truncated
+        } else if label_width > inner_width {
+            // Too narrow for even truncation, show what we can
+            label_text.chars().take(inner_width.saturating_sub(1)).collect::<String>()
+        } else {
+            label_text
+        };
+        
+        // Create a new Line with the (potentially truncated) text
+        let display_line = Line::raw(display_text.clone());
+        let display_width = display_text.width() as u16;
+        
+        // Center the label inside the background (accounting for borders + padding)
+        let available_width = area.width.saturating_sub(2); // Just borders
+        let label_x = area.x + 1 + (available_width.saturating_sub(display_width)) / 2;
         let label_y = area.y + (area.height.saturating_sub(2)) / 2 + 1; // Adjust to align inside the box
-        buf.set_line(label_x, label_y, &self.label, area.width);
+        
+        // Only render if we have valid coordinates within the area
+        if label_y > area.y && label_y < area.y + area.height - 1 {
+            buf.set_line(label_x, label_y, &display_line, available_width);
+        }
 
         self.set_area(area);
         
-        let mut init = self.init.borrow_mut();
-        if *init {
-            *init = false;
-            let mut effect_stage = self.effect_stage.borrow_mut();
-            let effect1 = outline_selected_cells(
-                &mut effect_stage, 
-                area.as_size(),
-                background,
-                CellFilter::FgColor(Color::White)
-            );
-            effect_stage.add_effect(effect1);
-        }
+        // Only process effects if they should be shown
+        if self.should_show_effects() {
+            let mut init = self.init.borrow_mut();
+            if *init {
+                *init = false;
+                let mut effect_stage = self.effect_stage.borrow_mut();
+                
+                if self.is_tab_button {
+                    // For tab buttons, use the selected_tab_effect
+                    use crate::terminal_mode::fx::effect::selected_tab_effect;
+                    let effect = selected_tab_effect(&mut effect_stage, background, area);
+                    effect_stage.add_effect(effect);
+                } else {
+                    // For regular buttons, use the outline effect
+                    let effect1 = outline_selected_cells(
+                        &mut effect_stage, 
+                        area.as_size(),
+                        background,
+                        CellFilter::FgColor(Color::White)
+                    );
+                    effect_stage.add_effect(effect1);
+                }
+            }
 
-        let fx_duration = tachyonfx::Duration::from_millis(16);
-        self.effect_stage.borrow_mut().process_effects(fx_duration, buf, area);
+            let fx_duration = tachyonfx::Duration::from_millis(16);
+            self.effect_stage.borrow_mut().process_effects(fx_duration, buf, area);
+        }
     }
 }
 

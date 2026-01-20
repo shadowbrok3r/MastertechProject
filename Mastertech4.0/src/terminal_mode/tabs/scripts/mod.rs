@@ -1,4 +1,4 @@
-use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, fx::{EffectStage, UniqueEffectId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use checklist::{Category, Status, TodoItem, TodoList};
@@ -107,6 +107,10 @@ pub struct ScriptsTab<'a> {
     /// Track the scripts tab area for coordinate adjustment
     scripts_area: RefCell<Option<Rect>>,
     loading: bool,
+    /// Effect stage for animated border effects
+    effect_stage: RefCell<EffectStage<UniqueEffectId>>,
+    /// Track if border effects have been initialized
+    effects_init: RefCell<bool>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -281,6 +285,8 @@ impl<'a> ScriptsTab<'a> {
             total_offset: RefCell::new(0),
             scripts_area: RefCell::new(None),
             loading: false,
+            effect_stage: RefCell::new(EffectStage::default()),
+            effects_init: RefCell::new(false),
         }
     }
 

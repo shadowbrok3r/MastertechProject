@@ -1,5 +1,5 @@
 
-use database::schema::{helper_traits::parse_email_user, prestashop_schema::{PrestashopPayload, ServiceOrder}, utilities::{create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE};
+use database::schema::{helper_traits::parse_email_user, prestashop_schema::{PrestashopPayload, ServiceOrder}, utilities::{check_for_duplicates, create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, DuplicateResolution, TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use displays::remote_viewer::ratagui::TerminalEvent;
 use crate::filesystem::system_info::ComputerInfo;
@@ -167,14 +167,62 @@ impl ServiceData {
         }
     }
 
+    /// First step: Check for duplicates before submitting
     pub fn submit_tur_mastertech(&mut self) {
+        let mut task_data = self.task_data.clone();
+        let customer_data = self.customer_data.clone();
+        let ticket_data = self.ticket_data.clone();
+        let computer_data = self.computer_data.clone();
+        task_data.due_date = Utc::now().into();
+        let send_specs = self.send_specs;
+        let service_number = ticket_data.service_number.clone();
+
+        // Populate task data fields
+        task_data.service_number = Some(service_number.clone());
+        task_data.task_name = format!("{} - {}", &customer_data.name, &service_number);
+
+        let tx = get_event_sender();
+        let computer_for_check = if send_specs { Some(computer_data.clone()) } else { None };
+
+        log::info!("Starting duplicate check for service #{}", service_number);
+
+        tokio::spawn(async move {
+            let result = check_for_duplicates(
+                &service_number,
+                &task_data.clone().into(),
+                &ticket_data.clone().into(),
+                &customer_data,
+                computer_for_check.as_ref(),
+            ).await;
+
+            match result {
+                Ok(check_result) => {
+                    log::info!("Duplicate check completed: has_conflicts={}", check_result.has_conflicts());
+                    let _ = tx.try_send(WidgetEvent::Api(ApiEvent::DuplicateCheckResponse(check_result)));
+                }
+                Err(e) => {
+                    log::error!("Error during duplicate check: {:?}", e);
+                    // If check fails, proceed without showing modal (fallback behavior)
+                    let empty_result = database::schema::DuplicateCheckResult::new(service_number);
+                    let _ = tx.try_send(WidgetEvent::Api(ApiEvent::DuplicateCheckResponse(empty_result)));
+                }
+            }
+        });
+    }
+
+    /// Second step: Actually submit after duplicate resolution (or if no conflicts)
+    pub fn submit_after_resolution(&mut self, resolution: Option<DuplicateResolution>) {
         let mut task_data = self.task_data.clone();
         let customer_data = self.customer_data.clone();
         let ticket_data = self.ticket_data.clone();
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
         task_data.due_date = Utc::now().into();
-        let send_specs = self.send_specs.clone();
+        let send_specs = self.send_specs;
+
+        let tx = get_event_sender();
+
+        log::info!("Submitting TUR sheet after resolution: {:?}", resolution);
 
         tokio::spawn(async move {
             let send_payload_result = create_full_task_payload(
@@ -187,6 +235,7 @@ impl ServiceData {
             )
             .await;
             log::info!("send_payload_result: {send_payload_result:?}");
+            let _ = tx.try_send(WidgetEvent::Api(ApiEvent::TaskCreationResponse(send_payload_result)));
         });
     }
 }

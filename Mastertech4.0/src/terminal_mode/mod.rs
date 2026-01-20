@@ -11,6 +11,7 @@ use widgets::HandleWidget;
 use data::LocalTermEvent;
 use ratatui::prelude::*;
 use reqwest::Client;
+use styling::APP_BACKGROUND;
 
 pub mod systems;
 pub mod widgets;
@@ -21,6 +22,7 @@ pub mod fx;
 pub mod data;
 pub mod context;
 pub mod websockets;
+pub mod modals;
 
 static SPLASH_CONFIG: SplashConfig = SplashConfig {
     image_data: include_bytes!("../assets/masterlogoV3.png"),
@@ -242,10 +244,11 @@ impl <'a>TerminalApp<'a> {
                 // *manual_start = start;
             }
 
-            terminal.draw(|f| {
+            terminal.draw(|f: &mut Frame<'_>| {
                 let area = f.area();
-                // f.render_widget_ref(Block::new().border_type(ratatui::widgets::BorderType::Double).style(Style::new().bg(CATPPUCCIN.base)), area);
-                f.buffer_mut().set_style(area, Style::new().bg(Color::Black));
+                // Apply consistent dark background across the entire frame
+                // This ensures all areas, including gaps between widgets, have the same background
+                f.buffer_mut().set_style(area, Style::new().bg(APP_BACKGROUND));
                 if !splash_screen.is_rendered() {
                     Self::render_splash_screen(f, &mut splash_screen);
                 } else {

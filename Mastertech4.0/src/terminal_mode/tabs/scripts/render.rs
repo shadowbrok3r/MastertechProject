@@ -1,5 +1,5 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind}, layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect}, prelude::Backend, style::{Color, Style, Stylize}, text::{Line, Span}, widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, WidgetRef, Wrap}, Frame};
-use crate::terminal_mode::{events::action_handler::WidgetId, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
+use crate::terminal_mode::{events::action_handler::WidgetId, fx::effect::animated_border, styling::{BASE_COLORS, CATPPUCCIN, DEEPPINK, SPRINGGREEN, APP_BACKGROUND}, tabs::checklist::TodoItem, widgets::{ButtonType, HandleWidget, ShrinkArea}};
 use super::{checklist::Status, ScriptsTab};
 use displays::get_current_user_from_auth;
 use unicode_width::UnicodeWidthStr;
@@ -398,7 +398,7 @@ impl<'a> ScriptsTab<'a> {
                     .title(format!("{} Menu", widget_id.0))
                     .border_style(Style::new().fg(DEEPPINK.text))
                     .title_alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::new().bg(Color::Rgb(8, 8, 12)).fg(CATPPUCCIN.sky))
+                    .style(Style::new().bg(APP_BACKGROUND).fg(CATPPUCCIN.sky))
                 )
                 .highlight_style(Style::new().bg(CATPPUCCIN.base).fg(CATPPUCCIN.text))
                 .highlight_symbol(">>");
@@ -625,7 +625,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         .split(left_half);
 
         let para = Paragraph::new("Scripts Library")
-            .block(Block::default().bg(CATPPUCCIN.base))
+            .block(Block::default().bg(APP_BACKGROUND))
             .centered();
 
         (&para).render(left_side_chunks[0], f.buffer_mut());
@@ -789,6 +789,28 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         // Render Checklist
         self.draw_checklist::<B>(f, layout[0]);
+        
+        // Add animated border effects to the sections
+        {
+            let mut effects_init = self.effects_init.borrow_mut();
+            let mut effect_stage = self.effect_stage.borrow_mut();
+            
+            if !*effects_init {
+                // Initialize border effects for the log section (Run Report)
+                let log_effect = animated_border(CATPPUCCIN.blue, layout[1], 20.0);
+                effect_stage.add_effect(log_effect);
+                
+                // Initialize border effect for checklist (Job Builder)
+                let checklist_effect = animated_border(CATPPUCCIN.lavender, layout[0], 18.0);
+                effect_stage.add_effect(checklist_effect);
+                
+                *effects_init = true;
+            }
+            
+            // Process effects
+            let fx_duration = tachyonfx::Duration::from_millis(16);
+            effect_stage.process_effects(fx_duration, f.buffer_mut(), area);
+        }
 
         // Render popup if active
         self.draw_context_menu(f);
