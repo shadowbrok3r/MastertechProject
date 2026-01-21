@@ -2,16 +2,50 @@ use egui::ViewportCommand;
 use log::{debug, info};
 use semver::Version;
 use tokio::spawn;
+use displays::{get_toast_sender, ToastMessage};
 
 use crate::{app_state::MasterTechApp, tabs::github::self_updater::{run, Asset}};
 
 impl MasterTechApp {
     pub fn receive_github(&mut self, ctx: &eframe::egui::Context) {
+        // Track download progress for toast notifications
         while let Ok(res) = self.context.bytes_rx.try_recv() {
             ctx.request_repaint();
+            
+            // Calculate previous progress percentage before updating
+            let prev_pct = if self.context.progress.1 > 0.0 {
+                (self.context.progress.0 / self.context.progress.1 * 100.0) as u32
+            } else {
+                0
+            };
+            
             self.context.progress.1 = res.1 as f32;
             self.context.progress.0 += res.0 as f32;
+            
+            // Calculate current progress percentage
+            let current_pct = if self.context.progress.1 > 0.0 {
+                (self.context.progress.0 / self.context.progress.1 * 100.0) as u32
+            } else {
+                0
+            };
+            
+            // Show progress toast when crossing milestones (25%, 50%, 75%)
+            for milestone in [25u32, 50, 75] {
+                if prev_pct < milestone && current_pct >= milestone {
+                    let toast_tx = get_toast_sender();
+                    let _ = toast_tx.try_send(ToastMessage::Info(
+                        format!("Downloading update... {}%", milestone)
+                    ));
+                }
+            }
+            
             if res.0 == res.1 {
+                // Download complete
+                let toast_tx = get_toast_sender();
+                let _ = toast_tx.try_send(ToastMessage::Success(
+                    "Update downloaded! Installing and restarting...".to_string()
+                ));
+                
                 self.context.progress = (0.0, 0.0);
                 #[cfg(target_os = "windows")]
                 {
@@ -58,6 +92,13 @@ impl MasterTechApp {
                     if is_compatible_asset {
                         let client = self.context.client.clone();
                         info!("Found a new release! {:?}", &github_release_version);
+                        
+                        // Show toast notification for new release found
+                        let toast_tx = get_toast_sender();
+                        let _ = toast_tx.try_send(ToastMessage::Info(
+                            format!("New release v{} found! Downloading update...", github_release_version)
+                        ));
+                        
                         let tx = self.context.bytes_tx.clone();
 
                         spawn(async move {

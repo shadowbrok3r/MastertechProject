@@ -252,7 +252,7 @@ impl egui_dock::TabViewer for SharedContext {
             "Threads" => self.user_chat.ui(ui),
             "Bug Report" => self.github(ui),
             "My Tools" => self.filesystem.display(ui),
-            "Logs" => egui_logger::logger_ui()
+            "Logs" => crate::ui_tools::egui_logger::logger_ui()
                 .warn_color(Color32::from_rgb(94, 215, 221)) 
                 .error_color(Color32::from_rgb(255, 55, 102)) 
                 .log_levels([true, true, true, false, false])

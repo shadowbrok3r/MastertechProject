@@ -12,8 +12,7 @@ surrealdb-types = { git = "https://github.com/surrealdb/surrealdb", tag = "v3.0.
 egui_extras = { version = "0.33", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
-egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = ["serde"] } 
-egui_logger = { git = "https://github.com/shadowbrok3r/egui_logger" }
+egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = ["serde"] }
 rmcp = { version = "0.13.0", features = ["server", "client", "transport-async-rw"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1.49.0", features = ["full", "tracing"] }

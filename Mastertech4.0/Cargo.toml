@@ -74,12 +74,12 @@ env_logger = "*"
 dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
+
 # nvme = "0.2.2"
 # surrealdb-alpha ={ workspace = true }
 
 surrealdb = { workspace=true }
 ratatui = { workspace = true }
-egui_logger = {workspace = true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 database = { workspace=true }
@@ -156,6 +156,7 @@ winres = "0.1"
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
+whoami = "2"
 
 [dev-dependencies]
 criterion = { version = "0.8.0", features = ["async_tokio"]}

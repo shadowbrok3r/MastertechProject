@@ -23,7 +23,6 @@ tap = "1"
 surrealdb-types = { workspace = true }
 egui-data-table = { workspace = true }
 egui_json_tree = { workspace = true }
-egui_logger = { workspace = true }
 fuzzy-matcher = { workspace=true }
 async-trait = { workspace = true }
 egui_plot = { workspace = true }

@@ -14,6 +14,7 @@ pub mod toasts;
 pub mod tokyo_dark;
 pub mod theme_config;
 pub mod notification_center;
+pub mod egui_logger;
 
 const ZSTD_LEVEL: i32 = 9;
 
