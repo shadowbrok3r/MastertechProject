@@ -3,9 +3,8 @@ use crate::terminal_mode::{events::action_handler::{get_event_sender, WidgetEven
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use super::{button::{ButtonState, Theme}, ButtonType};
 use super::tui_textarea::{CursorMove, TextArea};
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 use crossbeam::channel::Sender;
-use textwrap::refill;
 
 /// Minimum height required for an InputField to be visible (borders + 1 line of text)
 pub const INPUT_FIELD_MIN_HEIGHT: u16 = 3;
@@ -27,7 +26,6 @@ pub struct InputField <'a> {
     theme: Theme,
     block: RefCell<Option<Block<'a>>>,
     event_sender: Sender<WidgetEvent>,
-    has_wrapped: Rc<RefCell<bool>>,
     last_width: RefCell<Option<usize>>,
 }
 
@@ -47,9 +45,7 @@ impl <'a> InputField <'a>{
             state: RefCell::new(ButtonState::Normal),
             theme: CATPPUCCINTHEME,
             event_sender: get_event_sender(),
-            has_wrapped: Rc::new(RefCell::new(false)),
             last_width: RefCell::new(None),
-            
         }
     }
 
@@ -101,52 +97,36 @@ impl <'a> InputField <'a>{
     }
 
     pub fn check_text_wrapping(&self, area: Rect) {
-        // Render the input's value in a Paragraph.
-        let Ok(mut input) = self.input.try_borrow_mut() else { return; };
-
+        // This method now only tracks width changes without modifying text content.
+        // Text wrapping is handled visually by the TextArea widget itself.
+        // We no longer insert hard line breaks which caused corruption on resize.
+        let Ok(input) = self.input.try_borrow() else { return; };
+        
         let width = area.width.saturating_sub(2) as usize;
-        let lines = input.lines().to_vec();
-        let cursor_line_idx = input.cursor().0;
-        let cursor_col = input.cursor().1;
-        let current_line = lines.get(cursor_line_idx).cloned().unwrap_or(String::new());
-
-        let is_current_clipped = current_line.chars().count() > width && cursor_col >= width;
-        let mut has_wrapped = self.has_wrapped.borrow_mut();
-        if is_current_clipped && !has_wrapped.clone() {
-            input.insert_newline();
-            *has_wrapped = true;
-        } else if !is_current_clipped {
-            *has_wrapped = false;
-        }
-
-        // Check for width change and unwrap if necessary
         let mut last_width = self.last_width.borrow_mut();
-        if let Some(prev_width) = *last_width {
-            if width > prev_width {
-                let current_text = lines.join("\n");
-                let refilled = refill(&current_text, width);
-                input.select_all();
-                input.cut();
-                input.insert_str(&refilled);
-            }
-        }
-
         *last_width = Some(width);
-
-        let lines = input.lines();
-
-        // Check for pasted text (optional fallback, can remove if using insert_wrapped_text)
-        let mut needs_split = false;
-        for (i, line) in lines.iter().enumerate() {
-            if line.chars().count() > width {
-                needs_split = true;
-                input.move_cursor(CursorMove::Jump(i as u16, width as u16));
-                input.insert_newline();
-                break;
-            }
-        }
-        if needs_split && !is_current_clipped {
-            *has_wrapped = false;
+        
+        // Just track that we've processed this width - no text modification
+        drop(input);
+    }
+    
+    /// Get the raw text content as a single string (joining all lines)
+    pub fn get_raw_text(&self) -> String {
+        let input = self.input.borrow();
+        input.lines().iter()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<&str>>()
+            .join(" ")
+    }
+    
+    /// Set text content, properly handling multi-line text
+    pub fn set_text(&self, text: &str) {
+        if let Ok(mut input) = self.input.try_borrow_mut() {
+            input.select_all();
+            input.cut();
+            // Insert the text as-is - let the TextArea handle wrapping visually
+            input.insert_str(text);
         }
     }
 }
@@ -232,6 +212,14 @@ impl <'a> ButtonType <'a> for InputField <'a> {
             KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
                 input.select_all();
                 input.copy();
+                let mut clipboard = arboard::Clipboard::new().unwrap();
+                let set_clipboard_contents = clipboard.set().text(input.yank_text());
+                log::info!("Set clipboard contents: {set_clipboard_contents:?}");
+                true
+            }
+            KeyCode::Char('x') if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.select_all();
+                input.cut();
                 let mut clipboard = arboard::Clipboard::new().unwrap();
                 let set_clipboard_contents = clipboard.set().text(input.yank_text());
                 log::info!("Set clipboard contents: {set_clipboard_contents:?}");

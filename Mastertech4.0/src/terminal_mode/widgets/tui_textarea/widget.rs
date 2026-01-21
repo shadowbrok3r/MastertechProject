@@ -1,7 +1,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Span, Text};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 use super::textarea::TextArea;
 use super::util::num_digits;
 use ratatui::text::Line;
@@ -148,7 +148,8 @@ impl Widget for &TextArea<'_> {
         let mut text_area = area;
         let mut inner = Paragraph::new(text)
             .style(style)
-            .alignment(self.alignment());
+            .alignment(self.alignment())
+            .wrap(Wrap { trim: false }); // Enable soft wrapping for multiline content
         if let Some(b) = self.block() {
             text_area = b.inner(area);
             b.render(area, buf)
