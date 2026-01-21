@@ -25,7 +25,7 @@ pub fn run() {
     use web_sys::HtmlCanvasElement;
 
     gloo_console::info!("INIT LOGGER");
-    egui_logger::builder().init();
+    displays::ui_tools::egui_logger::builder().init();
     // Redirect `log` message to `console.log` and friends:
     // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
