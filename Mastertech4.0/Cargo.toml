@@ -36,7 +36,7 @@ clap = { version = "4.5", features = ["derive"] }
 sha2 = { version = "0.10", features = ["std"] }
 nvml-wrapper = { version = "0.11.0", features = ["serde"] }
 strum = { version = "0.27", features = ["strum_macros", "derive"] }
-rmcp = { version = "0.12.0", features = ["server", "transport-io", "schemars"]}
+rmcp = { version = "0.13.0", features = ["server", "transport-io", "schemars"]}
 enigo = { version = "0.6.1", features = ["serde"] }
 indexmap = { version = "2.10.0", features = ["serde"] }
 tachyonfx = { version = "0.22"}

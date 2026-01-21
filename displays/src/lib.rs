@@ -279,6 +279,14 @@ pub enum Cmd {
     SaveRemoteFile(String, String),
     /// Response indicating save result
     SaveResult(bool, String),
+    /// Reboot the remote system (with optional persistence flag for auto-restart)
+    RebootSystem { persist_mastertech: bool },
+    /// Shutdown the remote system
+    ShutdownSystem,
+    /// Lock the remote workstation
+    LockWorkstation,
+    /// Log off the current user
+    LogOffUser,
     None,
 }
 
