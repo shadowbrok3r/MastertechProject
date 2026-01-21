@@ -56,13 +56,13 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# # lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
-# codegen-units = 1
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+# lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
+codegen-units = 1
 
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"

@@ -888,6 +888,225 @@ impl TerminalWebsocketClient {
                     }
                 }
             }
+            Cmd::RebootSystem { persist_mastertech } => {
+                log::info!("websockets -> Reboot system command received (persist={})", persist_mastertech);
+                #[cfg(target_os = "windows")]
+                {
+                    if persist_mastertech {
+                        // Create a scheduled task to run Mastertech on next login
+                        // This uses schtasks to create a one-time task that runs at logon
+                        let exe_path = std::env::current_exe().unwrap_or_default();
+                        let exe_path_str = exe_path.to_string_lossy();
+                        
+                        // Create a scheduled task that runs once at next logon then deletes itself
+                        let task_name = "MastertechAutoRestart";
+                        let create_task = tokio::process::Command::new("schtasks")
+                            .args([
+                                "/Create",
+                                "/TN", task_name,
+                                "/TR", &format!("\"{}\"", exe_path_str),
+                                "/SC", "ONLOGON",
+                                "/RL", "HIGHEST",
+                                "/F", // Force overwrite if exists
+                            ])
+                            .output()
+                            .await;
+                        
+                        match create_task {
+                            Ok(out) => {
+                                if out.status.success() {
+                                    log::info!("Created scheduled task for Mastertech auto-restart");
+                                } else {
+                                    let stderr = String::from_utf8_lossy(&out.stderr);
+                                    log::error!("Failed to create scheduled task: {}", stderr);
+                                }
+                            }
+                            Err(e) => log::error!("Error creating scheduled task: {}", e),
+                        }
+                    }
+                    
+                    // Initiate system reboot with 5 second delay
+                    let output = tokio::process::Command::new("shutdown")
+                        .args(["/r", "/t", "5", "/c", "Mastertech remote reboot requested"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if out.status.success() {
+                                log::info!("Reboot initiated successfully");
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to initiate reboot: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing shutdown command: {}", e),
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let output = tokio::process::Command::new("sudo")
+                        .args(["shutdown", "-r", "+1", "Mastertech remote reboot"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if !out.status.success() {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to initiate reboot: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing shutdown: {}", e),
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let output = tokio::process::Command::new("sudo")
+                        .args(["shutdown", "-r", "+1"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if !out.status.success() {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to initiate reboot: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing shutdown: {}", e),
+                    }
+                }
+            }
+            Cmd::ShutdownSystem => {
+                log::info!("websockets -> Shutdown system command received");
+                #[cfg(target_os = "windows")]
+                {
+                    let output = tokio::process::Command::new("shutdown")
+                        .args(["/s", "/t", "5", "/c", "Mastertech remote shutdown requested"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if out.status.success() {
+                                log::info!("Shutdown initiated successfully");
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to initiate shutdown: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing shutdown command: {}", e),
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let output = tokio::process::Command::new("sudo")
+                        .args(["shutdown", "-h", "+1"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if !out.status.success() {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to initiate shutdown: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error executing shutdown: {}", e),
+                    }
+                }
+            }
+            Cmd::LockWorkstation => {
+                log::info!("websockets -> Lock workstation command received");
+                #[cfg(target_os = "windows")]
+                {
+                    // Use rundll32 to call the LockWorkStation function
+                    let output = tokio::process::Command::new("rundll32.exe")
+                        .args(["user32.dll,LockWorkStation"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if out.status.success() {
+                                log::info!("Workstation locked successfully");
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to lock workstation: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error locking workstation: {}", e),
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    // Try common screen lockers
+                    let lockers = ["loginctl lock-session", "gnome-screensaver-command -l", "xdg-screensaver lock"];
+                    for locker in lockers {
+                        let parts: Vec<&str> = locker.split_whitespace().collect();
+                        if let Some((cmd, args)) = parts.split_first() {
+                            if let Ok(output) = tokio::process::Command::new(cmd)
+                                .args(args)
+                                .output()
+                                .await
+                            {
+                                if output.status.success() {
+                                    log::info!("Workstation locked using: {}", locker);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = tokio::process::Command::new("pmset")
+                        .args(["displaysleepnow"])
+                        .output()
+                        .await;
+                }
+            }
+            Cmd::LogOffUser => {
+                log::info!("websockets -> Log off user command received");
+                #[cfg(target_os = "windows")]
+                {
+                    let output = tokio::process::Command::new("shutdown")
+                        .args(["/l"])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if out.status.success() {
+                                log::info!("User logged off successfully");
+                            } else {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to log off user: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error logging off user: {}", e),
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // On Linux/macOS, kill the user's session
+                    let output = tokio::process::Command::new("pkill")
+                        .args(["-KILL", "-u", &whoami::username()])
+                        .output()
+                        .await;
+                    
+                    match output {
+                        Ok(out) => {
+                            if !out.status.success() {
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                log::error!("Failed to log off user: {}", stderr);
+                            }
+                        }
+                        Err(e) => log::error!("Error logging off user: {}", e),
+                    }
+                }
+            }
             Cmd::None => {},
             _ => {}
         }

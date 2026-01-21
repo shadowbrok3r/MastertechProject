@@ -206,13 +206,6 @@ impl ProcessTableViewer {
     }
 }
 
-
-// Don't need to implement any trait on row data itself.
-// #[derive(Default, Serialize, Clone, Deserialize, PartialEq, Debug)]
-// pub struct ProcessTableData(pub String, pub String, pub String, pub String, pub String, pub String, pub String);
-
-// pub struct Process 
-
 impl RowViewer<Process> for ProcessRowViewer {
     fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<Process>> {
         Some(Codec)
@@ -246,16 +239,54 @@ impl RowViewer<Process> for ProcessRowViewer {
         hotkeys
     }
 
-    // TODO: Custom context menu items are not currently supported by egui_data_table
-    // The following methods were removed because CustomMenuItem, CustomActionContext,
-    // and CustomActionEditor don't exist in the current egui_data_table API:
-    // - custom_context_menu_items
-    // - on_custom_action_ex
-    // 
-    // To implement process kill/open in explorer functionality, consider:
-    // 1. Using on_cell_view_response to handle right-click actions
-    // 2. Adding buttons directly in show_cell_view
-    // 3. Using the action channel (process_action_tx) with external UI
+    fn custom_context_menu_items(
+            &mut self,
+            _context: &UiActionContext,
+            selection: &egui_data_table::SelectionSnapshot<'_, Process>,
+        ) -> Vec<egui_data_table::CustomMenuItem> {
+        use egui_data_table::CustomMenuItem;
+        
+        let has_selection = !selection.selected_rows.is_empty();
+        let single_selection = selection.selected_rows.len() == 1;
+        
+        vec![
+            // Process-specific actions (require selection)
+            CustomMenuItem::new("kill_process", "Kill Process")
+                .icon("🔫")
+                .enabled(has_selection),
+            CustomMenuItem::new("open_in_explorer", "Open in Explorer")
+                .icon("📂")
+                .enabled(single_selection),
+        ]
+    }
+
+    fn on_custom_action_ex(
+            &mut self,
+            action_id: &'static str,
+            ctx: &egui_data_table::viewer::CustomActionContext<'_, Process>,
+            _editor: &mut egui_data_table::viewer::CustomActionEditor<Process>,
+        ) {
+        match action_id {
+            "kill_process" => {
+                // Kill all selected processes
+                for (_, process) in ctx.selection.selected_rows.iter() {
+                    if let Some(tx) = &self.action_tx {
+                        let _ = tx.try_send(ProcessAction::Kill(process.id));
+                    }
+                }
+            }
+            "open_in_explorer" => {
+                // Open the first selected process's location
+                if let Some((_, process)) = ctx.selection.selected_rows.first() {
+                    let path = process.exe_path.clone().unwrap_or_else(|| process.cmd.clone());
+                    if let Some(tx) = &self.action_tx {
+                        let _ = tx.try_send(ProcessAction::OpenInExplorer(path));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &Process, column: usize) {
         let _ = match column {
