@@ -25,7 +25,7 @@ impl crate::app_state::SharedContext {
         let live_notif_tx = self.live_notification_tx.clone();        
         let live_user_tx = self.live_user_tx.clone();
         let live_clients_tx = self.live_clients_tx.clone();
-        self.store_selection = std::convert::Into::<u64>::into(user.get_store());
+        self.store_selection = user.get_store().into_store_id() as u64;
         let user = user.clone();
         let name = user.get_name();
         log::info!("Getting Initial data: {}", self.store_selection);
