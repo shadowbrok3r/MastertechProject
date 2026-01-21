@@ -83,11 +83,16 @@ impl GithubIssue {
             if submit.clicked() {
                 let github_issue_title = self.github_issue_title.clone();
                 let current_user = self.user.clone().unwrap_or_default();
+                
+                // Get logs before clearing the form
+                let logs = crate::ui_tools::egui_logger::get_logs_for_issue();
+                
                 let github_issue_descript = format!(
-                    "{}\nUser: {} - {}", 
+                    "{}\n\n**User:** {} - {}\n\n<details>\n<summary>Application Logs (last 100 entries)</summary>\n\n```\n{}\n```\n</details>", 
                     self.github_issue_descript.clone(), 
                     current_user.get_name(), 
-                    current_user.get_email()
+                    current_user.get_email(),
+                    logs
                 );
 
                 self.github_issue_descript.clear();
