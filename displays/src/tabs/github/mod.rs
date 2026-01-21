@@ -13,7 +13,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{app_state::SharedContext, markdown_editor, PlatformSpawner, Spawner};
+use crate::{app_state::SharedContext, get_toast_sender, markdown_editor, PlatformSpawner, Spawner, ToastMessage};
 
 pub struct GithubIssue {
     pub github_issue_descript: String,
@@ -99,9 +99,20 @@ impl GithubIssue {
                     let create_issue =
                         create_new_issue(github_issue_title, github_issue_descript, client).await;
 
+                    let toast_tx = get_toast_sender();
                     match create_issue {
-                        Ok(val) => info!("Sent request ok: {val:?}"),
-                        Err(e) => error!("Error creating issue: {e:?}"),
+                        Ok(val) => {
+                            info!("Sent request ok: {val:?}");
+                            let _ = toast_tx.try_send(ToastMessage::Success(
+                                "GitHub issue submitted successfully".to_string()
+                            ));
+                        }
+                        Err(e) => {
+                            error!("Error creating issue: {e:?}");
+                            let _ = toast_tx.try_send(ToastMessage::Error(
+                                format!("Failed to submit issue: {:?}", e)
+                            ));
+                        }
                     }
                 });
             }
