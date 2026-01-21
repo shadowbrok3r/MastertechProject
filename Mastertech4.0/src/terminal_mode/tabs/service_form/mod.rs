@@ -1,6 +1,6 @@
 use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
-use database::schema::{prestashop_schema::OrderRow, GetKeysResponse, DuplicateCheckResult};
+use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
 use ratatui::{layout::Rect, style::Style};
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
 use reqwest::Client;
@@ -111,37 +111,37 @@ impl<'a> ServiceFormTab<'a> {
         }
     }
 
-    // Optional: Method to populate order_rows later
-    pub fn set_order_rows(&mut self, order_rows: Vec<OrderRow>) {
-        log::info!("SetOrderRows");
-        self.order_row_fields = order_rows
-            .into_iter()
-            .enumerate()
-            .map(|(i, row)| {
-                log::info!("mapping order_row_fields");
+    // // Optional: Method to populate order_rows later
+    // pub fn set_order_rows(&mut self, order_rows: Vec<OrderRow>) {
+    //     log::info!("SetOrderRows");
+    //     self.order_row_fields = order_rows
+    //         .into_iter()
+    //         .enumerate()
+    //         .map(|(i, row)| {
+    //             log::info!("mapping order_row_fields");
     
-                log::info!("creating name_field");
-                let name_field = InputField::new("Product Name", WidgetId(format!("ProductName{}", i)));
-                {
-                    let mut name_field_input = name_field.input.borrow_mut();
-                    name_field_input.insert_str(row.product_name);
-                    name_field_input.set_cursor_style(Style::default());
-                } // name_field_input dropped here
+    //             log::info!("creating name_field");
+    //             let name_field = InputField::new("Product Name", WidgetId(format!("ProductName{}", i)));
+    //             {
+    //                 let mut name_field_input = name_field.input.borrow_mut();
+    //                 name_field_input.insert_str(row.product_name);
+    //                 name_field_input.set_cursor_style(Style::default());
+    //             } // name_field_input dropped here
     
-                log::info!("creating price_field");
-                let price_field = InputField::new("Price", WidgetId(format!("ProductPrice{}", i)));
-                {
-                    let mut price_field_input = price_field.input.borrow_mut();
-                    price_field_input.insert_str(row.product_price);
-                    price_field_input.set_cursor_style(Style::default());
-                } // price_field_input dropped here
+    //             log::info!("creating price_field");
+    //             let price_field = InputField::new("Price", WidgetId(format!("ProductPrice{}", i)));
+    //             {
+    //                 let mut price_field_input = price_field.input.borrow_mut();
+    //                 price_field_input.insert_str(row.product_price);
+    //                 price_field_input.set_cursor_style(Style::default());
+    //             } // price_field_input dropped here
                 
-                log::info!("returning name and price field");
+    //             log::info!("returning name and price field");
                 
-                (name_field.clone(), price_field.clone())
-            })
-            .collect();
-    }
+    //             (name_field.clone(), price_field.clone())
+    //         })
+    //         .collect();
+    // }
     
     fn set_active_field(&self, input_field: WidgetId) {
         let idx = Self::get_input_idx(&input_field);
