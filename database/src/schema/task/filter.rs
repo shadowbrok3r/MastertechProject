@@ -1,6 +1,3 @@
-
-use std::cmp::Reverse;
-
 use chrono::{DateTime, Utc};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
@@ -108,7 +105,7 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
 
         // Pre-filter search to reduce fuzzy match calls
         let search_input_lower = search_input.to_lowercase();
-        let match_results = search
+        let match_results: Vec<_> = search
             .into_iter()
             .filter(|s| s.as_ref().to_lowercase().contains(&search_input_lower))
             .filter_map(|s| {
@@ -123,7 +120,7 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
                     (s, adjusted_score, indices)
                 })
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         // Create a map of task IDs to tasks for O(1) lookups
         let task_map: std::collections::HashMap<_, _> = self
@@ -131,45 +128,53 @@ impl FilterLiveTasks for Vec<LiveTaskPayload> {
             .map(|task| (task.id.key_string(), task))
             .collect();
 
-        // Collect tasks with their best match scores and completion status
-        let mut task_scores: Vec<(String, i64, bool)> = vec![];
-        let mut seen_ids = std::collections::HashSet::with_capacity(self.len());
+        // Helper function to collect matching tasks for a given filter
+        let collect_matching_tasks = |tasks: &[LiveTaskPayload], include_completed: bool| -> Vec<(String, i64)> {
+            let mut task_scores: Vec<(String, i64)> = vec![];
+            let mut seen_ids = std::collections::HashSet::with_capacity(tasks.len());
 
-        for (output, input_score, _) in match_results {
-            let output_str = output.as_ref();
-            for task in self.iter() {
-                let task_id = task.id.key_string().clone();
-                if seen_ids.contains(&task_id) {
-                    continue;
-                }
-                let task_name = task.task_name.as_str();
-                // Compute fuzzy match score for task_name only
-                if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
-                    let combined_score = task_score.max(input_score);
-                    // Store (task_id, score, is_completed)
-                    task_scores.push((task_id.clone(), combined_score, task.completed));
-                    seen_ids.insert(task_id);
+            for (output, input_score, _) in &match_results {
+                let output_str = output.as_ref();
+                for task in tasks.iter() {
+                    // Skip completed tasks unless we're including them
+                    if task.completed && !include_completed {
+                        continue;
+                    }
+                    
+                    let task_id = task.id.key_string().clone();
+                    if seen_ids.contains(&task_id) {
+                        continue;
+                    }
+                    let task_name = task.task_name.as_str();
+                    // Compute fuzzy match score for task_name only
+                    if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
+                        let combined_score = task_score.max(*input_score);
+                        task_scores.push((task_id.clone(), combined_score));
+                        seen_ids.insert(task_id);
+                    }
                 }
             }
-        }
 
-        // Sort tasks: non-completed first (completed=false before completed=true),
-        // then by score in descending order within each group
-        task_scores.sort_by(|a, b| {
-            // First compare by completion status: false (non-completed) comes before true (completed)
-            match a.2.cmp(&b.2) {
-                std::cmp::Ordering::Equal => {
-                    // If same completion status, sort by score descending
-                    b.1.cmp(&a.1)
-                }
-                other => other,
-            }
-        });
+            // Sort by score descending
+            task_scores.sort_by(|a, b| b.1.cmp(&a.1));
+            task_scores
+        };
 
-        // Collect unique tasks, avoiding clones
+        // First, try to find matches in non-completed tasks only
+        let non_completed_scores = collect_matching_tasks(self, false);
+
+        // If we found non-completed matches, return those
+        // Otherwise, fall back to including completed tasks
+        let task_scores = if !non_completed_scores.is_empty() {
+            non_completed_scores
+        } else {
+            collect_matching_tasks(self, true)
+        };
+
+        // Collect unique tasks
         task_scores
             .into_iter()
-            .filter_map(|(task_id, _, _)| task_map.get(&task_id).map(|task| *task))
+            .filter_map(|(task_id, _)| task_map.get(&task_id).map(|task| *task))
             .cloned()
             .collect::<Vec<LiveTaskPayload>>()
     }
@@ -235,7 +240,7 @@ impl FilterTasks for Vec<TaskPayload> {
 
         // Pre-filter search to reduce fuzzy match calls
         let search_input_lower = search_input.to_lowercase();
-        let match_results = search
+        let match_results: Vec<_> = search
             .into_iter()
             .filter(|s| s.as_ref().to_lowercase().contains(&search_input_lower))
             .filter_map(|s| {
@@ -250,7 +255,7 @@ impl FilterTasks for Vec<TaskPayload> {
                     (s, adjusted_score, indices)
                 })
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         // Create a map of task IDs to tasks for O(1) lookups
         let task_map: std::collections::HashMap<_, _> = self
@@ -258,45 +263,53 @@ impl FilterTasks for Vec<TaskPayload> {
             .map(|task| (task.id.key_string(), task))
             .collect();
 
-        // Collect tasks with their best match scores and completion status
-        let mut task_scores: Vec<(String, i64, bool)> = vec![];
-        let mut seen_ids = std::collections::HashSet::with_capacity(self.len());
+        // Helper function to collect matching tasks for a given filter
+        let collect_matching_tasks = |tasks: &[TaskPayload], include_completed: bool| -> Vec<(String, i64)> {
+            let mut task_scores: Vec<(String, i64)> = vec![];
+            let mut seen_ids = std::collections::HashSet::with_capacity(tasks.len());
 
-        for (output, input_score, _) in match_results {
-            let output_str = output.as_ref();
-            for task in self.iter() {
-                let task_id = task.id.key_string().clone();
-                if seen_ids.contains(&task_id) {
-                    continue;
-                }
-                let task_name = task.task_name.as_str();
-                // Compute fuzzy match score for task_name only
-                if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
-                    let combined_score = task_score.max(input_score);
-                    // Store (task_id, score, is_completed)
-                    task_scores.push((task_id.clone(), combined_score, task.completed));
-                    seen_ids.insert(task_id);
+            for (output, input_score, _) in &match_results {
+                let output_str = output.as_ref();
+                for task in tasks.iter() {
+                    // Skip completed tasks unless we're including them
+                    if task.completed && !include_completed {
+                        continue;
+                    }
+                    
+                    let task_id = task.id.key_string().clone();
+                    if seen_ids.contains(&task_id) {
+                        continue;
+                    }
+                    let task_name = task.task_name.as_str();
+                    // Compute fuzzy match score for task_name only
+                    if let Some((task_score, _)) = matcher.fuzzy_indices(task_name, output_str) {
+                        let combined_score = task_score.max(*input_score);
+                        task_scores.push((task_id.clone(), combined_score));
+                        seen_ids.insert(task_id);
+                    }
                 }
             }
-        }
 
-        // Sort tasks: non-completed first (completed=false before completed=true),
-        // then by score in descending order within each group
-        task_scores.sort_by(|a, b| {
-            // First compare by completion status: false (non-completed) comes before true (completed)
-            match a.2.cmp(&b.2) {
-                std::cmp::Ordering::Equal => {
-                    // If same completion status, sort by score descending
-                    b.1.cmp(&a.1)
-                }
-                other => other,
-            }
-        });
+            // Sort by score descending
+            task_scores.sort_by(|a, b| b.1.cmp(&a.1));
+            task_scores
+        };
 
-        // Collect unique tasks, avoiding clones
+        // First, try to find matches in non-completed tasks only
+        let non_completed_scores = collect_matching_tasks(self, false);
+
+        // If we found non-completed matches, return those
+        // Otherwise, fall back to including completed tasks
+        let task_scores = if !non_completed_scores.is_empty() {
+            non_completed_scores
+        } else {
+            collect_matching_tasks(self, true)
+        };
+
+        // Collect unique tasks
         task_scores
             .into_iter()
-            .filter_map(|(task_id, _, _)| task_map.get(&task_id).map(|task| *task))
+            .filter_map(|(task_id, _)| task_map.get(&task_id).map(|task| *task))
             .cloned()
             .collect::<Vec<TaskPayload>>()
     }
