@@ -397,7 +397,19 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
                 true
             }
             KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.select_all();
                 input.copy();
+                let mut clipboard = arboard::Clipboard::new().unwrap();
+                let set_clipboard_contents = clipboard.set().text(input.yank_text());
+                log::info!("Set clipboard contents: {set_clipboard_contents:?}");
+                true
+            }
+            KeyCode::Char('x') if modifiers.contains(KeyModifiers::CONTROL) => {
+                input.select_all();
+                input.cut();
+                let mut clipboard = arboard::Clipboard::new().unwrap();
+                let set_clipboard_contents = clipboard.set().text(input.yank_text());
+                log::info!("Set clipboard contents: {set_clipboard_contents:?}");
                 true
             }
             KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {

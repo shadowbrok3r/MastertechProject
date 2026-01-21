@@ -51,7 +51,15 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                 match widget_id.0.as_str() {
                     "SubmitTur" => if let Ok(ctx) = &mut self.ctx.try_lock() {
                         if let Ok(recommendations) = self.recommendations.input.try_borrow() {
-                            ctx.service_data.task_data.task_description = recommendations.lines()[0].clone();
+                            // Join all lines with spaces to create a single paragraph
+                            // This handles multi-line input that may have been wrapped
+                            let all_lines = recommendations.lines();
+                            let joined_text = all_lines.iter()
+                                .map(|line| line.trim())
+                                .filter(|line| !line.is_empty())
+                                .collect::<Vec<&str>>()
+                                .join(" ");
+                            ctx.service_data.task_data.task_description = joined_text;
                         }
                         let description_empty = ctx.service_data.task_data.task_description.is_empty();
                         
