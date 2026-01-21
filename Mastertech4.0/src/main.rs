@@ -141,7 +141,7 @@ async fn main() -> eframe::Result<()> {
         ).unwrap();
     } else {
         // Create an EguiLogger; multi_log will take care of initialization.
-        let egui_logger = Box::new(egui_logger::builder().build());
+        let egui_logger = Box::new(displays::ui_tools::egui_logger::builder().build());
         // Early initialization of the logger
         let drain = tui_logger::Drain::new();
         // instead of tui_logger::init_logger, we use `env_logger`

@@ -14,6 +14,7 @@ use reqwest::{
 };
 use self_updater::{Asset, GithubRelease};
 use tokio::spawn;
+use displays::{get_toast_sender, ToastMessage};
 
 use crate::app_state::MastertechContext;
 
@@ -66,6 +67,11 @@ impl MastertechContext {
                     current_user.get_email()
                 );
                 let client = self.client.clone();
+                
+                // Clear the form fields immediately
+                self.github_issue_title.clear();
+                self.github_issue_descript.clear();
+                
                 spawn(async move {
                     let create_issue = create_new_issue(
                         github_issue_title, 
@@ -73,9 +79,20 @@ impl MastertechContext {
                         client
                     ).await;
 
+                    let toast_tx = get_toast_sender();
                     match create_issue {
-                        Ok(val) => info!("Sent request ok: {val:?}"),
-                        Err(e) => error!("Error creating issue: {e:?}"),
+                        Ok(val) => {
+                            info!("Sent request ok: {val:?}");
+                            let _ = toast_tx.try_send(ToastMessage::Success(
+                                "GitHub issue submitted successfully".to_string()
+                            ));
+                        }
+                        Err(e) => {
+                            error!("Error creating issue: {e:?}");
+                            let _ = toast_tx.try_send(ToastMessage::Error(
+                                format!("Failed to submit issue: {:?}", e)
+                            ));
+                        }
                     }
                 });
             }

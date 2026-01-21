@@ -1092,7 +1092,7 @@ impl TerminalWebsocketClient {
                 {
                     // On Linux/macOS, kill the user's session
                     let output = tokio::process::Command::new("pkill")
-                        .args(["-KILL", "-u", &whoami::username()])
+                        .args(["-KILL", "-u", &whoami::username().unwrap_or_default()])
                         .output()
                         .await;
                     

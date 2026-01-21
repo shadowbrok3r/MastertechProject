@@ -21,7 +21,7 @@ impl TabViewer for MtechServerContext {
             "Threads" => self.shared_ctx.user_chat.ui(ui),
             "Bug Report" => self.shared_ctx.github(ui),
             "My Tools" => self.shared_ctx.filesystem.display(ui),
-            "Logs" => egui_logger::logger_ui()
+            "Logs" => displays::ui_tools::egui_logger::logger_ui()
                 .warn_color(Color32::from_rgb(94, 215, 221)) 
                 .error_color(Color32::from_rgb(255, 55, 102)) 
                 .log_levels([true, true, true, false, false])

@@ -1,5 +1,5 @@
 
-use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, ProgressBar, RichText, Separator, Stroke, TopBottomPanel, Vec2, Widget, vec2};
+use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, RichText, Separator, Stroke, TopBottomPanel, Vec2, Widget, vec2};
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
@@ -340,18 +340,6 @@ impl MasterTechApp {
                         ui.add_space(20.0);
                         ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());
                         ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
-
-                        let progress = self.context.progress;
-
-                        if progress.0 > 0.0 {
-                            let _ = ProgressBar::new(progress.0 / progress.1)
-                                .fill(Color32::from_rgba_premultiplied(255, 77, 210, 20))
-                                .desired_width(ui.available_width() / 4.0)
-                                .show_percentage()
-                                .animate(true)
-                                .ui(ui);
-                            ui.add_space(50.);
-                        }
 
                         ui.add_space(ui.available_width() / 5.);
                         let txt = RichText::new(format!(
