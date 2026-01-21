@@ -766,6 +766,59 @@ pub fn clear_logs() {
         .clear();
 }
 
+/// Returns all logs as a formatted string.
+/// Useful for exporting logs to a file or including in bug reports.
+/// 
+/// # Arguments
+/// * `max_logs` - Optional maximum number of logs to include (most recent). If None, includes all logs.
+/// * `include_level` - Whether to include the log level in the output.
+/// * `include_target` - Whether to include the target (category) in the output.
+pub fn get_logs_as_string(max_logs: Option<usize>, include_level: bool, include_target: bool) -> String {
+    let Ok(logger) = LOGGER.lock() else {
+        return String::from("Could not access logger");
+    };
+    
+    let mut output = String::new();
+    let logs_iter = if let Some(max) = max_logs {
+        // Get the last N logs
+        let skip = logger.logs.len().saturating_sub(max);
+        logger.logs.iter().skip(skip).collect::<Vec<_>>()
+    } else {
+        logger.logs.iter().collect::<Vec<_>>()
+    };
+    
+    for record in logs_iter {
+        // Format: [TIMESTAMP] [LEVEL] target: message
+        let time_str = record.time.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+        
+        let level_str = if include_level {
+            format!("[{:5}] ", record.level)
+        } else {
+            String::new()
+        };
+        
+        let target_str = if include_target {
+            format!("{}: ", record.target)
+        } else {
+            String::new()
+        };
+        
+        output.push_str(&format!("[{}] {}{}{}\n", time_str, level_str, target_str, record.message));
+    }
+    
+    output
+}
+
+/// Returns the most recent logs as a formatted string suitable for GitHub issues.
+/// Limits output to avoid making issues too large.
+pub fn get_logs_for_issue() -> String {
+    let logs = get_logs_as_string(Some(100), true, true);
+    if logs.is_empty() {
+        return String::from("No logs available");
+    }
+    logs
+}
+
 /// This returns the Log builder with default values.
 /// This is just a convenient way to get [`Builder::default()`].
 /// [Read more](`crate::Builder`)
