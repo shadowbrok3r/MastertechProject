@@ -1,6 +1,7 @@
 pub mod messages;
 pub mod threads;
 pub use messages::*;
+#[cfg(feature = "desktop")]
 use rfd::FileHandle;
 pub use threads::*;
 
@@ -28,6 +29,7 @@ pub enum ChatAction {
     Edit(RecordId),
     CancelEdit(RecordId),
     SaveNote(UserMessage),
+    #[cfg(feature = "desktop")]
     #[serde(skip)]
     UploadedFiles(Vec<FileHandle>)
 }

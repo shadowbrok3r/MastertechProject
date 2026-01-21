@@ -3,6 +3,10 @@ name = "database"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+desktop = ["rfd"]  # Include GUI dependencies for desktop builds
+
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 xml = "1"
@@ -22,7 +26,7 @@ chrono = {workspace=true}
 serde = { workspace=true }
 bytes = {workspace = true}
 brotli = { workspace=true }
-rfd = { workspace = true }
+rfd = { workspace = true, optional = true }
 log = { workspace=true }
 fuzzy-matcher = { workspace=true }
 uuid = { workspace = true }
