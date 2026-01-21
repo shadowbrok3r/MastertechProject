@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "4.7.0"
+version = "4.7.1"
 edition = "2024"
 
 [features]
@@ -34,7 +34,7 @@ crossbeam = { workspace=true }
 surrealdb = { workspace=true }
 egui_dock = { workspace=true }
 once_cell = { workspace=true }
-database = { workspace=true }
+database = { workspace=true, features = ["desktop"] }
 web-time = { workspace=true }
 futures = { workspace=true }
 bincode = { workspace=true } 

@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.7.0"
+version = "4.7.1"
 edition = "2024"
 description = "Mastertech"
 build = "build.rs"
@@ -9,7 +9,7 @@ build = "build.rs"
 ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2025"
-ProductVersion = "4.7.0"
+ProductVersion = "4.7.1"
 FileDescription = "Mastertech"
 
 [package.metadata]
@@ -82,7 +82,7 @@ surrealdb = { workspace=true }
 ratatui = { workspace = true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
-database = { workspace=true }
+database = { workspace=true, features = ["desktop"] }
 tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }

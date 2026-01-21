@@ -1,3 +1,7 @@
 target/
+**/target/
 MtechServer2.0/dist
 Cargo.lock
+.git/
+**/.git/
+*.log
