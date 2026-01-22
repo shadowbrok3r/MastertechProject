@@ -192,7 +192,20 @@ impl SharedContext {
                     for index in row_range {
                         ui.add_space(4.);
                         if let Some(client) = clients.get(index) {
-                            AdminConsole::client_header(ui, ws_client.ui_actions_channel.0.clone(), client, ws_client.undock_client.clone());
+                            // Check if we have an active WebSocket connection with confirmed remote client activity
+                            // Green requires both: master connected AND client actively responding
+                            let is_ws_connected = ws_client.ws_clients
+                                .get(&client.connection_string)
+                                .map(|wsc| wsc.is_connected && wsc.last_pong_time.is_some())
+                                .unwrap_or(false);
+                            
+                            AdminConsole::client_header(
+                                ui, 
+                                ws_client.ui_actions_channel.0.clone(), 
+                                client, 
+                                ws_client.undock_client.clone(),
+                                is_ws_connected,
+                            );
                         }
                     }
                 });

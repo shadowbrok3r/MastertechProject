@@ -33,8 +33,33 @@ impl AdminConsole {
             },
             ClientUiAction::ConnectClient(mut client) => {
                 self.open_menu = false;
+                log::info!("Received Connection Command for {}", client.connection_string);
+                
+                // Close any existing docked (non-undocked) clients before connecting to the new one
+                // Only one docked client should be visible at a time
+                let docked_clients: Vec<String> = self.undock_client
+                    .iter()
+                    .filter(|(conn_str, is_undocked)| {
+                        // Find docked clients (is_undocked == false) that are NOT the new client
+                        !**is_undocked && *conn_str != &client.connection_string
+                    })
+                    .map(|(conn_str, _)| conn_str.clone())
+                    .collect();
+                
+                for conn_str in docked_clients {
+                    log::info!("Closing previous docked client: {}", conn_str);
+                    // Close the WebSocket connection
+                    if let Some(mut ws_client) = self.ws_clients.remove(&conn_str) {
+                        ws_client.ws_sender.close();
+                        drop(ws_client);
+                    }
+                    // Remove from undock tracking
+                    self.undock_client.remove(&conn_str);
+                }
+                
+                // Now connect to the new client as docked
                 self.undock_client.insert(client.connection_string.clone(), false);
-                log::info!("Received Connection Command");
+                
                 let url = format!(
                     "{}&room_id={}",
                     if cfg!(debug_assertions) {WS_MASTER_URL_LOCAL} else {WS_MASTER_URL},
@@ -58,7 +83,7 @@ impl AdminConsole {
                             .entry(client.connection_string.clone())
                             .or_insert(ws_client);
 
-                        self.error = format!("WebConsole -> Connected to server");
+                        self.error = format!("WebConsole -> Connected to {}", client.connection_string);
                     }
                     Err(error) => {
                         client.connected = false;

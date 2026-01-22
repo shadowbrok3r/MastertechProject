@@ -1,4 +1,4 @@
-use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::ConnectedClient};
+use database::{live_data::{handle_live_delete_client, update_or_insert_client}, schema::{ConnectedClient, UserAuthorization}};
 use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use eframe::egui::{Color32, RichText};
 use std::collections::BTreeMap;
@@ -14,7 +14,13 @@ impl SharedContext {
 
             // Check if this is a meaningful change (Create action or actual connection state change)
             let should_notify = if let (Some(usr), Some(current_user)) = (&new_client.assigned_user, &self.current_user) {
-                if usr == &current_user.get_id() {
+                let is_root = if let Some(user) = &self.current_user {
+                    user.get_authorization() == UserAuthorization::Root
+                } else {
+                    false
+                };
+                
+                if usr == &current_user.get_id() || is_root {
                     // For Create action, always notify (new client)
                     // For Update action, only notify if connection state actually changed
                     // For Delete action, always notify (client removed)

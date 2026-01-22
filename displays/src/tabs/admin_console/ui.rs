@@ -1,15 +1,22 @@
 use eframe::egui::{text::LayoutJob, Align, Button, Color32, FontFamily, FontId, Frame, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText};
-use database::schema::ConnectedClient;
+use database::schema::{ConnectedClient, RecordIdExt};
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
+use crate::get_database_users;
 use log::info;
 
 use super::{AdminConsole, WebConsolePageState};
 
 impl AdminConsole {
-    pub fn client_header(ui: &mut Ui, tx: Sender<ClientUiAction>, client: &ConnectedClient, undock_client: HashMap<String, bool>) {
+    pub fn client_header(
+        ui: &mut Ui, 
+        tx: Sender<ClientUiAction>, 
+        client: &ConnectedClient, 
+        undock_client: HashMap<String, bool>,
+        is_ws_connected: bool, // True if WebSocket connection is active and responding
+    ) {
         let style = ui.style().clone();
         Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
@@ -23,6 +30,27 @@ impl AdminConsole {
             ui.set_height(25.);
             ui.horizontal_top(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    // Green dot indicator for active connection
+                    let (indicator_color, indicator_text) = if is_ws_connected {
+                        (
+                            Color32::from_rgb(50, 205, 50), // Lime green for active
+                            "●"
+                        )
+                    } else if client.connected {
+                        (
+                            Color32::from_rgb(255, 200, 0), // Yellow for DB-connected but no active WS
+                            "⚠"
+                        )
+                    } else {
+                        (
+                            Color32::from_rgb(128, 128, 128), // Gray for disconnected
+                            "⊗"
+                        )
+                    };
+                    
+                    ui.colored_label(indicator_color, indicator_text);
+                    ui.add_space(4.0);
+                    
                     // Create a new LayoutJob
                     let mut job = LayoutJob::default();
 
@@ -67,15 +95,28 @@ impl AdminConsole {
 
                     // Convert LayoutJob to WidgetText
                     let formatted_text = WidgetText::from(job);
+                    
+                    // Build hover text with date and assigned user info
                     let parsed_date = DateTime::parse_from_rfc3339(
                         &client.last_update.clone().unwrap_or(Utc::now().into()).to_string()
                     )
                     .unwrap_or_default()
                     .with_timezone(&Local);
-            
                     let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                    let _ = Button::new(formatted_text).ui(ui).on_hover_text(formatted_date);
-                    // if ui.button(formatted_text).clicked() {};
+                    
+                    // Look up assigned user name
+                    let assigned_user_text = if let Some(ref user_id) = client.assigned_user {
+                        let users = get_database_users();
+                        users.iter()
+                            .find(|u| u.get_id().key_string() == user_id.key_string())
+                            .map(|u| format!("Assigned to: {}", u.get_name()))
+                            .unwrap_or_else(|| format!("Assigned to: {}", user_id.key_string()))
+                    } else {
+                        "Assigned to: (none)".to_string()
+                    };
+                    
+                    let hover_text = format!("{}\n{}", formatted_date, assigned_user_text);
+                    let _ = Button::new(formatted_text).ui(ui).on_hover_text(hover_text);
                 });
 
 

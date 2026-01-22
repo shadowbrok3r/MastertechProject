@@ -406,7 +406,47 @@ impl WebSocketClient {
                 // These are for client-side, ignore on master
                 return;
             }
-            _ => {}
+            _ => {
+                // Handle CLIENT_STATUS messages from websocket server
+                // Format: CLIENT_STATUS:ACTIVE:seconds, CLIENT_STATUS:STALE:seconds, 
+                //         CLIENT_STATUS:CONNECTED:0, CLIENT_STATUS:DISCONNECTED
+                if text.starts_with("CLIENT_STATUS:") {
+                    let parts: Vec<&str> = text.split(':').collect();
+                    if parts.len() >= 2 {
+                        match parts[1] {
+                            "ACTIVE" => {
+                                // Client is actively sending messages
+                                self.is_connected = true;
+                                self.last_pong_time = Some(web_time::Instant::now());
+                                self.connection_status = "Client Active".to_string();
+                            }
+                            "CONNECTED" => {
+                                // Client is connected but hasn't sent messages yet
+                                self.is_connected = true;
+                                self.connection_status = "Client Connected".to_string();
+                            }
+                            "STALE" => {
+                                // Client connected but no recent activity
+                                self.is_connected = true;
+                                self.last_pong_time = None; // Clear pong time to show yellow
+                                self.connection_status = "Client Stale".to_string();
+                            }
+                            "DISCONNECTED" => {
+                                self.is_connected = false;
+                                self.last_pong_time = None;
+                                self.connection_status = "Client Disconnected".to_string();
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+                
+                // Handle MASTER_STATUS messages (for clients, but we ignore on master side)
+                if text.starts_with("MASTER_STATUS:") {
+                    return;
+                }
+            }
         }
         
         self.loading = false;
