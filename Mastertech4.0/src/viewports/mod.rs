@@ -90,7 +90,20 @@ impl MasterTechApp{
                             
                             let tx = layout.ui_actions_channel.0.clone();
                             
-                            ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone()));
+                            // Check if we have an active WebSocket connection with confirmed remote client activity
+                            // Green requires both: master connected AND client actively responding
+                            let is_ws_connected = layout.ws_clients
+                                .get(&client.connection_string)
+                                .map(|wsc| wsc.is_connected && wsc.last_pong_time.is_some())
+                                .unwrap_or(false);
+                            
+                            ui.horizontal(|ui| AdminConsole::client_header(
+                                ui, 
+                                tx, 
+                                &client.clone(), 
+                                undock_client.clone(),
+                                is_ws_connected,
+                            ));
                             if let Some(ws_client) =
                                 layout.ws_clients.get_mut(&client.connection_string)
                             {

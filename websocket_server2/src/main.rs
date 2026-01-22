@@ -36,10 +36,27 @@ enum ChatMessage {
     },
 }
 
-#[derive(Clone, Debug, Default)]
+use std::time::Instant;
+
+#[derive(Clone, Debug)]
 struct Room {
     master: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>,
     client: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>,
+    /// Last time we received any message from the master
+    master_last_activity: Option<Instant>,
+    /// Last time we received any message from the client
+    client_last_activity: Option<Instant>,
+}
+
+impl Default for Room {
+    fn default() -> Self {
+        Self {
+            master: None,
+            client: None,
+            master_last_activity: None,
+            client_last_activity: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -230,6 +247,8 @@ impl ChatServer {
         let server_clone = Arc::clone(&self);
         let role_clone = role.clone();
         let ws_tx_for_ping = ws_tx.clone();
+        let room_id_for_ping = room_id.clone();
+        let session_id_for_ping = session_id.clone();
 
         // Ping task to detect disconnection
         tokio::spawn(async move {
@@ -238,15 +257,99 @@ impl ChatServer {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 let mut sender = ws_tx.lock().await;
                 if let Err(e) = sender.send(Message::Ping(vec![].into())).await {
-                    info!("WebSocket {} disconnected: {:?}", session_id, e);
+                    info!("WebSocket {} disconnected: {:?}", session_id_for_ping, e);
                     drop(sender);
                     server_clone
-                        .cleanup_session(&room_id, &session_id, &role_clone)
+                        .cleanup_session(&room_id_for_ping, &session_id_for_ping, &role_clone)
                         .await?;
                     break;
                 }
             }
             Ok::<(), anyhow::Error>(())
+        });
+
+        // Status broadcast task - sends activity status to the other party
+        // This lets the master know if the client is alive and vice versa
+        let server_clone = Arc::clone(&self);
+        let role_clone = role.clone();
+        let room_id_for_status = room_id.clone();
+        
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                
+                let rooms = server_clone.rooms.lock().await;
+                if let Some(room) = rooms.get(&room_id_for_status) {
+                    match role_clone.as_str() {
+                        "master" => {
+                            // Master wants to know about client status
+                            if let Some(master_tx) = &room.master {
+                                let status = if room.client.is_some() {
+                                    if let Some(last_activity) = room.client_last_activity {
+                                        let elapsed_secs = last_activity.elapsed().as_secs();
+                                        if elapsed_secs < 30 {
+                                            format!("CLIENT_STATUS:ACTIVE:{}", elapsed_secs)
+                                        } else {
+                                            format!("CLIENT_STATUS:STALE:{}", elapsed_secs)
+                                        }
+                                    } else {
+                                        "CLIENT_STATUS:CONNECTED:0".to_string()
+                                    }
+                                } else {
+                                    "CLIENT_STATUS:DISCONNECTED".to_string()
+                                };
+                                
+                                let send_result = master_tx.lock().await
+                                    .send(Message::Text(status.into()))
+                                    .await;
+                                    
+                                if send_result.is_err() {
+                                    // Master connection is dead, exit the status task
+                                    break;
+                                }
+                            } else {
+                                // Master disconnected, exit task
+                                break;
+                            }
+                        }
+                        "client" => {
+                            // Client wants to know about master status
+                            if let Some(client_tx) = &room.client {
+                                let status = if room.master.is_some() {
+                                    if let Some(last_activity) = room.master_last_activity {
+                                        let elapsed_secs = last_activity.elapsed().as_secs();
+                                        if elapsed_secs < 30 {
+                                            format!("MASTER_STATUS:ACTIVE:{}", elapsed_secs)
+                                        } else {
+                                            format!("MASTER_STATUS:STALE:{}", elapsed_secs)
+                                        }
+                                    } else {
+                                        "MASTER_STATUS:CONNECTED:0".to_string()
+                                    }
+                                } else {
+                                    "MASTER_STATUS:DISCONNECTED".to_string()
+                                };
+                                
+                                let send_result = client_tx.lock().await
+                                    .send(Message::Text(status.into()))
+                                    .await;
+                                    
+                                if send_result.is_err() {
+                                    // Client connection is dead, exit the status task
+                                    break;
+                                }
+                            } else {
+                                // Client disconnected, exit task
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                } else {
+                    // Room no longer exists
+                    break;
+                }
+            }
         });
     }
 
@@ -262,9 +365,20 @@ impl ChatServer {
             } => {
                 let mut rooms = self.rooms.lock().await;
                 if let Some(room) = rooms.get_mut(&room_id) {
-                    let target_session = if self.is_session_match(room.master.as_ref(), &from).await {
+                    // Track activity and determine target
+                    let is_from_master = self.is_session_match(room.master.as_ref(), &from).await;
+                    let is_from_client = self.is_session_match(room.client.as_ref(), &from).await;
+                    
+                    // Update last activity timestamp for the sender
+                    if is_from_master {
+                        room.master_last_activity = Some(Instant::now());
+                    } else if is_from_client {
+                        room.client_last_activity = Some(Instant::now());
+                    }
+                    
+                    let target_session = if is_from_master {
                         room.client.clone()
-                    } else if self.is_session_match(room.client.as_ref(), &from).await {
+                    } else if is_from_client {
                         room.master.clone()
                     } else {
                         None

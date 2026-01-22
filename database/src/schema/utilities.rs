@@ -1,4 +1,4 @@
-use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
+use crate::{schema::{prestashop::xml::{modify_xml, remove_xml_tag}, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Qc, Record, RecordId, RecordIdExt, SurrealValue, Store, TaskNotePayload, User, UserAuthorization, CUSTOMER_TABLE, TASK_TABLE}, PlatformSpawner, Spawner, DATABASE};
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, LocalSebData, Notification, TicketData};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
 use std::{collections::HashMap, fmt::Debug};
@@ -207,20 +207,44 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), 
 pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
     debug!("get_connected_clients");
 
+    // Check if current user is Root - they can see all clients
+    let is_root = match User::get_current_user_from_auth().await {
+        Ok(Some(user)) => user.get_authorization() == UserAuthorization::Root,
+        _ => false,
+    };
+
     // Get the current time and subtract 2 days
     let two_days_ago = Utc::now() - Duration::days(2);
-    let _: Vec<RecordId> = DATABASE
-        .query("UPDATE connected_client SET connected = false WHERE assigned_user == $auth.id && created_at <= $two_days_ago  && connected == true")
-        .bind(("two_days_ago", two_days_ago))
-        .await?
-        .take(0)?;
+    
+    if is_root {
+        // Root users: mark stale clients as disconnected for ALL clients
+        let _: Vec<RecordId> = DATABASE
+            .query("UPDATE connected_client SET connected = false WHERE created_at <= $two_days_ago && connected == true")
+            .bind(("two_days_ago", two_days_ago))
+            .await?
+            .take(0)?;
 
-    let query: Vec<ConnectedClient> = DATABASE
-        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ORDER BY last_update DESC LIMIT 10")
-        .await?
-        .take(0)?;
-    // info!("Clients: {:?}", query);
-    tx.try_send(query)?;
+        // Root users: see ALL connected clients
+        let query: Vec<ConnectedClient> = DATABASE
+            .query("SELECT * FROM connected_client WHERE connected == true ORDER BY last_update DESC LIMIT 50")
+            .await?
+            .take(0)?;
+        tx.try_send(query)?;
+    } else {
+        // Non-root users: only see their own assigned clients
+        let _: Vec<RecordId> = DATABASE
+            .query("UPDATE connected_client SET connected = false WHERE assigned_user == $auth.id && created_at <= $two_days_ago && connected == true")
+            .bind(("two_days_ago", two_days_ago))
+            .await?
+            .take(0)?;
+
+        let query: Vec<ConnectedClient> = DATABASE
+            .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ORDER BY last_update DESC LIMIT 10")
+            .await?
+            .take(0)?;
+        tx.try_send(query)?;
+    }
+    
     Ok(())
 }
 
@@ -236,10 +260,23 @@ pub async fn disconnect_client(tx: Sender<Vec<RecordId>>, id: RecordId) -> Resul
 }
 
 pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
-    let query: Vec<ConnectedClient> = DATABASE
-        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id")
-        .await?
-        .take(0)?;
+    // Check if current user is Root - they can see all clients
+    let is_root = match User::get_current_user_from_auth().await {
+        Ok(Some(user)) => user.get_authorization() == UserAuthorization::Root,
+        _ => false,
+    };
+
+    let query: Vec<ConnectedClient> = if is_root {
+        DATABASE
+            .query("SELECT * FROM connected_client")
+            .await?
+            .take(0)?
+    } else {
+        DATABASE
+            .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id")
+            .await?
+            .take(0)?
+    };
     tx.try_send(query)?;
     Ok(())
 }
