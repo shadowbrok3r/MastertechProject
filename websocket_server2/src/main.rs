@@ -36,7 +36,7 @@ enum ChatMessage {
     },
 }
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 struct Room {
@@ -46,6 +46,10 @@ struct Room {
     master_last_activity: Option<Instant>,
     /// Last time we received any message from the client
     client_last_activity: Option<Instant>,
+    /// Last time we updated last_activity in DB for master (for rate limiting)
+    master_db_update: Option<Instant>,
+    /// Last time we updated last_activity in DB for client (for rate limiting)
+    client_db_update: Option<Instant>,
 }
 
 impl Default for Room {
@@ -55,9 +59,14 @@ impl Default for Room {
             client: None,
             master_last_activity: None,
             client_last_activity: None,
+            master_db_update: None,
+            client_db_update: None,
         }
     }
 }
+
+/// Minimum interval between database updates for last_activity (prevents excessive writes)
+const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 struct ChatServer {
@@ -250,9 +259,10 @@ impl ChatServer {
         let room_id_for_ping = room_id.clone();
         let session_id_for_ping = session_id.clone();
 
-        // Ping task to detect disconnection
+        // Ping task to detect disconnection and update activity
         tokio::spawn(async move {
             let ws_tx = ws_tx_for_ping;
+            let mut last_db_update: Option<Instant> = None;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 let mut sender = ws_tx.lock().await;
@@ -264,93 +274,32 @@ impl ChatServer {
                         .await?;
                     break;
                 }
+                drop(sender);
+                
+                // Update last_activity in DB (rate-limited) after successful ping
+                // This ensures activity is tracked even when no messages are being relayed
+                let should_update = match last_db_update {
+                    Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
+                    _ => true,
+                };
+                if should_update {
+                    let result: Result<Option<ConnectedClient>, _> = DATABASE
+                        .query("UPDATE connected_client SET last_activity = time::now() WHERE connection_string == $room_id")
+                        .bind(("room_id", room_id_for_ping.clone()))
+                        .await
+                        .and_then(|mut r| r.take(0));
+                    
+                    if let Err(e) = result {
+                        log::warn!("Failed to update last_activity from ping task for room {}: {:?}", room_id_for_ping, e);
+                    }
+                    last_db_update = Some(Instant::now());
+                }
             }
             Ok::<(), anyhow::Error>(())
         });
 
-        // Status broadcast task - sends activity status to the other party
-        // This lets the master know if the client is alive and vice versa
-        let server_clone = Arc::clone(&self);
-        let role_clone = role.clone();
-        let room_id_for_status = room_id.clone();
-        
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                
-                let rooms = server_clone.rooms.lock().await;
-                if let Some(room) = rooms.get(&room_id_for_status) {
-                    match role_clone.as_str() {
-                        "master" => {
-                            // Master wants to know about client status
-                            if let Some(master_tx) = &room.master {
-                                let status = if room.client.is_some() {
-                                    if let Some(last_activity) = room.client_last_activity {
-                                        let elapsed_secs = last_activity.elapsed().as_secs();
-                                        if elapsed_secs < 30 {
-                                            format!("CLIENT_STATUS:ACTIVE:{}", elapsed_secs)
-                                        } else {
-                                            format!("CLIENT_STATUS:STALE:{}", elapsed_secs)
-                                        }
-                                    } else {
-                                        "CLIENT_STATUS:CONNECTED:0".to_string()
-                                    }
-                                } else {
-                                    "CLIENT_STATUS:DISCONNECTED".to_string()
-                                };
-                                
-                                let send_result = master_tx.lock().await
-                                    .send(Message::Text(status.into()))
-                                    .await;
-                                    
-                                if send_result.is_err() {
-                                    // Master connection is dead, exit the status task
-                                    break;
-                                }
-                            } else {
-                                // Master disconnected, exit task
-                                break;
-                            }
-                        }
-                        "client" => {
-                            // Client wants to know about master status
-                            if let Some(client_tx) = &room.client {
-                                let status = if room.master.is_some() {
-                                    if let Some(last_activity) = room.master_last_activity {
-                                        let elapsed_secs = last_activity.elapsed().as_secs();
-                                        if elapsed_secs < 30 {
-                                            format!("MASTER_STATUS:ACTIVE:{}", elapsed_secs)
-                                        } else {
-                                            format!("MASTER_STATUS:STALE:{}", elapsed_secs)
-                                        }
-                                    } else {
-                                        "MASTER_STATUS:CONNECTED:0".to_string()
-                                    }
-                                } else {
-                                    "MASTER_STATUS:DISCONNECTED".to_string()
-                                };
-                                
-                                let send_result = client_tx.lock().await
-                                    .send(Message::Text(status.into()))
-                                    .await;
-                                    
-                                if send_result.is_err() {
-                                    // Client connection is dead, exit the status task
-                                    break;
-                                }
-                            } else {
-                                // Client disconnected, exit task
-                                break;
-                            }
-                        }
-                        _ => break,
-                    }
-                } else {
-                    // Room no longer exists
-                    break;
-                }
-            }
-        });
+        // Note: Status broadcast task removed - activity status is now tracked
+        // via SurrealDB connected_client.last_activity field instead of websocket messages
     }
 
     async fn handle_message(&self, call: ChatMessage) {
@@ -370,10 +319,46 @@ impl ChatServer {
                     let is_from_client = self.is_session_match(room.client.as_ref(), &from).await;
                     
                     // Update last activity timestamp for the sender
+                    // Also check if we should update the database (rate-limited to prevent excessive writes)
+                    let mut should_update_db = false;
                     if is_from_master {
                         room.master_last_activity = Some(Instant::now());
+                        // Check if we should update DB (rate limited)
+                        let should_update = match room.master_db_update {
+                            Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
+                            _ => true,
+                        };
+                        if should_update {
+                            room.master_db_update = Some(Instant::now());
+                            should_update_db = true;
+                        }
                     } else if is_from_client {
                         room.client_last_activity = Some(Instant::now());
+                        // Check if we should update DB (rate limited)
+                        let should_update = match room.client_db_update {
+                            Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
+                            _ => true,
+                        };
+                        if should_update {
+                            room.client_db_update = Some(Instant::now());
+                            should_update_db = true;
+                        }
+                    }
+                    
+                    // Spawn DB update in background if needed (don't block message relay)
+                    if should_update_db {
+                        let room_id_for_db = room_id.clone();
+                        tokio::spawn(async move {
+                            let result: Result<Option<ConnectedClient>, _> = DATABASE
+                                .query("UPDATE connected_client SET last_activity = time::now() WHERE connection_string == $room_id")
+                                .bind(("room_id", room_id_for_db.clone()))
+                                .await
+                                .and_then(|mut r| r.take(0));
+                            
+                            if let Err(e) = result {
+                                log::warn!("Failed to update last_activity for room {}: {:?}", room_id_for_db, e);
+                            }
+                        });
                     }
                     
                     let target_session = if is_from_master {

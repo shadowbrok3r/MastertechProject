@@ -67,9 +67,6 @@ impl PersistentShell {
                     }
                     *ready = false; // Mark as busy
                 }
-
-                // Send the COMMAND_SENT marker first
-                output_tx_clone.send(format!("COMMAND_SENT: {}\n", command).into_bytes()).ok();
                 
                 // Send command to shell
                 let command_with_newline = format!("{}\n", command);
@@ -83,41 +80,52 @@ impl PersistentShell {
             }
         });
 
-        // Handle stdout with command completion detection
+        // Handle stdout with timeout-based command completion detection
+        // Instead of detecting prompts, we use a timeout: if no output for 500ms after
+        // the last line, we consider the command complete and send DONE.
         let tx_clone = self.output_tx.clone();
         let is_ready_clone = self.is_ready.clone();
         tokio::spawn(async move {
-            // let mut command_output_started = false;
-            while let Some(line) = stdout_reader.next_line().await? {
-                tx_clone.send(format!("{}\n", line).into_bytes()).ok();
-                
-                // Detect command completion for Windows cmd
-                if cfg!(target_os = "windows") {
-                    // Look for command prompt pattern indicating command completion
-                    if line.contains(">") && (line.contains("C:\\") || line.contains("D:\\") || line.contains("E:\\")) {
-                        // Send DONE marker to indicate command completion
-                        tx_clone.send("DONE".as_bytes().to_vec()).ok();
+            use tokio::time::{timeout, Duration};
+            
+            let idle_timeout = Duration::from_millis(500);
+            let mut received_any_output = false;
+            
+            loop {
+                match timeout(idle_timeout, stdout_reader.next_line()).await {
+                    Ok(Ok(Some(line))) => {
+                        // Got a line of output - trim trailing whitespace (PowerShell pads with spaces)
+                        let trimmed = line.trim_end();
                         
-                        // Mark shell as ready for next command after a brief delay
-                        let is_ready_clone = is_ready_clone.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                            let mut ready = is_ready_clone.lock().await;
-                            *ready = true;
-                        });
+                        // Skip PowerShell prompt lines that echo the command back
+                        // These look like: "PS C:\path> command here"
+                        let is_prompt_echo = trimmed.starts_with("PS ") && trimmed.contains(">");
+                        
+                        if !is_prompt_echo {
+                            tx_clone.send(format!("{}\n", trimmed).into_bytes()).ok();
+                        }
+                        received_any_output = true;
                     }
-                } else {
-                    // For Unix shells, look for typical prompt patterns
-                    if line.ends_with("$ ") || line.ends_with("# ") || line.ends_with("% ") {
-                        // Send DONE marker to indicate command completion
-                        tx_clone.send("DONE".as_bytes().to_vec()).ok();
-                        
-                        let is_ready_clone = is_ready_clone.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    Ok(Ok(None)) => {
+                        // Stream ended (shell closed)
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        log::error!("Error reading stdout: {}", e);
+                        break;
+                    }
+                    Err(_) => {
+                        // Timeout - no output for 500ms
+                        if received_any_output {
+                            // We had output but now it stopped - command is done
+                            tx_clone.send("DONE".as_bytes().to_vec()).ok();
+                            received_any_output = false;
+                            
+                            // Mark shell as ready for next command
                             let mut ready = is_ready_clone.lock().await;
                             *ready = true;
-                        });
+                        }
+                        // Continue waiting for more output (next command)
                     }
                 }
             }
@@ -128,7 +136,7 @@ impl PersistentShell {
         let tx_clone = self.output_tx.clone();
         tokio::spawn(async move {
             while let Some(line) = stderr_reader.next_line().await? {
-                tx_clone.send(format!("ERROR: {}\n", line).into_bytes()).ok();
+                tx_clone.send(format!("ERROR: {}\n", line.trim_end()).into_bytes()).ok();
             }
             Ok::<(), anyhow::Error>(())
         });
