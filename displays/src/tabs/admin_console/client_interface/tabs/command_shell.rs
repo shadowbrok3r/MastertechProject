@@ -510,9 +510,9 @@ impl WebSocketClient {
                                     .corner_radius(rnding)
                                     .show(ui, |ui| 
                                 {
-                                    ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                        Direction::TopDown,
-                                        Align::Center,
+                                    ui.with_layout(Layout::left_to_right(
+                                        // Direction::TopDown,
+                                        Align::Min,
                                     ), |ui| {
                                         ui.set_width(ui.available_width());
                                         // crate::markdown_editor::viewer::easy_mark(ui, &item.message);

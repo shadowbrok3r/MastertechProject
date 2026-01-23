@@ -192,6 +192,8 @@ impl AdminConsole {
                         !c.1 && c.0 == &client.connection_string
                     ) {
                         if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string) {
+                            // Sync the latest ConnectedClient data (especially last_activity) from live queries
+                            ws_client.client = client.clone();
                             ws_client.show(ui);
                         }
                     }

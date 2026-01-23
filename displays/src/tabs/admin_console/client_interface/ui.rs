@@ -87,14 +87,30 @@ impl WebSocketClient {
 
                 ui.add_space(10.);
                 
-                // Connection status indicator
-                let (status_color, status_text) = if self.is_connected {
-                    (Color32::GREEN, "✔")
+                // Connection status indicator based on last_activity from SurrealDB
+                let (status_color, status_text, status_tooltip) = if !self.client.connected {
+                    (Color32::RED, "✖", "Disconnected")
+                } else if let Some(last_activity) = &self.client.last_activity {
+                    // Calculate elapsed time since last activity
+                    let now = chrono::Utc::now();
+                    let activity_time = last_activity.to_utc();
+                    let elapsed_secs = (now - activity_time).num_seconds();
+                    
+                    if elapsed_secs < 30 {
+                        (Color32::GREEN, "✔", "Active")
+                    } else if elapsed_secs < 120 {
+                        (Color32::YELLOW, "⚠", "Stale")
+                    } else {
+                        (Color32::LIGHT_RED, "⏳", "Inactive")
+                    }
+                } else if self.is_connected {
+                    // Connected but no last_activity yet
+                    (Color32::from_rgb(100, 200, 100), "◯", "Connected (awaiting activity)")
                 } else {
-                    (Color32::RED, "✖")
+                    (Color32::RED, "✖", "Disconnected")
                 };
                 
-                ui.colored_label(status_color, status_text);
+                ui.colored_label(status_color, status_text).on_hover_text(status_tooltip);
                 
                 ui.add_space(10.);
                 

@@ -17,7 +17,10 @@ pub struct ConnectedClient {
     pub customer: Option<RecordId>,
     pub last_update: Option<Datetime>,
     pub created_at: Option<Datetime>,
-    pub computer:  Option<RecordId>
+    pub computer: Option<RecordId>,
+    /// Tracks when the client last had activity (ping/pong or message relay)
+    /// Used for determining if client is active, stale, or disconnected
+    pub last_activity: Option<Datetime>,
 }
 
 impl Default for ConnectedClient {
@@ -34,6 +37,7 @@ impl Default for ConnectedClient {
             last_update: Default::default(),
             created_at: Default::default(),
             computer: Default::default(),
+            last_activity: Default::default(),
         }
     }
 }

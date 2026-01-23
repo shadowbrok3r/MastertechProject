@@ -180,6 +180,10 @@ impl TerminalWebsocketClient {
                                         } else if txt == "CLIENT_CONNECTED" || txt == "CLIENT_DISCONNECTED" {
                                             // These are for master-side, ignore on client
                                             continue;
+                                        } else if txt.starts_with("MASTER_STATUS:") || txt.starts_with("CLIENT_STATUS:") {
+                                            // Activity status is now tracked via SurrealDB, not websocket messages
+                                            // Ignore these to prevent them from being executed as shell commands
+                                            continue;
                                         }
                                         
                                         if !*ready && txt == "READY".to_string() {
