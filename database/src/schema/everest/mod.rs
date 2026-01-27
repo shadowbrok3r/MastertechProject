@@ -2,8 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::{Client, Method};
 use serde::Deserialize;
 
-// Scaffold Everest API endpoint
-const EVEREST_URL: &str = "https://scaffold.pclaptops.com/api/index";
+use crate::SCAFFOLD_URL;
 
 #[derive(Debug, Deserialize)]
 struct EverestSerialLookupEntry {
@@ -60,7 +59,7 @@ async fn lookup_docnum(client: &Client, email: &str, password: &str, serial: &st
     headers.insert("Content-Type", "application/json".parse().unwrap());
 
     let resp = client
-        .request(Method::POST, EVEREST_URL)
+        .request(Method::POST, SCAFFOLD_URL)
         .headers(headers)
         .json(&payload)
         .send()
@@ -97,7 +96,7 @@ async fn get_order(client: &Client, email: &str, password: &str, docnum: &str) -
     headers.insert("Content-Type", "application/json".parse().unwrap());
 
     let resp = client
-        .request(Method::POST, EVEREST_URL)
+        .request(Method::POST, SCAFFOLD_URL)
         .headers(headers)
         .json(&payload)
         .send()

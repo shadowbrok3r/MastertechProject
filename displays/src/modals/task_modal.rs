@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::schema::{utilities::{delete_task, get_prestashop_payload, PhoneNumberFormatter}, CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, COMPUTER_TABLE};
+use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{COMPUTER_TABLE, CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
 use database::schema::prestashop::{Prestashop, Customer, Address, OrderState};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::schema::prestashop_schema::PrestashopPayload;
@@ -1083,8 +1083,8 @@ impl SpecialPartOrder {
                                                 }
 
                                                 let params: Value = serde_json::json!({
-                                                    "user_email": "logan.lees@pclaptops.com",
-                                                    "user_password": "Poolparty1",
+                                                    "user_email": SCAFFOLD_USER,
+                                                    "user_password": SCAFFOLD_PASS,
                                                     "format_data": "text",
                                                     "action": "create",
                                                     "application": "customer_request_order",
@@ -1094,7 +1094,7 @@ impl SpecialPartOrder {
                                                 let client = Client::new();
                                                 client
                                                     .post(
-                                                        "https://scaffold.pclaptops.com/api/index",
+                                                        SCAFFOLD_URL,
                                                     )
                                                     .header(CONTENT_TYPE, "application/json")
                                                     .header(ACCEPT, "application/json")

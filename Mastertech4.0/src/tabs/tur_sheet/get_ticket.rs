@@ -3,6 +3,7 @@ use crate::tabs::tur_sheet::scaffold::{ScaffoldActions, ScaffoldApps};
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use crossbeam::channel;
+use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER};
 use database::schema::Store;
 use database::schema::{ExtendedSeb, GetKeysResponse, LocalSebData};
 use log::{debug, error, info, trace};
@@ -44,8 +45,8 @@ impl SendRequest {
         client: reqwest::Client,
     ) -> anyhow::Result<Vec<GetKeysResponse>, anyhow::Error> {
         let json = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com",
-            "user_password": "Poolparty1",
+            "user_email": SCAFFOLD_USER,
+            "user_password": SCAFFOLD_PASS,
             "application": "software_license_fetch",
             "action": "fetch_keys",
             "id_order": &so_number,
@@ -53,7 +54,7 @@ impl SendRequest {
         });
 
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index")
+            .post(SCAFFOLD_URL)
             .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
             .header(ACCEPT, "application/json")
             .json(&json)
@@ -103,23 +104,23 @@ where
     T: Debug + Serialize + for<'a> Deserialize<'a> + Clone + std::convert::From<LocalSebData>,
 {
     let mut params: HashMap<&str, &str> = HashMap::new();
-    params.insert("user_email", "logan.lees@pclaptops.com");
-    params.insert("user_password", "Poolparty1");
+    params.insert("user_email", SCAFFOLD_USER);
+    params.insert("user_password", SCAFFOLD_PASS);
     params.insert("application", "carbonite");
     params.insert("action", "search");
 
     if let Some(customer_email) = customer_email {
         // let mut params: HashMap<&str, &str> = HashMap::new();
         let json = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com",
-            "user_password": "Poolparty1",
+            "user_email": SCAFFOLD_USER,
+            "user_password": SCAFFOLD_PASS,
             "application": "carbonite",
             "action": "search",
             "search": &customer_email
         });
 
         let response = client
-        .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .post(SCAFFOLD_URL) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&json)
@@ -144,7 +145,7 @@ where
         params.insert("search", &result.InstalledDeviceId);
 
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .post(SCAFFOLD_URL) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .form(&params)
@@ -176,8 +177,8 @@ where
     T: Debug + Serialize + for<'a> Deserialize<'a> + Clone + std::convert::From<LocalSebData>,
 {
     let mut params: HashMap<&str, &str> = HashMap::new();
-    params.insert("user_email", "logan.lees@pclaptops.com");
-    params.insert("user_password", "Poolparty1");
+    params.insert("user_email", SCAFFOLD_USER);
+    params.insert("user_password", SCAFFOLD_PASS);
     params.insert("application", "carbonite");
     params.insert("action", "search");
 
@@ -185,7 +186,7 @@ where
         params.insert("search", &customer_email);
 
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .post(SCAFFOLD_URL) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
             // .header(ACCEPT, "application/json")
             .form(&params)
@@ -215,7 +216,7 @@ where
             params.insert("search", &result.InstalledDeviceId);
 
             let response = client
-                .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+                .post(SCAFFOLD_URL) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
                 .header(CONTENT_TYPE, "application/json")
                 .header(ACCEPT, "application/json")
                 .form(&params)
