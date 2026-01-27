@@ -1,11 +1,10 @@
 use anyhow::{anyhow, Context, Result};
+use database::SCAFFOLD_URL;
 use reqwest::{Client, Method};
 use serde::Deserialize;
 
 // PrestaShop API endpoint
 const PRESTASHOP_BASE_URL: &str = "https://pclaptops.mojo11.com";
-// Scaffold Everest API endpoint
-const EVEREST_URL: &str = "https://scaffold.pclaptops.com/api/index";
 
 // ============================================
 // PrestaShop Models
@@ -221,7 +220,7 @@ async fn lookup_docnum(client: &Client, email: &str, password: &str, serial: &st
     });
 
     let resp = client
-        .request(Method::POST, EVEREST_URL)
+        .request(Method::POST, SCAFFOLD_URL)
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -260,7 +259,7 @@ async fn get_order(client: &Client, email: &str, password: &str, docnum: &str) -
     });
 
     let resp = client
-        .request(Method::POST, EVEREST_URL)
+        .request(Method::POST, SCAFFOLD_URL)
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()

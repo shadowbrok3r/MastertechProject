@@ -1,5 +1,5 @@
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
-use crate::{schema::prestashop::Order, DATABASE};
+use crate::{DATABASE, SCAFFOLD_PASS, SCAFFOLD_USER, schema::prestashop::Order};
 use helper_traits::GetAssociatedDataFromId;
 use structdiff::{Difference, StructDiff};
 use serde::{Deserialize, Serialize};
@@ -198,15 +198,15 @@ impl CarboniteResponse {
     pub async fn from_customer_email(&self, customer_email: String, client: Client) -> anyhow::Result<Vec<Self>, anyhow::Error> {
         // let mut params: HashMap<&str, &str> = HashMap::new();
         let json = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com",
-            "user_password": "Poolparty1",
+            "user_email": SCAFFOLD_USER,
+            "user_password": SCAFFOLD_PASS,
             "application": "carbonite",
             "action": "search",
             "search": &customer_email
         });
 
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index")
+            .post(crate::SCAFFOLD_URL)
             .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
             .header(ACCEPT, "application/json")
             .json(&json)
