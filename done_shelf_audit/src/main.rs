@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Utc, Weekday};
 use clap::Parser;
 use database::{
-    DATABASE, init_database, schema::{
+    DATABASE, SCAFFOLD_URL, init_database, schema::{
         helper_traits::PrestashopPayloadHelper,
         ComputerData, LiveTaskPayload, Priority, 
         Store, TASK_TABLE, TASK_NOTE_TABLE, TICKET_TABLE, TaskNotePayload, 
@@ -40,9 +40,6 @@ const MIN_DAYS_ON_SHELF: i64 = 1;
 
 /// Minimum days overdue for task audit
 const MIN_DAYS_TASK_OVERDUE: i64 = 3;
-
-/// The audit assignee email
-const AUDIT_ASSIGNEE_EMAIL: &str = "logan.lees@pclaptops.com";
 
 #[derive(Parser, Debug)]
 #[command(name = "done_shelf_audit")]
@@ -316,13 +313,13 @@ async fn main() -> Result<()> {
 async fn get_audit_assignee() -> Result<User> {
     let assignee: Option<User> = DATABASE
         .query("SELECT * FROM user WHERE email == $email")
-        .bind(("email", AUDIT_ASSIGNEE_EMAIL.to_string()))
+        .bind(("email", SCAFFOLD_URL.to_string()))
         .await?
         .take(0)?;
 
     assignee.context(format!(
         "Could not find audit assignee user with email: {}. Please ensure this user exists in the database.",
-        AUDIT_ASSIGNEE_EMAIL
+        SCAFFOLD_URL
     ))
 }
 
