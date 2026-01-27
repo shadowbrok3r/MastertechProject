@@ -4,7 +4,7 @@ use crate::{
 };
 
 use database::schema::{
-    prestashop_schema::ServiceOrder, utilities::{get_local_seb_data, PhoneNumberFormatter}, CarboniteResponse, ExtendedSeb, GetKeysResponse, LocalSebData, TaskCreationResult
+    CarboniteResponse, ExtendedSeb, GetKeysResponse, LocalSebData, TaskCreationResult, helper_traits::parse_email_user, prestashop_schema::ServiceOrder, utilities::{PhoneNumberFormatter, get_local_seb_data}
 };
 
 use super::ServiceFormTab;
@@ -62,8 +62,20 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                             ctx.service_data.task_data.task_description = joined_text;
                         }
                         let description_empty = ctx.service_data.task_data.task_description.is_empty();
-                        
-                        if description_empty { // also check salesman here
+                        let assignee_empty = &mut false;
+                        if let Ok(mut salesman) =  self.salesman_name.input.try_borrow_mut() {
+                            salesman.select_all();
+                            salesman.copy();
+                            let assignee = salesman.yank_text();
+                            if assignee.is_empty() {
+                                *assignee_empty = true;
+                            } else {
+                                ctx.service_data.ticket_data.salesman = parse_email_user(&assignee).to_string();
+                                *assignee_empty = false;
+                            }
+                        }
+
+                        if description_empty || *assignee_empty { // also check salesman here
                             let _ = ctx.data_sender.send(Box::new(Notification::new(
                                 NotificationType::Error, 
                                 "Missing Recommendations", 
@@ -245,14 +257,6 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                                 customer_phone.cut();
                                 customer_phone.insert_str(phone_number);
                             } // customer_phone dropped here
-                            log::info!("salesman_name");
-                            // Update salesman_name
-                            {
-                                let mut salesman_name = self.salesman_name.input.borrow_mut();
-                                salesman_name.select_all();
-                                salesman_name.cut();
-                                salesman_name.insert_str(ctx.service_data.ticket_data.salesman.clone());
-                            } // salesman_name dropped here
                             log::info!("technician_name");
                             // Update technician_name
                             {

@@ -174,6 +174,7 @@ impl crate::app_state::SharedContext {
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
         
         // Check for live query connection errors (Connection Reset in WASM)
+        #[cfg(target_arch = "wasm32")]
         if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
             log::warn!("Live query connection error detected: {}", error_msg);
             if error_msg.contains("connection reset") || error_msg.contains("reset") || error_msg.contains("I/O") {
@@ -315,7 +316,6 @@ impl crate::app_state::SharedContext {
             });
         }
         
-        self.toasts.show(ctx);
         for (_, layout) in self.task_layouts.iter_mut() {
             layout.receive();
         }
@@ -346,6 +346,7 @@ impl crate::app_state::SharedContext {
             self.ai_playground.set_threads(thread_map);
         }
 
+        self.toasts.show(ctx);
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button
         // (which is clicking Mtechserver in the top middle of the page),

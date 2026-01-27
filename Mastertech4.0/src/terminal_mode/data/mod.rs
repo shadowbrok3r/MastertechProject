@@ -106,7 +106,7 @@ impl ServiceData {
         customer.email = presta_data.customer.email.clone();
         customer.name = presta_data.customer.name.clone();
         customer.phone_number = presta_data.customer.phone_number.clone();
-        ticket.salesman = email_split_rep;
+        ticket.salesman = if email_split_rep.is_empty() && !email.is_empty() { email.clone() } else { email_split_rep };
         ticket.sales_rep = email.clone();
         ticket.tech = email.clone();
         ticket.customer = Some(customer.clone());
@@ -120,6 +120,8 @@ impl ServiceData {
             ticket.service_number.clone(),
         );
 
+
+        
         services.push(ticket.id.clone());
         
         if !service_details.is_empty() {

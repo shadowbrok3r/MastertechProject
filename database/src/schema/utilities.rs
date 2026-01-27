@@ -394,6 +394,7 @@ pub async fn create_full_task_payload(
     };
     let _queried_tech = User::query_user_from_email(ticket_data.tech.clone()).await.unwrap_or_default();
     
+    log::error!("schema/utilities.rs -> Queried Salesman (Which will be assignee): {:?}", queried_salesman);
     
     // let task_id = task_data.id.clone();
     let ticket_id = ticket_data.id.clone();
