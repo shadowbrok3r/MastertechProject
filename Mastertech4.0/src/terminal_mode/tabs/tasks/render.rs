@@ -1,42 +1,338 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint, Rect}, prelude::Backend, style::{Color, Modifier, Style}, text::{Line, Span, Text}, widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table}, Frame};
-use crate::terminal_mode::{fx::unique_border_effect, styling::CATPPUCCIN, widgets::HandleWidget};
+use crate::terminal_mode::{fx::unique_border_effect, styling::CATPPUCCIN, widgets::{ButtonType, HandleWidget}};
 use database::schema::{LiveTaskPayload, RecordIdExt, User};
 use unicode_width::UnicodeWidthStr;
 use std::cmp::max;
-use super::{EditMode, TasksTab};
+use super::{EditMode, SortColumn, SortDirection, TasksTab};
 
-// Static default widths for columns (used when no tasks are available)
-// Due, Status, Task, Assignee, Priority, Description
-const DEFAULT_WIDTHS: [u16; 6] = [12, 12, 30, 14, 10, 60];
+// Static default widths for columns (first 5 columns only, description fills rest)
+// Due, Status, Task, Assignee, Priority
+const DEFAULT_WIDTHS: [u16; 5] = [12, 12, 30, 14, 10];
+
+// Minimum width for description column
+const MIN_DESCRIPTION_WIDTH: u16 = 30;
 
 /// Implement the HandleWidget trait for TasksTab.
 /// This allows the composite widget to draw itself and handle events.
-impl<'a> HandleWidget <'a> for TasksTab {
+impl<'a> HandleWidget <'a> for TasksTab<'a> {
     fn draw<B: Backend>(&mut self, f: &mut Frame, area: Rect) {
+        // Check if modal is open - use a single borrow to avoid RefCell conflict
+        let has_modal = {
+            let modal_ref = self.open_task_modal.borrow();
+            modal_ref.is_some()
+        };
+        
+        if has_modal {
+            // Draw the table dimmed in background first
+            self.draw_table_impl(f, area);
+            
+            // Draw modal on top - need mutable borrow for HandleWidget::draw
+            if let Some(ref mut modal) = *self.open_task_modal.borrow_mut() {
+                modal.draw::<B>(f, area);
+            }
+            return;
+        }
+        
+        self.draw_table_impl(f, area);
+    }
+    
+    fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
+        // Check modal state and handle events - use separate borrow scopes
+        let (has_modal, should_close) = {
+            let modal_ref = self.open_task_modal.borrow();
+            if let Some(ref modal) = *modal_ref {
+                modal.handle_mouse_event(mouse_event);
+                (true, modal.should_close())
+            } else {
+                (false, false)
+            }
+        };
+        
+        if should_close {
+            self.close_modal();
+            return;
+        }
+        
+        if has_modal {
+            return;
+        }
+        
+        let table_area = *self.table_area.borrow();
+        let x = mouse_event.column;
+        let y = mouse_event.row;
+        
+        self.sort_due_btn.handle_mouse_event(mouse_event);
+        self.sort_status_btn.handle_mouse_event(mouse_event);
+        self.sort_priority_btn.handle_mouse_event(mouse_event);
+
+        match mouse_event.kind {
+            MouseEventKind::ScrollDown => self.state.borrow_mut().scroll_down_by(1),
+            MouseEventKind::ScrollUp => self.state.borrow_mut().scroll_up_by(1),
+            MouseEventKind::ScrollLeft => self.state.borrow_mut().scroll_left_by(1),
+            MouseEventKind::ScrollRight => self.state.borrow_mut().scroll_right_by(1),
+            MouseEventKind::Moved => {
+                // Update hover state
+                if x >= table_area.x && x < table_area.right() 
+                   && y >= table_area.y && y < table_area.bottom() 
+                {
+                    let header_height = 4;
+                    
+                    // Check if hovering over header
+                    if y < table_area.y + header_height {
+                        // Calculate which column header is being hovered
+                        let widths = if self.widths.len() >= 5 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
+                        let mut col_start = table_area.x + 1;
+                        let mut hovered_col = None;
+                        
+                        for (i, width) in widths.iter().enumerate() {
+                            let col_end = col_start + width + 1;
+                            if x >= col_start && x < col_end {
+                                // Only columns 0 (Due), 1 (Status), 4 (Priority) are sortable
+                                if matches!(i, 0 | 1 | 4) {
+                                    hovered_col = Some(i);
+                                }
+                                break;
+                            }
+                            col_start = col_end;
+                        }
+                        
+                        *self.hovered_header_col.borrow_mut() = hovered_col;
+                        *self.hovered_row.borrow_mut() = None;
+                    } else {
+                        // Calculate which row is being hovered
+                        let relative_y = (y - table_area.y - header_height) as usize;
+                        let row_idx = relative_y / 3;
+                        
+                        if row_idx < self.items.len() {
+                            *self.hovered_row.borrow_mut() = Some(row_idx);
+                        } else {
+                            *self.hovered_row.borrow_mut() = None;
+                        }
+                        *self.hovered_header_col.borrow_mut() = None;
+                    }
+                } else {
+                    *self.hovered_row.borrow_mut() = None;
+                    *self.hovered_header_col.borrow_mut() = None;
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Check if click is within table area
+                if x >= table_area.x && x < table_area.right() 
+                   && y >= table_area.y && y < table_area.bottom() 
+                {
+                    let header_height = 4;
+                    
+                    // Check if click is on header (for sorting)
+                    if y < table_area.y + header_height {
+                        let widths = if self.widths.len() >= 5 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
+                        let mut col_start = table_area.x + 1;
+                        
+                        for (i, width) in widths.iter().enumerate() {
+                            let col_end = col_start + width + 1;
+                            if x >= col_start && x < col_end {
+                                // Handle sortable columns
+                                match i {
+                                    0 => {
+                                        // Sort by Due Date - need mutable access
+                                        // This will be handled via message passing
+                                        log::info!("Sort by Due Date clicked");
+                                    }
+                                    1 => {
+                                        log::info!("Sort by Status clicked");
+                                    }
+                                    4 => {
+                                        log::info!("Sort by Priority clicked");
+                                    }
+                                    _ => {}
+                                }
+                                break;
+                            }
+                            col_start = col_end;
+                        }
+                        return;
+                    }
+                    
+                    // Calculate which row was clicked
+                    if y >= table_area.y + header_height {
+                        let relative_y = (y - table_area.y - header_height) as usize;
+                        let row_idx = relative_y / 3;
+                        
+                        if row_idx < self.items.len() {
+                            let mut state = self.state.borrow_mut();
+                            state.select(Some(row_idx));
+                            
+                            // Calculate which column was clicked
+                            let widths = if self.widths.len() >= 5 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
+                            let mut col_start = table_area.x + 1;
+                            let mut col_idx = 0;
+                            
+                            for (i, width) in widths.iter().enumerate() {
+                                let col_end = col_start + width + 1;
+                                if x >= col_start && x < col_end {
+                                    col_idx = i;
+                                    break;
+                                }
+                                col_start = col_end;
+                            }
+                            
+                            // Check if description column (or beyond) was clicked
+                            if col_idx >= widths.len() || x >= col_start {
+                                col_idx = 5; // Description column
+                            }
+                            
+                            state.select_column(Some(col_idx));
+                            state.select_cell(Some((row_idx, col_idx)));
+                            
+                            // If Task Name column (2) was clicked, open modal
+                            if col_idx == 2 {
+                                drop(state);
+                                self.open_modal(row_idx);
+                            }
+                        }
+                    }
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Right-click could open context menu in the future
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
+        // Check modal state and handle key events - use separate borrow scopes
+        let (has_modal, should_close, handled) = {
+            let mut modal_ref = self.open_task_modal.borrow_mut();
+            if let Some(ref mut modal) = *modal_ref {
+                let handled = modal.handle_key_event(key_event);
+                (true, modal.should_close(), handled)
+            } else {
+                (false, false, false)
+            }
+        };
+        
+        if should_close {
+            self.close_modal();
+            return true;
+        }
+        
+        if has_modal {
+            return true; // Consume all keys when modal is open
+        }
+        
+        // If in edit mode, handle edit-specific keys
+        if self.is_editing() {
+            match key_event.code {
+                KeyCode::Up | KeyCode::Char('k') => self.edit_select_prev(),
+                KeyCode::Down | KeyCode::Char('j') => self.edit_select_next(),
+                KeyCode::Enter => {
+                    if let Some((row, field, _value)) = self.confirm_edit() {
+                        // Trigger async update for the task
+                        self.update_task_field(row, &field);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('q') => self.cancel_edit(),
+                _ => {}
+            }
+            return true;
+        }
+        
+        match key_event.code {
+            KeyCode::Up | KeyCode::Char('k') => self.previous_row(),
+            KeyCode::Down | KeyCode::Char('j') => self.next_row(),
+            KeyCode::Left | KeyCode::Char('h') => self.previous_column(),
+            KeyCode::Right | KeyCode::Char('l') => self.next_column(),
+            KeyCode::Enter => {
+                // Open modal for current task if Task Name column selected, otherwise edit
+                let state = self.state.borrow();
+                if let (Some(row), Some(col)) = (state.selected(), state.selected_column()) {
+                    drop(state);
+                    if col == 2 {
+                        // Task Name column - open modal
+                        self.open_modal(row);
+                    } else if matches!(col, 1 | 3 | 4) {
+                        // Editable columns
+                        self.toggle_edit(row, col);
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                // Space for inline edit on editable columns
+                let state = self.state.borrow();
+                if let (Some(row), Some(col)) = (state.selected(), state.selected_column()) {
+                    drop(state);
+                    if matches!(col, 1 | 3 | 4) {
+                        self.toggle_edit(row, col);
+                    }
+                }
+            }
+            KeyCode::Char('c') => {
+                // Toggle completed
+                let state = self.state.borrow();
+                if let Some(row) = state.selected() {
+                    drop(state);
+                    if let Some(task) = self.items.get_mut(row) {
+                        task.completed = !task.completed;
+                        self.update_task_field(row, "completed");
+                    }
+                }
+            }
+            KeyCode::Char('d') => {
+                // Sort by due date
+                self.toggle_sort(SortColumn::DueDate);
+            }
+            KeyCode::Char('s') => {
+                // Sort by status
+                self.toggle_sort(SortColumn::Status);
+            }
+            KeyCode::Char('p') => {
+                // Sort by priority
+                self.toggle_sort(SortColumn::Priority);
+            }
+            _ => {}
+        }
+        true
+    }
+}
+
+impl<'a> TasksTab<'a> {
+    /// Draw the main table
+    fn draw_table_impl(&self, f: &mut Frame, area: Rect) {
         // Store the table area for mouse hit-testing
         *self.table_area.borrow_mut() = area;
         
         let mut total_height = 3; // Start with header height
-        let widths = if self.widths.len() == 6 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
+        let widths = if self.widths.len() >= 5 { &self.widths[..5] } else { &DEFAULT_WIDTHS[..] };
         
-        // Use static defaults for header
+        // Calculate remaining width for description column
+        let fixed_cols_width: u16 = widths.iter().sum::<u16>() + (widths.len() as u16 * 1); // +1 for spacing
+        let description_width = area.width.saturating_sub(fixed_cols_width + 4).max(MIN_DESCRIPTION_WIDTH); // -4 for borders
+        
+        // Get current sort state for header display
+        let sort_col = *self.sort_column.borrow();
+        let sort_dir = *self.sort_direction.borrow();
+        let hovered_header = *self.hovered_header_col.borrow();
+        
+        // Build header with sort indicators
         let header = Row::new(vec![
-            Cell::from(Text::from(Self::center_text_with_borders("Due".to_string(), widths[0] as usize, 3))),
-            Cell::from(Text::from(Self::center_text_with_borders("Status".to_string(), widths[1] as usize, 3))),
+            Cell::from(Text::from(Self::header_with_sort("Due", SortColumn::DueDate, sort_col, sort_dir, hovered_header == Some(0), widths[0] as usize))),
+            Cell::from(Text::from(Self::header_with_sort("Status", SortColumn::Status, sort_col, sort_dir, hovered_header == Some(1), widths[1] as usize))),
             Cell::from(Text::from(Self::center_text_with_borders("Task".to_string(), widths[2] as usize, 3))),
             Cell::from(Text::from(Self::center_text_with_borders("Assignee".to_string(), widths[3] as usize, 3))),
-            Cell::from(Text::from(Self::center_text_with_borders("Priority".to_string(), widths[4] as usize, 3))),
-            Cell::from(Text::from(Self::center_text_with_borders("Description".to_string(), widths[5] as usize, 3))),
+            Cell::from(Text::from(Self::header_with_sort("Priority", SortColumn::Priority, sort_col, sort_dir, hovered_header == Some(4), widths[4] as usize))),
+            Cell::from(Text::from(Self::center_text_with_borders("Description".to_string(), description_width as usize, 3))),
         ])
         .style(Style::default().fg(CATPPUCCIN.sapphire).bg(Color::Rgb(12,12,16)).add_modifier(Modifier::BOLD))
         .height(3)
         .bottom_margin(1);
 
+        let hovered_row = *self.hovered_row.borrow();
+        
         let rows: Vec<Row> = self.items.iter().enumerate().map(|(i, task)| {
             // Get username from assignee RecordId
             let assignee_name = self.get_username(&task.assignee);
             
-            let wrapped_desc = Self::wrap_text_with_borders(task.task_description.clone(), widths[5] as usize);
+            let wrapped_desc = Self::wrap_text_with_borders(task.task_description.clone(), description_width as usize);
             let height = wrapped_desc.len().max(3) as u16;
             total_height += height;
             
@@ -59,6 +355,31 @@ impl<'a> HandleWidget <'a> for TasksTab {
                 _ => CATPPUCCIN.text,
             };
             
+            // Determine row background based on hover and alternating
+            let is_hovered = hovered_row == Some(i);
+            let bg_color = if is_hovered {
+                Color::Rgb(35, 35, 50) // Lighter when hovered
+            } else if i % 2 == 0 {
+                CATPPUCCIN.base
+            } else {
+                Color::Rgb(14, 14, 18)
+            };
+            
+            let fg_color = if is_hovered {
+                CATPPUCCIN.text
+            } else if i % 2 == 0 {
+                CATPPUCCIN.subtext0
+            } else {
+                CATPPUCCIN.text
+            };
+            
+            // Task name is clickable - show it with underline when this row is hovered
+            let task_name_style = if is_hovered {
+                Style::default().fg(CATPPUCCIN.blue).add_modifier(Modifier::UNDERLINED)
+            } else {
+                Style::default()
+            };
+            
             Row::new(vec![
                 Cell::from(Text::from(Self::center_text_with_borders(
                     task.due_date.format("%m/%d/%y").to_string(), 
@@ -74,7 +395,7 @@ impl<'a> HandleWidget <'a> for TasksTab {
                     task.task_name.clone(), 
                     widths[2] as usize, 
                     height
-                ))),
+                ))).style(task_name_style),
                 Cell::from(Text::from(Self::center_text_with_borders(
                     assignee_name, 
                     widths[3] as usize, 
@@ -87,14 +408,13 @@ impl<'a> HandleWidget <'a> for TasksTab {
                 ))).style(Style::default().fg(priority_color)),
                 Cell::from(Text::from(wrapped_desc)),
             ])
-            .style(Style::default()
-                .fg( if i % 2 == 0 { CATPPUCCIN.subtext0 } else { CATPPUCCIN.text } )
-                .bg( if i % 2 == 0 { CATPPUCCIN.base } else { Color::Rgb(14, 14, 18) } )
-            )
+            .style(Style::default().fg(fg_color).bg(bg_color))
             .height(height)
         }).collect();
 
-        let constraints: Vec<_> = widths.iter().map(|&w| Constraint::Length(w)).collect();
+        // Use Fill for description column to take remaining space
+        let mut constraints: Vec<_> = widths.iter().map(|&w| Constraint::Length(w)).collect();
+        constraints.push(Constraint::Fill(1)); // Description fills remaining
         
         let mut table_state = self.state.borrow_mut();
         if table_state.selected().is_none() && !self.items.is_empty() {
@@ -172,113 +492,9 @@ impl<'a> HandleWidget <'a> for TasksTab {
         self.draw_edit_popup(f, area);
     }
     
-    fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-        let table_area = *self.table_area.borrow();
-        let x = mouse_event.column;
-        let y = mouse_event.row;
-        
-        match mouse_event.kind {
-            MouseEventKind::ScrollDown => self.state.borrow_mut().scroll_down_by(1),
-            MouseEventKind::ScrollUp => self.state.borrow_mut().scroll_up_by(1),
-            MouseEventKind::ScrollLeft => self.state.borrow_mut().scroll_left_by(1),
-            MouseEventKind::ScrollRight => self.state.borrow_mut().scroll_right_by(1),
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Check if click is within table area
-                if x >= table_area.x && x < table_area.right() 
-                   && y >= table_area.y && y < table_area.bottom() 
-                {
-                    // Calculate which row was clicked (accounting for header and borders)
-                    let header_height = 4; // Header row + borders
-                    if y >= table_area.y + header_height {
-                        let relative_y = (y - table_area.y - header_height) as usize;
-                        // Approximate row based on default row height of 3
-                        let row_idx = relative_y / 3;
-                        
-                        if row_idx < self.items.len() {
-                            let mut state = self.state.borrow_mut();
-                            state.select(Some(row_idx));
-                            
-                            // Calculate which column was clicked
-                            let widths = if self.widths.len() == 6 { &self.widths } else { &DEFAULT_WIDTHS.to_vec() };
-                            let mut col_start = table_area.x + 1; // Account for border
-                            let mut col_idx = 0;
-                            for (i, width) in widths.iter().enumerate() {
-                                let col_end = col_start + width + 1; // +1 for column spacing
-                                if x >= col_start && x < col_end {
-                                    col_idx = i;
-                                    break;
-                                }
-                                col_start = col_end;
-                            }
-                            
-                            state.select_column(Some(col_idx));
-                            state.select_cell(Some((row_idx, col_idx)));
-                        }
-                    }
-                }
-            }
-            MouseEventKind::Down(MouseButton::Right) => {
-                // Right-click could open context menu in the future
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
-        // If in edit mode, handle edit-specific keys
-        if self.is_editing() {
-            match key_event.code {
-                KeyCode::Up | KeyCode::Char('k') => self.edit_select_prev(),
-                KeyCode::Down | KeyCode::Char('j') => self.edit_select_next(),
-                KeyCode::Enter => {
-                    if let Some((row, field, _value)) = self.confirm_edit() {
-                        // Trigger async update for the task
-                        self.update_task_field(row, &field);
-                    }
-                }
-                KeyCode::Esc | KeyCode::Char('q') => self.cancel_edit(),
-                _ => {}
-            }
-            return true;
-        }
-        
-        match key_event.code {
-            KeyCode::Up | KeyCode::Char('k') => self.previous_row(),
-            KeyCode::Down | KeyCode::Char('j') => self.next_row(),
-            KeyCode::Left | KeyCode::Char('h') => self.previous_column(),
-            KeyCode::Right | KeyCode::Char('l') => self.next_column(),
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                // Enter edit mode for the current cell if editable
-                let state = self.state.borrow();
-                if let (Some(row), Some(col)) = (state.selected(), state.selected_column()) {
-                    drop(state);
-                    // Columns 1 (Status), 3 (Assignee), 4 (Priority) are editable
-                    if matches!(col, 1 | 3 | 4) {
-                        self.toggle_edit(row, col);
-                    }
-                }
-            }
-            KeyCode::Char('c') => {
-                // Toggle completed
-                let state = self.state.borrow();
-                if let Some(row) = state.selected() {
-                    drop(state);
-                    if let Some(task) = self.items.get_mut(row) {
-                        task.completed = !task.completed;
-                        self.update_task_field(row, "completed");
-                    }
-                }
-            }
-            _ => {}
-        }
-        true
-    }
-}
-
-
-impl TasksTab {
+    /// Calculate widths for first 5 columns (description fills remaining)
     pub fn calculate_widths(tasks: &[LiveTaskPayload], users: &[User]) -> Vec<u16> {
-        let headers = ["Due", "Status", "Task", "Assignee", "Priority", "Description"];
+        let headers = ["Due", "Status", "Task", "Assignee", "Priority"];
         let mut widths = DEFAULT_WIDTHS.to_vec();
 
         for task in tasks {
@@ -293,14 +509,30 @@ impl TasksTab {
             widths[3] = max(widths[3], assignee_name.len() as u16);
         }
         
-        // Apply min/max constraints
+        // Apply min/max constraints (description is dynamic, not in this list)
         widths[0] = max(widths[0], headers[0].len() as u16).min(14);
         widths[1] = max(widths[1], headers[1].len() as u16).min(14);
         widths[2] = max(widths[2], headers[2].len() as u16).min(35);
         widths[3] = max(widths[3], headers[3].len() as u16).min(16);
         widths[4] = max(widths[4], headers[4].len() as u16).min(12);
-        widths[5] = max(widths[5], headers[5].len() as u16).min(80);
         widths
+    }
+    
+    /// Build header cell with sort indicator
+    fn header_with_sort<'b>(title: &str, col: SortColumn, current_sort: SortColumn, dir: SortDirection, is_hovered: bool, width: usize) -> Vec<Line<'b>> {
+        let indicator = if current_sort == col {
+            match dir {
+                SortDirection::Ascending => " ▲",
+                SortDirection::Descending => " ▼",
+            }
+        } else if is_hovered {
+            " ○" // Show indicator on hover for sortable columns
+        } else {
+            ""
+        };
+        
+        let display_text = format!("{}{}", title, indicator);
+        Self::center_text_with_borders(display_text, width, 3)
     }
     
     /// Draw the edit popup when in edit mode
@@ -490,7 +722,7 @@ impl TasksTab {
         self.state.borrow_mut().scroll_left_by(1);
     }
     
-    fn _wrap_text<'a>(text: String, width: usize) -> Vec<Line<'a>> {
+    fn _wrap_text<'b>(text: String, width: usize) -> Vec<Line<'b>> {
         let mut lines = Vec::new();
         let mut current = String::new();
         
@@ -526,7 +758,7 @@ impl TasksTab {
         lines
     }
 
-    fn wrap_text_with_borders<'a>(text: String, width: usize) -> Vec<Line<'a>> {
+    fn wrap_text_with_borders<'b>(text: String, width: usize) -> Vec<Line<'b>> {
         let mut lines = Vec::new();
         let inner_width = width.saturating_sub(2);
         let mut current = String::new();
@@ -571,7 +803,7 @@ impl TasksTab {
         lines
     }
 
-    fn center_text_with_borders<'a>(text: String, width: usize, height: u16) -> Vec<Line<'a>> {
+    fn center_text_with_borders<'b>(text: String, width: usize, height: u16) -> Vec<Line<'b>> {
         let inner_width = width.saturating_sub(2);
         let content_lines = 1;
         let total_lines = height as usize;

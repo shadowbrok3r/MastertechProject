@@ -28,7 +28,7 @@ impl<'a> ActionHandler for MenuBar<'a> {
         match event {
             WidgetEvent::ButtonClick { widget_id , button: _, source: _} => {
                 // Helper to update tab selection state on all buttons
-                let update_tab_selection = |new_tab: Tab, menu: &Self| {
+                let update_tab_selection = | new_tab: Tab, menu: &Self | {
                     menu.ticket_tab.set_selected(matches!(new_tab, Tab::TurSheet));
                     menu.scripts_tab.set_selected(matches!(new_tab, Tab::Scripts));
                     menu.system_tab.set_selected(matches!(new_tab, Tab::SystemInfo));

@@ -21,7 +21,6 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
             WidgetId("GetKeys".to_string()),
             WidgetId("CopyWebroot".to_string()),
             WidgetId("CopySuperAnti".to_string()),
-            WidgetId("CheckSeb".to_string()),
             WidgetId("GetTicket".to_string()),
             WidgetId("CustomerName".to_string()),
             WidgetId("CustomerPhone".to_string()),
@@ -36,10 +35,11 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
             WidgetId("DeviceSerial".to_string()),
             WidgetId("DevicePassword".to_string()),
             WidgetId("DevicePowerSupply".to_string()),
-            WidgetId("CarboniteDeviceName".to_string()),
-            WidgetId("CarboniteDeviceId".to_string()),
-            WidgetId("ActivationCode".to_string()),
-            WidgetId("RecurlyId".to_string()),
+            // SEB/Carbonite copy buttons
+            WidgetId("CopyCarboniteDeviceName".to_string()),
+            WidgetId("CopyCarboniteDeviceId".to_string()),
+            WidgetId("CopyActivationCode".to_string()),
+            WidgetId("CopyRecurlyId".to_string()),
             // Add any other widget IDs handled by this tab
         ]
     }
@@ -148,29 +148,64 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                         }
                         log::info!("set text to clip: {set:?}");
                     },
-                    "CheckSeb" => if let Ok(ctx) = self.ctx.try_lock() {
-                        let _ = ctx.data_sender.send(Box::new(Notification::new(
-                            NotificationType::Info, 
-                            "Checking SEB info", 
-                            "", 
-                            2
-                        )));
-                         
-                        let cust_email = ctx.service_data.customer_data.email.clone();
-                        if !cust_email.is_empty() {
-                            log::info!("Customer email: {cust_email:?}");
-                            let client = self.client.clone();
-                            tokio::spawn(async move {
-                                let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
-                                    .from_customer_email(cust_email.clone(), client)
-                                    .await?;
-                                log::info!("SEB Response: {:?}", response_json);
-                                let tx = get_event_sender();
-                                tx.try_send(WidgetEvent::Api(ApiEvent::GetSebResponse(response_json)))?;
-                                Ok::<(), anyhow::Error>(())
-                            });
-                        } else {
-                            log::info!("Customer email is empty, cannot check SEB.");
+                    "CopyCarboniteDeviceName" => {
+                        let val = self.carbonite_device_name_btn.get_label();
+                        if val != "Carbonite Device Name" {
+                            let mut clipboard = arboard::Clipboard::new().unwrap();
+                            let _ = clipboard.set().text(val);
+                            if let Ok(ctx) = self.ctx.try_lock() {
+                                let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                    NotificationType::Info, 
+                                    "Copied Carbonite Device Name", 
+                                    val, 
+                                    2
+                                )));
+                            }
+                        }
+                    },
+                    "CopyCarboniteDeviceId" => {
+                        let val = self.carbonite_device_id_btn.get_label();
+                        if val != "Device ID" {
+                            let mut clipboard = arboard::Clipboard::new().unwrap();
+                            let _ = clipboard.set().text(val);
+                            if let Ok(ctx) = self.ctx.try_lock() {
+                                let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                    NotificationType::Info, 
+                                    "Copied Device ID", 
+                                    val, 
+                                    2
+                                )));
+                            }
+                        }
+                    },
+                    "CopyActivationCode" => {
+                        let val = self.activation_code_btn.get_label();
+                        if val != "Activation Code" {
+                            let mut clipboard = arboard::Clipboard::new().unwrap();
+                            let _ = clipboard.set().text(val);
+                            if let Ok(ctx) = self.ctx.try_lock() {
+                                let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                    NotificationType::Info, 
+                                    "Copied Activation Code", 
+                                    val, 
+                                    2
+                                )));
+                            }
+                        }
+                    },
+                    "CopyRecurlyId" => {
+                        let val = self.recurly_id_btn.get_label();
+                        if val != "Recurly ID" {
+                            let mut clipboard = arboard::Clipboard::new().unwrap();
+                            let _ = clipboard.set().text(val);
+                            if let Ok(ctx) = self.ctx.try_lock() {
+                                let _ = ctx.data_sender.send(Box::new(Notification::new(
+                                    NotificationType::Info, 
+                                    "Copied Recurly ID", 
+                                    val, 
+                                    2
+                                )));
+                            }
                         }
                     },
                     "GetTicket" => if let Ok(ctx) = &mut self.ctx.try_lock() {
@@ -350,77 +385,63 @@ impl <'a> ActionHandler for ServiceFormTab <'a> {
                     },
                     ApiEvent::GetSebResponse(carbonite_response) => {
                         log::info!("GetSebResponse");
-                        for field in self.seb_fields.iter_mut() {
-                            let id = field.id();
-                            let carbonite = carbonite_response.get(0).cloned().unwrap_or_default();
-                            if let Ok(ctx) = &mut self.ctx.try_lock() {
-                                let seb_data = &mut ctx.service_data.computer_data.seb_info;
-                                log::warn!("WE HAVE CTX");
-                                if let Ok(seb) = get_local_seb_data() {
-                                    log::warn!("LOCAL SEB: {seb:#?}");
-                                    *seb_data = Some(seb);
-                                } else {
-                                    *seb_data = Some(LocalSebData {
-                                        InstalledDeviceId: carbonite.device_id.clone(),
-                                        InstallInstanceId: carbonite.device_id.clone(),
-                                        ActivationCode: carbonite.activation_code.clone(),
-                                        InstallVersion: carbonite.client_version.clone(),
-                                        MachineName: carbonite.device_name.clone(),
-                                        ExtendedSeb: Some(ExtendedSeb {
-                                            email: carbonite.email.clone(),
-                                            phone: carbonite.phone.clone(),
-                                            userid: carbonite.userid.clone(),
-                                            device_name: carbonite.device_name.clone(),
-                                            device_id: carbonite.device_id.clone(),
-                                            state: carbonite.state.clone(),
-                                            usage_gb: carbonite.usage_gb.clone(),
-                                            date_device_created: carbonite.date_device_created.clone(),
-                                            activated: carbonite.activated.clone(),
-                                            activation_code: carbonite.activation_code.clone(),
-                                            last_complete_backup: carbonite.last_complete_backup.clone(),
-                                            last_client_status_update: carbonite.last_client_status_update.clone(),
-                                            id_recurly_account: carbonite.id_recurly_account.clone(),
-                                            date_last_scan: carbonite.date_last_scan.clone(),
-                                            date_email_sent: carbonite.date_email_sent.clone(),
-                                            date_canceled_account: carbonite.date_canceled_account.clone(),
-                                            date_deleted_account: carbonite.date_deleted_account.clone(),
-                                            current_period_ends_at: carbonite.current_period_ends_at.clone(),
-                                            date_modified: carbonite.date_modified.clone(),
-                                            date_created: carbonite.date_created.clone(),
-                                        }),
-                                        ..Default::default()
-                                    });
+                        let carbonite = carbonite_response.get(0).cloned().unwrap_or_default();
+                        
+                        // Update context with SEB data
+                        if let Ok(ctx) = &mut self.ctx.try_lock() {
+                            let seb_data = &mut ctx.service_data.computer_data.seb_info;
+                            log::warn!("WE HAVE CTX");
+                            if let Ok(seb) = get_local_seb_data() {
+                                log::warn!("LOCAL SEB: {seb:#?}");
+                                *seb_data = Some(seb);
+                            } else {
+                                *seb_data = Some(LocalSebData {
+                                    InstalledDeviceId: carbonite.device_id.clone(),
+                                    InstallInstanceId: carbonite.device_id.clone(),
+                                    ActivationCode: carbonite.activation_code.clone(),
+                                    InstallVersion: carbonite.client_version.clone(),
+                                    MachineName: carbonite.device_name.clone(),
+                                    ExtendedSeb: Some(ExtendedSeb {
+                                        email: carbonite.email.clone(),
+                                        phone: carbonite.phone.clone(),
+                                        userid: carbonite.userid.clone(),
+                                        device_name: carbonite.device_name.clone(),
+                                        device_id: carbonite.device_id.clone(),
+                                        state: carbonite.state.clone(),
+                                        usage_gb: carbonite.usage_gb.clone(),
+                                        date_device_created: carbonite.date_device_created.clone(),
+                                        activated: carbonite.activated.clone(),
+                                        activation_code: carbonite.activation_code.clone(),
+                                        last_complete_backup: carbonite.last_complete_backup.clone(),
+                                        last_client_status_update: carbonite.last_client_status_update.clone(),
+                                        id_recurly_account: carbonite.id_recurly_account.clone(),
+                                        date_last_scan: carbonite.date_last_scan.clone(),
+                                        date_email_sent: carbonite.date_email_sent.clone(),
+                                        date_canceled_account: carbonite.date_canceled_account.clone(),
+                                        date_deleted_account: carbonite.date_deleted_account.clone(),
+                                        current_period_ends_at: carbonite.current_period_ends_at.clone(),
+                                        date_modified: carbonite.date_modified.clone(),
+                                        date_created: carbonite.date_created.clone(),
+                                    }),
+                                    ..Default::default()
+                                });
 
-                                    log::warn!("svc_data.computer_data.seb_info: {:#?}", seb_data);
-                                }
+                                log::warn!("svc_data.computer_data.seb_info: {:#?}", seb_data);
                             }
-                            match id.0.as_str() {
-                                "CarboniteDeviceName" => {
-                                    let mut input = field.input.borrow_mut();
-                                    input.select_all();
-                                    input.cut();
-                                    input.insert_str(carbonite.device_name);
-                                }
-                                "CarboniteDeviceId" => {
-                                    let mut input = field.input.borrow_mut();
-                                    input.select_all();
-                                    input.cut();
-                                    input.insert_str(carbonite.device_id);
-                                }
-                                "ActivationCode" => {
-                                    let mut input = field.input.borrow_mut();
-                                    input.select_all();
-                                    input.cut();
-                                    input.insert_str(carbonite.activation_code);
-                                }
-                                "RecurlyId" => {
-                                    let mut input = field.input.borrow_mut();
-                                    input.select_all();
-                                    input.cut();
-                                    input.insert_str(carbonite.id_recurly_account);
-                                }
-                                _ => {}
-                            }
+                        }
+                        
+                        // Update button labels with the SEB values
+                        if !carbonite.device_name.is_empty() {
+                            self.carbonite_device_name_btn.set_label(carbonite.device_name);
+                        }
+                        if !carbonite.device_id.is_empty() {
+                            self.carbonite_device_id_btn.set_label(carbonite.device_id);
+                        }
+                        if !carbonite.activation_code.is_empty() {
+                            self.activation_code_btn.set_label(carbonite.activation_code);
+                        }
+                        if !carbonite.id_recurly_account.is_empty() {
+                            self.recurly_id_btn.set_label(carbonite.id_recurly_account);
                         }
                     },
                     ApiEvent::DuplicateCheckResponse(check_result) => {
