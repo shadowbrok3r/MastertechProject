@@ -48,7 +48,9 @@ pub enum ButtonState {
     Hovered,
     Selected,
     Active,
-    AltClicked
+    AltClicked,
+    /// Used when user is dragging to select text in an InputField
+    Selecting,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -184,6 +186,7 @@ impl <'a> ButtonType<'a> for Button<'a> {
             ButtonState::Active => (t.background, t.text, t.highlight, t.shadow),
             ButtonState::Hovered => (t.background, t.text, t.highlight, t.shadow),
             ButtonState::AltClicked => (t.background, t.text, Color::White, Color::White),
+            ButtonState::Selecting => (t.background, t.text, t.highlight, t.shadow),
         }
     }
 

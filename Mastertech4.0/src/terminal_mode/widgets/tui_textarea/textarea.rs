@@ -2035,6 +2035,19 @@ impl<'a> TextArea<'a> {
     pub fn cursor(&self) -> (usize, usize) {
         self.cursor
     }
+    
+    /// Get the current viewport scroll position as (row, col).
+    /// This returns the top-left position of the visible area.
+    /// ```
+    /// use tui_textarea::TextArea;
+    ///
+    /// let textarea = TextArea::default();
+    /// let (row, col) = textarea.viewport();
+    /// assert_eq!((row, col), (0, 0)); // Initially at top-left
+    /// ```
+    pub fn viewport(&self) -> (u16, u16) {
+        self.viewport.scroll_top()
+    }
 
     /// Get the current selection range as a pair of the start position and the end position. The range is bounded
     /// inclusively below and exclusively above. The positions are 0-base character-wise (row, col) values.

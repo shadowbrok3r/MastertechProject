@@ -37,7 +37,7 @@ pub struct TerminalApp<'a> {
     scripts_tab: Rc<RefCell<ScriptsTab<'a>>>,
     service_tab: Rc<RefCell<ServiceFormTab<'a>>>,
     ncdu_tab: Rc<RefCell<NcduTab>>,
-    tasks_tab: Rc<RefCell<TasksTab>>,
+    tasks_tab: Rc<RefCell<TasksTab<'a>>>,
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     webconsole_tab: Rc<RefCell<WebconsoleTab<'a>>>,
@@ -122,6 +122,7 @@ impl Default for TerminalApp <'_>{
                 )
             )
         );
+        
         let login_tab = Rc::new(RefCell::new(LoginTab::new(client.clone(), ctx.clone())));
         let webconsole_tab = Rc::new(RefCell::new(WebconsoleTab::new(client.clone(), ctx.clone())));
 
@@ -135,6 +136,7 @@ impl Default for TerminalApp <'_>{
         event_manager.register_handler(login_tab.clone());
         event_manager.register_handler(webconsole_tab.clone());
         event_manager.register_handler(menu_bar.clone());
+        event_manager.register_handler(tasks_tab.clone());
 
         Self {
             ctx,

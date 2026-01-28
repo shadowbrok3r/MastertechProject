@@ -1,4 +1,4 @@
-use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN}, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
+use crate::terminal_mode::{context::TerminalContext, events::action_handler::WidgetId, modals::DuplicateMergeModal, styling::{CATPPUCCINTHEME, DEEPPINK, MEDIUMSLATEBLUE, SPRINGGREEN, TURQUOISE}, widgets::{autocomplete_input::AutoCompleteInput, button::{Button, ButtonState}, input_field::InputField, ButtonType}};
 use std::{rc::Rc, sync::{Arc, Mutex}, cell::RefCell};
 use database::schema::{prestashop_schema::OrderRow, GetKeysResponse};
 use ratatui::{layout::Rect, style::Style};
@@ -17,7 +17,6 @@ pub struct ServiceFormTab<'a> {
     get_ticket_btn: Button<'a>,
     submit_btn: Button<'a>,
     order_number: Rc<InputField<'a>>,
-    pub seb_fields: Vec<InputField<'a>>,
     // Other display only fields
     pub other_fields: Vec<InputField<'a>>,
     pub order_row_fields: Vec<(InputField<'a>, InputField<'a>)>,
@@ -30,13 +29,18 @@ pub struct ServiceFormTab<'a> {
     pub salesman_name: AutoCompleteInput<'a>,
     pub technician_name: AutoCompleteInput<'a>,
 
-    // Row 3: Two buttons
+    // Row 3: Get Keys button only (Check SEB removed - done automatically on GetTicket)
     pub get_keys_btn: Button<'a>,
-    pub check_seb_btn: Button<'a>,
 
-    // Row 4: Two buttons
+    // Row 4: Two buttons for keys
     pub webroot_key_btn: Button<'a>,
     pub superanti_key_btn: Button<'a>,
+
+    // SEB/Carbonite buttons (dynamically updated with values)
+    pub carbonite_device_name_btn: Button<'a>,
+    pub carbonite_device_id_btn: Button<'a>,
+    pub activation_code_btn: Button<'a>,
+    pub recurly_id_btn: Button<'a>,
 
     // Row 5: Multiline text fields
     pub checkin_notes: InputField<'a>,
@@ -74,13 +78,6 @@ impl<'a> ServiceFormTab<'a> {
             InputField::new("Device Power Supply", WidgetId("DevicePowerSupply".to_string()))
         ];
 
-        let seb_fields = vec![
-            InputField::new("Carbonite Device Name", WidgetId("CarboniteDeviceName".to_string())),
-            InputField::new("Device ID", WidgetId("CarboniteDeviceId".to_string())),
-            InputField::new("Activation Code", WidgetId("ActivationCode".to_string())),
-            InputField::new("Recurly Id", WidgetId("RecurlyId".to_string())),
-        ];
-
         Self {
             scroll_state: RefCell::new(ScrollViewState::default()),
             service_form_area: Rc::new(RefCell::new(None)),
@@ -97,13 +94,16 @@ impl<'a> ServiceFormTab<'a> {
             get_ticket_btn: Button::new("Get Ticket",WidgetId("GetTicket".to_string())).theme(MEDIUMSLATEBLUE),
             submit_btn: Button::new("Submit",WidgetId("SubmitTur".to_string())).theme(DEEPPINK),
             get_keys_btn: Button::new("Get Keys",WidgetId("GetKeys".to_string())).theme(CATPPUCCINTHEME),
-            check_seb_btn: Button::new("Check SEB",WidgetId("CheckSeb".to_string())).theme(CATPPUCCINTHEME),
             webroot_key_btn: Button::new("Webroot Key",WidgetId("CopyWebroot".to_string())).theme(SPRINGGREEN),
             superanti_key_btn: Button::new("SuperAnti Key",WidgetId("CopySuperAnti".to_string())).theme(DEEPPINK),
+            // SEB/Carbonite buttons - initialized with labels that will be updated with values
+            carbonite_device_name_btn: Button::new("Carbonite Device Name",WidgetId("CopyCarboniteDeviceName".to_string())).theme(TURQUOISE),
+            carbonite_device_id_btn: Button::new("Device ID",WidgetId("CopyCarboniteDeviceId".to_string())).theme(TURQUOISE),
+            activation_code_btn: Button::new("Activation Code",WidgetId("CopyActivationCode".to_string())).theme(TURQUOISE),
+            recurly_id_btn: Button::new("Recurly ID",WidgetId("CopyRecurlyId".to_string())).theme(TURQUOISE),
             order_row_fields: Vec::new(),
             order_number: service_num_field,
             other_fields,
-            seb_fields,
             client,
             ctx,
             duplicate_modal: RefCell::new(None),

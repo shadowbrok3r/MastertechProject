@@ -45,10 +45,11 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             Constraint::Length(3),  // Row 2: Service Number | Customer Email
             Constraint::Length(3),  // Row 3: Customer Name | Customer Phone | Device Name | Device Mfg
             Constraint::Length(3),  // Row 4: Salesman | Technician | Device Model | Device Serial
-            Constraint::Length(3),  // Row 5: Get Keys | Check SEB | Device Password | Device Power
-            Constraint::Length(3),  // Row 6: Carbonite Name | Device ID | Activation Code | Recurly
-            Constraint::Length(3),  // Row 7: Webroot Key | SuperAnti Key
-            Constraint::Length(8),  // Row 8: CheckIn Notes | Recommendations
+            Constraint::Length(3),  // Row 5: Get Keys | Device Password | Device Power
+            Constraint::Length(3),  // Row 6: Carbonite Device Name | Device ID
+            Constraint::Length(3),  // Row 7: Activation Code | Recurly ID
+            Constraint::Length(3),  // Row 8: Webroot Key | SuperAnti Key
+            Constraint::Length(8),  // Row 9: CheckIn Notes | Recommendations
             Constraint::Min(1),     // Spacer
         ];
 
@@ -142,7 +143,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             self.other_fields[4].render_ref(row4[3], scroll_view.buf_mut()); // Device Serial
         }
 
-        // Row 5: Get Keys | Check SEB | Device Password | Device Power (25% each)
+        // Row 5: Get Keys | Device Password | Device Power (33% each, with spacer)
         let row5 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -154,8 +155,7 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             .split(rows[4]);
         let get_keys_btn_area = row5[0].shrink(2, 0);
         self.get_keys_btn.render_ref(get_keys_btn_area, scroll_view.buf_mut());
-        let check_seb_btn_area = row5[1].shrink(2, 0);
-        self.check_seb_btn.render_ref(check_seb_btn_area, scroll_view.buf_mut());
+        // row5[1] is empty (Check SEB removed)
         if self.other_fields.len() > 5 {
             self.other_fields[5].render_ref(row5[2], scroll_view.buf_mut()); // Device Password
         }
@@ -163,52 +163,55 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
             self.other_fields[6].render_ref(row5[3], scroll_view.buf_mut()); // Device Powersupply
         }
 
-        // Row 6: Carbonite Name | Device ID | Activation Code | Recurly (25% each)
+        // Row 6: Carbonite Device Name | Device ID (50% each - wide for long values)
         let row6 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
+                Constraint::Percentage(50),  // Carbonite Device Name - wide
+                Constraint::Percentage(50),  // Device ID - wide
             ])
             .split(rows[5]);
-        if !self.seb_fields.is_empty() {
-            self.seb_fields[0].render_ref(row6[0], scroll_view.buf_mut()); // Carbonite Device Name
-        }
-        if self.seb_fields.len() > 1 {
-            self.seb_fields[1].render_ref(row6[1], scroll_view.buf_mut()); // Device ID
-        }
-        if self.seb_fields.len() > 2 {
-            self.seb_fields[2].render_ref(row6[2], scroll_view.buf_mut()); // Activation Code
-        }
-        if self.seb_fields.len() > 3 {
-            self.seb_fields[3].render_ref(row6[3], scroll_view.buf_mut()); // Recurly Id
-        }
+        let carbonite_name_btn_area = row6[0].shrink(2, 0);
+        self.carbonite_device_name_btn.render_ref(carbonite_name_btn_area, scroll_view.buf_mut());
+        let device_id_btn_area = row6[1].shrink(2, 0);
+        self.carbonite_device_id_btn.render_ref(device_id_btn_area, scroll_view.buf_mut());
 
-        // Row 7: Webroot Key | SuperAnti Key (50% each - stays wide for long keys)
+        // Row 7: Activation Code | Recurly ID (50% each - wide for long values)
         let row7 = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),  // Activation Code - wide
+                Constraint::Percentage(50),  // Recurly ID - wide
+            ])
+            .split(rows[6]);
+        let activation_code_btn_area = row7[0].shrink(2, 0);
+        self.activation_code_btn.render_ref(activation_code_btn_area, scroll_view.buf_mut());
+        let recurly_id_btn_area = row7[1].shrink(2, 0);
+        self.recurly_id_btn.render_ref(recurly_id_btn_area, scroll_view.buf_mut());
+
+        // Row 8: Webroot Key | SuperAnti Key (50% each - stays wide for long keys)
+        let row8 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Percentage(50),  // Webroot Key - wide for long keys
                 Constraint::Percentage(50),  // SuperAnti Key - wide for long keys
             ])
-            .split(rows[6]);
-        let webroot_key_btn_area = row7[0].shrink(2, 0);
+            .split(rows[7]);
+        let webroot_key_btn_area = row8[0].shrink(2, 0);
         self.webroot_key_btn.render_ref(webroot_key_btn_area, scroll_view.buf_mut());
-        let superanti_key_btn_area = row7[1].shrink(2, 0);
+        let superanti_key_btn_area = row8[1].shrink(2, 0);
         self.superanti_key_btn.render_ref(superanti_key_btn_area, scroll_view.buf_mut());
 
-        // Row 8: CheckIn Notes | Recommendations (50% each)
-        let row8 = Layout::default()
+        // Row 9: CheckIn Notes | Recommendations (50% each)
+        let row9 = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Percentage(50),  // CheckIn Notes
                 Constraint::Percentage(50),  // Recommendations
             ])
-            .split(rows[7]);
-        self.checkin_notes.render_ref(row8[0], scroll_view.buf_mut());
-        self.recommendations.render_ref(row8[1], scroll_view.buf_mut());
+            .split(rows[8]);
+        self.checkin_notes.render_ref(row9[0], scroll_view.buf_mut());
+        self.recommendations.render_ref(row9[1], scroll_view.buf_mut());
 
         // No more product rows - removed
 
@@ -323,14 +326,13 @@ impl<'a> HandleWidget<'a> for ServiceFormTab<'a> {
                         input_fields.handle_mouse_event(&adjusted_event);
                     }
 
-                    for input_fields in self.seb_fields.iter() {
-                        input_fields.handle_mouse_event(&adjusted_event);
-                    }
-
                     self.get_keys_btn.handle_mouse_event(&adjusted_event);
-                    self.check_seb_btn.handle_mouse_event(&adjusted_event);
                     self.webroot_key_btn.handle_mouse_event(&adjusted_event);
                     self.superanti_key_btn.handle_mouse_event(&adjusted_event);
+                    self.carbonite_device_name_btn.handle_mouse_event(&adjusted_event);
+                    self.carbonite_device_id_btn.handle_mouse_event(&adjusted_event);
+                    self.activation_code_btn.handle_mouse_event(&adjusted_event);
+                    self.recurly_id_btn.handle_mouse_event(&adjusted_event);
                     self.get_ticket_btn.handle_mouse_event(&adjusted_event);
                     self.submit_btn.handle_mouse_event(&adjusted_event);
 

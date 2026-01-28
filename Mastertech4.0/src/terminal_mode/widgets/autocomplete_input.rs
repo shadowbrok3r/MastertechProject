@@ -344,6 +344,7 @@ impl<'a> ButtonType<'a> for AutoCompleteInput<'a> {
             ButtonState::Active => (CATPPUCCIN.green, CATPPUCCIN.teal, CATPPUCCIN.red, CATPPUCCIN.blue),
             ButtonState::Hovered => (CATPPUCCIN.lavender, CATPPUCCIN.sapphire, CATPPUCCIN.red, CATPPUCCIN.maroon),
             ButtonState::AltClicked => (CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon, CATPPUCCIN.maroon),
+            ButtonState::Selecting => (CATPPUCCIN.sky, CATPPUCCIN.teal, CATPPUCCIN.sapphire, CATPPUCCIN.blue),
         }
     }
 

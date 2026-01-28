@@ -1,5 +1,9 @@
 use crate::terminal_mode::context::TerminalContext;
 use crate::terminal_mode::fx::{EffectStage, UniqueEffectId};
+use crate::terminal_mode::events::action_handler::WidgetId;
+use crate::terminal_mode::styling::CATPPUCCINTHEME;
+use crate::terminal_mode::widgets::button::Button;
+use crate::terminal_mode::modals::TaskModal;
 use std::{cell::RefCell, sync::{Arc, Mutex}};
 use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, User};
 use crate::terminal_mode::widgets::tui_scroll_view::ScrollViewState;
@@ -9,6 +13,35 @@ use reqwest::Client;
 
 pub mod action_handler;
 pub mod render;
+
+/// Column identifiers for sorting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortColumn {
+    #[default]
+    DueDate,
+    Status,
+    Task,
+    Assignee,
+    Priority,
+    Description,
+}
+
+/// Sort direction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortDirection {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    pub fn toggle(&mut self) {
+        *self = match self {
+            SortDirection::Ascending => SortDirection::Descending,
+            SortDirection::Descending => SortDirection::Ascending,
+        };
+    }
+}
 
 /// Represents the edit state when a cell is being edited
 #[derive(Debug, Clone, PartialEq)]
@@ -26,10 +59,10 @@ impl Default for EditMode {
     }
 }
 
-pub struct TasksTab {
+pub struct TasksTab<'a> {
     state: RefCell<TableState>,
     pub items: Vec<LiveTaskPayload>,
-    widths: Vec<u16>, // Column widths
+    widths: Vec<u16>, // Column widths (first 5 columns, description fills remaining)
     scroll_state: RefCell<ScrollViewState>,
     pub _client: Client,
     ctx: Arc<Mutex<TerminalContext>>,
@@ -39,16 +72,39 @@ pub struct TasksTab {
     pub table_area: RefCell<Rect>,
     /// Row areas for mouse click detection
     pub row_areas: RefCell<Vec<Rect>>,
+    /// Header area for click detection
+    pub header_area: RefCell<Rect>,
     /// Current edit mode
     pub edit_mode: RefCell<EditMode>,
     /// Effect stage for animations
     pub effect_stage: RefCell<EffectStage<UniqueEffectId>>,
     /// Whether effects have been initialized
     pub effects_init: RefCell<bool>,
+    /// Current sort column
+    pub sort_column: RefCell<SortColumn>,
+    /// Current sort direction
+    pub sort_direction: RefCell<SortDirection>,
+    /// Hovered row index (for mouse hover highlighting)
+    pub hovered_row: RefCell<Option<usize>>,
+    /// Hovered column index (for header hover)
+    pub hovered_header_col: RefCell<Option<usize>>,
+    /// Currently open task modal (if any)
+    pub open_task_modal: RefCell<Option<TaskModal<'static>>>,
+    /// Sortable header buttons
+    pub sort_due_btn: Button<'a>,
+    pub sort_status_btn: Button<'a>,
+    pub sort_priority_btn: Button<'a>,
 }
 
-impl TasksTab {
+impl<'a> TasksTab<'a> {
     pub fn new(_client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
+        // Create sortable header buttons
+        let sort_due_btn = Button::new("Due ▼", WidgetId("TasksSortDue".to_string()))
+            .theme(CATPPUCCINTHEME);
+        let sort_status_btn = Button::new("Status", WidgetId("TasksSortStatus".to_string()))
+            .theme(CATPPUCCINTHEME);
+        let sort_priority_btn = Button::new("Priority", WidgetId("TasksSortPriority".to_string()))
+            .theme(CATPPUCCINTHEME);
 
         Self {
             ctx,
@@ -61,10 +117,104 @@ impl TasksTab {
             current_user: User::default(),
             table_area: RefCell::new(Rect::default()),
             row_areas: RefCell::new(Vec::new()),
+            header_area: RefCell::new(Rect::default()),
             edit_mode: RefCell::new(EditMode::None),
             effect_stage: RefCell::new(EffectStage::default()),
             effects_init: RefCell::new(false),
+            sort_column: RefCell::new(SortColumn::default()),
+            sort_direction: RefCell::new(SortDirection::default()),
+            hovered_row: RefCell::new(None),
+            hovered_header_col: RefCell::new(None),
+            open_task_modal: RefCell::new(None),
+            sort_due_btn,
+            sort_status_btn,
+            sort_priority_btn,
         }
+    }
+    
+    /// Update sort button labels based on current sort state
+    pub fn update_sort_button_labels(&mut self) {
+        let sort_col = *self.sort_column.borrow();
+        let sort_dir = *self.sort_direction.borrow();
+        let indicator = match sort_dir {
+            SortDirection::Ascending => " ▲",
+            SortDirection::Descending => " ▼",
+        };
+        
+        // Reset all labels first
+        self.sort_due_btn.set_label("Due".to_string());
+        self.sort_status_btn.set_label("Status".to_string());
+        self.sort_priority_btn.set_label("Priority".to_string());
+        
+        // Add indicator to current sort column
+        match sort_col {
+            SortColumn::DueDate => self.sort_due_btn.set_label(format!("Due{}", indicator)),
+            SortColumn::Status => self.sort_status_btn.set_label(format!("Status{}", indicator)),
+            SortColumn::Priority => self.sort_priority_btn.set_label(format!("Priority{}", indicator)),
+            _ => {}
+        }
+    }
+    
+    /// Sort the items based on current sort column and direction
+    pub fn sort_items(&mut self) {
+        let sort_col = *self.sort_column.borrow();
+        let sort_dir = *self.sort_direction.borrow();
+        
+        self.items.sort_by(|a, b| {
+            let cmp = match sort_col {
+                SortColumn::DueDate => a.due_date.cmp(&b.due_date),
+                SortColumn::Status => a.status.as_str().cmp(b.status.as_str()),
+                SortColumn::Task => a.task_name.cmp(&b.task_name),
+                SortColumn::Assignee => a.assignee.key_string().cmp(&b.assignee.key_string()),
+                SortColumn::Priority => {
+                    // Custom order: Express > Fire > RFS > QC > Normal
+                    let priority_order = |p: &Priority| match p {
+                        Priority::Express => 0,
+                        Priority::Fire => 1,
+                        Priority::Rfs => 2,
+                        Priority::Qc => 3,
+                        Priority::Normal => 4,
+                    };
+                    priority_order(&a.priority).cmp(&priority_order(&b.priority))
+                }
+                SortColumn::Description => a.task_description.cmp(&b.task_description),
+            };
+            
+            match sort_dir {
+                SortDirection::Ascending => cmp,
+                SortDirection::Descending => cmp.reverse(),
+            }
+        });
+    }
+    
+    /// Toggle sort by column - if same column, toggle direction; if different, sort ascending
+    pub fn toggle_sort(&mut self, column: SortColumn) {
+        let current_col = *self.sort_column.borrow();
+        if current_col == column {
+            self.sort_direction.borrow_mut().toggle();
+        } else {
+            *self.sort_column.borrow_mut() = column;
+            *self.sort_direction.borrow_mut() = SortDirection::Ascending;
+        }
+        self.sort_items();
+    }
+    
+    /// Open the task modal for a specific task
+    pub fn open_modal(&self, task_idx: usize) {
+        if let Some(task) = self.items.get(task_idx) {
+            let modal = TaskModal::new(task.clone(), self.store_users.clone(), self.current_user.clone());
+            self.open_task_modal.replace(Some(modal));
+        }
+    }
+    
+    /// Close the task modal
+    pub fn close_modal(&self) {
+        self.open_task_modal.replace(None);
+    }
+    
+    /// Check if modal is open
+    pub fn is_modal_open(&self) -> bool {
+        self.open_task_modal.borrow().is_some()
     }
 
     pub fn check_tasks(&mut self) {
