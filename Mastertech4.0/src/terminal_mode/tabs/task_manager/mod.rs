@@ -10,7 +10,6 @@ pub mod render;
 
 pub struct SysinfoTab {
     system: SystemInformation,
-    should_quit: bool,
     first_run: bool,
     process_scroll_state: ScrollbarState,
     process_table_state: TableState,
@@ -22,7 +21,8 @@ pub struct SysinfoTab {
 
     tx: Sender<SystemInformation>,
     rx: Receiver<SystemInformation>,
-
+    stop_rx: tokio::sync::broadcast::Receiver<()>,
+    stop_tx: tokio::sync::broadcast::Sender<()>,
     start_time: Instant,
     // pub effect_stage: EffectStage<UniqueEffectId>,
 }
@@ -37,9 +37,9 @@ struct Sample {
 impl SysinfoTab {
     pub fn new() -> Self {
         let (tx, rx) = crossbeam::channel::unbounded();
+        let (stop_tx, stop_rx) = tokio::sync::broadcast::channel(1);
         Self {
-            system: Default::default(), 
-            should_quit: false, 
+            system: Default::default(),
             first_run: true,
             process_table_state: TableState::default(),
             process_scroll_state: ScrollbarState::default(),
@@ -53,22 +53,26 @@ impl SysinfoTab {
             start_time: Instant::now(),
             // effect_stage: EffectStage::default(),
 
-            tx, 
-            rx,
+            tx, rx,
+            stop_tx, stop_rx,
         }
     }
 
-    fn get_sysinfo(&mut self) {
-        if !self.should_quit {
-            let tx = self.tx.clone();
-            tokio::spawn(async move {
-                loop {
-                    let _ = tx.try_send(get_sysinfo_no_gpu().await.unwrap_or_default());
-                    tokio::time::sleep(std::time::Duration::from_secs_f32(0.2)).await;
+    fn get_sysinfo(&mut self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        log::warn!("Received shutdown signal, restarting sysinfo task");
+                        break;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs_f32(0.2)) => {
+                        let _ = tx.try_send(get_sysinfo_no_gpu().await.unwrap_or_default());
+                    }
                 }
-                // log::info!("Res: {res:?}");
-            });
-        }
+            }
+        });
     }
 
     /// Call this on every update (or in your draw loop) to record the latest value.

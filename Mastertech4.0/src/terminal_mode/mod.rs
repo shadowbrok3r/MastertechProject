@@ -41,8 +41,6 @@ pub struct TerminalApp<'a> {
     sysinfo_tab: SysinfoTab,
     login_tab: Rc<RefCell<LoginTab<'a>>>,
     webconsole_tab: Rc<RefCell<WebconsoleTab<'a>>>,
-    // effect_stage: EffectStage<UniqueEffectId>,
-    // first_run: bool,
     event_handler: EventHandler,
     event_manager: EventManager<'a>,
     ctx: Arc<Mutex<TerminalContext>>,
@@ -148,15 +146,12 @@ impl Default for TerminalApp <'_>{
             sysinfo_tab,
             webconsole_tab,
             ncdu_tab,
-            // first_run: true,
             data_system,
             render_system,
             event_manager,
             logger: Logger::new(),
             event_handler: EventHandler::new(),
-            // effect_stage: EffectStage::default(),
             manual_connect_rx,
-            // terminal_ws_client: TerminalWebsocketClient::new()
         }
     }
 }
@@ -166,10 +161,9 @@ impl <'a>TerminalApp<'a> {
     where 
         <B as Backend>::Error: Send + Sync + 'static
     {
-        let last_sent = &mut Instant::now(); // Changed: Added to throttle sending
-        let send_interval = Duration::from_millis(30); // Changed: ~3 FPS interval
+        let last_sent = &mut Instant::now();
+        let send_interval = Duration::from_millis(30); 
         let can_start = &mut false;
-        // let manual_start = &mut false;
 
         // render splash screen
         let mut splash_screen = SplashScreen::new(SPLASH_CONFIG)?;
@@ -208,10 +202,6 @@ impl <'a>TerminalApp<'a> {
 
         join_handles.push(
             tokio::spawn(async move {
-                // let client = get_client_hash(); // Initialize client hash
-                // let connection_url = format!("{WS_CLIENT_URL}&room_id={}", client.connection_string);
-                // let connection = ewebsock::connect(connection_url, ewebsock::Options::default());
-
                 let websocket_server = // 
                 TerminalWebsocketClient::new().start_websocket_sender(
                     buffer_rx, 
@@ -219,7 +209,6 @@ impl <'a>TerminalApp<'a> {
                     connection_state_tx,
                     event_tx, 
                     shutdown_rx_websocket,
-                    // manual_start,
                 ).await;
                 log::info!("websocket_server: {websocket_server:?}");
             })
@@ -339,7 +328,6 @@ impl <'a>TerminalApp<'a> {
                     self.logger.draw::<B>(f, main_content_area);
                 },
             }
-            // Block::new().style(Style::new().bg(Color::Black)).render(f.area(), f.buffer_mut());
         }
         Ok(())
     }
@@ -378,13 +366,7 @@ impl <'a>TerminalApp<'a> {
         if let Ok(mut notifs) = notifications.lock() {
             notifs.retain(|notif| !notif.is_expired());
             if let Some(notification) = notifs.last() {
-                // let a = notification.notification_area::<B>(f);
                 notification.display::<B>(f);
-                // self.effect_stage.process_effects(
-                //     tachyonfx::Duration::from_millis(16), 
-                //     f.buffer_mut(), 
-                //     a
-                // );
             }
         }
         // Synchronously render other UI messages
@@ -393,25 +375,5 @@ impl <'a>TerminalApp<'a> {
                 ui_message.as_display().render_widget::<B>(f, area);
             }
         }
-    }
-
-    fn _prepare_effects(&mut self, _f: &mut Frame) {
-        // if self.first_run {
-            
-            // let effect1 = outline_selected_cells(
-            //     &mut self.menu_bar.effect_stage, 
-            //     main_content_area.as_size(),
-            //     CATPPUCCIN.maroon,
-            //     CellFilter::FgColor(CATPPUCCIN.maroon)
-            // );
-
-            // self.effect_stage.add_effect(effect1);
-            // if let Ok(notifs) = notifications.lock() {
-            //     if let Some(notification) = notifs.last() {
-            //         let a = notification.notification_area::<B>(f);
-            //         notification.render_effects(&mut self.effect_stage, a);
-            //     }
-            // }
-        // }
     }
 }

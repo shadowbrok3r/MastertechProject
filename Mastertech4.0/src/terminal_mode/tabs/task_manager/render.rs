@@ -318,7 +318,7 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
         // Update histories and fetch new sysinfo if available.
         if self.first_run {
             self.first_run = false;
-            self.get_sysinfo();
+            self.get_sysinfo(self.stop_rx.resubscribe());
         }
 
         if let Ok(sysinfo) = self.rx.try_recv() {
@@ -423,7 +423,6 @@ impl<'a> HandleWidget<'a> for SysinfoTab {
         match key_event.code {
             KeyCode::Up => self.process_table_state.scroll_up_by(1),
             KeyCode::Down => self.process_table_state.scroll_down_by(1),
-            KeyCode::Char('q') => self.should_quit = true,
             _ => {}
         }
         true

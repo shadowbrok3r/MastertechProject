@@ -88,6 +88,14 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
         let inside_modal = x >= modal_area.x && x < modal_area.right()
             && y >= modal_area.y && y < modal_area.bottom();
         
+        // Forward to tab buttons
+        for btn in &self.tab_buttons {
+            btn.handle_mouse_event(mouse_event);
+        }
+
+        // Forward to close button
+        self.close_btn.handle_mouse_event(mouse_event);
+
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if !inside_modal {
@@ -95,21 +103,6 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
                     self.request_close();
                     return;
                 }
-                
-                // Forward to tab buttons
-                for btn in &self.tab_buttons {
-                    btn.handle_mouse_event(mouse_event);
-                }
-                
-                // Forward to close button
-                self.close_btn.handle_mouse_event(mouse_event);
-            }
-            MouseEventKind::Moved => {
-                // Forward hover events to buttons
-                for btn in &self.tab_buttons {
-                    btn.handle_mouse_event(mouse_event);
-                }
-                self.close_btn.handle_mouse_event(mouse_event);
             }
             MouseEventKind::ScrollDown => {
                 *self.scroll_offset.borrow_mut() += 1;
@@ -118,12 +111,7 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
                 let mut offset = self.scroll_offset.borrow_mut();
                 *offset = offset.saturating_sub(1);
             }
-            _ => {
-                // Forward other events
-                for btn in &self.tab_buttons {
-                    btn.handle_mouse_event(mouse_event);
-                }
-            }
+            _ => {}
         }
     }
 
@@ -156,26 +144,6 @@ impl<'a> HandleWidget<'a> for TaskModal<'a> {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 *self.scroll_offset.borrow_mut() += 1;
-                true
-            }
-            KeyCode::Char('1') => {
-                self.set_active_tab(ModalPage::TicketInfo);
-                true
-            }
-            KeyCode::Char('2') => {
-                self.set_active_tab(ModalPage::ComputerInfo);
-                true
-            }
-            KeyCode::Char('3') => {
-                self.set_active_tab(ModalPage::SoftwareInfo);
-                true
-            }
-            KeyCode::Char('4') => {
-                self.set_active_tab(ModalPage::TaskHistory);
-                true
-            }
-            KeyCode::Char('5') => {
-                self.set_active_tab(ModalPage::TaskNotes);
                 true
             }
             _ => false

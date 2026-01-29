@@ -8,12 +8,22 @@ impl ActionHandler for SysinfoTab {
     }
 
     fn managed_widget_ids(&self) -> Vec<WidgetId> {
-        vec![]
+        vec![
+            WidgetId("RefreshSystemInfo".to_string())
+        ]
     }
 
     fn handle_event(&mut self, event: &WidgetEvent) {
         match event {
-            WidgetEvent::ButtonClick { widget_id: _ , button: _, source: _} => {}
+            WidgetEvent::ButtonClick { widget_id, button: _, source: _} => {
+                match widget_id.0.as_str() {
+                    "RefreshSystemInfo" => { 
+                        let _ = self.stop_tx.send(()); 
+                        self.first_run = true;
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
