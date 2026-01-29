@@ -52,6 +52,13 @@ impl<'a> ActionHandler for MenuBar<'a> {
                         update_tab_selection(Tab::Scripts, self);
                     }
                     "System" => { 
+                        let _ = get_event_sender().try_send(
+                            WidgetEvent::ButtonClick { 
+                                widget_id: WidgetId("RefreshSystemInfo".to_string()), 
+                                button: WidgetButton::Left,
+                                source: Default::default()
+                            }
+                        );
                         *current_tab = Tab::SystemInfo;
                         drop(current_tab);
                         update_tab_selection(Tab::SystemInfo, self);

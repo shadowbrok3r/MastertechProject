@@ -1,5 +1,4 @@
 //! Action handler implementation for TaskModal
-
 use crate::terminal_mode::events::action_handler::{ActionHandler, WidgetEvent, WidgetId};
 use super::{ModalPage, TaskModal};
 
@@ -30,6 +29,7 @@ impl<'a> ActionHandler for TaskModal<'a> {
                         self.request_close();
                     }
                     id => {
+                        log::info!("Clicked widget: {id:?}");
                         // Check if it's a tab button click
                         if let Some(page) = ModalPage::from_widget_id(id) {
                             log::info!("TaskModal tab clicked: {:?}", page);

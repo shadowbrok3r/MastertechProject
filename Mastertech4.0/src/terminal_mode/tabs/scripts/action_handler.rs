@@ -60,14 +60,6 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         let adjusted_x = popup_x.min(frame_area.width.saturating_sub(popup_width));
                         let adjusted_y = popup_y.min(frame_area.height.saturating_sub(popup_height));
                         let popup_area = Rect::new(adjusted_x, adjusted_y, popup_width, popup_height);
-                        // log::info!(
-                        //     "Opening popup for {}: {} items, width: {}, height: {}, area: {:?}",
-                        //     widget_id.0,
-                        //     item_count,
-                        //     popup_width,
-                        //     popup_height,
-                        //     popup_area
-                        // );
                         self.active_popup.replace(Some((widget_id.clone(), popup_area)));
                         self.list_state.borrow_mut().select(None);
                         self.popup_list_state.borrow_mut().select(None);
@@ -82,8 +74,6 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                         
                         if !self.service_number.is_empty() {
                             if let Ok(ctx) = &mut self.ctx.lock() {
-                                // ctx.service_data.get_ticket();
-    
                                 let cust_email = ctx.service_data.customer_data.email.clone();
                                 let so_num = ctx.service_data.ticket_data.service_number.clone();
                                 
