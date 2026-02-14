@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Minimal xcrun shim:
+# - supports --sdk <name> --show-sdk-path by returning SDKROOT
+# - supports `simctl ...` as a no-op on Linux (dx "install/launch" phase)
+sdk=""
+if [[ "${1:-}" == "--sdk" ]]; then
+  sdk="${2:-}"
+  shift 2
+fi
+
+case "${1:-}" in
+  --show-sdk-path|-show-sdk-path)
+    echo "${SDKROOT:?SDKROOT must be set}"
+    exit 0
+    ;;
+  simctl)
+    # No iOS simulator on Linux; pretend success so dx doesn't fail.
+    exit 0
+    ;;
+  *)
+    echo "xcrun shim: unsupported args: sdk='$sdk' argv='$*'" >&2
+    exit 2
+    ;;
+esac

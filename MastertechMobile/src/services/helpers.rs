@@ -18,11 +18,10 @@ pub fn next_start(current_start: i32, page_size: i32, fetched: usize) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use database::schema::LiveTaskPayload;
-    use surrealdb::RecordId;
+    use database::schema::{LiveTaskPayload, RecordId};
 
     fn task_with_id(id: &str) -> LiveTaskPayload {
-        LiveTaskPayload { id: RecordId::from(("task", id)), ..Default::default() }
+        LiveTaskPayload { id: RecordId::new("task", id), ..Default::default() }
     }
 
     #[test]
@@ -31,9 +30,9 @@ mod tests {
         let b = vec![task_with_id("2"), task_with_id("3")];
         let merged = merge_tasks(a, b);
         assert_eq!(merged.len(), 3);
-        assert!(merged.iter().any(|t| t.id == RecordId::from(("task", "1"))));
-        assert!(merged.iter().any(|t| t.id == RecordId::from(("task", "2"))));
-        assert!(merged.iter().any(|t| t.id == RecordId::from(("task", "3"))));
+        assert!(merged.iter().any(|t| t.id == RecordId::new("task", "1")));
+        assert!(merged.iter().any(|t| t.id == RecordId::new("task", "2")));
+        assert!(merged.iter().any(|t| t.id == RecordId::new("task", "3")));
     }
 
     #[test]

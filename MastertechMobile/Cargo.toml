@@ -3,11 +3,8 @@ name = "mastertech-mobile"
 version = "0.1.0"
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-dioxus = { git = "https://github.com/DioxusLabs/dioxus", tag = "v0.7.0-rc.0", features = ["router"] }
-# dioxus-router = { git = "https://github.com/DioxusLabs/dioxus", tag = "v0.7.0-rc.0", package = "dioxus-router", features = ["wasm-split"] }
+dioxus = { version = "0.7", features = ["router"] }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
@@ -17,7 +14,8 @@ surrealdb.workspace = true
 database.workspace = true
 crossbeam-channel = "0.5"
 futures-timer = "3"
-dirs = "6.0.0"
+dirs = "6"
+dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 
 [features]
 default = ["mobile"]
