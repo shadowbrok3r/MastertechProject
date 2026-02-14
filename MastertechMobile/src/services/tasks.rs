@@ -1,6 +1,5 @@
-use database::schema::{LiveTaskPayload, TaskNotePayload, User, Priority, TASK_TABLE};
+use database::schema::{LiveTaskPayload, RecordId, TaskNotePayload, User, Priority, TASK_TABLE};
 use database::DATABASE;
-use surrealdb::RecordId;
 use chrono::Utc;
 
 // pub async fn fetch_my_tasks() -> anyhow::Result<Vec<LiveTaskPayload>> {
@@ -55,7 +54,7 @@ pub async fn update_status(task: &LiveTaskPayload, status: database::schema::Sta
     task.update_status(status).await
 }
 
-pub async fn update_assignee(task: &LiveTaskPayload, assignee: surrealdb::RecordId) -> anyhow::Result<()> {
+pub async fn update_assignee(task: &LiveTaskPayload, assignee: RecordId) -> anyhow::Result<()> {
     task.update_assignee(assignee).await
 }
 
@@ -120,7 +119,7 @@ pub async fn create_task_simple(input: NewTaskInput) -> anyhow::Result<LiveTaskP
             if let Some(u) = guard.clone() { return u.get_id(); }
         }
         // fallback: a random user id is not acceptable; keep a placeholder that will likely error if used
-        RecordId::from(("user", surrealdb::RecordIdKey::from_inner(surrealdb::sql::Id::rand().into())))
+        database::schema::random_record_id("user")
     });
 
     let mut task = LiveTaskPayload::default();

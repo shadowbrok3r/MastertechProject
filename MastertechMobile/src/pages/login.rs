@@ -16,7 +16,10 @@ pub fn LoginPage(props: LoginPageProps) -> Element {
     let mut submit = move || {
         let user = username();
         let pass = password();
-        if user.is_empty() || pass.is_empty() { error.set(Some("Please enter username and password".into())); return; }
+        if user.is_empty() || pass.is_empty() {
+            error.set(Some("Enter username and password".into()));
+            return;
+        }
         error.set(None);
         busy.set(true);
         spawn({
@@ -27,9 +30,11 @@ pub fn LoginPage(props: LoginPageProps) -> Element {
                 let res = Database::new(email.clone(), pass.clone(), None).await;
                 match res {
                     Ok(db) if db.jwt.is_some() && db.user.is_some() => {
-                        // persist session
-                        if let Some(jwt) = &db.jwt { 
-                            crate::save_session(&crate::SavedSession { token: Some(jwt), email: Some(email.clone()) });
+                        if let Some(jwt) = &db.jwt {
+                            crate::save_session(&crate::SavedSession {
+                                token: Some(jwt.clone()),
+                                email: Some(email.clone()),
+                            });
                         }
                         props.on_login.call((true, None));
                     }
@@ -42,27 +47,35 @@ pub fn LoginPage(props: LoginPageProps) -> Element {
     };
 
     rsx! {
-        div { class: "min-h-screen bg-[#0b0b0f] text-slate-200 flex items-center justify-center",
-            div { class: "w-full max-w-sm bg-[#0c0c10]/60 backdrop-blur rounded-lg border border-[#2a2c5d]/60 p-6 shadow",
-                h1 { class: "text-lg font-semibold mb-4", "Mastertech Mobile" }
-                div { class: "space-y-3",
-                    input { class: "w-full bg-[#111216] rounded px-3 py-2 text-sm border border-[#2a2c5d]/60",
-                        placeholder: "username",
-                        value: username(),
-                        oninput: move |e| username.set(e.value())
-                    }
-                    input { class: "w-full bg-[#111216] rounded px-3 py-2 text-sm border border-[#2a2c5d]/60",
-                        r#type: "password",
-                        placeholder: "password",
-                        value: password(),
-                        oninput: move |e| password.set(e.value())
-                    }
-                    if let Some(e) = error() { div { class: "text-sm text-red-400", {e} } }
-                    button { class: "w-full px-3 py-2 rounded border border-[#2a2c5d]/60 hover:bg-[#251d3d]/50",
-                        disabled: busy(),
-                        onclick: move |_| submit(),
-                        if busy() { span { "Signing in..." } } else { span { "Sign in" } }
-                    }
+        div { class: "min-h-screen bg-galaxy flex items-center justify-center p-6",
+            div { class: "card-cosmic w-full max-w-xs p-5 space-y-4",
+                // Logo
+                div { class: "flex items-center gap-2 justify-center mb-2",
+                    div { class: "w-8 h-8 rounded-lg bg-gradient-to-br from-[#5b21b6] to-[#db2777]" }
+                    span { class: "text-base font-bold text-star-white", "Mastertech" }
+                }
+                input {
+                    class: "w-full text-sm",
+                    r#type: "text",
+                    placeholder: "Username",
+                    value: username(),
+                    oninput: move |e| username.set(e.value()),
+                }
+                input {
+                    class: "w-full text-sm",
+                    r#type: "password",
+                    placeholder: "Password",
+                    value: password(),
+                    oninput: move |e| password.set(e.value()),
+                }
+                if let Some(e) = error() {
+                    div { class: "text-xs text-warning-red", {e} }
+                }
+                button {
+                    class: "btn-nebula w-full",
+                    disabled: busy(),
+                    onclick: move |_| submit(),
+                    if busy() { "Signing in..." } else { "Sign In" }
                 }
             }
         }

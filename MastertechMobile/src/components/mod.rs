@@ -1,3 +1,11 @@
 pub mod toast;
-pub mod dialog;
+pub mod modal;
 pub mod navbar;
+pub mod alert_dialog;
+pub mod button;
+pub mod card;
+pub mod badge;
+pub mod tabs;
+pub mod date_picker;
+pub mod calendar;
+pub mod popover;

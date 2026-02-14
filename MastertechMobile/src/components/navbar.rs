@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use database::schema::User;
 
+// ── Props ────────────────────────────────────────────────────
 #[derive(Props, PartialEq, Clone)]
 pub struct NavbarProps {
     pub active: String,
@@ -12,56 +13,115 @@ pub struct NavbarProps {
     pub on_new_task: Option<Callback<()>>,
     #[props(default)]
     pub on_preferences: Option<Callback<()>>,
+    #[props(default)]
+    pub on_logout: Option<Callback<()>>,
 }
 
+// ── Top bar: slim title + actions ────────────────────────────
 #[component]
-pub fn NavbarWithLogo(props: NavbarProps) -> Element {
-    let active = props.active.clone();
+pub fn TopBar(props: NavbarProps) -> Element {
     let mut menu_open = use_signal(|| false);
     let user: Option<User> = {
         if let Ok(g) = database::CURRENT_USER_INFO.try_lock() { g.clone() } else { None }
     };
-
-    let tab_btn = |name: &str| {
-        let is_active = active.as_str() == name;
-        let cls = if is_active {
-            // Active tab: subtle gradient + ring accent, crisper border
-            "h-8 px-3 text-sm rounded-md bg-gradient-to-b from-[#1f1a33]/70 to-[#141124]/70 border border-[#7c76c3]/80 text-[#e8e6ff] shadow-sm ring-1 ring-[#7c76c3]/30"
-        } else {
-            // Inactive tab: neutral surface with hover transitions
-            "h-8 px-3 text-sm rounded-md border border-[#2a2c5d]/60 text-[#c8c3e6]/90 hover:bg-[#171225]/60 hover:border-[#6a659b]/80 transition-colors duration-150"
-        };
-    let name_owned = name.to_string();
-    let label = name_owned.clone();
-    rsx! { button { class: cls, r#type: "button", role: "tab", aria_selected: is_active, onclick: move |_| { if let Some(cb)=&props.on_tab { cb.call(name_owned.clone()); } }, {label} } }
-    };
+    let initials = user.as_ref().map(|u| {
+        let n = u.get_username();
+        n.chars().next().unwrap_or('?').to_uppercase().to_string()
+    }).unwrap_or_else(|| "?".into());
 
     rsx! {
-        nav { class: "sticky top-0 z-30 bg-[#0b0b0f]/90 backdrop-blur border-b border-[#2a2c5d]/60 px-3 py-2 flex items-center gap-3 shadow-[0_1px_0_0_rgba(124,118,195,0.12)]",
-            // Logo
-            div { class: "flex items-center gap-2 select-none",
-                div { class: "w-6 h-6 rounded-md bg-gradient-to-br from-[#6a659b] to-[#4a4575] shadow" }
-                span { class: "text-sm font-semibold tracking-wide text-[#e8e6ff]", "Mastertech" }
+        div { class: "nav-galaxy flex items-center h-11 px-3 gap-2 sticky top-0 z-30",
+            // Logo dot
+            div { class: "w-5 h-5 rounded-md bg-gradient-to-br from-[#6a659b] to-[#4a4575] flex-shrink-0" }
+            span { class: "text-sm font-semibold text-star-white truncate flex-1", {props.active.clone()} }
+
+            // + New
+            button {
+                class: "btn-nebula text-xs px-3 py-1",
+                r#type: "button",
+                onclick: move |_| { if let Some(cb) = &props.on_new_task { cb.call(()); } },
+                "+"
             }
 
-            // Tabs: allow side-scroll on narrow screens
-            div { class: "flex items-center gap-2 ml-2 overflow-x-auto whitespace-nowrap pr-2" , role: "tablist",
-                {tab_btn("My Tasks")}
-                {tab_btn("Store Tasks")}
-                {tab_btn("Completed Tasks")}
+            // Refresh
+            button {
+                class: "btn-cosmic text-xs px-2 py-1",
+                r#type: "button",
+                onclick: move |_| { if let Some(cb) = &props.on_refresh { cb.call(()); } },
+                "↻"
             }
 
-            div { class: "ml-auto flex items-center gap-2",
-                button { class: "h-8 px-3 text-sm rounded-md border border-[#2a2c5d]/60 text-[#c8c3e6]/90 hover:bg-[#1e1a2a]/55 hover:border-[#6a659b]/80 transition-colors", r#type: "button", onclick: move |_| { if let Some(cb)=&props.on_refresh { cb.call(()); } }, "Refresh" }
-                button { class: "h-8 px-3 text-sm rounded-md border border-[#2a2c5d]/60 text-[#e8e6ff] bg-[#251d3d]/60 hover:bg-[#2b214a]/70 hover:border-[#7c76c3]/80 transition-colors", r#type: "button", onclick: move |_| { if let Some(cb)=&props.on_new_task { cb.call(()); } }, "+ New" }
-                // User menu
-                if let Some(u) = user.clone() {
-                    div { class: "relative",
-                        button { class: "h-8 px-3 text-sm rounded-md border border-[#2a2c5d]/60 text-[#c8c3e6]/90 hover:bg-[#1e1a2a]/55 hover:border-[#6a659b]/80 transition-colors", r#type: "button", onclick: move |_| menu_open.set(!menu_open()), {u.get_username()} }
-                        if menu_open() {
-                            div { class: "absolute right-0 mt-2 w-48 bg-[#0b0b0f]/98 border border-[#2a2c5d]/60 rounded-md shadow-lg z-40 overflow-hidden backdrop-blur",
-                                button { class: "w-full text-left px-3 py-2 text-sm hover:bg-[#1e1a2a]/55 transition-colors", r#type: "button", onclick: move |_| { menu_open.set(false); if let Some(cb)=&props.on_preferences { cb.call(()); } }, "Preferences" }
-                                button { class: "w-full text-left px-3 py-2 text-sm hover:bg-[#1e1a2a]/55 transition-colors", r#type: "button", onclick: move |_| { menu_open.set(false); /* TODO logout - for desktop dev we just reset auth? */ }, "Logout" }
+            // Avatar / user menu
+            div { class: "relative flex-shrink-0",
+                button {
+                    class: "w-8 h-8 rounded-full bg-gradient-to-br from-[#5b21b6] to-[#db2777] flex items-center justify-center text-xs font-bold text-star-white",
+                    r#type: "button",
+                    onclick: move |_| menu_open.set(!menu_open()),
+                    {initials.clone()}
+                }
+                if menu_open() {
+                    // Full-screen backdrop so dropdown doesn't affect layout
+                    div {
+                        class: "fixed inset-0 z-40",
+                        onclick: move |_| menu_open.set(false),
+                    }
+                    // Fixed position so it overlays content; navbar doesn't grow
+                    div { class: "fixed right-2 top-12 w-40 card-cosmic p-1 z-50 shadow-nebula",
+                        if let Some(u) = user.clone() {
+                            div { class: "px-3 py-1.5 text-xs text-stardust border-b border-[#2a2c5d]/40 truncate", {u.get_username()} }
+                        }
+                        button {
+                            class: "w-full text-left px-3 py-2 text-xs nav-link",
+                            r#type: "button",
+                            onclick: move |_| {
+                                menu_open.set(false);
+                                if let Some(cb) = &props.on_preferences { cb.call(()); }
+                            },
+                            "Preferences"
+                        }
+                        button {
+                            class: "w-full text-left px-3 py-2 text-xs nav-link",
+                            r#type: "button",
+                            onclick: move |_| {
+                                menu_open.set(false);
+                                if let Some(cb) = &props.on_logout { cb.call(()); }
+                            },
+                            "Logout"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Bottom tab bar ───────────────────────────────────────────
+#[component]
+pub fn BottomTabs(props: NavbarProps) -> Element {
+    let tabs = [("My Tasks", "☰"), ("Store Tasks", "🏪"), ("Completed", "✓")];
+
+    rsx! {
+        div { class: "flex-shrink-0 nav-galaxy border-t border-[#2a2c5d]/40 flex items-stretch",
+            style: "padding-bottom: env(safe-area-inset-bottom, 0px);",
+            for (label, icon) in tabs.iter() {
+                {
+                    let is_active = props.active.as_str() == *label
+                        || (*label == "Completed" && props.active.as_str() == "Completed Tasks");
+                    let label_s = if *label == "Completed" { "Completed Tasks".to_string() } else { label.to_string() };
+                    rsx! {
+                        button {
+                            class: format!(
+                                "flex-1 flex flex-col items-center justify-center py-1.5 text-[10px] {}",
+                                if is_active { "text-aurora-purple" } else { "text-stardust" }
+                            ),
+                            r#type: "button",
+                            onclick: move |_| {
+                                if let Some(cb) = &props.on_tab { cb.call(label_s.clone()); }
+                            },
+                            span { class: "text-base leading-none", {*icon} }
+                            span { {*label} }
+                            if is_active {
+                                div { class: "w-6 h-0.5 rounded-full bg-aurora-purple mt-0.5" }
                             }
                         }
                     }

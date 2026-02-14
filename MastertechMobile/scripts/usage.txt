@@ -1,0 +1,12 @@
+Usage examples
+
+scripts/ios-build.sh sim
+
+Simulator release
+scripts/ios-build.sh sim --release
+
+Device debug install
+scripts/ios-build.sh device
+
+Device release install
+scripts/ios-build.sh device --release

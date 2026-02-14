@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# No-op codesign shim for non-macOS hosts.
+# dx currently attempts to execute codesign even when codesign=false.
+if [[ "${1:-}" == "--version" ]]; then
+  echo "codesign (shim) 0.0"
+fi
+exit 0
