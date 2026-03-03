@@ -39,19 +39,15 @@ impl SurrealValue for ChatAction {
     fn kind_of() -> Kind {
         Kind::Any
     }
-    
+
     fn into_value(self) -> Value {
-        // Serialize to JSON and then convert to Value
-        match serde_json::to_value(&self) {
-            Ok(json) => json_to_surreal_value(json),
-            Err(_) => Value::None,
-        }
+        json_to_surreal_value(serde_json::to_value(&self).unwrap())
     }
-    
-    fn from_value(value: Value) -> surrealdb_types::anyhow::Result<Self> {
-        // Convert Value to JSON and then deserialize
-        let json = surreal_value_to_json(value);
-        serde_json::from_value(json).map_err(|e| surrealdb_types::anyhow::anyhow!(e))
+
+    fn from_value(value: Value) -> Result<Self, surrealdb::Error>
+        where
+            Self: Sized {
+        serde_json::from_value(surreal_value_to_json(value)).map_err(|e| surrealdb::Error::validation(e.to_string(), None).into())
     }
 }
 

@@ -252,25 +252,7 @@ impl<'de> Deserialize<'de> for Qc {
 }
 
 // Manual SurrealValue implementation for Qc
-impl SurrealValueTrait for Qc {
-    fn kind_of() -> Kind {
-        Kind::Any
-    }
-    
-    fn into_value(self) -> Value {
-        // Serialize via serde to get a Value
-        match serde_json::to_value(&self) {
-            Ok(json) => json_to_value(json),
-            Err(_) => Value::None,
-        }
-    }
-    
-    fn from_value(value: Value) -> surrealdb_types::anyhow::Result<Self> {
-        // Convert Value to JSON and deserialize
-        let json = value_to_json(value);
-        serde_json::from_value(json).map_err(|e| surrealdb_types::anyhow::anyhow!(e))
-    }
-}
+
 
 fn json_to_value(json: serde_json::Value) -> Value {
     match json {

@@ -126,7 +126,7 @@ pub struct RecordSuccess {
     pub success: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Difference)]
+#[derive(Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct Qc {
     pub task: RecordId,
     pub order: Order,

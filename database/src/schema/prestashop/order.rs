@@ -1,4 +1,5 @@
 use crate::schema::deserializer::deserialize_to_string;
+use crate::SurrealValue;
 use crate::schema::prestashop::{PRESTASHOP_API_URL_WASM, OrderType, Prestashop};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ pub struct ExtractedOrderSpecs {
     pub device_mfg: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct Order {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -75,7 +76,7 @@ pub struct Order {
     pub associations: Associations,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct Associations {
     #[serde(default = "new_vec")]
     pub order_rows: Vec<OrderRow>,
@@ -85,7 +86,7 @@ pub struct Associations {
     pub order_serial: Vec<OrderSerial>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct OrderSerial {
     pub id_order: String,
     pub id_order_detail: String,
@@ -93,7 +94,7 @@ pub struct OrderSerial {
     pub product_reference: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct OrderDetail {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -103,7 +104,7 @@ pub struct OrderDetail {
     pub product_name: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub enum OrderState {
     #[default]
     AcceptedByOdoo,
@@ -244,7 +245,7 @@ fn new_order_serial_vec() -> Vec<OrderSerial> {
     Vec::new()
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct OrderRow {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -256,7 +257,7 @@ pub struct OrderRow {
     pub product_reference: String
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, SurrealValue)]
 pub struct ServiceOrder {
     // pub id: String,
     #[serde(deserialize_with = "deserialize_to_string")]

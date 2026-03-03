@@ -35,11 +35,11 @@ tracing = { version = "0.1", features = ["log"] }
 clap = { version = "4.5", features = ["derive"] }
 sha2 = { version = "0.10", features = ["std"] }
 nvml-wrapper = { version = "0.12.0", features = ["serde"] }
-strum = { version = "0.27", features = ["strum_macros", "derive"] }
-rmcp = { version = "0.15.0", features = ["server", "transport-io", "schemars"]}
+strum = { version = "0.28.0", features = ["strum_macros", "derive"] }
+rmcp = { version = "0.17.0", features = ["server", "transport-io", "schemars"]}
 enigo = { version = "0.6.1", features = ["serde"] }
 indexmap = { version = "2.10.0", features = ["serde"] }
-tachyonfx = { version = "0.23.0"}
+tachyonfx = { version = "0.25.0"}
 tui-logger = { git = "https://github.com/shadowbrok3r/tui-logger" }
 rayon = "1"
 textwrap = "0.16"
@@ -78,27 +78,27 @@ image-meta = "0.1.4"
 # nvme = "0.2.2"
 # surrealdb-alpha ={ workspace = true }
 
-surrealdb = { workspace=true }
+surrealdb.workspace = true
 ratatui = { workspace = true }
-egui_extras = { workspace=true }
-egui_dock = { workspace=true }
+egui_extras.workspace = true
+egui_dock.workspace = true
 database = { workspace=true, features = ["desktop"] }
-tokio = { workspace=true }
-serde_json = { workspace=true }
-serde = { workspace=true }
-log  = { workspace=true }
-anyhow = { workspace=true }
-crossbeam = { workspace=true }
-futures = { workspace=true }
-bincode = { workspace=true }
-rfd = { workspace=true }
-regex = { workspace=true }
-chrono = { workspace=true }
-simplelog = { workspace=true }
-async-trait = { workspace=true }
-once_cell = { workspace=true }
-base64 = { workspace=true }
-fuzzy-matcher = { workspace=true }
+tokio.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+log .workspace = true
+anyhow.workspace = true
+crossbeam.workspace = true
+futures.workspace = true
+bincode.workspace = true
+rfd.workspace = true
+regex.workspace = true
+chrono.workspace = true
+simplelog.workspace = true
+async-trait.workspace = true
+once_cell.workspace = true
+base64.workspace = true
+fuzzy-matcher.workspace = true
 
 [dependencies.egui]
 version = "0.33"

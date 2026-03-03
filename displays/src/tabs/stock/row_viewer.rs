@@ -412,12 +412,12 @@ impl database::SurrealValue for BoolOrString {
         }
     }
 
-    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
+    fn from_value(value: surrealdb::types::Value) -> Result<Self, surrealdb::Error> {
         match value {
             surrealdb::types::Value::Bool(b) => Ok(BoolOrString::Bool(b)),
             surrealdb::types::Value::String(s) => Ok(BoolOrString::String(s)),
             surrealdb::types::Value::None | surrealdb::types::Value::Null => Ok(BoolOrString::Bool(false)),
-            other => anyhow::bail!("Expected bool or string for BoolOrString, got {:?}", other),
+            other => Err(surrealdb::Error::validation(format!("Expected bool or string for BoolOrString, got {:?}", other), None).into()),
         }
     }
 }
