@@ -2,6 +2,7 @@
 name: ""
 overview: ""
 todos: []
+isProject: false
 ---
 
 # Admin Console Fixes Plan
@@ -30,6 +31,8 @@ sequenceDiagram
     WC--xMC: Nothing sent - task continues!
 ```
 
+
+
 ---
 
 ## 1. Fix Resource Monitor Stop Button
@@ -38,8 +41,8 @@ sequenceDiagram
 
 **Files to modify**:
 
-- [`displays/src/tabs/admin_console/client_interface/ui.rs`](displays/src/tabs/admin_console/client_interface/ui.rs) - Add "Stop" button that sends `Cmd::Quit`
-- [`displays/src/tabs/admin_console/client_interface/tabs/resource_monitor.rs`](displays/src/tabs/admin_console/client_interface/tabs/resource_monitor.rs) - Remove local stop handling (already in dedicated tab version)
+- `[displays/src/tabs/admin_console/client_interface/ui.rs](displays/src/tabs/admin_console/client_interface/ui.rs)` - Add "Stop" button that sends `Cmd::Quit`
+- `[displays/src/tabs/admin_console/client_interface/tabs/resource_monitor.rs](displays/src/tabs/admin_console/client_interface/tabs/resource_monitor.rs)` - Remove local stop handling (already in dedicated tab version)
 
 **Changes**:
 
@@ -54,9 +57,9 @@ sequenceDiagram
 
 **Files to modify**:
 
-- [`displays/src/tabs/resource_monitor/process_table.rs`](displays/src/tabs/resource_monitor/process_table.rs) - Implement context menu
-- [`displays/src/tabs/admin_console/client_interface/mod.rs`](displays/src/tabs/admin_console/client_interface/mod.rs) - Add channel for process actions
-- [`Mastertech4.0/src/terminal_mode/websockets/mod.rs`](Mastertech4.0/src/terminal_mode/websockets/mod.rs) - Handle kill process command
+- `[displays/src/tabs/resource_monitor/process_table.rs](displays/src/tabs/resource_monitor/process_table.rs)` - Implement context menu
+- `[displays/src/tabs/admin_console/client_interface/mod.rs](displays/src/tabs/admin_console/client_interface/mod.rs)` - Add channel for process actions
+- `[Mastertech4.0/src/terminal_mode/websockets/mod.rs](Mastertech4.0/src/terminal_mode/websockets/mod.rs)` - Handle kill process command
 
 **Changes**:
 
@@ -72,8 +75,8 @@ sequenceDiagram
 
 **Files to modify**:
 
-- [`displays/src/tabs/resource_monitor/process_table.rs`](displays/src/tabs/resource_monitor/process_table.rs) - Add refresh rate field and UI
-- [`displays/src/tabs/resource_monitor/mod.rs`](displays/src/tabs/resource_monitor/mod.rs) - Use refresh rate in update logic
+- `[displays/src/tabs/resource_monitor/process_table.rs](displays/src/tabs/resource_monitor/process_table.rs)` - Add refresh rate field and UI
+- `[displays/src/tabs/resource_monitor/mod.rs](displays/src/tabs/resource_monitor/mod.rs)` - Use refresh rate in update logic
 
 **Changes**:
 
@@ -89,8 +92,8 @@ sequenceDiagram
 
 **Files to modify**:
 
-- [`displays/src/virtual_filesystem/mod.rs`](displays/src/virtual_filesystem/mod.rs) - Replace S3 calls with SurrealDB file functions
-- [`database/src/lib.rs`](database/src/lib.rs) - Add bucket definition and file helper functions
+- `[displays/src/virtual_filesystem/mod.rs](displays/src/virtual_filesystem/mod.rs)` - Replace S3 calls with SurrealDB file functions
+- `[database/src/lib.rs](database/src/lib.rs)` - Add bucket definition and file helper functions
 
 **SurrealDB Files API** (from surrealdb crate):
 
@@ -121,10 +124,10 @@ file::head(f"tools:/scripts/myscript.ps1")  -- metadata
 
 **Files to modify**:
 
-- [`displays/src/tabs/admin_console/client_interface/ui.rs`](displays/src/tabs/admin_console/client_interface/ui.rs) - Refactor Explorer tab
-- [`displays/src/tabs/admin_console/client_interface/receive.rs`](displays/src/tabs/admin_console/client_interface/receive.rs) - Handle directory listing responses
-- [`Mastertech4.0/src/terminal_mode/websockets/mod.rs`](Mastertech4.0/src/terminal_mode/websockets/mod.rs) - Implement directory listing
-- [`displays/src/lib.rs`](displays/src/lib.rs) - Add new `Cmd` variants
+- `[displays/src/tabs/admin_console/client_interface/ui.rs](displays/src/tabs/admin_console/client_interface/ui.rs)` - Refactor Explorer tab
+- `[displays/src/tabs/admin_console/client_interface/receive.rs](displays/src/tabs/admin_console/client_interface/receive.rs)` - Handle directory listing responses
+- `[Mastertech4.0/src/terminal_mode/websockets/mod.rs](Mastertech4.0/src/terminal_mode/websockets/mod.rs)` - Implement directory listing
+- `[displays/src/lib.rs](displays/src/lib.rs)` - Add new `Cmd` variants
 
 **New Cmd Variants**:
 
@@ -145,3 +148,4 @@ pub enum Cmd {
 - Mastertech responds with `Cmd::DirectoryListing(entries)`
 - Display entries in a tree/list view with breadcrumb navigation
 - Right-click actions: Download, Delete, Upload To
+

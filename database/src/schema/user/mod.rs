@@ -52,7 +52,7 @@ impl Default for User {
 
 impl Eq for User {}
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
 pub enum UserAuthorization {
     #[default]
     User,
@@ -60,34 +60,6 @@ pub enum UserAuthorization {
     Manager,
 }
 
-impl SurrealValue for UserAuthorization {
-    fn kind_of() -> surrealdb::types::Kind {
-        surrealdb::types::Kind::String
-    }
-
-    fn into_value(self) -> surrealdb::types::Value {
-        let s = match self {
-            UserAuthorization::User => "User",
-            UserAuthorization::Root => "Root",
-            UserAuthorization::Manager => "Manager",
-        };
-        surrealdb::types::Value::String(s.to_string())
-    }
-
-    fn from_value(value: surrealdb::types::Value) -> anyhow::Result<Self> {
-        match value {
-            surrealdb::types::Value::String(s) => {
-                match s.as_str() {
-                    "User" => Ok(UserAuthorization::User),
-                    "Root" => Ok(UserAuthorization::Root),
-                    "Manager" => Ok(UserAuthorization::Manager),
-                    other => anyhow::bail!("Unknown UserAuthorization variant: {}", other),
-                }
-            }
-            _ => anyhow::bail!("Expected string for UserAuthorization, got {:?}", value),
-        }
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
 pub struct UserSettings {

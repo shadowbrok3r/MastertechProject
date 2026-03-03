@@ -23,31 +23,31 @@ tap = "1"
 surrealdb-types = { workspace = true }
 egui-data-table = { workspace = true }
 egui_json_tree = { workspace = true }
-fuzzy-matcher = { workspace=true }
+fuzzy-matcher.workspace = true
 async-trait = { workspace = true }
 egui_plot = { workspace = true }
-egui_extras = { workspace=true }
+egui_extras.workspace = true
 itertools = { workspace = true }
-serde_json = { workspace=true }
-mime_guess = { workspace=true }
-crossbeam = { workspace=true }
-surrealdb = { workspace=true }
-egui_dock = { workspace=true }
-once_cell = { workspace=true }
+serde_json.workspace = true
+mime_guess.workspace = true
+crossbeam.workspace = true
+surrealdb.workspace = true
+egui_dock.workspace = true
+once_cell.workspace = true
 database = { workspace=true, features = ["desktop"] }
-web-time = { workspace=true }
-futures = { workspace=true }
-bincode = { workspace=true } 
-brotli = { workspace=true }
-anyhow = { workspace=true }
-eframe = { workspace=true }
-base64 = { workspace=true }
-chrono = { workspace=true }
-serde = { workspace=true }
-bytes = { workspace=true }
-regex = { workspace=true }
+web-time.workspace = true
+futures.workspace = true
+bincode.workspace = true 
+brotli.workspace = true
+anyhow.workspace = true
+eframe.workspace = true
+base64.workspace = true
+chrono.workspace = true
+serde.workspace = true
+bytes.workspace = true
+regex.workspace = true
 rfd = { workspace = true }
-log = { workspace=true }
+log.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
 workspace = true

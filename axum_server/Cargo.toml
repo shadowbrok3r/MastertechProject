@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 # The core stuff
-database = { workspace=true }
+database.workspace = true
 axum = {version = "0.8.3", features=["tracing", "macros", "multipart", "ws"]}
 tower-http = { version = "0.6", features = ["full"] }
 tokio = { version="1", features=["full"] }
@@ -13,8 +13,8 @@ http = "1"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 dotenv="0.15"
-tokio-cron-scheduler = {version = "0.13", features = ["english"]}
-rmcp = {version = "0.1.5", features = ["server", "transport-sse-server", "transport-io"]}
+tokio-cron-scheduler = {version = "0.15.1", features = ["english"]}
+rmcp = {version = "0.16.0", features = ["server", "transport-sse-server", "transport-io"]}
 schemars = "*"
 
 
