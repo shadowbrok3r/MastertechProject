@@ -16,7 +16,7 @@ WORKDIR /app
 COPY --from=mold /usr/local/bin/mold /usr/local/bin/mold
 COPY --from=mold /usr/local/bin/ld.mold /usr/local/bin/ld.mold
 
-# Install build dependencies
+# Install build dependencies (perl is required for vendored OpenSSL build)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     clang \
@@ -26,6 +26,7 @@ RUN apt-get update && \
     openssl \
     pkg-config \
     libssl-dev \
+    perl \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates
@@ -36,9 +37,6 @@ RUN rustup install nightly && rustup default nightly
 # Configure cargo to use mold linker
 RUN mkdir -p /app/.cargo && \
     printf '[target.x86_64-unknown-linux-gnu]\nlinker = "clang"\nrustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/mold"]\n' > /app/.cargo/config.toml
-
-# Copy the local surrealdb patches first (required by [patch] section)
-COPY surrealdb/ ./surrealdb/
 
 # Copy workspace Cargo.toml and modify it to exclude GUI crates
 COPY Cargo.toml .
