@@ -8,7 +8,11 @@ pub enum WsDisplayState {
     Explorer,
     Shell,
     ToolBox,
-    Terminal
+    Terminal,
+    EventLog,
+    Services,
+    TaskScheduler,
+    Registry,
 }
 
 impl WebSocketClient {
@@ -17,10 +21,11 @@ impl WebSocketClient {
         ui.set_min_height(600.);
 
         TopBottomPanel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
-        .exact_height(35.)
+        .exact_height(60.)
         .show_inside(ui, |ui| 
         {
             ui.add_space(2.);
+            // Row 1: existing tabs
             ui.horizontal(|ui| {
                 let btn_color = ui.style().visuals.error_fg_color;
                 if Button::new(RichText::new("My Tools").color(btn_color)).ui(ui).clicked(){
@@ -30,7 +35,6 @@ impl WebSocketClient {
                 if Button::new(RichText::new("Explorer").color(btn_color)).ui(ui).clicked(){
                     let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
                     self.notifications = 0;
-                    // Request directory listing using the new websocket-based explorer
                     if !self.interactive {
                         let path = if self.remote_explorer.current_path.is_empty() {
                             "current".to_string()
@@ -40,14 +44,12 @@ impl WebSocketClient {
                         let _ = self.send_cmd_tx.try_send(Cmd::ListDirectory(path));
                         self.remote_explorer.loading = true;
                         
-                        // Also request drives if we don't have them yet
                         if self.remote_explorer.drives.is_empty() {
                             let _ = self.send_cmd_tx.try_send(Cmd::GetDrives);
                         }
                     }
                 }
 
-                // Show "Charts" or "Stop Charts" based on live stats state
                 if self.live_stats_active {
                     if Button::new(RichText::new("■ Stop Charts").color(Color32::RED)).ui(ui).clicked(){
                         let _ = self.send_cmd_tx.try_send(Cmd::Quit);
@@ -87,11 +89,9 @@ impl WebSocketClient {
 
                 ui.add_space(10.);
                 
-                // Connection status indicator based on last_activity from SurrealDB
                 let (status_color, status_text, status_tooltip) = if !self.client.connected {
                     (Color32::RED, "✖", "Disconnected")
                 } else if let Some(last_activity) = &self.client.last_activity {
-                    // Calculate elapsed time since last activity
                     let now = chrono::Utc::now();
                     let activity_time = last_activity.to_utc();
                     let elapsed_secs = (now - activity_time).num_seconds();
@@ -104,7 +104,6 @@ impl WebSocketClient {
                         (Color32::LIGHT_RED, "⏳", "Inactive")
                     }
                 } else if self.is_connected {
-                    // Connected but no last_activity yet
                     (Color32::from_rgb(100, 200, 100), "◯", "Connected (awaiting activity)")
                 } else {
                     (Color32::RED, "✖", "Disconnected")
@@ -114,13 +113,11 @@ impl WebSocketClient {
                 
                 ui.add_space(10.);
                 
-                // Persistent shell indicator
                 if self.persistent_shell_mode {
                     ui.colored_label(Color32::YELLOW, "🖳 Persistent Shell");
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // OS command buttons (right-aligned)
                     let os_btn_color = Color32::from_rgb(180, 180, 200);
                     
                     if Button::new(RichText::new("⏻ Shutdown").color(os_btn_color).small())
@@ -148,6 +145,43 @@ impl WebSocketClient {
                     }
                 });
             });
+
+            // Row 2: system management tabs
+            ui.horizontal(|ui| {
+                let sys_color = Color32::from_rgb(160, 200, 180);
+
+                if Button::new(RichText::new("Event Log").color(sys_color).small()).ui(ui).clicked() {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::EventLog);
+                    if self.event_log_viewer.entries.is_empty() {
+                        let _ = self.send_cmd_tx.try_send(Cmd::ReadEventLog {
+                            log_name: self.event_log_viewer.selected_log.clone(),
+                            max_entries: self.event_log_viewer.max_entries,
+                            level_filter: None,
+                        });
+                        self.event_log_viewer.loading = true;
+                    }
+                }
+
+                if Button::new(RichText::new("Services").color(sys_color).small()).ui(ui).clicked() {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Services);
+                    if self.services_viewer.entries.is_empty() {
+                        let _ = self.send_cmd_tx.try_send(Cmd::ListServices);
+                        self.services_viewer.loading = true;
+                    }
+                }
+
+                if Button::new(RichText::new("Task Scheduler").color(sys_color).small()).ui(ui).clicked() {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::TaskScheduler);
+                    if self.task_scheduler_viewer.entries.is_empty() {
+                        let _ = self.send_cmd_tx.try_send(Cmd::ListScheduledTasks { folder: None });
+                        self.task_scheduler_viewer.loading = true;
+                    }
+                }
+
+                if Button::new(RichText::new("Registry").color(sys_color).small()).ui(ui).clicked() {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Registry);
+                }
+            });
             ui.add_space(2.);
         });
 
@@ -162,6 +196,22 @@ impl WebSocketClient {
             WsDisplayState::Terminal => {
                 #[cfg(feature="tokio")]
                 self.remote_terminal.ui(ui)
+            },
+            WsDisplayState::EventLog => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.event_log_viewer.display(ui, &cmd_tx);
+            },
+            WsDisplayState::Services => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.services_viewer.display(ui, &cmd_tx);
+            },
+            WsDisplayState::TaskScheduler => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.task_scheduler_viewer.display(ui, &cmd_tx);
+            },
+            WsDisplayState::Registry => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.registry_editor.display(ui, &cmd_tx);
             },
         };
     }

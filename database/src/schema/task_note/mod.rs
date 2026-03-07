@@ -92,7 +92,7 @@ pub struct TaskNotePayload {
 impl TaskNotePayload {
     pub async fn get_all_notes_in_my_store(notes_tx: crossbeam::channel::Sender<Vec<TaskNotePayload>>) -> anyhow::Result<(), anyhow::Error> {
         let notes: Vec<Self> = DATABASE
-            .query("select * from task_note where task_id.assignee.store == $auth.store && task_id.completed == false PARALLEL")
+            .query("select * from task_note where task_id.assignee.store == $auth.store && task_id.completed == false ")
             .await?
             .take(0)?;
 
@@ -875,14 +875,14 @@ impl TaskNotePayload {
         }
         
         let query_results: Vec<Self> = DATABASE
-            .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number PARALLEL")
+            .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number ")
             .bind(("service_number", service_number.clone()))
             .await?
             .take(0)?;
 
         if query_results.is_empty() {
             let alt_query: Vec<Self> = DATABASE
-                .query("SELECT * FROM task_note WHERE service_number == $service_number PARALLEL")
+                .query("SELECT * FROM task_note WHERE service_number == $service_number ")
                 .bind(("service_number", service_number))
                 .await?
                 .take(0)?;
@@ -898,7 +898,7 @@ impl TaskNotePayload {
         log::debug!("get_db_notes_from_task_id");
         
         let query_results: Vec<Self> = DATABASE
-            .query("SELECT * FROM task_note WHERE task_id == $task_id PARALLEL")
+            .query("SELECT * FROM task_note WHERE task_id == $task_id ")
             .bind(("task_id", task_id.clone()))
             .await?
             .take(0)?;

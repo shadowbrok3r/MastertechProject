@@ -5,6 +5,10 @@ use filesystem_helper::WebSocketHelperDelegate;
 use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
 use remote_explorer::RemoteExplorer;
+use event_log_viewer::EventLogViewer;
+use services_viewer::ServicesViewer;
+use task_scheduler_viewer::TaskSchedulerViewer;
+use registry_editor::RegistryEditor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ui::WsDisplayState;
@@ -22,6 +26,10 @@ pub mod tabs;
 pub mod ui;
 pub mod filesystem_helper;
 pub mod remote_explorer;
+pub mod event_log_viewer;
+pub mod services_viewer;
+pub mod task_scheduler_viewer;
+pub mod registry_editor;
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -106,6 +114,10 @@ pub struct WebSocketClient {
     pub pending_download_filename: Option<String>,
     /// Buffer for accumulating file chunks during download
     pub download_buffer: Vec<u8>,
+    pub event_log_viewer: EventLogViewer,
+    pub services_viewer: ServicesViewer,
+    pub task_scheduler_viewer: TaskSchedulerViewer,
+    pub registry_editor: RegistryEditor,
 }
 
 impl Drop for WebSocketClient {
@@ -232,6 +244,10 @@ Get-WmiObject")
             },
             pending_download_filename: None,
             download_buffer: Vec::new(),
+            event_log_viewer: EventLogViewer::new(),
+            services_viewer: ServicesViewer::new(),
+            task_scheduler_viewer: TaskSchedulerViewer::new(),
+            registry_editor: RegistryEditor::new(),
         }
     }
 

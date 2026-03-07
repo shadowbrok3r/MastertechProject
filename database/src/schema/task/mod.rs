@@ -435,12 +435,18 @@ impl From<TaskPayload> for LiveTaskPayload {
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Eq, Hash, SurrealValue)]
+#[surreal(untagged)]
 pub enum Status {
     #[default]
+    #[surreal(value = "Todo")]
     Todo,
+    #[surreal(value = "In Repair")]
     InRepair,
+    #[surreal(value = "Complete")]
     Complete,
+    #[surreal(value = "Sales")]
     Sales,
+    #[surreal(value = "QC")]
     Qc,
     CustomStatus(String),
 }
@@ -487,6 +493,7 @@ impl<'de> Deserialize<'de> for Status {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default, SurrealValue)]
+#[surreal(untagged)]
 pub enum Priority {
     Express,
     Rfs,
@@ -510,6 +517,7 @@ impl Priority {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord, SurrealValue)]
+#[surreal(untagged)]
 pub enum Store {
     #[default]
     RIV,
