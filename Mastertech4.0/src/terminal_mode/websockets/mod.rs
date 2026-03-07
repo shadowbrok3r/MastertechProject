@@ -1,5 +1,5 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
-use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, FileSystemAction, RemoteDirEntry};
+use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, ScheduledTask, ServiceActionType, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
@@ -405,9 +405,7 @@ impl TerminalWebsocketClient {
                     let _ = self.interactive_input_tx.send(cmd);
                 }
             },
-            Cmd::ReadEvents => {
-                
-            },
+            Cmd::ReadEvents => {},
             Cmd::QuitInteractive => {
                 if let Some(shell) = self.persistent_shell.take() {
                     let mut shell = shell;
@@ -1111,6 +1109,396 @@ impl TerminalWebsocketClient {
                     }
                 }
             }
+            // --- Event Log ---
+            Cmd::ReadEventLog { log_name, max_entries, level_filter } => {
+                log::info!("websockets -> Reading event log: {} (max: {}, filter: {:?})", log_name, max_entries, level_filter);
+
+                let level_clause = match level_filter.as_deref() {
+                    Some("Critical") => " -Level 1",
+                    Some("Error") => " -Level 2",
+                    Some("Warning") => " -Level 3",
+                    Some("Information") => " -Level 4",
+                    Some("Verbose") => " -Level 5",
+                    _ => "",
+                };
+
+                let ps_cmd = format!(
+                    "Get-WinEvent -LogName '{}' -MaxEvents {}{} -ErrorAction SilentlyContinue | Select-Object LevelDisplayName,TimeCreated,ProviderName,Id,Message | ConvertTo-Json -Compress",
+                    log_name, max_entries, level_clause
+                );
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let mut entries = Vec::new();
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                        for obj in json_array {
+                            entries.push(EventLogEntry {
+                                level: obj.get("LevelDisplayName").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                                time: obj.get("TimeCreated").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                source: obj.get("ProviderName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                event_id: obj.get("Id").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                                message: obj.get("Message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            });
+                        }
+                    } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                        entries.push(EventLogEntry {
+                            level: obj.get("LevelDisplayName").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                            time: obj.get("TimeCreated").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            source: obj.get("ProviderName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            event_id: obj.get("Id").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                            message: obj.get("Message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        });
+                    }
+                }
+
+                log::info!("websockets -> Parsed {} event log entries", entries.len());
+                let response = Cmd::EventLogResponse(entries);
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            // --- Windows Services ---
+            Cmd::ListServices => {
+                log::info!("websockets -> Listing services");
+
+                let ps_cmd = "Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode,ProcessId | ConvertTo-Json -Compress";
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", ps_cmd])
+                    .output()
+                    .await;
+
+                let mut services = Vec::new();
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                        for obj in json_array {
+                            services.push(WindowsService {
+                                name: obj.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                display_name: obj.get("DisplayName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                status: obj.get("State").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                                start_type: obj.get("StartMode").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                                pid: obj.get("ProcessId").and_then(|v| v.as_u64()).map(|p| p as u32),
+                            });
+                        }
+                    }
+                }
+
+                log::info!("websockets -> Found {} services", services.len());
+                let response = Cmd::ServiceListResponse(services);
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::ControlService { name, action } => {
+                log::info!("websockets -> Service control: {} - {:?}", name, action);
+
+                let ps_cmd = match &action {
+                    ServiceActionType::Start => format!("Start-Service -Name '{}' -ErrorAction Stop; 'OK'", name),
+                    ServiceActionType::Stop => format!("Stop-Service -Name '{}' -Force -ErrorAction Stop; 'OK'", name),
+                    ServiceActionType::Restart => format!("Restart-Service -Name '{}' -Force -ErrorAction Stop; 'OK'", name),
+                    ServiceActionType::SetStartType(start_type) => format!("Set-Service -Name '{}' -StartupType '{}' -ErrorAction Stop; 'OK'", name, start_type),
+                };
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let (success, message) = match output {
+                    Ok(out) => {
+                        if out.status.success() {
+                            (true, format!("Action completed: {:?}", action))
+                        } else {
+                            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                            (false, stderr)
+                        }
+                    }
+                    Err(e) => (false, format!("Failed to execute: {}", e)),
+                };
+
+                let response = Cmd::ServiceActionResponse { name, success, message };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            // --- Task Scheduler ---
+            Cmd::ListScheduledTasks { folder } => {
+                log::info!("websockets -> Listing scheduled tasks (folder: {:?})", folder);
+
+                let folder_filter = folder.as_deref().unwrap_or("\\");
+                let ps_cmd = format!(
+                    r#"$tasks = Get-ScheduledTask -TaskPath '{}*' -ErrorAction SilentlyContinue; $results = @(); foreach($t in $tasks) {{ $info = $null; try {{ $info = Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction SilentlyContinue }} catch {{}}; $triggers = @(); foreach($tr in $t.Triggers) {{ $triggers += $tr.CimClass.CimClassName }}; $actions = @(); foreach($a in $t.Actions) {{ $actions += $a.Execute }}; $results += @{{ Name=$t.TaskName; Path=$t.TaskPath; State=$t.State.ToString(); LastRun=if($info){{$info.LastRunTime.ToString('o')}}else{{'Never'}}; NextRun=if($info){{$info.NextRunTime.ToString('o')}}else{{'N/A'}}; Description=$t.Description; Triggers=$triggers; Actions=$actions }} }}; $results | ConvertTo-Json -Compress -Depth 3"#,
+                    folder_filter
+                );
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let mut tasks = Vec::new();
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let parse_task = |obj: &serde_json::Value| -> ScheduledTask {
+                        ScheduledTask {
+                            name: obj.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            path: obj.get("Path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            state: obj.get("State").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                            last_run: obj.get("LastRun").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            next_run: obj.get("NextRun").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            description: obj.get("Description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            triggers: obj.get("Triggers").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter().filter_map(|t| t.as_str().map(|s| s.to_string())).collect()
+                            }).unwrap_or_default(),
+                            actions: obj.get("Actions").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter().filter_map(|a| a.as_str().map(|s| s.to_string())).collect()
+                            }).unwrap_or_default(),
+                        }
+                    };
+
+                    if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                        for obj in &json_array {
+                            tasks.push(parse_task(obj));
+                        }
+                    } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                        tasks.push(parse_task(&obj));
+                    }
+                }
+
+                log::info!("websockets -> Found {} scheduled tasks", tasks.len());
+                let response = Cmd::ScheduledTaskListResponse(tasks);
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::ToggleScheduledTask { path, enable } => {
+                log::info!("websockets -> {} task: {}", if enable { "Enable" } else { "Disable" }, path);
+
+                let ps_cmd = if enable {
+                    format!("Enable-ScheduledTask -TaskName '{}' -ErrorAction Stop; 'OK'", path)
+                } else {
+                    format!("Disable-ScheduledTask -TaskName '{}' -ErrorAction Stop; 'OK'", path)
+                };
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let (success, message) = match output {
+                    Ok(out) => {
+                        if out.status.success() {
+                            (true, format!("Task {}", if enable { "enabled" } else { "disabled" }))
+                        } else {
+                            (false, String::from_utf8_lossy(&out.stderr).to_string())
+                        }
+                    }
+                    Err(e) => (false, format!("Failed: {}", e)),
+                };
+
+                let response = Cmd::ScheduledTaskActionResponse { success, message };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::RunScheduledTask(path) => {
+                log::info!("websockets -> Running task: {}", path);
+
+                let ps_cmd = format!("Start-ScheduledTask -TaskName '{}' -ErrorAction Stop; 'OK'", path);
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let (success, message) = match output {
+                    Ok(out) => {
+                        if out.status.success() {
+                            (true, "Task started".to_string())
+                        } else {
+                            (false, String::from_utf8_lossy(&out.stderr).to_string())
+                        }
+                    }
+                    Err(e) => (false, format!("Failed: {}", e)),
+                };
+
+                let response = Cmd::ScheduledTaskActionResponse { success, message };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            // --- Registry ---
+            Cmd::ListRegistryKeys(path) => {
+                log::info!("websockets -> Listing registry keys: {}", path);
+
+                let ps_cmd = format!(
+                    r#"$subkeys = @(); $values = @(); try {{ Get-ChildItem -Path 'Registry::{path}' -ErrorAction Stop | ForEach-Object {{ $subkeys += @{{ Name=$_.PSChildName; Path=$_.Name; SubkeyCount=(Get-ChildItem -Path $_.PSPath -ErrorAction SilentlyContinue | Measure-Object).Count; ValueCount=(Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue | Get-Member -MemberType NoteProperty | Where-Object {{ $_.Name -notmatch '^PS' }} | Measure-Object).Count }} }}; $props = Get-ItemProperty -Path 'Registry::{path}' -ErrorAction SilentlyContinue; if($props) {{ $props | Get-Member -MemberType NoteProperty | Where-Object {{ $_.Name -notmatch '^PS' }} | ForEach-Object {{ $n = $_.Name; $v = $props.$n; $kind = (Get-Item -Path 'Registry::{path}' -ErrorAction SilentlyContinue).GetValueKind($n); $values += @{{ Name=$n; Kind=$kind.ToString(); Data=[string]$v }} }} }} }} catch {{ }}; @{{ Subkeys=$subkeys; Values=$values }} | ConvertTo-Json -Compress -Depth 4"#
+                );
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let mut subkeys = Vec::new();
+                let mut values = Vec::new();
+
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                        if let Some(sk_arr) = obj.get("Subkeys").and_then(|v| v.as_array()) {
+                            for sk in sk_arr {
+                                subkeys.push(RegistryKeyInfo {
+                                    name: sk.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    path: sk.get("Path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    subkey_count: sk.get("SubkeyCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                                    value_count: sk.get("ValueCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                                });
+                            }
+                        }
+                        if let Some(val_arr) = obj.get("Values").and_then(|v| v.as_array()) {
+                            for val in val_arr {
+                                values.push(RegistryValueEntry {
+                                    name: val.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    kind: val.get("Kind").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+                                    data: val.get("Data").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                log::info!("websockets -> Registry: {} subkeys, {} values", subkeys.len(), values.len());
+                let response = Cmd::RegistryKeyResponse { path, subkeys, values };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::BackupRegistryKey(path) => {
+                log::info!("websockets -> Backing up registry key: {}", path);
+
+                let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+                let backup_filename = format!("reg_backup_{}_{}.reg",
+                    path.replace('\\', "_").replace('/', "_"),
+                    timestamp
+                );
+                let backup_dir = std::env::temp_dir().join("mastertech_reg_backups");
+                let _ = std::fs::create_dir_all(&backup_dir);
+                let backup_path = backup_dir.join(&backup_filename);
+                let backup_path_str = backup_path.to_string_lossy().to_string();
+
+                let output = tokio::process::Command::new("reg")
+                    .args(["export", &path, &backup_path_str, "/y"])
+                    .output()
+                    .await;
+
+                let (success, message) = match output {
+                    Ok(out) => {
+                        if out.status.success() {
+                            (true, format!("Backup saved to {}", backup_path_str))
+                        } else {
+                            (false, String::from_utf8_lossy(&out.stderr).to_string())
+                        }
+                    }
+                    Err(e) => (false, format!("Failed to backup: {}", e)),
+                };
+
+                let response = Cmd::RegistryBackupResponse {
+                    success,
+                    backup_path: backup_path_str,
+                    message,
+                };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::CommitRegistryEdits(edits) => {
+                log::info!("websockets -> Committing {} registry edits", edits.len());
+
+                let mut all_success = true;
+                let mut messages = Vec::new();
+
+                for edit in &edits {
+                    let ps_cmd = match edit {
+                        RegistryEdit::SetValue { path, name, kind, data } => {
+                            let reg_type = match kind.as_str() {
+                                "REG_DWORD" | "DWord" => "DWord",
+                                "REG_QWORD" | "QWord" => "QWord",
+                                "REG_BINARY" | "Binary" => "Binary",
+                                "REG_MULTI_SZ" | "MultiString" => "MultiString",
+                                "REG_EXPAND_SZ" | "ExpandString" => "ExpandString",
+                                _ => "String",
+                            };
+                            format!(
+                                "Set-ItemProperty -Path 'Registry::{}' -Name '{}' -Value '{}' -Type {} -ErrorAction Stop; 'OK'",
+                                path, name, data, reg_type
+                            )
+                        }
+                        RegistryEdit::DeleteValue { path, name } => {
+                            format!(
+                                "Remove-ItemProperty -Path 'Registry::{}' -Name '{}' -ErrorAction Stop; 'OK'",
+                                path, name
+                            )
+                        }
+                        RegistryEdit::CreateKey { path } => {
+                            format!(
+                                "New-Item -Path 'Registry::{}' -Force -ErrorAction Stop | Out-Null; 'OK'",
+                                path
+                            )
+                        }
+                        RegistryEdit::DeleteKey { path } => {
+                            format!(
+                                "Remove-Item -Path 'Registry::{}' -Recurse -Force -ErrorAction Stop; 'OK'",
+                                path
+                            )
+                        }
+                    };
+
+                    let output = tokio::process::Command::new("powershell")
+                        .args(["-NoProfile", "-Command", &ps_cmd])
+                        .output()
+                        .await;
+
+                    match output {
+                        Ok(out) => {
+                            if !out.status.success() {
+                                all_success = false;
+                                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                                messages.push(format!("Failed: {}", stderr));
+                            }
+                        }
+                        Err(e) => {
+                            all_success = false;
+                            messages.push(format!("Error: {}", e));
+                        }
+                    }
+                }
+
+                let message = if all_success {
+                    format!("All {} edit(s) applied successfully", edits.len())
+                } else {
+                    messages.join("; ")
+                };
+
+                let response = Cmd::RegistryEditResponse { success: all_success, message };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
             Cmd::None => {},
             _ => {}
         }

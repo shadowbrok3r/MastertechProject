@@ -53,6 +53,7 @@ impl Default for User {
 impl Eq for User {}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, SurrealValue)]
+#[surreal(untagged)]
 pub enum UserAuthorization {
     #[default]
     User,

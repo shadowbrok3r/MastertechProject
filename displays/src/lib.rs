@@ -287,7 +287,94 @@ pub enum Cmd {
     LockWorkstation,
     /// Log off the current user
     LogOffUser,
+
+    // --- Event Log ---
+    ReadEventLog { log_name: String, max_entries: u32, level_filter: Option<String> },
+    EventLogResponse(Vec<EventLogEntry>),
+
+    // --- Windows Services ---
+    ListServices,
+    ServiceListResponse(Vec<WindowsService>),
+    ControlService { name: String, action: ServiceActionType },
+    ServiceActionResponse { name: String, success: bool, message: String },
+
+    // --- Task Scheduler ---
+    ListScheduledTasks { folder: Option<String> },
+    ScheduledTaskListResponse(Vec<ScheduledTask>),
+    ToggleScheduledTask { path: String, enable: bool },
+    RunScheduledTask(String),
+    ScheduledTaskActionResponse { success: bool, message: String },
+
+    // --- Registry ---
+    ListRegistryKeys(String),
+    RegistryKeyResponse { path: String, subkeys: Vec<RegistryKeyInfo>, values: Vec<RegistryValueEntry> },
+    BackupRegistryKey(String),
+    RegistryBackupResponse { success: bool, backup_path: String, message: String },
+    CommitRegistryEdits(Vec<RegistryEdit>),
+    RegistryEditResponse { success: bool, message: String },
+
     None,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EventLogEntry {
+    pub level: String,
+    pub time: String,
+    pub source: String,
+    pub event_id: u32,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WindowsService {
+    pub name: String,
+    pub display_name: String,
+    pub status: String,
+    pub start_type: String,
+    pub pid: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ServiceActionType {
+    Start,
+    Stop,
+    Restart,
+    SetStartType(String),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScheduledTask {
+    pub name: String,
+    pub path: String,
+    pub state: String,
+    pub last_run: Option<String>,
+    pub next_run: Option<String>,
+    pub description: String,
+    pub triggers: Vec<String>,
+    pub actions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RegistryKeyInfo {
+    pub name: String,
+    pub path: String,
+    pub subkey_count: u32,
+    pub value_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RegistryValueEntry {
+    pub name: String,
+    pub kind: String,
+    pub data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum RegistryEdit {
+    SetValue { path: String, name: String, kind: String, data: String },
+    DeleteValue { path: String, name: String },
+    CreateKey { path: String },
+    DeleteKey { path: String },
 }
 
 /// A remote directory entry for filesystem browsing

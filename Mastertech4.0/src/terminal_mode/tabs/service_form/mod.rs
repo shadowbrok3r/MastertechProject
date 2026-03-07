@@ -146,7 +146,9 @@ impl<'a> ServiceFormTab<'a> {
     fn set_active_field(&self, input_field: WidgetId) {
         let idx = Self::get_input_idx(&input_field);
         self.active_field.replace(Some(input_field));
-        self.input_idx.replace(idx);
+        if let Ok(mut input_field) = self.input_idx.try_borrow_mut() {
+            *input_field = idx;
+        }
     }
 
     fn set_input_idx(&self, idx: i32) {
@@ -155,7 +157,9 @@ impl<'a> ServiceFormTab<'a> {
         self.input_idx.replace(new_idx);
         let final_widget_id = Self::get_field_id_from_idx(new_idx); // Recalculate if reset
         log::info!("Widget ID: {final_widget_id:?}");
-        self.active_field.replace(Some(final_widget_id));
+        if let Ok(mut active_field) = self.active_field.try_borrow_mut() {
+            *active_field = Some(final_widget_id);
+        }
     }
 
     fn set_input_state_from_input_idx(&self, idx: i32, state: ButtonState) {

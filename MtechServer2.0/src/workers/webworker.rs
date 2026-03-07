@@ -73,7 +73,7 @@ pub fn decode_task_payload(packet: &[u8]) -> anyhow::Result<Vec<LiveTaskPayload>
 
 pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<LiveTaskPayload>, anyhow::Error> {
     let query = r#"
-        SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS true AND $this.assignee.active == true PARALLEL
+        SELECT * FROM task WHERE $this.assignee.store == $auth.store AND $this.completed IS true AND $this.assignee.active == true 
     "#;
 
     let start_query = web_time::Instant::now();

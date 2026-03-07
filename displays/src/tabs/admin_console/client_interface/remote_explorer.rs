@@ -11,11 +11,17 @@
 //! - Context menu with download, copy to tools, delete options
 
 use eframe::egui::{
-    Align, CentralPanel, Color32, Direction, Frame, Key, Layout, Margin,
+    self, Align, CentralPanel, Color32, Frame, Key, KeyboardShortcut, Layout, Margin,
     RichText, ScrollArea, Sense, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui,
-    Vec2, CornerRadius,
+    Vec2, CornerRadius, scroll_area, Widget
 };
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Sender, Receiver};
+use egui_data_table::{
+    viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext, CustomActionContext, CustomActionEditor},
+    CustomMenuItem, DataTable, Renderer, RowViewer, SelectionSnapshot, UiAction,
+};
+use egui_extras::Column as TableColumnConfig;
+use serde::Serialize;
 use crate::{Cmd, RemoteDirEntry, PlatformSpawner, Spawner};
 use database::schema::file_storage::{self, FileEntry};
 
@@ -83,18 +89,104 @@ impl PreviewState {
     }
 }
 
+/// Actions dispatched from the file table's context menu / clicks
+#[derive(Debug, Clone)]
+pub enum ExplorerAction {
+    Navigate(String),
+    Download(String),
+    Execute(String),
+    PreviewText(String),
+    PreviewImage(String),
+    CopyToTools(String),
+    Delete(String),
+    Refresh,
+}
+
+/* --------------------------------- egui-data-table viewer --------------------------------- */
+
+/// Columns: 0 Icon, 1 Name, 2 Date Modified, 3 Size, 4 Type
+const NUM_FILE_COLUMNS: usize = 5;
+
+#[derive(Serialize)]
+pub struct RemoteFileRowViewer {
+    filter: String,
+    #[serde(skip)]
+    hotkeys: Vec<(KeyboardShortcut, UiAction)>,
+    #[serde(skip)]
+    pub action_tx: Option<Sender<ExplorerAction>>,
+}
+
+impl Default for RemoteFileRowViewer {
+    fn default() -> Self {
+        Self {
+            filter: String::new(),
+            hotkeys: Vec::new(),
+            action_tx: None,
+        }
+    }
+}
+
+/* ------------------------------------ RowCodec ------------------------------------ */
+
+pub struct RemoteFileCodec;
+
+impl RowCodec<RemoteDirEntry> for RemoteFileCodec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, row: &RemoteDirEntry, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(get_file_icon(&row.name, row.is_directory)),
+            1 => dst.push_str(&row.name),
+            2 => dst.push_str(row.modified.as_deref().unwrap_or("")),
+            3 => {
+                if let Some(size) = row.size {
+                    dst.push_str(&size.to_string());
+                }
+            }
+            4 => {
+                let ext = row.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                if row.is_directory { dst.push_str("Folder"); } else { dst.push_str(&ext); }
+            }
+            _ => {}
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        src: &str,
+        column: usize,
+        row: &mut RemoteDirEntry,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            1 => row.name = src.to_string(),
+            2 => row.modified = if src.is_empty() { None } else { Some(src.to_string()) },
+            3 => row.size = src.parse().ok(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> RemoteDirEntry {
+        RemoteDirEntry {
+            name: String::new(),
+            path: String::new(),
+            is_directory: false,
+            size: None,
+            modified: None,
+        }
+    }
+}
+
+/* --------------------------------- RemoteExplorer --------------------------------- */
+
 /// Remote filesystem explorer state
 pub struct RemoteExplorer {
     /// Current path being viewed
     pub current_path: String,
     /// Navigation history stack
     pub navigation_stack: Vec<String>,
-    /// Current directory listing
-    pub entries: Vec<RemoteDirEntry>,
     /// Whether we're waiting for a response
     pub loading: bool,
-    /// Selected entry index
-    pub selected_idx: Option<usize>,
     /// Path input for manual navigation
     path_input: String,
     /// Error message if any
@@ -128,6 +220,14 @@ pub struct RemoteExplorer {
     pub tools_rx: Option<crossbeam::channel::Receiver<Vec<ToolEntry>>>,
     /// Whether tools have been initially loaded
     pub tools_initialized: bool,
+    /// egui-data-table backing store for file entries
+    pub file_table: DataTable<RemoteDirEntry>,
+    /// Row viewer for the data table
+    pub file_viewer: RemoteFileRowViewer,
+    /// Receiver for actions dispatched from the table viewer
+    pub action_rx: Receiver<ExplorerAction>,
+    /// Sender kept so we can clone into the viewer on reset
+    action_tx: Sender<ExplorerAction>,
 }
 
 impl Default for RemoteExplorer {
@@ -150,12 +250,14 @@ impl RemoteExplorer {
             FolderShortcut { name: "LocalAppData".to_string(), icon: "💾", path: "LocalAppData".to_string() },
         ];
         
+        let (action_tx, action_rx) = crossbeam::channel::unbounded();
+        let mut file_viewer = RemoteFileRowViewer::default();
+        file_viewer.action_tx = Some(action_tx.clone());
+
         Self {
             current_path: "current".to_string(),
             navigation_stack: Vec::new(),
-            entries: Vec::new(),
             loading: false,
-            selected_idx: None,
             path_input: "current".to_string(),
             error: None,
             drives: Vec::new(),
@@ -173,6 +275,10 @@ impl RemoteExplorer {
             #[cfg(not(target_arch = "wasm32"))]
             tools_rx: None,
             tools_initialized: false,
+            file_table: DataTable::new(),
+            file_viewer,
+            action_rx,
+            action_tx,
         }
     }
     
@@ -343,25 +449,21 @@ impl RemoteExplorer {
     }
     
     /// Set the directory listing from response
-    pub fn set_entries(&mut self, entries: Vec<RemoteDirEntry>, current_path: Option<String>) {
-        self.entries = entries;
-        // Sort: directories first, then alphabetically
-        self.entries.sort_by(|a, b| {
+    pub fn set_entries(&mut self, mut entries: Vec<RemoteDirEntry>, current_path: Option<String>) {
+        entries.sort_by(|a, b| {
             match (a.is_directory, b.is_directory) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
                 _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             }
         });
+        self.file_table.replace(entries);
         self.loading = false;
-        self.selected_idx = None;
         
-        // Update current path if provided (from server response)
         if let Some(path) = current_path {
             self.current_path = path.clone();
             self.path_input = path;
         } else {
-            // Sync path_input with current_path
             self.path_input = self.current_path.clone();
         }
     }
@@ -380,28 +482,26 @@ impl RemoteExplorer {
         self.current_path = path.clone();
         self.path_input = path.clone();
         self.loading = true;
-        self.entries.clear();
+        self.file_table.clear();
         let _ = cmd_tx.try_send(Cmd::ListDirectory(path));
     }
     
     /// Navigate up one directory level
     pub fn navigate_up(&mut self, cmd_tx: &Sender<Cmd>) {
-        // Try to get parent from navigation stack first
         if let Some(previous) = self.navigation_stack.pop() {
             self.current_path = previous.clone();
             self.path_input = previous.clone();
             self.loading = true;
-            self.entries.clear();
+            self.file_table.clear();
             let _ = cmd_tx.try_send(Cmd::ListDirectory(previous));
         } else if !self.current_path.is_empty() {
-            // Compute parent directory
             let path = std::path::Path::new(&self.current_path);
             if let Some(parent) = path.parent() {
                 let parent_str = parent.to_string_lossy().to_string();
                 self.current_path = parent_str.clone();
                 self.path_input = parent_str.clone();
                 self.loading = true;
-                self.entries.clear();
+                self.file_table.clear();
                 let _ = cmd_tx.try_send(Cmd::ListDirectory(parent_str));
             }
         }
@@ -410,7 +510,7 @@ impl RemoteExplorer {
     /// Refresh current directory
     pub fn refresh(&mut self, cmd_tx: &Sender<Cmd>) {
         self.loading = true;
-        self.entries.clear();
+        self.file_table.clear();
         let _ = cmd_tx.try_send(Cmd::ListDirectory(self.current_path.clone()));
     }
     
@@ -879,8 +979,6 @@ impl RemoteExplorer {
     }
     
     fn display_file_list(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
-        let available_height = ui.available_height();
-        
         if self.loading {
             ui.vertical_centered(|ui| {
                 ui.add_space(50.);
@@ -890,7 +988,7 @@ impl RemoteExplorer {
             return;
         }
         
-        if self.entries.is_empty() {
+        if self.file_table.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(50.);
                 ui.label(RichText::new("📂 Empty directory").heading());
@@ -901,232 +999,69 @@ impl RemoteExplorer {
             });
             return;
         }
-        
-        // Track deferred actions
-        let mut navigate_to_path: Option<String> = None;
-        let mut should_refresh = false;
-        let mut new_selected_idx: Option<usize> = None;
-        let mut download_path: Option<String> = None;
-        let mut execute_path: Option<String> = None;
-        let mut preview_text_path: Option<String> = None;
-        let mut preview_image_path: Option<String> = None;
-        let mut copy_to_tools_path: Option<String> = None;
-        
-        // Column header
+
+        // Drain actions dispatched by the RowViewer
+        while let Ok(action) = self.action_rx.try_recv() {
+            match action {
+                ExplorerAction::Navigate(path) => {
+                    self.navigate_to(path, cmd_tx);
+                }
+                ExplorerAction::Download(path) => {
+                    let filename = std::path::Path::new(&path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "download".to_string());
+                    self.pending_download = Some(filename);
+                    let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
+                }
+                ExplorerAction::Execute(path) => {
+                    let _ = cmd_tx.try_send(Cmd::ExecuteRemoteFile(path));
+                }
+                ExplorerAction::PreviewText(path) => {
+                    self.preview.loading = true;
+                    let _ = cmd_tx.try_send(Cmd::PreviewRemoteFile(path));
+                }
+                ExplorerAction::PreviewImage(path) => {
+                    self.preview.loading = true;
+                    let _ = cmd_tx.try_send(Cmd::RequestThumbnail(path));
+                }
+                ExplorerAction::CopyToTools(path) => {
+                    self.pending_tool_upload = Some((path.clone(), Vec::new()));
+                    let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
+                }
+                ExplorerAction::Delete(path) => {
+                    let _ = cmd_tx.try_send(Cmd::FileSystemAction(
+                        crate::FileSystemAction::Delete(path),
+                    ));
+                    self.refresh(cmd_tx);
+                }
+                ExplorerAction::Refresh => {
+                    self.refresh(cmd_tx);
+                }
+            }
+        }
+
+        // Filter bar
         ui.horizontal(|ui| {
-            ui.set_min_height(22.);
-            let header_color = Color32::from_rgb(180, 180, 180);
-            ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width() * 0.5, 20.),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.label(RichText::new("Name").color(header_color).strong());
-                }
-            );
-            ui.allocate_ui_with_layout(
-                Vec2::new(140., 20.),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.label(RichText::new("Date Modified").color(header_color).strong());
-                }
-            );
-            ui.allocate_ui_with_layout(
-                Vec2::new(80., 20.),
-                Layout::right_to_left(Align::Center),
-                |ui| {
-                    ui.label(RichText::new("Size").color(header_color).strong());
-                }
-            );
+            ui.label("Filter:");
+            egui::TextEdit::singleline(&mut self.file_viewer.filter)
+                .hint_text("Search files...")
+                .desired_width(ui.available_width() - 10.)
+                .show(ui);
         });
-        ui.separator();
-        
-        ScrollArea::vertical()
-            .max_height(available_height - 40.)
+        ui.add_space(2.);
+
+        ScrollArea::horizontal()
             .auto_shrink(false)
-            .show(ui, |ui| {
-                for (idx, entry) in self.entries.iter().enumerate() {
-                    let is_selected = self.selected_idx == Some(idx);
-                    let icon = get_file_icon(&entry.name, entry.is_directory);
-                    
-                    // Format size
-                    let size_text = if entry.is_directory {
-                        String::new()
-                    } else if let Some(size) = entry.size {
-                        format_file_size(size)
-                    } else {
-                        String::new()
-                    };
-                    
-                    // Format date modified
-                    let modified_text = format_modified_date(entry.modified.as_deref());
-                    
-                    // Row layout
-                    let response = ui.horizontal(|ui| {
-                        ui.set_min_height(22.);
-                        
-                        // Selection highlight
-                        let fill_color = if is_selected {
-                            Color32::from_rgba_unmultiplied(80, 80, 120, 80)
-                        } else {
-                            Color32::TRANSPARENT
-                        };
-                        
-                        let rect = ui.available_rect_before_wrap();
-                        ui.painter().rect_filled(rect, 0.0, fill_color);
-                        
-                        // Name column (50% width)
-                        let name_response = ui.allocate_ui_with_layout(
-                            Vec2::new(ui.available_width() * 0.5, 20.),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                let label_text = format!("{}  {}", icon, entry.name);
-                                let name_color = if entry.is_directory {
-                                    Color32::from_rgb(130, 170, 255)
-                                } else {
-                                    Color32::from_rgb(220, 220, 220)
-                                };
-                                ui.add(eframe::egui::Label::new(RichText::new(label_text).color(name_color)).sense(Sense::click()))
-                            }
-                        ).inner;
-                        
-                        // Date Modified column (140px)
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(140., 20.),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.label(RichText::new(&modified_text).color(Color32::GRAY).small());
-                            }
-                        );
-                        
-                        // Size column (80px, right-aligned)
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(80., 20.),
-                            Layout::right_to_left(Align::Center),
-                            |ui| {
-                                ui.label(RichText::new(&size_text).color(Color32::GRAY).small());
-                            }
-                        );
-                        
-                        name_response
-                    }).inner;
-                    
-                    // Handle clicks
-                    if response.clicked() {
-                        new_selected_idx = Some(idx);
-                        
-                        // Single click on text files -> preview
-                        if !entry.is_directory && is_text_file(&entry.name) {
-                            preview_text_path = Some(entry.path.clone());
-                        }
-                    }
-                    
-                    // Double-click behavior
-                    if response.double_clicked() {
-                        if entry.is_directory {
-                            navigate_to_path = Some(entry.path.clone());
-                        } else if is_image_file(&entry.name) {
-                            // Request thumbnail for images
-                            preview_image_path = Some(entry.path.clone());
-                        } else {
-                            // Execute the file
-                            execute_path = Some(entry.path.clone());
-                        }
-                    }
-                    
-                    // Context menu
-                    let entry_path = entry.path.clone();
-                    let entry_name = entry.name.clone();
-                    let entry_is_directory = entry.is_directory;
-                    
-                    response.context_menu(|ui| {
-                        ui.set_min_width(180.0);
-                        
-                        if entry_is_directory {
-                            if ui.button("📂 Open").clicked() {
-                                navigate_to_path = Some(entry_path.clone());
-                                ui.close();
-                            }
-                        } else {
-                            if ui.button("▶ Execute / Open").clicked() {
-                                execute_path = Some(entry_path.clone());
-                                ui.close();
-                            }
-                            
-                            if ui.button("📥 Download").clicked() {
-                                download_path = Some(entry_path.clone());
-                                ui.close();
-                            }
-                            
-                            if is_text_file(&entry_name) {
-                                if ui.button("👁 Preview").clicked() {
-                                    preview_text_path = Some(entry_path.clone());
-                                    ui.close();
-                                }
-                            }
-                            
-                            if is_image_file(&entry_name) {
-                                if ui.button("🖼 View Thumbnail").clicked() {
-                                    preview_image_path = Some(entry_path.clone());
-                                    ui.close();
-                                }
-                            }
-                            
-                            ui.separator();
-                            
-                            if ui.button("🧰 Copy to My Tools").clicked() {
-                                copy_to_tools_path = Some(entry_path.clone());
-                                ui.close();
-                            }
-                        }
-                        
-                        ui.separator();
-                        
-                        if ui.button("🗑 Delete").clicked() {
-                            let _ = cmd_tx.try_send(Cmd::FileSystemAction(
-                                crate::FileSystemAction::Delete(entry_path.clone())
-                            ));
-                            should_refresh = true;
-                            ui.close();
-                        }
-                    });
-                }
-            });
-        
-        // Apply deferred actions
-        if let Some(idx) = new_selected_idx {
-            self.selected_idx = Some(idx);
-        }
-        if let Some(path) = navigate_to_path {
-            self.navigate_to(path, cmd_tx);
-        }
-        if let Some(path) = download_path {
-            let filename = std::path::Path::new(&path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "download".to_string());
-            self.pending_download = Some(filename);
-            let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
-        }
-        if let Some(path) = execute_path {
-            let _ = cmd_tx.try_send(Cmd::ExecuteRemoteFile(path));
-        }
-        if let Some(path) = preview_text_path {
-            self.preview.loading = true;
-            let _ = cmd_tx.try_send(Cmd::PreviewRemoteFile(path));
-        }
-        if let Some(path) = preview_image_path {
-            self.preview.loading = true;
-            let _ = cmd_tx.try_send(Cmd::RequestThumbnail(path));
-        }
-        if let Some(path) = copy_to_tools_path {
-            // First download the file, then upload to My Tools
-            // We'll need to handle this specially in receive.rs
-            self.pending_tool_upload = Some((path.clone(), Vec::new()));
-            let _ = cmd_tx.try_send(Cmd::DownloadRemoteFile(path));
-        }
-        if should_refresh {
-            self.refresh(cmd_tx);
-        }
+            .show(ui, |ui|
+                Renderer::new(&mut self.file_table, &mut self.file_viewer)
+                    .with_style_modify(|s| {
+                        s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                    })
+                    .ui(ui)
+            );
     }
     
     /// Refresh My Tools asynchronously
@@ -1247,6 +1182,258 @@ impl RemoteExplorer {
     
     #[cfg(target_arch = "wasm32")]
     fn upload_tool_dialog(&mut self) {}
+}
+
+/* ========================== RowViewer implementation ========================== */
+
+impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
+    fn try_create_codec(&mut self, _copy_full_row: bool) -> Option<impl RowCodec<RemoteDirEntry>> {
+        Some(RemoteFileCodec)
+    }
+
+    fn num_columns(&mut self) -> usize { NUM_FILE_COLUMNS }
+
+    fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
+        ["", "Name", "Date Modified", "Size", "Type"][column].into()
+    }
+
+    fn is_sortable_column(&mut self, column: usize) -> bool { column > 0 }
+
+    fn row_filter_hash(&mut self) -> &impl std::hash::Hash { &self.filter }
+
+    fn filter_row(&mut self, row: &RemoteDirEntry) -> bool {
+        if self.filter.trim().is_empty() { return true; }
+        let f = self.filter.to_lowercase();
+        row.name.to_lowercase().contains(&f)
+    }
+
+    fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
+        let hot = default_hotkeys(context);
+        self.hotkeys.clone_from(&hot);
+        hot
+    }
+
+    fn is_editable_cell(&mut self, _column: usize, _row: usize, _row_value: &RemoteDirEntry) -> bool { false }
+
+    fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &RemoteDirEntry, column: usize) {
+        let style = ui.style_mut();
+        style.interaction.multi_widget_text_select = false;
+        style.interaction.selectable_labels = false;
+        match column {
+            0 => {
+                let icon = get_file_icon(&row.name, row.is_directory);
+                ui.label(icon);
+            }
+            1 => {
+                let name_color = if row.is_directory {
+                    Color32::from_rgb(130, 170, 255)
+                } else {
+                    Color32::from_rgb(220, 220, 220)
+                };
+                
+                egui::Label::new(RichText::new(&row.name).color(name_color).underline()).sense(Sense::click()).ui(ui);
+            }
+            2 => {
+                ui.label(
+                    RichText::new(format_modified_date(row.modified.as_deref()))
+                        .color(Color32::GRAY)
+                        .small(),
+                );
+            }
+            3 => {
+                if row.is_directory {
+                    ui.label("");
+                } else if let Some(size) = row.size {
+                    ui.label(RichText::new(format_file_size(size)).color(Color32::GRAY).small());
+                } else {
+                    ui.label("");
+                }
+            }
+            4 => {
+                if row.is_directory {
+                    ui.label(RichText::new("Folder").color(Color32::from_rgb(130, 170, 255)).small());
+                } else {
+                    let ext = row.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    ui.label(RichText::new(ext).color(Color32::GRAY).small());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn show_cell_editor(
+        &mut self,
+        _ui: &mut egui::Ui,
+        _row: &mut RemoteDirEntry,
+        _column: usize,
+    ) -> Option<egui::Response> {
+        None
+    }
+
+    fn on_cell_view_response(
+        &mut self,
+        row: &RemoteDirEntry,
+        column: usize,
+        resp: &egui::Response,
+    ) -> Option<Box<RemoteDirEntry>> {
+        if let Some(tx) = &self.action_tx {
+            if resp.clicked() {
+                if !row.is_directory && is_text_file(&row.name) {
+                    let _ = tx.try_send(ExplorerAction::PreviewText(row.path.clone()));
+                } else if row.is_directory {
+                    let _ = tx.try_send(ExplorerAction::Navigate(row.path.clone()));
+                } else if is_image_file(&row.name) {
+                    let _ = tx.try_send(ExplorerAction::PreviewImage(row.path.clone()));
+                } else {
+                    let _ = tx.try_send(ExplorerAction::Execute(row.path.clone()));
+                }
+            }
+        }
+
+        if column == 1 {
+            resp.clone().on_hover_text(&row.path);
+        }
+
+        None
+    }
+
+    fn set_cell_value(&mut self, src: &RemoteDirEntry, dst: &mut RemoteDirEntry, column: usize) {
+        match column {
+            1 => dst.name = src.name.clone(),
+            2 => dst.modified = src.modified.clone(),
+            3 => dst.size = src.size,
+            4 => dst.is_directory = src.is_directory,
+            _ => {}
+        }
+    }
+
+    fn compare_cell(&self, l: &RemoteDirEntry, r: &RemoteDirEntry, column: usize) -> std::cmp::Ordering {
+        use std::cmp::Ordering::*;
+        // Directories always sort before files regardless of column
+        match (l.is_directory, r.is_directory) {
+            (true, false) => return Less,
+            (false, true) => return Greater,
+            _ => {}
+        }
+        match column {
+            0 => Equal,
+            1 => l.name.to_lowercase().cmp(&r.name.to_lowercase()),
+            2 => l.modified.cmp(&r.modified),
+            3 => l.size.unwrap_or(0).cmp(&r.size.unwrap_or(0)),
+            4 => {
+                let l_ext = l.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                let r_ext = r.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                l_ext.cmp(&r_ext)
+            }
+            _ => Equal,
+        }
+    }
+
+    fn new_empty_row(&mut self) -> RemoteDirEntry {
+        RemoteDirEntry {
+            name: String::new(),
+            path: String::new(),
+            is_directory: false,
+            size: None,
+            modified: None,
+        }
+    }
+
+    fn column_render_config(&mut self, column: usize, _is_editing: bool) -> TableColumnConfig {
+        let base = TableColumnConfig::auto();
+        match column {
+            0 => base.at_least(30.).at_most(35.),                    // icon
+            1 => base.at_least(200.).clip(true).resizable(true),     // name
+            2 => base.at_least(140.).at_most(160.).resizable(true),  // modified
+            3 => base.at_least(80.).at_most(100.),                   // size
+            4 => base.at_least(60.).at_most(80.),                    // type
+            _ => base,
+        }
+    }
+
+    fn custom_context_menu_items(
+        &mut self,
+        _context: &UiActionContext,
+        selection: &SelectionSnapshot<'_, RemoteDirEntry>,
+    ) -> Vec<CustomMenuItem> {
+        let has_selection = !selection.selected_rows.is_empty();
+        let first_is_dir = selection.selected_rows.first().map(|(_, r)| r.is_directory).unwrap_or(false);
+        let first_is_text = selection.selected_rows.first().map(|(_, r)| is_text_file(&r.name)).unwrap_or(false);
+        let first_is_image = selection.selected_rows.first().map(|(_, r)| is_image_file(&r.name)).unwrap_or(false);
+
+        let mut items = Vec::new();
+
+        if first_is_dir {
+            items.push(CustomMenuItem::new("open_dir", "Open").icon("📂").enabled(has_selection));
+        } else {
+            items.push(CustomMenuItem::new("execute", "Execute / Open").icon("▶").enabled(has_selection));
+            items.push(CustomMenuItem::new("download", "Download").icon("📥").enabled(has_selection));
+            if first_is_text {
+                items.push(CustomMenuItem::new("preview_text", "Preview").icon("👁").enabled(true));
+            }
+            if first_is_image {
+                items.push(CustomMenuItem::new("preview_image", "View Thumbnail").icon("🖼").enabled(true));
+            }
+            items.push(CustomMenuItem::new("copy_to_tools", "Copy to My Tools").icon("🧰").enabled(has_selection));
+        }
+        items.push(CustomMenuItem::new("delete", "Delete").icon("🗑").enabled(has_selection));
+        items.push(CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true));
+        items
+    }
+
+    fn on_custom_action_ex(
+        &mut self,
+        action_id: &'static str,
+        ctx: &CustomActionContext<'_, RemoteDirEntry>,
+        _editor: &mut CustomActionEditor<RemoteDirEntry>,
+    ) {
+        let Some(tx) = &self.action_tx else { return };
+        let first = ctx.selection.selected_rows.first().map(|(_, r)| r);
+
+        match action_id {
+            "open_dir" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::Navigate(row.path.clone()));
+                }
+            }
+            "execute" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::Execute(row.path.clone()));
+                }
+            }
+            "download" => {
+                for (_, row) in ctx.selection.selected_rows.iter() {
+                    if !row.is_directory {
+                        let _ = tx.try_send(ExplorerAction::Download(row.path.clone()));
+                    }
+                }
+            }
+            "preview_text" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::PreviewText(row.path.clone()));
+                }
+            }
+            "preview_image" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::PreviewImage(row.path.clone()));
+                }
+            }
+            "copy_to_tools" => {
+                if let Some(row) = first {
+                    let _ = tx.try_send(ExplorerAction::CopyToTools(row.path.clone()));
+                }
+            }
+            "delete" => {
+                for (_, row) in ctx.selection.selected_rows.iter() {
+                    let _ = tx.try_send(ExplorerAction::Delete(row.path.clone()));
+                }
+            }
+            "refresh" => {
+                let _ = tx.try_send(ExplorerAction::Refresh);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Get an appropriate icon for a file based on its extension

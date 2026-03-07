@@ -40,8 +40,8 @@ impl PersistentShell {
         let stderr = process.stderr.take().expect("Failed to get stderr");
         let stdin = process.stdin.take().expect("Failed to get stdin");
 
-        let mut stdout_reader = BufReader::new(stdout).lines();
-        let mut stderr_reader = BufReader::new(stderr).lines();
+        let mut stdout_reader = BufReader::new(stdout);
+        let mut stderr_reader = BufReader::new(stderr);
 
         // Store the process
         self.process = Some(process);
@@ -90,15 +90,15 @@ impl PersistentShell {
             
             let idle_timeout = Duration::from_millis(500);
             let mut received_any_output = false;
+            let mut line_buf = Vec::new();
             
             loop {
-                match timeout(idle_timeout, stdout_reader.next_line()).await {
-                    Ok(Ok(Some(line))) => {
-                        // Got a line of output - trim trailing whitespace (PowerShell pads with spaces)
+                match timeout(idle_timeout, stdout_reader.read_until(b'\n', &mut line_buf)).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        let line = String::from_utf8_lossy(&line_buf).to_string();
+                        line_buf.clear();
                         let trimmed = line.trim_end();
                         
-                        // Skip PowerShell prompt lines that echo the command back
-                        // These look like: "PS C:\path> command here"
                         let is_prompt_echo = trimmed.starts_with("PS ") && trimmed.contains(">");
                         
                         if !is_prompt_echo {
@@ -106,8 +106,7 @@ impl PersistentShell {
                         }
                         received_any_output = true;
                     }
-                    Ok(Ok(None)) => {
-                        // Stream ended (shell closed)
+                    Ok(Ok(_)) => {
                         break;
                     }
                     Ok(Err(e)) => {
@@ -115,17 +114,13 @@ impl PersistentShell {
                         break;
                     }
                     Err(_) => {
-                        // Timeout - no output for 500ms
                         if received_any_output {
-                            // We had output but now it stopped - command is done
                             tx_clone.send("DONE".as_bytes().to_vec()).ok();
                             received_any_output = false;
                             
-                            // Mark shell as ready for next command
                             let mut ready = is_ready_clone.lock().await;
                             *ready = true;
                         }
-                        // Continue waiting for more output (next command)
                     }
                 }
             }
@@ -135,8 +130,16 @@ impl PersistentShell {
         // Handle stderr
         let tx_clone = self.output_tx.clone();
         tokio::spawn(async move {
-            while let Some(line) = stderr_reader.next_line().await? {
-                tx_clone.send(format!("ERROR: {}\n", line.trim_end()).into_bytes()).ok();
+            let mut line_buf = Vec::new();
+            loop {
+                match stderr_reader.read_until(b'\n', &mut line_buf).await {
+                    Ok(n) if n > 0 => {
+                        let line = String::from_utf8_lossy(&line_buf).to_string();
+                        line_buf.clear();
+                        tx_clone.send(format!("ERROR: {}\n", line.trim_end()).into_bytes()).ok();
+                    }
+                    _ => break,
+                }
             }
             Ok::<(), anyhow::Error>(())
         });

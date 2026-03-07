@@ -108,7 +108,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
     debug!("get_tasks");
 
     let query = r#"
-        SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS false PARALLEL
+        SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS false 
     "#; // WITH INDEX idx_store_due_date
 
     /*
@@ -122,7 +122,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
             service_ticket, 
             service_ticket.computer, 
             service_ticket.customer
-        PARALLEL
+        
      */
     let start_query = Instant::now(); // Start timing the query
 
@@ -143,7 +143,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String
 pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_completed_tasks");
     let query = r#"
-        SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS true PARALLEL
+        SELECT * FROM task WHERE $this.assignee.store == $store AND $this.completed IS true 
     "#;
     
     /*
@@ -158,8 +158,8 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<LiveTaskPayload>>, sto
             service_ticket, 
             service_ticket.computer, 
             service_ticket.customer
-        PARALLEL
-    "#; */ // PARALLEL
+        
+    "#; */ // 
     
     let start_query = Instant::now(); // Start timing the query
 
@@ -196,7 +196,7 @@ pub async fn get_associated_task_notes(
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), Error> {
     debug!("get_store_users");
     let data: Vec<User> = DATABASE
-        .query("SELECT * FROM user WHERE store == $store AND active == true PARALLEL")
+        .query("SELECT * FROM user WHERE store == $store AND active == true ")
         .bind(("store", store))
         .await?
         .take(0)?;
@@ -298,7 +298,7 @@ pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<
     debug!("get_notifications");
     let notifications: Vec<Notification> = DATABASE
         .query(
-            "SELECT * FROM notification WHERE user == $auth.id ORDER BY created_at DESC LIMIT 50 PARALLEL"
+            "SELECT * FROM notification WHERE user == $auth.id ORDER BY created_at DESC LIMIT 50 "
         )
         .await?
         .take(0)?;

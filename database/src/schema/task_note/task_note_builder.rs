@@ -405,14 +405,14 @@ impl TaskNote {
         }
 
         let query_results: Vec<Self> = DATABASE
-            .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number PARALLEL")
+            .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number ")
             .bind(("service_number", service_number.to_string()))
             .await?
             .take(0)?;
 
         if query_results.is_empty() {
             Ok(DATABASE
-                .query("SELECT * FROM task_note WHERE service_number == $service_number PARALLEL")
+                .query("SELECT * FROM task_note WHERE service_number == $service_number ")
                 .bind(("service_number", service_number.to_string()))
                 .await?
                 .take::<Vec<TaskNote>>(0)?)
@@ -424,7 +424,7 @@ impl TaskNote {
     /// Retrieves database notes for a task ID.
     pub async fn get_db_notes_by_task_id(task_id: RecordId) -> Result<Vec<Self>> {
         Ok(DATABASE
-            .query("SELECT * FROM task_note WHERE task_id == $task_id PARALLEL")
+            .query("SELECT * FROM task_note WHERE task_id == $task_id ")
             .bind(("task_id", task_id))
             .await?
             .take::<Vec<TaskNote>>(0)?)

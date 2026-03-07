@@ -331,6 +331,36 @@ impl WebSocketClient {
                             message,
                             timestamp: chrono::Local::now().to_rfc3339(),
                         });
+                    } else if let Cmd::EventLogResponse(entries) = cmd {
+                        log::info!("Received {} event log entries", entries.len());
+                        self.event_log_viewer.set_entries(entries);
+                    } else if let Cmd::ServiceListResponse(services) = cmd {
+                        log::info!("Received {} services", services.len());
+                        self.services_viewer.set_entries(services);
+                    } else if let Cmd::ServiceActionResponse { name, success, message } = cmd {
+                        log::info!("Service action result: {} - {} - {}", name, success, message);
+                        self.services_viewer.set_action_result(name, success, message);
+                        // Refresh the service list after an action
+                        let _ = self.send_cmd_tx.try_send(Cmd::ListServices);
+                    } else if let Cmd::ScheduledTaskListResponse(tasks) = cmd {
+                        log::info!("Received {} scheduled tasks", tasks.len());
+                        self.task_scheduler_viewer.set_entries(tasks);
+                    } else if let Cmd::ScheduledTaskActionResponse { success, message } = cmd {
+                        log::info!("Task scheduler action result: {} - {}", success, message);
+                        self.task_scheduler_viewer.set_action_result(success, message);
+                        let _ = self.send_cmd_tx.try_send(Cmd::ListScheduledTasks { folder: None });
+                    } else if let Cmd::RegistryKeyResponse { path, subkeys, values } = cmd {
+                        log::info!("Received registry data for {} ({} subkeys, {} values)", path, subkeys.len(), values.len());
+                        self.registry_editor.set_key_data(path, subkeys, values);
+                    } else if let Cmd::RegistryBackupResponse { success, backup_path, message } = cmd {
+                        log::info!("Registry backup result: {} - {}", success, message);
+                        self.registry_editor.set_backup_result(success, backup_path, message);
+                    } else if let Cmd::RegistryEditResponse { success, message } = cmd {
+                        log::info!("Registry edit result: {} - {}", success, message);
+                        self.registry_editor.set_edit_result(success, message);
+                        if success && !self.registry_editor.selected_key.is_empty() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::ListRegistryKeys(self.registry_editor.selected_key.clone()));
+                        }
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }
