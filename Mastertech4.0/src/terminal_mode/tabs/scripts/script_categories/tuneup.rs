@@ -1,6 +1,5 @@
-use crate::{tabs::tur_sheet::get_ticket::SendRequest, terminal_mode::tabs::{checklist::Category, script_categories::{get_data_transfer_candidates, disable_hibernation_and_sleep}, scripts::Reporter, ScriptsTab}, utilities::{scripts::{get_running_processes, install_sas, install_supereasybackup, install_webroot, run_ps_script}, windows::windows_update::install_windows_updates}};
+use crate::{tabs::tur_sheet::get_ticket::SendRequest, terminal_mode::tabs::{checklist::Category, script_categories::{get_data_transfer_candidates, disable_hibernation_and_sleep}, scripts::Reporter, ScriptsTab}, utilities::{scripts::{antivirus::kill_sas_processes, install_sas, install_supereasybackup, install_webroot, run_ps_script}, windows::windows_update::install_windows_updates}};
 use crate::{utilities::{scripts::{install_program, StartupProgram, StartupState}, windows::{registry::{align_taskbar_left, disable_account_notifications, disable_content_delivery_allowed, disable_copilot, disable_lockscreen_notifications, disable_notifications, disable_recent_items_tracking, disable_silent_installed_apps_enabled, disable_start_account_notifications, disable_subscribed_content_enabled, disable_system_pane_suggestions_enabled, enable_more_pins_layout, remove_chat_from_taskbar}}}};
-use std::process::Command;
 
 
 impl <'a> ScriptsTab <'a> {
@@ -62,24 +61,8 @@ impl <'a> ScriptsTab <'a> {
             return;
         }
 
-        if let Ok(processes) = get_running_processes() {
-            for process in processes {
-                let name = process.process_name.to_lowercase();
-                let exe_path = process.exe_path.clone().unwrap_or_default().to_lowercase();
-                if name.contains("sascore") 
-                    || exe_path.contains("superanti") 
-                    || name.contains("superanti")
-                {
-                    self.log_message(format!("PID {} found, attempting to kill SAS", process.id));
-                    
-                    let output = Command::new("taskkill")
-                        .args(&["/PID", &format!("{}", process.id), "/F"])
-                        .output();
-                
-                    self.log_message(format!("{:?}", output));
-                }
-            }
-        }
+        let killed = kill_sas_processes();
+        self.log_message(format!("Killed {killed} SAS processes before install"));
 
         let so = self.service_number.clone();
         let tx = self.progress_tx.clone();
@@ -91,8 +74,14 @@ impl <'a> ScriptsTab <'a> {
             let key = cps_keys.get(0).cloned().unwrap_or_default();
             let res = install_webroot(key.webroot_key.clone(), client.clone(), tx.clone()).await;
             log::info!("install_webroot Result: {res:?}");
+
+            // install_sas now waits for the installer and re-kills + autoregisters internally
             let res = install_sas(key.superanti_key.clone(), client.clone(), tx).await;
             log::info!("install_sas Result: {res:?}");
+
+            // Final kill after everything settles so the key sticks
+            let killed = kill_sas_processes();
+            log::info!("Post-install killed {killed} SAS processes");
         });
 
         self.update_checklist(category.clone(), item_text, true);
@@ -241,10 +230,35 @@ impl <'a> ScriptsTab <'a> {
         self.update_checklist(category.clone(), item_text, true);
     }
 
-    /// TODO: NOT YET IMPLEMENTED
     pub fn change_superantispyware_settings(&mut self, item_text: &str, category: &Category) {
-        self.log_message("SuperAntiSpyware settings change not implemented.");
-        self.update_checklist(category.clone(), item_text, false);
+        use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_scheduled_tasks;
+
+        let sas_exe = std::path::Path::new(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+        if !sas_exe.exists() {
+            self.log_message("SUPERAntiSpyware is not installed yet. Install via Activate CPS first.");
+            self.update_checklist(category.clone(), item_text, false);
+            return;
+        }
+
+        self.log_message("Killing SAS processes before modifying database...");
+        let killed = kill_sas_processes();
+        self.log_message(format!("Killed {killed} SAS processes"));
+
+        // Brief pause to let file locks release
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        match configure_sas_scheduled_tasks() {
+            Ok((update_guid, scan_guid)) => {
+                self.log_message(format!("Created SAS update task: {update_guid}"));
+                self.log_message(format!("Created SAS quick-scan task: {scan_guid}"));
+                self.log_message("SAS scheduled tasks configured successfully.");
+                self.update_checklist(category.clone(), item_text, true);
+            }
+            Err(e) => {
+                self.log_message(format!("Failed to configure SAS tasks: {e}"));
+                self.update_checklist(category.clone(), item_text, false);
+            }
+        }
     }
 
     /// TODO: NOT YET IMPLEMENTED

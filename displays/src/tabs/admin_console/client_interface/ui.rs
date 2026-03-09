@@ -13,6 +13,7 @@ pub enum WsDisplayState {
     Services,
     TaskScheduler,
     Registry,
+    StartupApps,
 }
 
 impl WebSocketClient {
@@ -181,6 +182,14 @@ impl WebSocketClient {
                 if Button::new(RichText::new("Registry").color(sys_color).small()).ui(ui).clicked() {
                     let _ = self.display_state_channel.0.try_send(WsDisplayState::Registry);
                 }
+
+                if Button::new(RichText::new("Startup Apps").color(sys_color).small()).ui(ui).clicked() {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::StartupApps);
+                    if self.startup_apps_viewer.entries.is_empty() {
+                        let _ = self.send_cmd_tx.try_send(Cmd::ListStartupApps);
+                        self.startup_apps_viewer.loading = true;
+                    }
+                }
             });
             ui.add_space(2.);
         });
@@ -212,6 +221,10 @@ impl WebSocketClient {
             WsDisplayState::Registry => {
                 let cmd_tx = self.send_cmd_tx.clone();
                 self.registry_editor.display(ui, &cmd_tx);
+            },
+            WsDisplayState::StartupApps => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.startup_apps_viewer.display(ui, &cmd_tx);
             },
         };
     }

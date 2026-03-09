@@ -361,6 +361,15 @@ impl WebSocketClient {
                         if success && !self.registry_editor.selected_key.is_empty() {
                             let _ = self.send_cmd_tx.try_send(Cmd::ListRegistryKeys(self.registry_editor.selected_key.clone()));
                         }
+                    } else if let Cmd::StartupAppsResponse(apps) = cmd {
+                        log::info!("Received {} startup apps", apps.len());
+                        self.startup_apps_viewer.set_entries(apps);
+                    } else if let Cmd::StartupAppActionResponse { success, message } = cmd {
+                        log::info!("Startup app action result: {} - {}", success, message);
+                        self.startup_apps_viewer.set_action_result(success, message.clone());
+                        if success {
+                            let _ = self.send_cmd_tx.try_send(Cmd::ListStartupApps);
+                        }
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }

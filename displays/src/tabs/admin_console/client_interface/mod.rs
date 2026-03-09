@@ -9,6 +9,7 @@ use event_log_viewer::EventLogViewer;
 use services_viewer::ServicesViewer;
 use task_scheduler_viewer::TaskSchedulerViewer;
 use registry_editor::RegistryEditor;
+use startup_apps_viewer::StartupAppsViewer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ui::WsDisplayState;
@@ -30,6 +31,7 @@ pub mod event_log_viewer;
 pub mod services_viewer;
 pub mod task_scheduler_viewer;
 pub mod registry_editor;
+pub mod startup_apps_viewer;
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -118,6 +120,7 @@ pub struct WebSocketClient {
     pub services_viewer: ServicesViewer,
     pub task_scheduler_viewer: TaskSchedulerViewer,
     pub registry_editor: RegistryEditor,
+    pub startup_apps_viewer: StartupAppsViewer,
 }
 
 impl Drop for WebSocketClient {
@@ -248,6 +251,7 @@ Get-WmiObject")
             services_viewer: ServicesViewer::new(),
             task_scheduler_viewer: TaskSchedulerViewer::new(),
             registry_editor: RegistryEditor::new(),
+            startup_apps_viewer: StartupAppsViewer::new(),
         }
     }
 

@@ -1,5 +1,5 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
-use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, ScheduledTask, ServiceActionType, WindowsService};
+use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
@@ -1494,6 +1494,179 @@ impl TerminalWebsocketClient {
                 };
 
                 let response = Cmd::RegistryEditResponse { success: all_success, message };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::ListStartupApps => {
+                log::info!("websockets -> ListStartupApps");
+
+                let ps_cmd = r#"
+$paths = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+)
+$results = @()
+foreach ($path in $paths) {
+    if (Test-Path $path) {
+        $isApproved = $path -like "*StartupApproved*"
+        $props = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+        if ($props) {
+            $memberNames = ($props | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name) | Where-Object { $_ -notin @('PSPath','PSParentPath','PSChildName','PSProvider','PSDrive') }
+            foreach ($name in $memberNames) {
+                $value = $props.$name
+                $state = "Unknown"
+                $cmd = ""
+                if ($isApproved) {
+                    if ($value -is [byte[]] -and $value.Length -ge 1) {
+                        switch ($value[0]) {
+                            0x02 { $state = "Enabled" }
+                            0x03 { $state = "Disabled" }
+                            0x06 { $state = "DisabledByUser" }
+                            default { $state = "Unknown" }
+                        }
+                    }
+                    $runPath = $path -replace 'StartupApproved\\Run','Run'
+                    if (Test-Path $runPath) {
+                        $runProps = Get-ItemProperty -Path $runPath -ErrorAction SilentlyContinue
+                        if ($runProps -and ($runProps | Get-Member -Name $name -ErrorAction SilentlyContinue)) {
+                            $cmd = [string]$runProps.$name
+                        }
+                    }
+                } else {
+                    $cmd = [string]$value
+                    $approvedPath = $path -replace '\\Run$','\Explorer\StartupApproved\Run'
+                    if (Test-Path $approvedPath) {
+                        $approvedProps = Get-ItemProperty -Path $approvedPath -ErrorAction SilentlyContinue
+                        if ($approvedProps -and ($approvedProps | Get-Member -Name $name -ErrorAction SilentlyContinue)) {
+                            $aVal = $approvedProps.$name
+                            if ($aVal -is [byte[]] -and $aVal.Length -ge 1) {
+                                switch ($aVal[0]) {
+                                    0x02 { $state = "Enabled" }
+                                    0x03 { $state = "Disabled" }
+                                    0x06 { $state = "DisabledByUser" }
+                                    default { $state = "Unknown" }
+                                }
+                            }
+                        } else { $state = "Enabled" }
+                    } else { $state = "Enabled" }
+                }
+
+                $source = if ($path -like "HKLM:*") { "HKLM" } else { "HKCU" }
+                if ($path -like "*WOW6432Node*") { $source = "HKLM (32-bit)" }
+                if ($isApproved) { $source += " (Approved)" }
+
+                if (-not $isApproved -or $cmd -ne "") {
+                    $results += [pscustomobject]@{
+                        name = $name
+                        command = $cmd
+                        registry_path = $path
+                        state = $state
+                        source = $source
+                    }
+                }
+            }
+        }
+    }
+}
+$results | Sort-Object -Property name -Unique | ConvertTo-Json -Depth 3
+"#;
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", ps_cmd])
+                    .output()
+                    .await;
+
+                let apps: Vec<StartupApp> = match output {
+                    Ok(out) if out.status.success() => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let trimmed = stdout.trim();
+                        if trimmed.is_empty() || trimmed == "null" {
+                            Vec::new()
+                        } else {
+                            serde_json::from_str::<Vec<StartupApp>>(trimmed)
+                                .or_else(|_| serde_json::from_str::<StartupApp>(trimmed).map(|s| vec![s]))
+                                .unwrap_or_default()
+                        }
+                    }
+                    Ok(out) => {
+                        log::error!("ListStartupApps failed: {}", String::from_utf8_lossy(&out.stderr));
+                        Vec::new()
+                    }
+                    Err(e) => {
+                        log::error!("ListStartupApps error: {e}");
+                        Vec::new()
+                    }
+                };
+
+                let response = Cmd::StartupAppsResponse(apps);
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::ToggleStartupApp { name, registry_path, enable } => {
+                log::info!("websockets -> ToggleStartupApp: {} -> enable={}", name, enable);
+
+                // Determine the StartupApproved path from the registry_path
+                let approved_path = if registry_path.contains("StartupApproved") {
+                    registry_path.clone()
+                } else {
+                    registry_path.replace("\\Run", "\\Explorer\\StartupApproved\\Run")
+                };
+
+                let byte_val = if enable { "0x02" } else { "0x03" };
+
+                let ps_cmd = format!(
+                    r#"
+$path = '{approved_path}'
+$name = '{name}'
+if (Test-Path $path) {{
+    $props = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+    if ($props -and ($props | Get-Member -Name $name -ErrorAction SilentlyContinue)) {{
+        $current = $props.$name
+        if ($current -is [byte[]]) {{
+            $current[0] = {byte_val}
+            Set-ItemProperty -Path $path -Name $name -Value ([byte[]]$current) -ErrorAction Stop
+            'OK'
+        }} else {{
+            $newVal = [byte[]]@({byte_val},0,0,0,0,0,0,0,0,0,0,0)
+            Set-ItemProperty -Path $path -Name $name -Value $newVal -ErrorAction Stop
+            'OK'
+        }}
+    }} else {{
+        $newVal = [byte[]]@({byte_val},0,0,0,0,0,0,0,0,0,0,0)
+        New-ItemProperty -Path $path -Name $name -Value $newVal -PropertyType Binary -ErrorAction Stop | Out-Null
+        'OK'
+    }}
+}} else {{
+    Write-Error "Registry path not found: $path"
+}}
+"#
+                );
+
+                let output = tokio::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                    .await;
+
+                let (success, message) = match output {
+                    Ok(out) if out.status.success() => {
+                        let action = if enable { "enabled" } else { "disabled" };
+                        (true, format!("'{}' {}", name, action))
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                        (false, format!("Failed to toggle '{}': {}", name, stderr))
+                    }
+                    Err(e) => (false, format!("Error: {}", e)),
+                };
+
+                let response = Cmd::StartupAppActionResponse { success, message };
                 if let Ok(payload) = encode_to_vec(&response, standard()) {
                     sender.send(WsMessage::Binary(payload));
                 }

@@ -64,7 +64,7 @@ itertools = "0.14.0"
 unicode-width = "0.2.0"
 arboard = "3"
 tempfile = "3.19"
-xcap = "0.8.0"
+xcap = "0.9.0"
 display-info = "0.5"
 self-replace = "1.5.0"
 zstd = "0.13.3"
@@ -74,6 +74,7 @@ env_logger = "*"
 dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
 
 # nvme = "0.2.2"
 # surrealdb-alpha ={ workspace = true }
@@ -99,6 +100,7 @@ async-trait.workspace = true
 once_cell.workspace = true
 base64.workspace = true
 fuzzy-matcher.workspace = true
+uuid.workspace = true
 
 [dependencies.egui]
 version = "0.33"
