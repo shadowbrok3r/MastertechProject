@@ -179,10 +179,10 @@ impl ComputerInfo for ComputerData {
 
         #[cfg(target_os="windows")]
         {
-            // let installed_programs = InstalledProgram::get_installed_programs()?;
-            // if let Ok(programs) = serde_json::to_value(installed_programs) {
-            //     self.installed_programs = Some(programs);
-            // }
+            let installed_programs = crate::utilities::scripts::InstalledProgram::get_installed_programs()?;
+            if let Ok(programs) = serde_json::to_value(installed_programs) {
+                self.installed_programs = Some(programs);
+            }
 
             let license_status = check_windows_activation()?;
             if license_status.license_status == 1 {

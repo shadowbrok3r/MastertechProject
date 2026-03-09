@@ -313,6 +313,12 @@ pub enum Cmd {
     CommitRegistryEdits(Vec<RegistryEdit>),
     RegistryEditResponse { success: bool, message: String },
 
+    // --- Startup Apps ---
+    ListStartupApps,
+    StartupAppsResponse(Vec<StartupApp>),
+    ToggleStartupApp { name: String, registry_path: String, enable: bool },
+    StartupAppActionResponse { success: bool, message: String },
+
     None,
 }
 
@@ -375,6 +381,17 @@ pub enum RegistryEdit {
     DeleteValue { path: String, name: String },
     CreateKey { path: String },
     DeleteKey { path: String },
+}
+
+// --- Startup Apps ---
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StartupApp {
+    pub name: String,
+    pub command: String,
+    pub registry_path: String,
+    pub state: String,
+    pub source: String,
 }
 
 /// A remote directory entry for filesystem browsing

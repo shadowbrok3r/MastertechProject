@@ -1,3 +1,5 @@
+pub mod sas_tasks;
+
 use database::schema::{find_latest_carbonite_entry, CarboniteResponse};
 use tokio::{fs, io::AsyncWriteExt, process::Command};
 use winapi::um::winbase::CREATE_NO_WINDOW;
@@ -10,7 +12,31 @@ use sha2::Digest;
 use log::info;
 use std::{io, path::PathBuf, time::Duration};
 
-use super::InstalledProgram;
+use super::{get_running_processes, InstalledProgram};
+
+/// Kills all running SUPERAntiSpyware processes (SUPERAntiSpyware.exe, SASCore, SASTask, etc).
+/// Returns the number of processes killed.
+pub fn kill_sas_processes() -> u32 {
+    let mut killed = 0;
+    if let Ok(processes) = get_running_processes() {
+        for process in processes {
+            let name = process.process_name.to_lowercase();
+            let exe_path = process.exe_path.clone().unwrap_or_default().to_lowercase();
+            if name.contains("sascore")
+                || name.contains("sastask")
+                || exe_path.contains("superanti")
+                || name.contains("superanti")
+            {
+                log::info!("Killing SAS process PID {} ({})", process.id, process.process_name);
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &process.id.to_string(), "/F"])
+                    .output();
+                killed += 1;
+            }
+        }
+    }
+    killed
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AntiVirusProduct {
@@ -172,38 +198,42 @@ pub async fn install_sas(
     if activation_key.is_empty() {
         return Err(anyhow::anyhow!("Activation key is empty"));
     }
+
     if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
         for program in &mut *programs {
             if let (Some(publisher), Some(install_location)) = (&program.publisher, &program.install_location) {
                 if program.display_name.clone().unwrap_or_default().contains("SUPERAntiSpyware")
                     || publisher.clone().contains("SUPERAntiSpyware")
-                { // "C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe" /autoregister:1HT2-ZJEA-VV0B5
+                {
                     let path = PathBuf::from(install_location);
                     let sas_exe = path.join("SUPERAntiSpyware.exe");
                     if sas_exe.exists() {
-                        log::info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
+                        info!("SAS already installed, killing processes before autoregister");
+                        kill_sas_processes();
+                        tokio::time::sleep(Duration::from_secs(3)).await;
 
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        let cmd_stdout: tokio::process::Child = Command::new("cmd")
+                        info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
+                        let output = Command::new("cmd")
                             .arg("/C")
                             .arg(sas_exe.as_os_str())
                             .arg(format!("/autoregister:{activation_key}"))
                             .creation_flags(CREATE_NO_WINDOW)
-                            .spawn()?;
+                            .output()
+                            .await?;
 
-                        log::info!("cmd_stdout: {cmd_stdout:?}");
+                        info!("autoregister exit status: {:?}", output.status);
                         return Ok(());
-
-                    } else {log::info!("Install location: {sas_exe:?}");}
+                    } else {
+                        info!("Install location not found: {sas_exe:?}");
+                    }
                 }
             }
         }
     }
 
+    info!("SAS not found, downloading and installing...");
     let response = client
-        .get(format!(
-            "https://secure.superantispyware.com/SUPERAntiSpyware.exe"
-        ))
+        .get("https://secure.superantispyware.com/SUPERAntiSpyware.exe")
         .send()
         .await?;
 
@@ -229,21 +259,45 @@ pub async fn install_sas(
     }
 
     if downloaded_bytes == total_length {
-
         let hash = sha.finalize();
         info!("Download complete. SHA-256: {:x}", hash);
+
         #[cfg(target_os = "windows")]
         {
-            let cmd_stdout = Command::new("cmd")
+            info!("Running SAS installer (waiting for completion)...");
+            let installer_output = Command::new("cmd")
                 .arg("/C")
-                .arg(sas_path)
+                .arg(&sas_path)
                 .arg(format!("/REGCODE={activation_key}"))
                 .arg("/silent")
                 .creation_flags(CREATE_NO_WINDOW)
-                .spawn()?
-                .stdout;
+                .output()
+                .await?;
 
-            info!("cmd_stdout: {:?}", cmd_stdout);
+            info!("SAS installer exit status: {:?}", installer_output.status);
+
+            // Wait for SAS to fully start after install
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            // Kill SAS processes so autoregister can take effect
+            let killed = kill_sas_processes();
+            info!("Killed {killed} SAS processes post-install");
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            // Re-register with product key now that SAS is installed
+            let sas_exe = PathBuf::from(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+            if sas_exe.exists() {
+                info!("Running autoregister after fresh install");
+                let reg_output = Command::new("cmd")
+                    .arg("/C")
+                    .arg(sas_exe.as_os_str())
+                    .arg(format!("/autoregister:{activation_key}"))
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .await?;
+
+                info!("autoregister exit status: {:?}", reg_output.status);
+            }
         }
     }
     Ok(())
