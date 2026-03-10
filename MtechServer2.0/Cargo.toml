@@ -21,7 +21,7 @@ path = "src/workers/deser_worker.rs"
 [dependencies]
 displays = { path="../displays", features = ["wasm"]}
 gloo-worker = "0.5"
-js-sys = "0.3.83"
+js-sys = "0.3"
 zstd = "0.13"
 web-sys = { version = "0.3", features = [
 	"Storage",

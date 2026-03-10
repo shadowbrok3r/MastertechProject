@@ -27,10 +27,11 @@ inline = []
 [dependencies]
 eframe = { version="0.33", features=["persistence", "serde",  "default_fonts", "glow", "wayland"], default-features=false }
 displays = { path="../displays", features = ["tokio"] }
-reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "cookies", "brotli", "native-tls-vendored", "form", "charset", "http2", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
-sysinfo = {version = "0.38.0", features = ["serde", "multithread"]}
-quick-xml = { version="0.39.0", features = ["serialize"] }
+sysinfo = {version = "0.38", features = ["serde", "multithread"]}
+quick-xml = { version="0.39", features = ["serialize"] }
 tracing = { version = "0.1", features = ["log"] }
 clap = { version = "4.5", features = ["derive"] }
 sha2 = { version = "0.10", features = ["std"] }
@@ -38,7 +39,7 @@ nvml-wrapper = { version = "0.12.0", features = ["serde"] }
 strum = { version = "0.28.0", features = ["strum_macros", "derive"] }
 rmcp = { version = "1.1.1", features = ["server", "transport-io", "schemars"]}
 enigo = { version = "0.6.1", features = ["serde"] }
-indexmap = { version = "2.10.0", features = ["serde"] }
+indexmap = { version = "2.13.0", features = ["serde"] }
 tachyonfx = { version = "0.25.0"}
 tui-logger = { git = "https://github.com/shadowbrok3r/tui-logger" }
 rayon = "1"
@@ -136,7 +137,7 @@ windows = {version = "0.62", features = [
 ]}
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 minidump-processor = { version = "0.26", features = ["http"] }
-breakpad-symbols = { version = "0.26.0" }
+breakpad-symbols = { version = "0.26" }
 minidump-common = { version = "0.26" }
 minidump = { version = "0.26" }
 memmap2 = "0.9"
@@ -144,8 +145,8 @@ windows_x86_64_msvc = "0.53"
 minidump-unwind = "0.26"
 windows-registry = "0.6"
 windows-core = "0.62"
-wmi = "0.18.0"
-evtx = "0.11.0"
+wmi = "0.18"
+evtx = "0.11"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 dotenvy = { workspace = true }

@@ -81,6 +81,8 @@ impl eframe::App for app_state::MasterTechApp {
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::System::Threading::GetCurrentProcess;
