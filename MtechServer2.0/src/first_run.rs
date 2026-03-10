@@ -431,7 +431,12 @@ impl MtechServer {
                 };
 
                 if *should_we_undock {
-                    let color = if client.connected {
+                    let is_ws_connected = layout.ws_clients
+                        .get(&client.connection_string)
+                        .map(|wsc| wsc.is_connected && wsc.last_pong_time.is_some())
+                        .unwrap_or(false);
+                    
+                    let color = if is_ws_connected {
                         Color32::LIGHT_BLUE
                     } else {
                         Color32::LIGHT_RED
@@ -454,7 +459,7 @@ impl MtechServer {
                                 
                                 let tx = layout.ui_actions_channel.0.clone();
                                 
-                                ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone()));
+                                ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone(), is_ws_connected));
                                 if let Some(ws_client) =
                                     layout.ws_clients.get_mut(&client.connection_string)
                                 {
