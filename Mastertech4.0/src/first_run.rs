@@ -26,7 +26,23 @@ impl MasterTechApp {
                 }
                 let tx = self.context.shared_ctx.db_tx.clone();
                 spawn(async move {
-                    let db = Database::new(login.username, login.password, None).await;
+                    let db = Database::new(login.username.clone(), login.password.clone(), None).await;
+                    let db = match db {
+                        Ok(d) => Ok(d),
+                        Err(e) => {
+                            log::warn!("Initial DB signin failed ({e}), checking connectivity...");
+                            match crate::utilities::windows::net_adapter::ensure_internet_connected().await {
+                                Ok(()) => {
+                                    log::info!("Internet restored, retrying DB signin...");
+                                    Database::new(login.username, login.password, None).await
+                                }
+                                Err(net_err) => {
+                                    log::error!("No connectivity: {net_err}");
+                                    Err(e)
+                                }
+                            }
+                        }
+                    };
                     match tx.try_send(db) {
                         Ok(_) => drop(tx),
                         Err(e) => log::error!("Error sending specs: {e:?}"),

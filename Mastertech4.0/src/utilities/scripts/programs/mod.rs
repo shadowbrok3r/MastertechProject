@@ -1,9 +1,7 @@
 use std::io;
 
 use crossbeam::channel::Sender;
-use futures::StreamExt;
 use reqwest::Client;
-use sha2::Digest;
 use tokio::{fs, io::AsyncWriteExt, process::Command};
 use winapi::um::winbase::CREATE_NO_WINDOW;
 
@@ -209,31 +207,78 @@ impl InstalledProgram {
     }
 }
 
-/// TODO: THIS DOESNT DROP
 pub async fn install_program(
     url: String, 
     client: Client,
     progress_tx: Sender<(u64, u64)>,
 ) -> anyhow::Result<(), anyhow::Error> {
-
     log::info!("running install_program!");
-    let response = client
-        .get(url)
-        .send()
-        .await?;
 
+    let temp_directory = std::env::temp_dir();
+    let download_path = format!("{}\\prgrm.exe", temp_directory.display());
+
+    let need_download = match tokio::fs::metadata(&download_path).await {
+        Ok(meta) if meta.len() > 500_000 => {
+            log::info!("Cached installer found ({} bytes), trying it first", meta.len());
+            false
+        }
+        _ => true,
+    };
+
+    if need_download {
+        if let Err(e) = download_to_file(&client, &url, &download_path, &progress_tx).await {
+            log::info!("Download failed ({e}), checking connectivity...");
+            crate::utilities::windows::net_adapter::ensure_internet_connected().await?;
+            download_to_file(&client, &url, &download_path, &progress_tx).await?;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        log::info!("Running installer (waiting for completion)...");
+        let output = Command::new("cmd")
+            .arg("/C")
+            .arg(&download_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .await?;
+
+        log::info!("Installer exit status: {:?}", output.status);
+
+        if !output.status.success() {
+            log::info!("Cached installer failed, re-downloading...");
+            let _ = tokio::fs::remove_file(&download_path).await;
+            download_to_file(&client, &url, &download_path, &progress_tx).await?;
+
+            let retry = Command::new("cmd")
+                .arg("/C")
+                .arg(&download_path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .await?;
+            log::info!("Installer retry exit status: {:?}", retry.status);
+        }
+    }
+    Ok(())
+}
+
+async fn download_to_file(
+    client: &Client,
+    url: &str,
+    dest_path: &str,
+    progress_tx: &Sender<(u64, u64)>,
+) -> anyhow::Result<()> {
+    use futures::StreamExt;
+    use sha2::Digest;
+
+    let response = client.get(url).send().await?;
     let total_length = response.content_length().ok_or_else(|| {
         io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
     })?;
 
     let mut downloaded_bytes: u64 = 0;
-
-    let temp_directory = std::env::temp_dir();
-    let download_path: String = format!("{}\\prgrm.exe", temp_directory.display());
-
-    let mut file = fs::File::create(download_path.clone()).await?;
+    let mut file = fs::File::create(dest_path).await?;
     let mut sha = sha2::Sha256::new();
-
     let mut stream = response.bytes_stream();
 
     while let Some(item) = stream.next().await {
@@ -241,25 +286,17 @@ pub async fn install_program(
         file.write_all(&chunk).await?;
         sha.update(&chunk);
         downloaded_bytes += chunk.len() as u64;
-        progress_tx.try_send((downloaded_bytes, total_length))?;
+        let _ = progress_tx.try_send((downloaded_bytes, total_length));
     }
 
-    if downloaded_bytes == total_length {
-        let hash = sha.finalize();
-        log::info!("Download complete. SHA-256: {:x}", hash);
-
-        #[cfg(target_os = "windows")]
-        {
-            let cmd_stdout = Command::new("cmd")
-                .arg("/k ")
-                .arg(download_path)
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()?
-                .stdout;
-
-            log::info!("cmd_stdout: {:?}", cmd_stdout);
-        }
+    if downloaded_bytes != total_length {
+        return Err(anyhow::anyhow!(
+            "Incomplete download: got {downloaded_bytes} of {total_length} bytes"
+        ));
     }
+
+    let hash = sha.finalize();
+    log::info!("Download complete ({dest_path}). SHA-256: {:x}", hash);
     Ok(())
 }
 

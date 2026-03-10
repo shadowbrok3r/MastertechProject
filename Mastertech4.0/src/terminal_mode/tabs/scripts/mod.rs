@@ -42,9 +42,13 @@ pub struct ScriptsTab<'a> {
     update_log_rx: Receiver<WindowsUpdateEvent>,
     path_size_tx: Sender<Vec<(String, String)>>,
     path_size_rx: Receiver<Vec<(String, String)>>,
-    progress_tx: Sender<(u64, u64)>, // Receive progress updates
-    progress_rx: Receiver<(u64, u64)>, // Receive progress updates
+    progress_tx: Sender<(u64, u64)>,
+    progress_rx: Receiver<(u64, u64)>,
     progress: RefCell<Option<(u64, u64)>>,
+    pub script_log_tx: Sender<String>,
+    script_log_rx: Receiver<String>,
+    checklist_completion_tx: Sender<(Category, String, bool)>,
+    checklist_completion_rx: Receiver<(Category, String, bool)>,
     update_progress: RefCell<Option<u64>>,
     windows_installation: RefCell<bool>,
     
@@ -123,7 +127,8 @@ impl<'a> ScriptsTab<'a> {
         let (path_size_tx, path_size_rx) = crossbeam::channel::unbounded();
         let (data_transfer_progress_tx, data_transfer_progress_rx) = crossbeam::channel::unbounded();
         let (progress_tx, progress_rx) = crossbeam::channel::unbounded();
-        // let (update_progress_tx, update_progress_rx) = crossbeam::channel::unbounded();
+        let (script_log_tx, script_log_rx) = crossbeam::channel::unbounded();
+        let (checklist_completion_tx, checklist_completion_rx) = crossbeam::channel::unbounded();
 
         let mut checklists = HashMap::new();
         
@@ -249,6 +254,8 @@ impl<'a> ScriptsTab<'a> {
             data_transfer_progress_rx, 
             active_robocopy_processes: RefCell::new(HashMap::new()),
             progress_tx, progress_rx,
+            script_log_tx, script_log_rx,
+            checklist_completion_tx, checklist_completion_rx,
 
             checklists,
             #[cfg(target_os="windows")]
@@ -367,9 +374,16 @@ impl<'a> ScriptsTab<'a> {
             }
         }
 
+        while let Ok(msg) = self.script_log_rx.try_recv() {
+            self.log_message(&msg);
+        }
+
+        while let Ok((category, item_text, success)) = self.checklist_completion_rx.try_recv() {
+            self.update_checklist(category, &item_text, success);
+        }
+
         #[cfg(target_os="windows")]
         {
-            // listen for Windows Update logs & results
             if let Ok(event) = self.update_log_rx.try_recv() {
                 match event {
                     WindowsUpdateEvent::UpdateLogs(log) => self.log_message(&log),
