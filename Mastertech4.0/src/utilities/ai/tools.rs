@@ -587,17 +587,10 @@ impl DesktopToolProvider {
 impl ServerHandler for DesktopToolProvider {
     // Provide basic server information
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::LATEST,
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .enable_experimental()
-                .build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
-                INSTRUCTIONS.to_string()
-            ),
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_experimental().build())
+        .with_instructions(INSTRUCTIONS.to_string())
+        .with_server_info(Implementation::from_build_env())
+        .with_protocol_version(ProtocolVersion::LATEST)
     }
     // Add other ServerHandler methods if needed
 }
