@@ -7,8 +7,8 @@ exclude = ["surrealdb"]
 database = { path = "database" }
 eframe = { version="0.33", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
-surrealdb = { version = "3", features = ["protocol-ws"] }
-surrealdb-types = { version = "3" }
+surrealdb = { version = "3.0.3", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.0.3" }
 egui_extras = { version = "0.33", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
@@ -55,13 +55,13 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# # lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
-# codegen-units = 1
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+# lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
+codegen-units = 1
 
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"

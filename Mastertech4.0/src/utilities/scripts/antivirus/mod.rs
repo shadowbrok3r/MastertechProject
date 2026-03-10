@@ -143,48 +143,77 @@ pub async fn install_webroot(
     }
 
     info!("running install_webroot!");
-    let response = client
-        .get("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
-        .send()
-        .await?;
 
-    let total_length = response.content_length().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
-    })?;
-
-    let mut downloaded_bytes: u64 = 0;
+    // Skip download if Webroot is already installed
+    let wrsa_path = PathBuf::from(r"C:\Program Files\Webroot\WRSA.exe");
+    let wrsa_x86 = PathBuf::from(r"C:\Program Files (x86)\Webroot\WRSA.exe");
+    if wrsa_path.exists() || wrsa_x86.exists() {
+        info!("Webroot already installed, skipping download");
+        return Ok(());
+    }
 
     let temp_directory = std::env::temp_dir();
     let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
 
-    let mut file = fs::File::create(wrv_path.clone()).await?;
-    let mut sha = sha2::Sha256::new();
+    let need_download = match tokio::fs::metadata(&wrv_path).await {
+        Ok(meta) if meta.len() > 500_000 => {
+            info!("Cached Webroot installer found ({} bytes)", meta.len());
+            false
+        }
+        _ => true,
+    };
 
-    let mut stream = response.bytes_stream();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-        file.write_all(&chunk).await?;
-        sha.update(&chunk);
-        downloaded_bytes += chunk.len() as u64;
-        progress_tx.try_send((downloaded_bytes, total_length))?;
+    if need_download {
+        if let Err(e) = download_file(
+            &client,
+            "https://anywhere.webrootcloudav.com/zerol/wsainstall.exe",
+            &wrv_path,
+            &progress_tx,
+        ).await {
+            info!("Webroot download failed ({e}), checking connectivity...");
+            crate::utilities::windows::net_adapter::ensure_internet_connected().await?;
+            download_file(
+                &client,
+                "https://anywhere.webrootcloudav.com/zerol/wsainstall.exe",
+                &wrv_path,
+                &progress_tx,
+            ).await?;
+        }
     }
 
-    if downloaded_bytes == total_length {
-        let hash = sha.finalize();
-        info!("Download complete. SHA-256: {:x}", hash);
-        #[cfg(target_os = "windows")]
-        {
-            let cmd_stdout = Command::new("cmd")
-                .arg("/c ")
-                .arg(wrv_path)
+    #[cfg(target_os = "windows")]
+    {
+        info!("Running Webroot installer (waiting for completion)...");
+        let output = Command::new("cmd")
+            .arg("/C")
+            .arg(&wrv_path)
+            .arg(format!("/key={activation_key}"))
+            .arg("/silent")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .await?;
+
+        info!("Webroot installer exit status: {:?}", output.status);
+
+        if !output.status.success() {
+            info!("Cached Webroot installer failed, re-downloading...");
+            let _ = tokio::fs::remove_file(&wrv_path).await;
+            download_file(
+                &client,
+                "https://anywhere.webrootcloudav.com/zerol/wsainstall.exe",
+                &wrv_path,
+                &progress_tx,
+            ).await?;
+
+            let retry = Command::new("cmd")
+                .arg("/C")
+                .arg(&wrv_path)
                 .arg(format!("/key={activation_key}"))
                 .arg("/silent")
                 .creation_flags(CREATE_NO_WINDOW)
-                .spawn()?
-                .stdout;
-
-            info!("cmd_stdout: {:?}", cmd_stdout);
+                .output()
+                .await?;
+            info!("Webroot retry exit status: {:?}", retry.status);
         }
     }
     Ok(())
@@ -232,40 +261,61 @@ pub async fn install_sas(
     }
 
     info!("SAS not found, downloading and installing...");
-    let response = client
-        .get("https://secure.superantispyware.com/SUPERAntiSpyware.exe")
-        .send()
-        .await?;
-
-    let total_length = response.content_length().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
-    })?;
-    let mut downloaded_bytes: u64 = 0;
 
     let temp_directory = std::env::temp_dir();
     let sas_path = format!("{}\\sas.exe", temp_directory.display());
 
-    let mut file = fs::File::create(sas_path.clone()).await?;
-    let mut sha = sha2::Sha256::new();
+    let need_download = match tokio::fs::metadata(&sas_path).await {
+        Ok(meta) if meta.len() > 1_000_000 => {
+            info!("Cached SAS installer found ({} bytes), trying it first", meta.len());
+            false
+        }
+        _ => true,
+    };
 
-    let mut stream = response.bytes_stream();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-        file.write_all(&chunk).await?;
-        sha.update(&chunk);
-        downloaded_bytes += chunk.len() as u64;
-        progress_tx.try_send((downloaded_bytes, total_length))?;
+    if need_download {
+        if let Err(e) = download_file(
+            &client,
+            "https://secure.superantispyware.com/SUPERAntiSpyware.exe",
+            &sas_path,
+            &progress_tx,
+        ).await {
+            info!("SAS download failed ({e}), checking connectivity...");
+            crate::utilities::windows::net_adapter::ensure_internet_connected().await?;
+            download_file(
+                &client,
+                "https://secure.superantispyware.com/SUPERAntiSpyware.exe",
+                &sas_path,
+                &progress_tx,
+            ).await?;
+        }
     }
 
-    if downloaded_bytes == total_length {
-        let hash = sha.finalize();
-        info!("Download complete. SHA-256: {:x}", hash);
+    #[cfg(target_os = "windows")]
+    {
+        info!("Running SAS installer (waiting for completion)...");
+        let installer_output = Command::new("cmd")
+            .arg("/C")
+            .arg(&sas_path)
+            .arg(format!("/REGCODE={activation_key}"))
+            .arg("/silent")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .await?;
 
-        #[cfg(target_os = "windows")]
-        {
-            info!("Running SAS installer (waiting for completion)...");
-            let installer_output = Command::new("cmd")
+        info!("SAS installer exit status: {:?}", installer_output.status);
+
+        if !installer_output.status.success() {
+            info!("Cached installer failed, re-downloading...");
+            let _ = tokio::fs::remove_file(&sas_path).await;
+            download_file(
+                &client,
+                "https://secure.superantispyware.com/SUPERAntiSpyware.exe",
+                &sas_path,
+                &progress_tx,
+            ).await?;
+
+            let retry = Command::new("cmd")
                 .arg("/C")
                 .arg(&sas_path)
                 .arg(format!("/REGCODE={activation_key}"))
@@ -273,31 +323,26 @@ pub async fn install_sas(
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .await?;
+            info!("SAS installer retry exit status: {:?}", retry.status);
+        }
 
-            info!("SAS installer exit status: {:?}", installer_output.status);
+        tokio::time::sleep(Duration::from_secs(10)).await;
 
-            // Wait for SAS to fully start after install
-            tokio::time::sleep(Duration::from_secs(10)).await;
+        let killed = kill_sas_processes();
+        info!("Killed {killed} SAS processes post-install");
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
-            // Kill SAS processes so autoregister can take effect
-            let killed = kill_sas_processes();
-            info!("Killed {killed} SAS processes post-install");
-            tokio::time::sleep(Duration::from_secs(3)).await;
-
-            // Re-register with product key now that SAS is installed
-            let sas_exe = PathBuf::from(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
-            if sas_exe.exists() {
-                info!("Running autoregister after fresh install");
-                let reg_output = Command::new("cmd")
-                    .arg("/C")
-                    .arg(sas_exe.as_os_str())
-                    .arg(format!("/autoregister:{activation_key}"))
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-                    .await?;
-
-                info!("autoregister exit status: {:?}", reg_output.status);
-            }
+        let sas_exe = PathBuf::from(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+        if sas_exe.exists() {
+            info!("Running autoregister after fresh install");
+            let reg_output = Command::new("cmd")
+                .arg("/C")
+                .arg(sas_exe.as_os_str())
+                .arg(format!("/autoregister:{activation_key}"))
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .await?;
+            info!("autoregister exit status: {:?}", reg_output.status);
         }
     }
     Ok(())
@@ -310,23 +355,80 @@ pub async fn install_supereasybackup(
     progress_tx: Sender<(u64, u64)>,
 ) -> anyhow::Result<(), anyhow::Error> {
     info!("running install_supereasybackup!");
-    let response = client
-        .get("https://dcgeneral.blob.core.windows.net/downloads/MUS/v11.5.0/DCProtect-11.5.0.8737-SuperEasyBackup.msi")
-        .send()
-        .await?;
 
+    let temp_directory = std::env::temp_dir();
+    let seb_path = format!("{}\\seb.msi", temp_directory.display());
+
+    let need_download = match tokio::fs::metadata(&seb_path).await {
+        Ok(meta) if meta.len() > 500_000 => {
+            info!("Cached SEB installer found ({} bytes)", meta.len());
+            false
+        }
+        _ => true,
+    };
+
+    if need_download {
+        if let Err(e) = download_file(
+            &client,
+            "https://dcgeneral.blob.core.windows.net/downloads/MUS/v11.5.0/DCProtect-11.5.0.8737-SuperEasyBackup.msi",
+            &seb_path,
+            &progress_tx,
+        ).await {
+            info!("SEB download failed ({e}), checking connectivity...");
+            crate::utilities::windows::net_adapter::ensure_internet_connected().await?;
+            download_file(
+                &client,
+                "https://dcgeneral.blob.core.windows.net/downloads/MUS/v11.5.0/DCProtect-11.5.0.8737-SuperEasyBackup.msi",
+                &seb_path,
+                &progress_tx,
+            ).await?;
+        }
+    }
+
+    let response_json: Vec<CarboniteResponse> = CarboniteResponse::default()
+        .from_customer_email(customer_email, client.clone()).await?;
+
+    if response_json.is_empty() { return Err(anyhow::anyhow!("Response is empty")); }
+
+    if let Some(carbonite_entry) = find_latest_carbonite_entry(&response_json) {
+        let activation_code = &carbonite_entry.activation_code;
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_string = format!(
+                "msiexec /i \"{}\" /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}",
+                seb_path, activation_code
+            );
+
+            info!("Running SEB installer: {:?}", cmd_string);
+
+            let output = Command::new("powershell")
+                .arg("-Command")
+                .arg(cmd_string)
+                .creation_flags(0x08000000)
+                .output()
+                .await?;
+
+            info!("SEB installer exit status: {:?}", output.status);
+        }
+    }
+    Ok(())
+}
+
+/// Downloads a file from `url` into `dest_path`, streaming bytes and reporting progress.
+pub async fn download_file(
+    client: &Client,
+    url: &str,
+    dest_path: &str,
+    progress_tx: &Sender<(u64, u64)>,
+) -> anyhow::Result<()> {
+    let response = client.get(url).send().await?;
     let total_length = response.content_length().ok_or_else(|| {
         io::Error::new(io::ErrorKind::Other, "Content-Length header is missing")
     })?;
 
     let mut downloaded_bytes: u64 = 0;
-
-    let temp_directory = std::env::temp_dir();
-    let seb_path = format!("{}\\seb.msi", temp_directory.display());
-
-    let mut file = fs::File::create(seb_path.clone()).await?;
+    let mut file = fs::File::create(dest_path).await?;
     let mut sha = sha2::Sha256::new();
-
     let mut stream = response.bytes_stream();
 
     while let Some(item) = stream.next().await {
@@ -334,49 +436,16 @@ pub async fn install_supereasybackup(
         file.write_all(&chunk).await?;
         sha.update(&chunk);
         downloaded_bytes += chunk.len() as u64;
-        progress_tx.try_send((downloaded_bytes, total_length))?;
+        let _ = progress_tx.try_send((downloaded_bytes, total_length));
     }
 
-    if downloaded_bytes == total_length {
-        let response_json: Vec<CarboniteResponse> = CarboniteResponse::default().from_customer_email(customer_email, client.clone()).await?;
-        let hash = sha.finalize();
-        info!("Download complete. SHA-256: {:x}", hash);
-
-        if response_json.is_empty() { return Err(anyhow::anyhow!("Response is empty")); }
-
-        if let Some(carbonite_entry) = find_latest_carbonite_entry(&response_json) {
-            let activation_code = &carbonite_entry.activation_code;
-            #[cfg(target_os = "windows")]
-            {
-                let cmd_string = format!(
-                    "msiexec /i \"{}\" /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}",
-                    seb_path, activation_code
-                );
-
-                info!("cmd_string: {:?}", cmd_string);
-                
-                let cmd_stdout = Command::new("powershell")
-                    .arg("-Command") // Tells PowerShell to execute the following string as a command
-                    .arg(cmd_string)
-                    .creation_flags(0x08000000) // CREATE_NO_WINDOW flag
-                    .spawn()?;
-
-                // msiexec /i SuperEasyBackup.msi /qn Silent=1 ActivationURL=https://blue.mysecuredatavault.com ActivationCode={}
-                // let cmd_stdout = Command::new("msiexec")
-                //     .arg("/i")
-                //     .arg(seb_path)
-                //     .arg("/qn")
-                //     .arg("Silent=1")
-                //     .arg("ActivationURL=https://blue.mysecuredatavault.com")
-                //     .arg(format!("ActivationCode={}", activation_code))
-                //     .creation_flags(CREATE_NO_WINDOW)
-                //     .spawn()?;
-    
-                info!("cmd_stderr: {:?}", cmd_stdout.stderr);
-                info!("cmd_stdin: {:?}", cmd_stdout.stdin);
-                info!("cmd_stdout: {:?}", cmd_stdout.stdout);
-            }
-        }
+    if downloaded_bytes != total_length {
+        return Err(anyhow::anyhow!(
+            "Incomplete download: got {downloaded_bytes} of {total_length} bytes"
+        ));
     }
+
+    let hash = sha.finalize();
+    info!("Download complete ({dest_path}). SHA-256: {:x}", hash);
     Ok(())
 }

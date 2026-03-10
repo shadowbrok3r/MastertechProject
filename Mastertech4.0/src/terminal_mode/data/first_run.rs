@@ -12,7 +12,26 @@ impl <'a>TerminalApp<'a> {
             match loaded_data {
                 Some(login) => {
                     tokio::spawn(async move {
-                        match Database::new(login.username, login.password, None).await {
+                        let db_result = match Database::new(login.username.clone(), login.password.clone(), None).await {
+                            Ok(db) => Ok(db),
+                            Err(e) => {
+                                log::warn!("Initial DB signin failed ({e}), checking connectivity...");
+                                let already_connected = e.to_string().contains("Already connected");
+                                if already_connected {
+                                    Err(e)
+                                } else {
+                                    match crate::utilities::windows::net_adapter::ensure_internet_connected().await {
+                                        Ok(()) => {
+                                            log::info!("Internet restored, retrying DB signin...");
+                                            Database::new(login.username, login.password, None).await
+                                        }
+                                        Err(_) => Err(e),
+                                    }
+                                }
+                            }
+                        };
+
+                        match db_result {
                             Ok(db) => {
                                 if let Some(ref usr) = db.user {
                                     data_tx.send(Box::new(Notification::new(
@@ -25,13 +44,7 @@ impl <'a>TerminalApp<'a> {
                                     data_tx.send(Box::new(
                                         DataMessage(usr.clone())
                                     ))?;
-
-                                    // client.assigned_user = Some(usr.id.clone());
-
-                                    // let create_client = create_client(client.clone()).await;
-                                    // log::info!("Client Creation: {create_client:?}");
-
-                                }else{ 
+                                } else { 
                                     log::info!("no usr"); 
                                     let _ = DATABASE.invalidate().await;
                                     app_state_tx.try_send(AppState::NoAuth("Login".to_string()))?;
@@ -41,12 +54,10 @@ impl <'a>TerminalApp<'a> {
                             Err(e) => {
                                 log::error!("Error with db: {e:?}");
                                 let check = e.to_string().contains("Already connected");
-                                log::info!("db check: {check}");
                                 if check { 
                                     let user = User::get_current_user_from_auth().await;
                                     log::info!("user: {user:?}");
                                     if let Ok(Some(usr)) = user {
-            
                                         data_tx.send(Box::new(
                                             DataMessage(usr.clone())
                                         ))?;
@@ -59,7 +70,6 @@ impl <'a>TerminalApp<'a> {
                                         )))?;
                                     }
                                     app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; 
-            
                                 }
                                 else { app_state_tx.try_send(AppState::NoAuth(e.to_string()))?; }
                             },

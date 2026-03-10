@@ -46,13 +46,25 @@ impl <'a> ScriptsTab <'a> {
     }
     
     pub fn install_windows_updates(&mut self, item_text: &str, category: &Category) {
-        self.log_message("Running Windows Updates...");
+        self.log_message("Checking internet before Windows Updates...");
         let tx = self.update_log_tx.clone();
-        std::thread::spawn(move || {
-            let _ = install_windows_updates(tx, true, true);
+        let log_tx = self.script_log_tx.clone();
+        let checklist_tx = self.checklist_completion_tx.clone();
+        let category_clone = category.clone();
+        let item_clone = item_text.to_string();
+
+        tokio::spawn(async move {
+            if let Err(e) = crate::utilities::windows::net_adapter::ensure_internet_connected().await {
+                let _ = log_tx.try_send(format!("No internet for Windows Updates: {e}"));
+                let _ = checklist_tx.try_send((category_clone, item_clone, false));
+                return;
+            }
+            let _ = log_tx.try_send("Internet confirmed, starting Windows Updates...".into());
+            std::thread::spawn(move || {
+                let _ = install_windows_updates(tx, true, true);
+            });
+            let _ = checklist_tx.try_send((category_clone, item_clone, true));
         });
-        self.log_message("Windows Updates initiated.");
-        self.update_checklist(category.clone(), item_text, true);
     }
 
     pub fn activate_cps(&mut self, item_text: &str, category: &Category) {
@@ -67,24 +79,39 @@ impl <'a> ScriptsTab <'a> {
         let so = self.service_number.clone();
         let tx = self.progress_tx.clone();
         let client = self.client.clone();
-        
+        let log_tx = self.script_log_tx.clone();
+        let checklist_tx = self.checklist_completion_tx.clone();
+        let category_clone = category.clone();
+        let item_text_clone = item_text.to_string();
+
         tokio::spawn(async move {
+            let mut success = true;
+
             let cps_keys = SendRequest::get_cps(so.clone(), client.clone()).await.unwrap_or_default();
-            log::info!("CPS Request: {cps_keys:?}");
+            let _ = log_tx.try_send(format!("CPS keys retrieved: {cps_keys:?}"));
             let key = cps_keys.get(0).cloned().unwrap_or_default();
-            let res = install_webroot(key.webroot_key.clone(), client.clone(), tx.clone()).await;
-            log::info!("install_webroot Result: {res:?}");
 
-            // install_sas now waits for the installer and re-kills + autoregisters internally
-            let res = install_sas(key.superanti_key.clone(), client.clone(), tx).await;
-            log::info!("install_sas Result: {res:?}");
+            match install_webroot(key.webroot_key.clone(), client.clone(), tx.clone()).await {
+                Ok(_) => { let _ = log_tx.try_send("Webroot installed successfully".into()); }
+                Err(e) => {
+                    let _ = log_tx.try_send(format!("Webroot install error: {e}"));
+                    success = false;
+                }
+            }
 
-            // Final kill after everything settles so the key sticks
+            match install_sas(key.superanti_key.clone(), client.clone(), tx).await {
+                Ok(_) => { let _ = log_tx.try_send("SAS installed successfully".into()); }
+                Err(e) => {
+                    let _ = log_tx.try_send(format!("SAS install error: {e}"));
+                    success = false;
+                }
+            }
+
             let killed = kill_sas_processes();
-            log::info!("Post-install killed {killed} SAS processes");
-        });
+            let _ = log_tx.try_send(format!("Post-install killed {killed} SAS processes"));
 
-        self.update_checklist(category.clone(), item_text, true);
+            let _ = checklist_tx.try_send((category_clone, item_text_clone, success));
+        });
     }
 
     pub fn activate_seb(&mut self, item_text: &str, category: &Category) {

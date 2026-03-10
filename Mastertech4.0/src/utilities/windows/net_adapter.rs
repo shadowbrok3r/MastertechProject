@@ -333,73 +333,99 @@ pub fn check_network_adapters() -> anyhow::Result<Vec<String>, anyhow::Error> {
 }
 
 pub fn get_wlan_status() -> anyhow::Result<(), anyhow::Error> {
-    log::info!("Starting WLAN status check...");
+    if is_wlan_connected() {
+        log::info!("WLAN status: Connected");
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("WLAN is not connected"))
+    }
+}
 
+/// Returns true if any WLAN interface reports a connected state.
+pub fn is_wlan_connected() -> bool {
     unsafe {
         let mut client_handle: HANDLE = HANDLE(std::ptr::null_mut());
         let mut negotiated_version: u32 = 0;
 
-        log::info!("Opening WLAN client handle...");
-        if WlanOpenHandle(2, None, &mut negotiated_version, &mut client_handle) == 0 {
-            log::info!("Successfully opened WLAN client handle.");
+        if WlanOpenHandle(2, None, &mut negotiated_version, &mut client_handle) != 0 {
+            return false;
+        }
 
-            let mut interface_list_ptr: *mut WLAN_INTERFACE_INFO_LIST = null_mut();
-
-            log::info!("Enumerating WLAN interfaces...");
-            if WlanEnumInterfaces(client_handle, None, &mut interface_list_ptr) == 0 {
-                let interface_list = &*interface_list_ptr;
-                log::info!("Found {} WLAN interfaces.", interface_list.dwNumberOfItems);
-
-                for i in 0..interface_list.dwNumberOfItems {
-                    let interface_info: &WLAN_INTERFACE_INFO = &interface_list.InterfaceInfo[i as usize];
-                    let interface_name = PCWSTR(interface_info.strInterfaceDescription.as_ptr()).to_string()?;
-
-                    log::info!("Processing WLAN interface: {}", interface_name);
-
-                    // Query connection status
-                    let mut data_size: u32 = 0;
-                    let mut data_ptr: *mut std::ffi::c_void = null_mut();
-                    let wlan_interface_query = WlanQueryInterface(
-                        client_handle,
-                        &interface_info.InterfaceGuid,
-                        WLAN_INTF_OPCODE(0),
-                        None,
-                        &mut data_size,
-                        &mut data_ptr,
-                        None,
-                    );
-
-                    if wlan_interface_query == 0
-                    {
-                        let connection_attributes = &*(data_ptr as *mut WLAN_CONNECTION_ATTRIBUTES);
-                        let status = if connection_attributes.isState == wlan_interface_state_connected {
-                            "Connected"
-                        } else {
-                            "Not Connected"
-                        };
-
-                        log::info!(
-                            "WLAN Interface: {} | Status: {} | Interface GUID: {:?}",
-                            interface_name,
-                            status,
-                            interface_info.InterfaceGuid
-                        );
-                    } else {
-                        log::error!("Failed to query WLAN interface status for {} => {}", interface_name, wlan_interface_query);
-                    }
-                }
-            } else {
-                log::error!("Failed to enumerate WLAN interfaces.");
-            }
-
-            // Close handle
-            log::info!("Closing WLAN client handle...");
+        let mut interface_list_ptr: *mut WLAN_INTERFACE_INFO_LIST = null_mut();
+        if WlanEnumInterfaces(client_handle, None, &mut interface_list_ptr) != 0 {
             WlanCloseHandle(client_handle, None);
-        } else {
-            log::error!("Failed to open WLAN client handle.");
+            return false;
+        }
+
+        let interface_list = &*interface_list_ptr;
+        let mut connected = false;
+
+        for i in 0..interface_list.dwNumberOfItems {
+            let interface_info: &WLAN_INTERFACE_INFO = &interface_list.InterfaceInfo[i as usize];
+
+            let mut data_size: u32 = 0;
+            let mut data_ptr: *mut std::ffi::c_void = null_mut();
+            let query_result = WlanQueryInterface(
+                client_handle,
+                &interface_info.InterfaceGuid,
+                WLAN_INTF_OPCODE(0),
+                None,
+                &mut data_size,
+                &mut data_ptr,
+                None,
+            );
+
+            if query_result == 0 {
+                let attrs = &*(data_ptr as *mut WLAN_CONNECTION_ATTRIBUTES);
+                if attrs.isState == wlan_interface_state_connected {
+                    connected = true;
+                    break;
+                }
+            }
+        }
+
+        WlanCloseHandle(client_handle, None);
+        connected
+    }
+}
+
+/// Verifies internet connectivity, attempting to reconnect via Wi-Fi if offline.
+/// Tries a quick HTTP request first; if that fails, checks WLAN and reconnects.
+/// Polls up to ~15 seconds total before giving up.
+pub async fn ensure_internet_connected() -> anyhow::Result<()> {
+    // Quick connectivity test via HTTP
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    if client.head("http://clients3.google.com/generate_204")
+        .send().await.is_ok()
+    {
+        return Ok(());
+    }
+
+    log::warn!("Internet check failed, attempting WiFi reconnect...");
+
+    if !is_wlan_connected() {
+        let _ = connect_to_wifi("PClaptops5.0", Some("bestburger"), None);
+    }
+
+    // Poll for connectivity (3 attempts, ~5s each)
+    for attempt in 1..=3 {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        if client.head("http://clients3.google.com/generate_204")
+            .send().await.is_ok()
+        {
+            log::info!("Internet restored after {attempt} attempt(s)");
+            return Ok(());
+        }
+
+        if !is_wlan_connected() {
+            let _ = connect_to_wifi("PClaptops5.0", Some("bestburger"), None);
         }
     }
 
-    log::info!("WLAN status check completed.");
-    Ok(())
+    Err(anyhow::anyhow!("No internet connectivity after reconnect attempts"))
 }
