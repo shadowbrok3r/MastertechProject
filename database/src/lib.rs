@@ -40,8 +40,8 @@ pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
 pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
 pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");
-pub const BUCKET_DEV_WINDOWS_URL: &str = "D:/SurrealBuckets/";
-pub const BUCKET_DEV_LINUX_URL: &str = "/home/shadowbroker/Documents/SurrealKV";
+pub const BUCKET_DEV_WINDOWS_URL: &str = "C:/SurrealBuckets/";
+pub const BUCKET_DEV_LINUX_URL: &str = "/home/shadowbroker/Documents/SurrealKV/";
 pub const BUCKET_URL: &str = "/SurrealBuckets";
 
 // JWT token type - in v3.0 this is just a String
@@ -214,17 +214,20 @@ impl Database {
                     if cfg!(debug_assertions)  {
                         if cfg!(target_os = "windows") {
                             let bucket_url = format!("{}{}", BUCKET_DEV_WINDOWS_URL, u.get_user_bucket_name());
-                            let _ = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await;
+                            if let Err(e) = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await {
+                                log::warn!("Failed to define user bucket: {e}");
+                            }
                         } else if cfg!(target_os = "linux") {
                             let bucket_url = format!("{}{}", BUCKET_DEV_LINUX_URL, u.get_user_bucket_name());
-                            let _ = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await;
+                            if let Err(e) = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await {
+                                log::warn!("Failed to define user bucket: {e}");
+                            }
                         }
                     } else {
                         let bucket_url = format!("{}{}", BUCKET_URL, u.get_user_bucket_name());
-                        let _ = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await;
-                    }
-                    if let Err(e) = file_storage::init_user_bucket(&u.get_user_bucket_name()).await {
-                        log::warn!("Failed to initialize user bucket: {e}");
+                        if let Err(e) = file_storage::define_bucket(&u.get_user_bucket_name(), &bucket_url).await {
+                            log::warn!("Failed to define user bucket: {e}");
+                        }
                     }
                 
                     // lock only after await

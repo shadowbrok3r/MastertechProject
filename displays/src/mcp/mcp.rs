@@ -17,6 +17,10 @@ use super::tools::{
     mcp_complete_command,
     mcp_execute_script,
     mcp_wait as mcp_wait_payload,
+    mcp_list_scripts,
+    mcp_read_script,
+    mcp_save_script,
+    mcp_delete_script,
 };
 
 // --- Shared domain types (pared down to what tools need) ---
@@ -239,10 +243,94 @@ impl DiagnosticToolProvider {
     let payload = mcp_wait_payload(Some(ms)).await.map_err(to_internal)?;
     Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
+
+    /// List scripts stored in the user's SurrealDB toolbox bucket.
+    #[tool(name = "list_scripts", description = "List all scripts in the user's script toolbox. Returns script names, paths, and sizes.")]
+    async fn list_scripts(
+        &self,
+        Parameters(p): Parameters<ListScriptsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let bucket = resolve_bucket(&p.bucket_name);
+        let payload = mcp_list_scripts(&bucket).await.map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+    }
+
+    /// Read the contents of a script from the toolbox.
+    #[tool(name = "read_script", description = "Read a script's contents from the user's toolbox. Provide the script filename (e.g. 'cleanup.ps1').")]
+    async fn read_script(
+        &self,
+        Parameters(p): Parameters<ReadScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let bucket = resolve_bucket(&p.bucket_name);
+        let payload = mcp_read_script(&bucket, &p.script_name).await.map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+    }
+
+    /// Save or update a script in the toolbox.
+    #[tool(name = "save_script", description = "Save a script to the user's toolbox. Provide the filename and full script content.")]
+    async fn save_script(
+        &self,
+        Parameters(p): Parameters<SaveScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let bucket = resolve_bucket(&p.bucket_name);
+        let payload = mcp_save_script(&bucket, &p.script_name, &p.content).await.map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+    }
+
+    /// Delete a script from the toolbox.
+    #[tool(name = "delete_script", description = "Delete a script from the user's toolbox.")]
+    async fn delete_script(
+        &self,
+        Parameters(p): Parameters<DeleteScriptParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let bucket = resolve_bucket(&p.bucket_name);
+        let payload = mcp_delete_script(&bucket, &p.script_name).await.map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+    }
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 struct DurationParams { #[schemars(default)] duration_ms: Option<u64> }
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+struct ListScriptsParams {
+    #[schemars(description = "SurrealDB bucket name (user bucket). Defaults to current logged-in user's bucket.")]
+    pub bucket_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+struct ReadScriptParams {
+    #[schemars(description = "Script filename to read (e.g. 'cleanup.ps1')")]
+    pub script_name: String,
+    #[schemars(description = "SurrealDB bucket name. Defaults to current logged-in user's bucket.")]
+    pub bucket_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+struct SaveScriptParams {
+    #[schemars(description = "Script filename (e.g. 'cleanup.ps1'). Will be saved under Scripts/ prefix.")]
+    pub script_name: String,
+    #[schemars(description = "Full script content to save")]
+    pub content: String,
+    #[schemars(description = "SurrealDB bucket name. Defaults to current logged-in user's bucket.")]
+    pub bucket_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+struct DeleteScriptParams {
+    #[schemars(description = "Script filename to delete")]
+    pub script_name: String,
+    #[schemars(description = "SurrealDB bucket name. Defaults to current logged-in user's bucket.")]
+    pub bucket_name: Option<String>,
+}
+
+fn resolve_bucket(name: &Option<String>) -> String {
+    name.clone().unwrap_or_else(|| {
+        database::get_current_user_from_auth()
+            .map(|u| u.get_user_bucket_name())
+            .unwrap_or_else(|| "default".to_string())
+    })
+}
 
 #[allow(dead_code)]
 fn assess_script_risk(script: &str) -> RiskLevel {
@@ -257,7 +345,11 @@ fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
 }
 
 // --- Server metadata ---
-const INSTRUCTIONS: &str = "Mastertech Diagnostics – rmcp tools bundle. Use provided tools to analyze Windows systems. Avoid destructive actions without explicit approval.";
+const INSTRUCTIONS: &str = "Mastertech Diagnostics & Script Toolbox – rmcp tools bundle. \
+Use diagnostic tools to analyze Windows systems (BSOD, event logs, performance, etc.). \
+Use script tools (list_scripts, read_script, save_script, delete_script) to manage \
+PowerShell/batch scripts in the user's SurrealDB toolbox. \
+Avoid destructive actions without explicit approval.";
 
 #[tool_handler]
 impl ServerHandler for DiagnosticToolProvider {

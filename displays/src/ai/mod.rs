@@ -1,4 +1,5 @@
-const OPENAI_API_KEY: &str = "sk-proj-jjm5pUg5Li01U0z20cTPT3BlbkFJ5WQ40DMLpF1VeRPn4Ls6";
+pub(crate) const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
+pub(crate) const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
 
 // region:    --- Modules
 

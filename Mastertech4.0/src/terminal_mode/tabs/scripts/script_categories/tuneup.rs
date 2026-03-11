@@ -8,7 +8,8 @@ impl <'a> ScriptsTab <'a> {
         self.log_message(&format!("Starting Tuneup script: {}", item_text));
         match item_text {
             "Disable Sleep / Hibernation" => self.disable_sleep_hibernation(item_text, category),
-            "Activate CPS" => self.activate_cps(item_text, category),
+            "Activate Webroot" => self.activate_webroot(item_text, category),
+            "Activate SuperAnti" => self.activate_superanti(item_text, category),
             "Activate SEB" => self.activate_seb(item_text, category),
             "Run Tron" => self.run_tron(item_text, category),
             "Run SuperAntiSpyware Scan" => self.run_superantispyware_scan(item_text, category),
@@ -67,9 +68,37 @@ impl <'a> ScriptsTab <'a> {
         });
     }
 
-    pub fn activate_cps(&mut self, item_text: &str, category: &Category) {
+    pub fn activate_webroot(&mut self, item_text: &str, category: &Category) {
         if self.service_number.is_empty() {
-            self.log_message("CPS activation requires SO number.");
+            self.log_message("Webroot activation requires SO number.");
+            return;
+        }
+
+        let so = self.service_number.clone();
+        let tx = self.progress_tx.clone();
+        let client = self.client.clone();
+        let log_tx = self.script_log_tx.clone();
+        let checklist_tx = self.checklist_completion_tx.clone();
+        let category_clone = category.clone();
+        let item_text_clone = item_text.to_string();
+
+        tokio::spawn(async move {
+            let cps_keys = SendRequest::get_cps(so, client.clone()).await.unwrap_or_default();
+            let key = cps_keys.get(0).cloned().unwrap_or_default();
+            let _ = log_tx.try_send(format!("Webroot key: {}", key.webroot_key));
+
+            let success = match install_webroot(key.webroot_key, client, tx).await {
+                Ok(_) => { let _ = log_tx.try_send("Webroot installed successfully".into()); true }
+                Err(e) => { let _ = log_tx.try_send(format!("Webroot install error: {e}")); false }
+            };
+
+            let _ = checklist_tx.try_send((category_clone, item_text_clone, success));
+        });
+    }
+
+    pub fn activate_superanti(&mut self, item_text: &str, category: &Category) {
+        if self.service_number.is_empty() {
+            self.log_message("SuperAnti activation requires SO number.");
             return;
         }
 
@@ -85,27 +114,14 @@ impl <'a> ScriptsTab <'a> {
         let item_text_clone = item_text.to_string();
 
         tokio::spawn(async move {
-            let mut success = true;
-
-            let cps_keys = SendRequest::get_cps(so.clone(), client.clone()).await.unwrap_or_default();
-            let _ = log_tx.try_send(format!("CPS keys retrieved: {cps_keys:?}"));
+            let cps_keys = SendRequest::get_cps(so, client.clone()).await.unwrap_or_default();
             let key = cps_keys.get(0).cloned().unwrap_or_default();
+            let _ = log_tx.try_send(format!("SuperAnti key: {}", key.superanti_key));
 
-            match install_webroot(key.webroot_key.clone(), client.clone(), tx.clone()).await {
-                Ok(_) => { let _ = log_tx.try_send("Webroot installed successfully".into()); }
-                Err(e) => {
-                    let _ = log_tx.try_send(format!("Webroot install error: {e}"));
-                    success = false;
-                }
-            }
-
-            match install_sas(key.superanti_key.clone(), client.clone(), tx).await {
-                Ok(_) => { let _ = log_tx.try_send("SAS installed successfully".into()); }
-                Err(e) => {
-                    let _ = log_tx.try_send(format!("SAS install error: {e}"));
-                    success = false;
-                }
-            }
+            let success = match install_sas(key.superanti_key, client, tx).await {
+                Ok(_) => { let _ = log_tx.try_send("SAS installed successfully".into()); true }
+                Err(e) => { let _ = log_tx.try_send(format!("SAS install error: {e}")); false }
+            };
 
             let killed = kill_sas_processes();
             let _ = log_tx.try_send(format!("Post-install killed {killed} SAS processes"));

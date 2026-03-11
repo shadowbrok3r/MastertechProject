@@ -370,6 +370,20 @@ impl WebSocketClient {
                         if success {
                             let _ = self.send_cmd_tx.try_send(Cmd::ListStartupApps);
                         }
+                    } else if let Cmd::RemoteScriptListResponse { categories } = cmd {
+                        log::info!("Received {} script categories", categories.len());
+                        self.remote_scripts_viewer.set_script_list(categories);
+                        if let Some(user) = crate::get_current_user_from_auth() {
+                            self.remote_scripts_viewer.load_custom_scripts(&user.get_user_bucket_name());
+                        }
+                    } else if let Cmd::RemoteScriptLog(msg) = cmd {
+                        self.remote_scripts_viewer.append_log(msg);
+                    } else if let Cmd::RemoteScriptResult { name, status } = cmd {
+                        log::info!("Script result: {} - {:?}", name, status);
+                        self.remote_scripts_viewer.set_script_result(name, status);
+                    } else if let Cmd::RemoteScriptsComplete = cmd {
+                        log::info!("All remote scripts completed");
+                        self.remote_scripts_viewer.set_complete();
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }

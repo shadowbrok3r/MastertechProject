@@ -319,6 +319,14 @@ pub enum Cmd {
     ToggleStartupApp { name: String, registry_path: String, enable: bool },
     StartupAppActionResponse { success: bool, message: String },
 
+    // --- Remote Scripts ---
+    GetRemoteScriptList,
+    RemoteScriptListResponse { categories: Vec<(String, Vec<RemoteScriptItem>)> },
+    RunRemoteScripts { scripts: Vec<RemoteScriptItem>, service_number: String, customer_email: String },
+    RemoteScriptLog(String),
+    RemoteScriptResult { name: String, status: RemoteScriptStatus },
+    RemoteScriptsComplete,
+
     None,
 }
 
@@ -392,6 +400,21 @@ pub struct StartupApp {
     pub registry_path: String,
     pub state: String,
     pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteScriptItem {
+    pub name: String,
+    pub category: String,
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum RemoteScriptStatus {
+    Running,
+    Success,
+    Failed,
 }
 
 /// A remote directory entry for filesystem browsing

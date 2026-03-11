@@ -1,5 +1,5 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
-use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
+use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
@@ -1668,6 +1668,494 @@ if (Test-Path $path) {{
 
                 let response = Cmd::StartupAppActionResponse { success, message };
                 if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::GetRemoteScriptList => {
+                log::info!("websockets -> GetRemoteScriptList");
+                let builtin = |name: &str, cat: &str| RemoteScriptItem {
+                    name: name.into(), category: cat.into(), content: None,
+                };
+                let categories = vec![
+                    ("Tuneup / QC".to_string(), vec![
+                        builtin("Data Transfer", "Tuneup / QC"),
+                        builtin("Activate Webroot", "Tuneup / QC"),
+                        builtin("Activate SuperAnti", "Tuneup / QC"),
+                        builtin("Activate SEB", "Tuneup / QC"),
+                        builtin("Install Windows Updates", "Tuneup / QC"),
+                        builtin("Disable Sleep / Hibernation", "Tuneup / QC"),
+                        builtin("Run SuperAntiSpyware Scan", "Tuneup / QC"),
+                        builtin("Run Webroot Scan", "Tuneup / QC"),
+                        builtin("Run Tron", "Tuneup / QC"),
+                        builtin("Install LibreOffice", "Tuneup / QC"),
+                        builtin("Disable proxy settings", "Tuneup / QC"),
+                        builtin("Disable Notifications", "Tuneup / QC"),
+                        builtin("Change SuperAntiSpyware settings", "Tuneup / QC"),
+                        builtin("Disable Startup Apps", "Tuneup / QC"),
+                        builtin("Unpin Copilot", "Tuneup / QC"),
+                        builtin("Align Taskbar to left", "Tuneup / QC"),
+                    ]),
+                    ("Informational".to_string(), vec![
+                        builtin("Is SuperEasyBackup installed?", "Informational"),
+                        builtin("Is Webroot installed?", "Informational"),
+                        builtin("Is SuperAntiSpyware installed?", "Informational"),
+                        builtin("Are there scheduled tasks for it?", "Informational"),
+                        builtin("Is Windows Activated?", "Informational"),
+                        builtin("Is Hibernation/Sleep enabled?", "Informational"),
+                        builtin("Any Recent Blue Screens?", "Informational"),
+                        builtin("When Was The Last Service Date?", "Informational"),
+                        builtin("Windows Version", "Informational"),
+                        builtin("Check Updates", "Informational"),
+                        builtin("Run Prechecks", "Informational"),
+                    ]),
+                    ("Junkware Removal".to_string(), vec![
+                        builtin("OneLaunch", "Junkware Removal"),
+                        builtin("WebNavigator Browser", "Junkware Removal"),
+                        builtin("Wave Browser", "Junkware Removal"),
+                        builtin("Clear Browser", "Junkware Removal"),
+                        builtin("Shift Browser", "Junkware Removal"),
+                        builtin("Avast Browser", "Junkware Removal"),
+                        builtin("Mcaffee Safe", "Junkware Removal"),
+                        builtin("Driver Support", "Junkware Removal"),
+                        builtin("Winzip", "Junkware Removal"),
+                    ]),
+                ];
+                let response = Cmd::RemoteScriptListResponse { categories };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::RunRemoteScripts { scripts, service_number, customer_email } => {
+                log::info!("websockets -> RunRemoteScripts: {} scripts, SO={}", scripts.len(), service_number);
+
+                let send_log = |sender: &mut ewebsock::WsSender, msg: String| {
+                    let cmd = Cmd::RemoteScriptLog(msg);
+                    if let Ok(payload) = encode_to_vec(&cmd, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                };
+
+                let send_result = |sender: &mut ewebsock::WsSender, name: &str, status: RemoteScriptStatus| {
+                    let cmd = Cmd::RemoteScriptResult { name: name.to_string(), status };
+                    if let Ok(payload) = encode_to_vec(&cmd, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                };
+
+                for script in &scripts {
+                    send_log(sender, format!("Starting: {}", script.name));
+
+                    match script.name.as_str() {
+                        "Disable Sleep / Hibernation" => {
+                            match crate::terminal_mode::tabs::script_categories::disable_hibernation_and_sleep() {
+                                Ok(_) => {
+                                    send_log(sender, "Disabled Sleep / Hibernation".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Activate Webroot" => {
+                            if service_number.is_empty() {
+                                send_log(sender, "Webroot activation requires SO number".into());
+                                send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                continue;
+                            }
+                            send_log(sender, "Fetching CPS keys...".into());
+                            let so = service_number.clone();
+                            let client = reqwest::Client::new();
+                            let (progress_tx, _) = crossbeam::channel::unbounded();
+                            match crate::tabs::tur_sheet::get_ticket::SendRequest::get_cps(so, client.clone()).await {
+                                Ok(keys) => {
+                                    let key = keys.get(0).cloned().unwrap_or_default();
+                                    send_log(sender, format!("Webroot key: {}", key.webroot_key));
+                                    match crate::utilities::scripts::antivirus::install_webroot(key.webroot_key, client, progress_tx).await {
+                                        Ok(_) => {
+                                            send_log(sender, "Webroot installed successfully".into());
+                                            send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                        }
+                                        Err(e) => {
+                                            send_log(sender, format!("Webroot install error: {e}"));
+                                            send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Failed to get CPS keys: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Activate SuperAnti" => {
+                            if service_number.is_empty() {
+                                send_log(sender, "SuperAnti activation requires SO number".into());
+                                send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                continue;
+                            }
+                            let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
+                            send_log(sender, format!("Killed {killed} SAS processes"));
+                            let so = service_number.clone();
+                            let client = reqwest::Client::new();
+                            let (progress_tx, _) = crossbeam::channel::unbounded();
+                            match crate::tabs::tur_sheet::get_ticket::SendRequest::get_cps(so, client.clone()).await {
+                                Ok(keys) => {
+                                    let key = keys.get(0).cloned().unwrap_or_default();
+                                    send_log(sender, format!("SuperAnti key: {}", key.superanti_key));
+                                    match crate::utilities::scripts::antivirus::install_sas(key.superanti_key, client, progress_tx).await {
+                                        Ok(_) => {
+                                            send_log(sender, "SAS installed successfully".into());
+                                            let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
+                                            send_log(sender, format!("Post-install killed {killed} SAS processes"));
+                                            send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                        }
+                                        Err(e) => {
+                                            send_log(sender, format!("SAS install error: {e}"));
+                                            send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Failed to get CPS keys: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Activate SEB" => {
+                            if service_number.is_empty() || customer_email.is_empty() {
+                                send_log(sender, "SEB activation requires SO number and email".into());
+                                send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                continue;
+                            }
+                            let client = reqwest::Client::new();
+                            let (progress_tx, _) = crossbeam::channel::unbounded();
+                            match crate::utilities::scripts::antivirus::install_supereasybackup(customer_email.clone(), client, progress_tx).await {
+                                Ok(_) => {
+                                    send_log(sender, "SEB installed successfully".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("SEB install error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Install Windows Updates" => {
+                            send_log(sender, "Checking internet before Windows Updates...".into());
+                            match crate::utilities::windows::net_adapter::ensure_internet_connected().await {
+                                Ok(_) => send_log(sender, "Internet confirmed".into()),
+                                Err(e) => {
+                                    send_log(sender, format!("No internet: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    continue;
+                                }
+                            }
+                            send_log(sender, "Starting Windows Updates (search + install)...".into());
+
+                            let (update_tx, update_rx) = crossbeam::channel::unbounded();
+                            let handle = std::thread::spawn(move || {
+                                crate::utilities::windows::windows_update::install_windows_updates(
+                                    update_tx, true, true,
+                                )
+                            });
+
+                            loop {
+                                match update_rx.recv_timeout(std::time::Duration::from_millis(250)) {
+                                    Ok(event) => {
+                                        use crate::utilities::windows::windows_update::WindowsUpdateEvent;
+                                        match event {
+                                            WindowsUpdateEvent::UpdateLogs(msg) => send_log(sender, msg),
+                                            WindowsUpdateEvent::DownloadPercentage(pct) => {
+                                                send_log(sender, format!("Download: {pct}%"));
+                                            }
+                                            WindowsUpdateEvent::InstallPercentage(pct) => {
+                                                send_log(sender, format!("Install: {pct}%"));
+                                            }
+                                            WindowsUpdateEvent::ReturnedUpdates(updates) => {
+                                                send_log(sender, format!("{} updates processed", updates.updates.len()));
+                                                for u in &updates.updates {
+                                                    send_log(sender, format!("  {} (installed: {})", u.title, u.is_installed));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                                        if handle.is_finished() {
+                                            while let Ok(event) = update_rx.try_recv() {
+                                                use crate::utilities::windows::windows_update::WindowsUpdateEvent;
+                                                match event {
+                                                    WindowsUpdateEvent::UpdateLogs(msg) => send_log(sender, msg),
+                                                    WindowsUpdateEvent::DownloadPercentage(pct) => send_log(sender, format!("Download: {pct}%")),
+                                                    WindowsUpdateEvent::InstallPercentage(pct) => send_log(sender, format!("Install: {pct}%")),
+                                                    WindowsUpdateEvent::ReturnedUpdates(updates) => {
+                                                        send_log(sender, format!("{} updates processed", updates.updates.len()));
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    Err(crossbeam::channel::RecvTimeoutError::Disconnected) => break,
+                                }
+                            }
+
+                            match handle.join() {
+                                Ok(Ok(_)) => {
+                                    send_log(sender, "Windows Updates completed successfully".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Ok(Err(e)) => {
+                                    send_log(sender, format!("Windows Updates error: {e:?}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                                Err(_) => {
+                                    send_log(sender, "Windows Updates thread panicked".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Install LibreOffice" => {
+                            let client = reqwest::Client::new();
+                            let (progress_tx, _) = crossbeam::channel::unbounded();
+                            match crate::utilities::scripts::programs::install_program(
+                                "https://ninite.com/libreoffice/ninite.exe".into(), client, progress_tx
+                            ).await {
+                                Ok(_) => {
+                                    send_log(sender, "LibreOffice installed".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("LibreOffice install error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Disable Notifications" => {
+                            let mut msgs = Vec::new();
+                            let mut ok = true;
+                            macro_rules! try_reg {
+                                ($fn:expr, $label:expr) => {
+                                    match $fn() {
+                                        Ok(r) => msgs.push(format!("{}: {:?}", $label, r)),
+                                        Err(e) => { msgs.push(format!("{}: {e}", $label)); ok = false; }
+                                    }
+                                }
+                            }
+                            use crate::utilities::windows::registry::*;
+                            try_reg!(disable_notifications, "notifications");
+                            try_reg!(disable_lockscreen_notifications, "lockscreen_notifications");
+                            try_reg!(disable_content_delivery_allowed, "content_delivery");
+                            try_reg!(disable_silent_installed_apps_enabled, "silent_apps");
+                            try_reg!(disable_subscribed_content_enabled, "subscribed_content");
+                            try_reg!(disable_system_pane_suggestions_enabled, "system_suggestions");
+                            try_reg!(disable_account_notifications, "account_notifications");
+                            try_reg!(enable_more_pins_layout, "more_pins_layout");
+                            try_reg!(disable_start_account_notifications, "start_account_notifications");
+                            try_reg!(disable_recent_items_tracking, "recent_items");
+                            try_reg!(remove_chat_from_taskbar, "chat_taskbar");
+                            for m in &msgs { send_log(sender, m.clone()); }
+                            send_result(sender, &script.name, if ok { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed });
+                        }
+
+                        "Unpin Copilot" => {
+                            match crate::utilities::windows::registry::disable_copilot() {
+                                Ok(results) => {
+                                    for r in &results { send_log(sender, r.clone()); }
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Align Taskbar to left" => {
+                            match crate::utilities::windows::registry::align_taskbar_left() {
+                                Ok(msgs) => {
+                                    for m in &msgs { send_log(sender, m.trim().to_string()); }
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Change SuperAntiSpyware settings" => {
+                            let sas_exe = std::path::Path::new(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+                            if !sas_exe.exists() {
+                                send_log(sender, "SAS not installed".into());
+                                send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                continue;
+                            }
+                            let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
+                            send_log(sender, format!("Killed {killed} SAS processes"));
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            match crate::utilities::scripts::antivirus::sas_tasks::configure_sas_scheduled_tasks() {
+                                Ok((update_guid, scan_guid)) => {
+                                    send_log(sender, format!("SAS update task: {update_guid}"));
+                                    send_log(sender, format!("SAS scan task: {scan_guid}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Is Windows Activated?" => {
+                            match crate::terminal_mode::tabs::script_categories::check_windows_activation() {
+                                Ok(status) => {
+                                    let msg = if status.license_status == 1 { "Windows is activated" } else { "Windows is NOT activated" };
+                                    send_log(sender, msg.into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Windows Version" => {
+                            let ver = sysinfo::System::long_os_version().unwrap_or_default();
+                            send_log(sender, format!("Windows Version: {ver}"));
+                            send_result(sender, &script.name, RemoteScriptStatus::Success);
+                        }
+
+                        "Is SuperEasyBackup installed?" | "Is Webroot installed?" | "Is SuperAntiSpyware installed?" => {
+                            let search_term = match script.name.as_str() {
+                                "Is SuperEasyBackup installed?" => "supereasybackup",
+                                "Is Webroot installed?" => "webroot",
+                                "Is SuperAntiSpyware installed?" => "superantispyware",
+                                _ => "",
+                            };
+                            match crate::utilities::scripts::programs::InstalledProgram::get_installed_programs() {
+                                Ok(programs) => {
+                                    let found = programs.iter().any(|p| {
+                                        let dn = p.display_name.clone().unwrap_or_default().to_lowercase();
+                                        let pub_ = p.publisher.clone().unwrap_or_default().to_lowercase();
+                                        dn.contains(search_term) || pub_.contains(search_term)
+                                    });
+                                    if found {
+                                        send_log(sender, format!("{} found", script.name.trim_end_matches('?')));
+                                    } else {
+                                        send_log(sender, format!("{} NOT found", script.name.trim_end_matches('?')));
+                                    }
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error querying programs: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Disable proxy settings" | "Disable Startup Apps" | "Run Tron"
+                        | "Run SuperAntiSpyware Scan" | "Run Webroot Scan" | "Data Transfer"
+                        | "Any Recent Blue Screens?" | "When Was The Last Service Date?"
+                        | "Are there scheduled tasks for it?" | "Is Hibernation/Sleep enabled?"
+                        | "Check Updates" | "Run Prechecks" | "Run Junkware Category" => {
+                            send_log(sender, format!("'{}' not yet implemented for remote execution", script.name));
+                            send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                        }
+
+                        _ => {
+                            if let Some(content) = &script.content {
+                                send_log(sender, format!("Running custom script: {}", script.name));
+                                let ext = if script.name.ends_with(".bat") || script.name.ends_with(".cmd") {
+                                    "bat"
+                                } else {
+                                    "ps1"
+                                };
+                                let temp_dir = std::env::temp_dir();
+                                let script_file = temp_dir.join(format!("mastertech_custom_{}.{}", uuid::Uuid::new_v4(), ext));
+                                if let Err(e) = std::fs::write(&script_file, content) {
+                                    send_log(sender, format!("Failed to write script: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    continue;
+                                }
+
+                                let output = if ext == "ps1" {
+                                    tokio::process::Command::new("powershell")
+                                        .args(["-ExecutionPolicy", "Bypass", "-File", &script_file.to_string_lossy()])
+                                        .output()
+                                        .await
+                                } else {
+                                    tokio::process::Command::new("cmd")
+                                        .args(["/C", &script_file.to_string_lossy()])
+                                        .output()
+                                        .await
+                                };
+
+                                let _ = std::fs::remove_file(&script_file);
+
+                                match output {
+                                    Ok(out) => {
+                                        let stdout = String::from_utf8_lossy(&out.stdout);
+                                        let stderr = String::from_utf8_lossy(&out.stderr);
+                                        if !stdout.is_empty() {
+                                            for line in stdout.lines() {
+                                                send_log(sender, line.to_string());
+                                            }
+                                        }
+                                        if !stderr.is_empty() {
+                                            for line in stderr.lines() {
+                                                send_log(sender, format!("[stderr] {}", line));
+                                            }
+                                        }
+                                        if out.status.success() {
+                                            send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                        } else {
+                                            send_log(sender, format!("Exit code: {:?}", out.status.code()));
+                                            send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        send_log(sender, format!("Execution error: {e}"));
+                                        send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    }
+                                }
+                            } else if script.category == "Junkware Removal" {
+                                send_log(sender, format!("Attempting to uninstall: {}", script.name));
+                                match crate::utilities::scripts::programs::InstalledProgram::get_by_name(&script.name) {
+                                    Ok(Some(program)) => {
+                                        let _ = program.uninstall();
+                                        send_log(sender, format!("Uninstall initiated for {}", script.name));
+                                        send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                    }
+                                    Ok(None) => {
+                                        send_log(sender, format!("{} not found / already removed", script.name));
+                                        send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                    }
+                                    Err(e) => {
+                                        send_log(sender, format!("Error: {e}"));
+                                        send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    }
+                                }
+                            } else {
+                                send_log(sender, format!("Unknown script: {}", script.name));
+                                send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                            }
+                        }
+                    }
+                }
+
+                let complete = Cmd::RemoteScriptsComplete;
+                if let Ok(payload) = encode_to_vec(&complete, standard()) {
                     sender.send(WsMessage::Binary(payload));
                 }
             }

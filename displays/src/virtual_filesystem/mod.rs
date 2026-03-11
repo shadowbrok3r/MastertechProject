@@ -1466,10 +1466,10 @@ impl FileSystem {
     }
 
     pub fn upload_script(&self, file_name: String, script_contents: String) {
-        let access_key = self.user.get_minio_access_key().unwrap_or_default();
-        let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
         let name = self.user.get_user_bucket_name().to_string();
-        let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
+        let backend = self.storage_backend.clone();
+        let fs_tx = self.fs_actions_channel.0.clone();
+        let current_prefix = self.current_prefix.clone();
 
         let new_name = if file_name.contains(' ') {
             file_name.replace(' ', "_")
@@ -1477,18 +1477,31 @@ impl FileSystem {
             file_name
         };
 
-        PlatformSpawner::spawn(async move {
-            let result = Self::perform_upload_script(
-                &name.clone(),
-                &access_key.clone(),
-                &secret_key.clone(),
-                bytes,
-                &new_name.clone(),
-            ).await;
-
-            info!("Result: {result:?}");
-        });
-        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
+        match backend {
+            StorageBackend::SurrealDb => {
+                PlatformSpawner::spawn(async move {
+                    let fetcher = SurrealDbFetcher::new(&name);
+                    let path = format!("Scripts/{new_name}");
+                    match fetcher.upload_text(&path, &script_contents).await {
+                        Ok(_) => info!("Script saved to SurrealDB: {path}"),
+                        Err(e) => log::warn!("Failed to save script to SurrealDB: {e:?}"),
+                    }
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
+            }
+            StorageBackend::S3 => {
+                let access_key = self.user.get_minio_access_key().unwrap_or_default();
+                let secret_key = self.user.get_minio_secret_key().unwrap_or_default();
+                let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
+                PlatformSpawner::spawn(async move {
+                    let result = Self::perform_upload_script(
+                        &name, &access_key, &secret_key, bytes, &new_name,
+                    ).await;
+                    info!("S3 upload result: {result:?}");
+                    let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
+                });
+            }
+        }
     }
 
     pub async fn perform_upload_script(

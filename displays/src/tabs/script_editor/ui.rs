@@ -1,14 +1,14 @@
-use eframe::egui::{Button, CentralPanel, Color32, FontId, Frame, Id, Layout, Margin, RichText, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, Color32, FontId, Frame, Id, Layout, Margin, RichText, ScrollArea, SidePanel, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use crate::{file_viewer::{ColorTheme, FileViewer, Syntax}, get_current_user_from_auth};
 use log::info;
-
 
 use super::ScriptEditor;
 
 impl ScriptEditor {
     pub fn ui(&mut self, ui: &mut Ui) {
         self.filesystem.receive();
-        
+        self.poll_ai_result();
+
         TopBottomPanel::top("Script editor top panel")
             .exact_height(40.)
             .frame(
@@ -17,7 +17,7 @@ impl ScriptEditor {
                 .stroke(Stroke::new(1., Color32::from_additive_luminance(150)))
                 .outer_margin(Margin::symmetric(0, 2))
             )
-            .show_inside(ui, |ui| 
+            .show_inside(ui, |ui|
         {
             ui.add_space(2.);
             ui.horizontal_top(|ui| {
@@ -36,16 +36,15 @@ impl ScriptEditor {
                     if Button::new("💾 Save Script")
                         .min_size(button_size)
                         .ui(ui)
-                        .clicked() 
+                        .clicked()
                     {
-                        if self.script_name.len() > 0 && self.code.len() != 0 {
+                        if !self.script_name.is_empty() && !self.code.is_empty() {
                             if !self.script_name.ends_with(".ps1") {
                                 self.script_name.push_str(".ps1");
                             }
                             self.filesystem.upload_script(self.script_name.clone(), self.code.clone());
                             let _ = self.filesystem.request_contents("/");
-                        }
-                        else {
+                        } else {
                             self.open_notification_modal = true;
                             self.notification_text = "You need to enter a file name first".to_string()
                         }
@@ -56,17 +55,23 @@ impl ScriptEditor {
                     if Button::new("➕ New Script")
                         .min_size(button_size)
                         .ui(ui)
-                        .clicked() 
+                        .clicked()
                     {
-                        if self.script_name.len() == 0 && self.code.len() != 0 {
-                            self.filesystem.upload_script(self.script_name.clone(), self.code.clone());
-                            self.code.clear();
-                            self.script_name.clear();
-                        }
-                        else {
-                            self.open_notification_modal = true;
-                            self.notification_text = "You need to a file name first".to_string()
-                        }
+                        self.code.clear();
+                        self.script_name.clear();
+                    }
+
+                    ui.add_space(5.);
+
+                    if self.ai_generating {
+                        ui.add(Spinner::new().size(16.0));
+                        ui.label("Generating...");
+                    } else if Button::new("🤖 AI Generate")
+                        .min_size(button_size)
+                        .ui(ui)
+                        .clicked()
+                    {
+                        self.show_ai_popup = true;
                     }
 
                     ui.add_space(5.);
@@ -75,13 +80,47 @@ impl ScriptEditor {
                         false => "<- Show File Browser",
                         true => "Hide File Browser ->",
                     };
-    
+
                     if ui.button(txt).clicked() {
                         self.open_file_browser = !self.open_file_browser;
                     }
                 });
             });
         });
+
+        // AI generation modal
+        if self.show_ai_popup {
+            eframe::egui::Modal::new(Id::new("AI Script Generator"))
+                .show(ui.ctx(), |ui| {
+                    ui.set_min_width(500.0);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("AI Script Generator").heading());
+                        ui.add_space(8.);
+                        ui.label("Describe the script you want to generate:");
+                        ui.add_space(4.);
+
+                        ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                            TextEdit::multiline(&mut self.ai_prompt)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(6)
+                                .hint_text("e.g. 'Write a script that cleans temp files older than 30 days and logs the results'")
+                                .show(ui);
+                        });
+
+                        ui.add_space(8.);
+                        ui.horizontal(|ui| {
+                            let can_generate = !self.ai_prompt.trim().is_empty();
+                            if ui.add_enabled(can_generate, Button::new("Generate")).clicked() {
+                                self.generate_script_from_prompt();
+                                self.show_ai_popup = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.show_ai_popup = false;
+                            }
+                        });
+                    });
+                });
+        }
 
         SidePanel::right(Id::new("Script editor sidebar"))
         .default_width(160.)
@@ -139,7 +178,7 @@ impl ScriptEditor {
                 Frame::default()
                 .outer_margin(Margin::symmetric(2, 4))
             )
-            .show_inside(ui, |ui| 
+            .show_inside(ui, |ui|
         {
             FileViewer::default()
                 .id_source("Script Editor")

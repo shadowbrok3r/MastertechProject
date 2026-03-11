@@ -14,6 +14,7 @@ pub enum WsDisplayState {
     TaskScheduler,
     Registry,
     StartupApps,
+    Scripts,
 }
 
 impl WebSocketClient {
@@ -190,6 +191,16 @@ impl WebSocketClient {
                         self.startup_apps_viewer.loading = true;
                     }
                 }
+
+                if Button::new(RichText::new("Scripts").color(sys_color).small()).ui(ui).clicked() {
+                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Scripts);
+                    if self.remote_scripts_viewer.loading || self.remote_scripts_viewer.running {
+                        // already loading or running
+                    } else {
+                        self.remote_scripts_viewer.loading = true;
+                        let _ = self.send_cmd_tx.try_send(Cmd::GetRemoteScriptList);
+                    }
+                }
             });
             ui.add_space(2.);
         });
@@ -225,6 +236,10 @@ impl WebSocketClient {
             WsDisplayState::StartupApps => {
                 let cmd_tx = self.send_cmd_tx.clone();
                 self.startup_apps_viewer.display(ui, &cmd_tx);
+            },
+            WsDisplayState::Scripts => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.remote_scripts_viewer.display(ui, &cmd_tx);
             },
         };
     }
