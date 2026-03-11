@@ -10,6 +10,7 @@ use services_viewer::ServicesViewer;
 use task_scheduler_viewer::TaskSchedulerViewer;
 use registry_editor::RegistryEditor;
 use startup_apps_viewer::StartupAppsViewer;
+use remote_scripts_viewer::RemoteScriptsViewer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ui::WsDisplayState;
@@ -32,6 +33,7 @@ pub mod services_viewer;
 pub mod task_scheduler_viewer;
 pub mod registry_editor;
 pub mod startup_apps_viewer;
+pub mod remote_scripts_viewer;
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -121,6 +123,7 @@ pub struct WebSocketClient {
     pub task_scheduler_viewer: TaskSchedulerViewer,
     pub registry_editor: RegistryEditor,
     pub startup_apps_viewer: StartupAppsViewer,
+    pub remote_scripts_viewer: RemoteScriptsViewer,
 }
 
 impl Drop for WebSocketClient {
@@ -163,7 +166,7 @@ impl WebSocketClient {
             // model can be overridden later; default to lightweight model
 
             use crate::mcp::run_mcp_server_tcp;
-            mcp_service.spawn_openai_connect("127.0.0.1:9002", "gpt-4.1-nano", Some(
+            mcp_service.spawn_openai_connect("127.0.0.1:9002", crate::ai::gpts::MODEL, Some(
                 format!("You are a command-line completion assistant. Provide a list of up to 5 command completions for a Powershell shell.
 Each completion should be on a new line. Do not add any extra text, explanations, or formatting.
 The user wants to append the completion to their existing input, so provide the remaining part of the command.
@@ -252,6 +255,7 @@ Get-WmiObject")
             task_scheduler_viewer: TaskSchedulerViewer::new(),
             registry_editor: RegistryEditor::new(),
             startup_apps_viewer: StartupAppsViewer::new(),
+            remote_scripts_viewer: RemoteScriptsViewer::new(),
         }
     }
 

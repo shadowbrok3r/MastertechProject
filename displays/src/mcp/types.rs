@@ -29,7 +29,7 @@ impl Default for LlmProvider {
     fn default() -> Self {
         LlmProvider::OpenAI {
             api_key: String::new(),
-            model: "gpt-4".to_string(),
+            model: crate::ai::gpts::MODEL.to_string(),
         }
     }
 }

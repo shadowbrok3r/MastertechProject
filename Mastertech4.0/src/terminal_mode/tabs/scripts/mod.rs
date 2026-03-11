@@ -140,8 +140,9 @@ impl<'a> ScriptsTab<'a> {
                 state: ListState::default(),
                 items: vec![
                     TodoItem::new("Data Transfer", Category::Tuneup),
-                    TodoItem::new("Activate CPS", Category::Tuneup), // Works
-                    TodoItem::new("Activate SEB", Category::Tuneup), // Works
+                    TodoItem::new("Activate Webroot", Category::Tuneup),
+                    TodoItem::new("Activate SuperAnti", Category::Tuneup),
+                    TodoItem::new("Activate SEB", Category::Tuneup),
                     TodoItem::new("Install Windows Updates", Category::Tuneup),
                     TodoItem::new("Disable Sleep / Hibernation", Category::Tuneup), // Works
                     TodoItem::new("Run SuperAntiSpyware Scan", Category::Tuneup),

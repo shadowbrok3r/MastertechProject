@@ -41,10 +41,7 @@ impl <'a> ScriptsTab <'a> {
             let scripts = self.get_selected_scripts();
 
             self.scripts_waiting_for_data = scripts.iter().filter(|s| {
-                match s.text.as_str() {
-                    "Activate CPS" | "Activate SEB" => true,
-                    _ => false,
-                }
+                matches!(s.text.as_str(), "Activate Webroot" | "Activate SuperAnti" | "Activate SEB")
             }).cloned().collect::<Vec<TodoItem>>();
 
             if scripts.is_empty() {

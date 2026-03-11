@@ -747,6 +747,59 @@ pub async fn mcp_execute_script(
 /// Wait for a specified duration and return JSON used by MCP.
 pub async fn mcp_wait(duration_ms: Option<u64>) -> Result<serde_json::Value> {
     let ms = duration_ms.unwrap_or(2000);
-    // No actual sleep here; MCP handler performs sleep. This keeps function side-effect free.
     Ok(serde_json::json!({ "status": "success", "duration_ms": ms }))
+}
+
+// === Script management MCP helpers (SurrealDB bucket storage) ===
+
+/// List scripts in a user's SurrealDB bucket.
+pub async fn mcp_list_scripts(bucket_name: &str) -> Result<serde_json::Value> {
+    use database::schema::file_storage;
+    let entries = file_storage::list_files(bucket_name, "Scripts").await?;
+    let scripts: Vec<serde_json::Value> = entries.iter().map(|e| {
+        serde_json::json!({
+            "name": e.filename(),
+            "path": e.path(),
+            "size": e.size,
+        })
+    }).collect();
+    Ok(serde_json::json!({ "scripts": scripts, "count": scripts.len() }))
+}
+
+/// Read a script from the user's SurrealDB bucket.
+pub async fn mcp_read_script(bucket_name: &str, script_path: &str) -> Result<serde_json::Value> {
+    use database::schema::file_storage;
+    let path = if script_path.starts_with("Scripts/") {
+        script_path.to_string()
+    } else {
+        format!("Scripts/{script_path}")
+    };
+    match file_storage::get_file_as_string(bucket_name, &path).await? {
+        Some(content) => Ok(serde_json::json!({ "path": path, "content": content })),
+        None => Err(anyhow::anyhow!("Script not found: {path}")),
+    }
+}
+
+/// Save a script to the user's SurrealDB bucket.
+pub async fn mcp_save_script(bucket_name: &str, script_name: &str, content: &str) -> Result<serde_json::Value> {
+    use database::schema::file_storage;
+    let path = if script_name.starts_with("Scripts/") {
+        script_name.to_string()
+    } else {
+        format!("Scripts/{script_name}")
+    };
+    file_storage::put_file(bucket_name, &path, content.as_bytes().to_vec()).await?;
+    Ok(serde_json::json!({ "status": "saved", "path": path, "size": content.len() }))
+}
+
+/// Delete a script from the user's SurrealDB bucket.
+pub async fn mcp_delete_script(bucket_name: &str, script_path: &str) -> Result<serde_json::Value> {
+    use database::schema::file_storage;
+    let path = if script_path.starts_with("Scripts/") {
+        script_path.to_string()
+    } else {
+        format!("Scripts/{script_path}")
+    };
+    file_storage::delete_file(bucket_name, &path).await?;
+    Ok(serde_json::json!({ "status": "deleted", "path": path }))
 }
