@@ -35,7 +35,8 @@ pub struct ScriptEditor {
 
 #[derive(Clone)]
 pub enum AiGenResult {
-    Done(String),
+    Chunk(String),
+    Done,
     Error(String),
 }
 
@@ -98,28 +99,39 @@ impl ScriptEditor {
         self
     }
 
-    /// Polls the AI generation channel and writes the result into the editor
+    /// Drains all available streaming chunks from the AI channel into the editor
     pub fn poll_ai_result(&mut self) {
         if let Some(rx) = &self.ai_result_rx {
-            if let Ok(result) = rx.try_recv() {
+            while let Ok(result) = rx.try_recv() {
                 match result {
-                    AiGenResult::Done(script) => {
-                        self.code = script;
+                    AiGenResult::Chunk(text) => {
+                        self.code.push_str(&text);
+                    }
+                    AiGenResult::Done => {
+                        let trimmed = self.code.trim().to_string();
+                        let trimmed = trimmed.strip_prefix("```powershell")
+                            .or_else(|| trimmed.strip_prefix("```ps1"))
+                            .or_else(|| trimmed.strip_prefix("```"))
+                            .unwrap_or(&trimmed);
+                        let trimmed = trimmed.strip_suffix("```").unwrap_or(trimmed);
+                        self.code = trimmed.trim().to_string();
                         self.ai_generating = false;
                         self.ai_result_rx = None;
+                        return;
                     }
                     AiGenResult::Error(e) => {
                         self.notification_text = format!("AI error: {e}");
                         self.open_notification_modal = true;
                         self.ai_generating = false;
                         self.ai_result_rx = None;
+                        return;
                     }
                 }
             }
         }
     }
 
-    /// Spawns an async task to generate a script from the AI prompt
+    /// Spawns an async task that streams a script from the AI into the editor
     #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     pub fn generate_script_from_prompt(&mut self) {
         use crate::Spawner;
@@ -128,14 +140,14 @@ impl ScriptEditor {
             return;
         }
 
-        let (tx, rx) = crossbeam::channel::bounded(1);
+        let (tx, rx) = crossbeam::channel::unbounded();
         self.ai_result_rx = Some(rx);
         self.ai_generating = true;
+        self.code.clear();
 
         crate::PlatformSpawner::spawn(async move {
-            match ai_generate_script(&prompt).await {
-                Ok(script) => { let _ = tx.send(AiGenResult::Done(script)); }
-                Err(e) => { let _ = tx.send(AiGenResult::Error(e.to_string())); }
+            if let Err(e) = ai_generate_script_streaming(&prompt, tx.clone()).await {
+                let _ = tx.send(AiGenResult::Error(e.to_string()));
             }
         });
     }
@@ -148,13 +160,17 @@ impl ScriptEditor {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-async fn ai_generate_script(prompt: &str) -> anyhow::Result<String> {
+async fn ai_generate_script_streaming(
+    prompt: &str,
+    tx: crossbeam::channel::Sender<AiGenResult>,
+) -> anyhow::Result<()> {
     use crate::ai::oa_client::new_oa_client;
     use crate::openai::types::{
         CreateChatCompletionRequestArgs, ChatCompletionRequestUserMessageArgs,
         ChatCompletionRequestSystemMessageArgs,
     };
     use crate::ai::gpts::MODEL;
+    use futures::StreamExt;
 
     let client = new_oa_client()?;
     let system_msg = ChatCompletionRequestSystemMessageArgs::default()
@@ -174,13 +190,24 @@ async fn ai_generate_script(prompt: &str) -> anyhow::Result<String> {
         .temperature(0.3f32)
         .build()?;
 
-    let response = client.chat().create(request).await?;
-    let content = response.choices.first()
-        .and_then(|c| c.message.content.clone())
-        .unwrap_or_default();
+    let mut stream = client.chat().create_stream(request).await?;
 
-    let trimmed = content.trim();
-    let trimmed = trimmed.strip_prefix("```powershell").or_else(|| trimmed.strip_prefix("```ps1")).or_else(|| trimmed.strip_prefix("```")).unwrap_or(trimmed);
-    let trimmed = trimmed.strip_suffix("```").unwrap_or(trimmed);
-    Ok(trimmed.trim().to_string())
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(response) => {
+                for choice in &response.choices {
+                    if let Some(ref content) = choice.delta.content {
+                        let _ = tx.send(AiGenResult::Chunk(content.clone()));
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(AiGenResult::Error(e.to_string()));
+                return Ok(());
+            }
+        }
+    }
+
+    let _ = tx.send(AiGenResult::Done);
+    Ok(())
 }
