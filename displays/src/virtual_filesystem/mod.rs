@@ -80,32 +80,68 @@ impl SurrealDbFetcher {
         self.bucket.define(backend).await
     }
     
-    /// Request contents of a directory from SurrealDB bucket
+    /// Request contents of a directory from SurrealDB bucket.
+    ///
+    /// SurrealDB stores files as flat paths (e.g. `Scripts/script1.ps1`).
+    /// This method parses those paths into a hierarchical Node tree so the
+    /// file browser can display proper folder structures.
     pub async fn request_bucket_contents(&self, prefix: &str) -> anyhow::Result<Node, anyhow::Error> {
         let entries = self.bucket.list(prefix).await?;
-        
-        // Build a Node tree from the file entries
-        let mut children: HashMap<String, Node> = HashMap::new();
-        
+
+        let folder_path = if prefix.is_empty() || prefix == "/" { "/" } else { prefix };
+        let clean_prefix = prefix.trim_matches('/');
+
+        let mut root_children: HashMap<String, Node> = HashMap::new();
+
         for entry in entries {
-            // Use the extracted key/path
-            let key = entry.path();
-            // Extract the file/folder name from the full path
-            let name = entry.filename();
-            
-            if name.is_empty() {
-                continue;
-            }
-            
-            if entry.is_directory {
-                children.insert(name.clone(), Node::Folder(key, HashMap::new()));
+            let raw_key = entry.key.clone();
+            if raw_key.is_empty() { continue; }
+
+            let relative = if clean_prefix.is_empty() {
+                raw_key.trim_start_matches('/').to_string()
             } else {
-                children.insert(name.clone(), Node::File((key.clone(), name)));
+                match raw_key.trim_start_matches('/').strip_prefix(clean_prefix) {
+                    Some(rest) => rest.trim_start_matches('/').to_string(),
+                    None => continue,
+                }
+            };
+            if relative.is_empty() { continue; }
+
+            let parts: Vec<&str> = relative.split('/').filter(|s| !s.is_empty()).collect();
+            if parts.is_empty() { continue; }
+
+            let mut current_children = &mut root_children;
+            for (i, part) in parts.iter().enumerate() {
+                let is_last = i == parts.len() - 1;
+
+                if is_last && !entry.is_directory {
+                    current_children.entry(part.to_string())
+                        .or_insert_with(|| Node::File((raw_key.clone(), part.to_string())));
+                } else {
+                    let folder_key = if clean_prefix.is_empty() {
+                        parts[..=i].join("/")
+                    } else {
+                        format!("{}/{}", clean_prefix, parts[..=i].join("/"))
+                    };
+
+                    let node = current_children.entry(part.to_string())
+                        .or_insert_with(|| Node::Folder(folder_key, HashMap::new()));
+
+                    if let Node::Folder(_, sub) = node {
+                        current_children = sub;
+                    } else {
+                        break;
+                    }
+                }
             }
         }
-        
-        let folder_path = if prefix.is_empty() || prefix == "/" { "/" } else { prefix };
-        Ok(Node::Folder(folder_path.to_string(), children))
+
+        if clean_prefix.is_empty() {
+            root_children.entry("Scripts".to_string())
+                .or_insert_with(|| Node::Folder("Scripts".to_string(), HashMap::new()));
+        }
+
+        Ok(Node::Folder(folder_path.to_string(), root_children))
     }
     
     /// Upload a file to SurrealDB bucket
@@ -872,11 +908,6 @@ impl FileSystem {
         
         match backend {
             StorageBackend::SurrealDb => {
-                // Note: PlatformSpawner::spawn on native uses tokio::task::spawn which
-                // can run on a different thread. The SurrealDB SDK sometimes reports
-                // "Connection uninitialised" from spawned tasks even when the connection
-                // is established. This appears to be a timing/synchronization issue.
-                // We use retry logic as a workaround.
                 PlatformSpawner::spawn(async move {
                     let fetcher = SurrealDbFetcher::new(&name);
                     

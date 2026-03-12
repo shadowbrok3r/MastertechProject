@@ -8,6 +8,9 @@ impl ScriptEditor {
     pub fn ui(&mut self, ui: &mut Ui) {
         self.filesystem.receive();
         self.poll_ai_result();
+        if self.ai_generating {
+            ui.ctx().request_repaint();
+        }
 
         TopBottomPanel::top("Script editor top panel")
             .exact_height(40.)
@@ -66,7 +69,7 @@ impl ScriptEditor {
                     if self.ai_generating {
                         ui.add(Spinner::new().size(16.0));
                         ui.label("Generating...");
-                    } else if Button::new("🤖 AI Generate")
+                    } else if Button::new("AI Generate")
                         .min_size(button_size)
                         .ui(ui)
                         .clicked()
@@ -131,14 +134,12 @@ impl ScriptEditor {
         )
         .show_animated_inside(ui, self.open_file_browser, |ui| {
             ui.vertical_centered_justified(|ui| {
-                if self.filesystem.get_current_folder().is_some() {
-                    ui.add_space(10.);
-                    ui.label(RichText::new("Toolbox").heading());
-                    ui.separator();
-                    ui.add_space(5.);
+                ui.add_space(10.);
+                ui.label(RichText::new("Toolbox").heading());
+                ui.separator();
+                ui.add_space(5.);
 
-                    self.filesystem.display(ui);
-                }
+                self.filesystem.display(ui);
 
                 if self.first_run {
                     self.first_run = false;
