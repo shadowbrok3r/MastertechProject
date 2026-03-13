@@ -68,10 +68,14 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 let id = widget_id.0.as_str();
                 match id {
                     "Run" => {
+                        if self.run_button_should_be_disabled() {
+                            self.log_message("Provide a service number to run Activate Webroot, Activate SuperAnti, or Activate SEB.");
+                            return;
+                        }
                         let text_area_input = self.service_number_field.input.borrow().clone();
                         let user_input = &text_area_input.lines()[0];
                         self.service_number = user_input.clone();
-                        
+
                         if !self.service_number.is_empty() {
                             if let Ok(ctx) = &mut self.ctx.lock() {
                                 let cust_email = ctx.service_data.customer_data.email.clone();
