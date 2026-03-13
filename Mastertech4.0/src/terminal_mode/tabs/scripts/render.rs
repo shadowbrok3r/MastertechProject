@@ -782,6 +782,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             }
         }
 
+        self.run_btn.set_disabled(self.run_button_should_be_disabled());
         f.render_widget(&self.run_btn, button_grid[10].shrink(4, 1));
 
         // Render log section

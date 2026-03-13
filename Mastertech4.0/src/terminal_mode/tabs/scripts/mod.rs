@@ -414,6 +414,34 @@ impl<'a> ScriptsTab<'a> {
             .collect()
     }
 
+    /// Scripts that require a service number to run (activation scripts).
+    const SCRIPTS_REQUIRING_SERVICE_NUMBER: &'static [&'static str] = &[
+        "Activate Webroot",
+        "Activate SuperAnti",
+        "Activate SEB",
+    ];
+
+    /// True when "Run Selected" should be disabled: any selected script requires a service number
+    /// but none is provided (neither in the field nor in `service_number`).
+    pub fn run_button_should_be_disabled(&self) -> bool {
+        let selected = self.get_selected_scripts();
+        let any_requires_sn = selected
+            .iter()
+            .any(|s| Self::SCRIPTS_REQUIRING_SERVICE_NUMBER.contains(&s.text.as_str()));
+        if !any_requires_sn {
+            return false;
+        }
+        let has_sn = !self.service_number.trim().is_empty()
+            || !self
+                .service_number_field
+                .get_text()
+                .first()
+                .map(|s| s.trim())
+                .unwrap_or("")
+                .is_empty();
+        !has_sn
+    }
+
     fn clear_selected_scripts(&self) {
         let mut popup_items = self.popup_items.borrow_mut();
 

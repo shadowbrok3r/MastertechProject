@@ -39,6 +39,8 @@ pub struct Button<'a> {
     is_selected_tab: RefCell<bool>,
     /// Whether to show animated effects on this button
     effects_enabled: bool,
+    /// When true, button is greyed out and does not respond to clicks
+    disabled: RefCell<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -76,7 +78,18 @@ impl<'a> Button<'a> {
             is_tab_button: false,
             is_selected_tab: RefCell::new(false),
             effects_enabled: true,
+            disabled: RefCell::new(false),
         }
+    }
+
+    /// Set whether the button is disabled (greyed out, no clicks).
+    pub fn set_disabled(&self, disabled: bool) {
+        *self.disabled.borrow_mut() = disabled;
+    }
+
+    /// True if the button is currently disabled.
+    pub fn is_disabled(&self) -> bool {
+        *self.disabled.borrow()
     }
 
     pub fn get_widget_id(&self) -> WidgetId {
@@ -116,7 +129,7 @@ impl<'a> Button<'a> {
     
     /// Returns true if effects should be shown for this button
     fn should_show_effects(&self) -> bool {
-        if !self.effects_enabled {
+        if *self.disabled.borrow() || !self.effects_enabled {
             return false;
         }
         
@@ -179,6 +192,10 @@ impl <'a> ButtonType<'a> for Button<'a> {
     
     /// Helper method to get the right colors based on the current state.
     fn colors(&self) -> (Color, Color, Color, Color) {
+        if *self.disabled.borrow() {
+            let dim = Color::DarkGray;
+            return (dim, dim, dim, dim);
+        }
         let t = self.theme;
         match *self.state.borrow() {
             ButtonState::Normal => (t.background, t.text, t.shadow, t.highlight),
@@ -191,7 +208,9 @@ impl <'a> ButtonType<'a> for Button<'a> {
     }
 
     fn handle_mouse_event(&self, mouse_event: &MouseEvent) {
-        // If we haven’t assigned an area yet, do nothing
+        if *self.disabled.borrow() {
+            return;
+        }
         let Some(area) = self.get_area() else { return; };
         let c = mouse_event.column;
         let r = mouse_event.row;
@@ -199,7 +218,6 @@ impl <'a> ButtonType<'a> for Button<'a> {
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Check if the mouse click is within area
                 if area.contains(mouse_position) {
                     self.set_state(ButtonState::Active);
                     let _ = self.event_sender.try_send(WidgetEvent::ButtonClick { widget_id: self.id.clone(), button: WidgetButton::Left, source: get_client_hash().connection_string });
