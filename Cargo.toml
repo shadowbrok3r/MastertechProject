@@ -1,14 +1,13 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0", "websocket_server2" ] #  
-exclude = ["surrealdb"]
+members = [ "database" , "displays", "Mastertech4.0" ]
 
 [workspace.dependencies]
 database = { path = "database" }
 eframe = { version="0.33", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
-surrealdb = { version = "3.0.3", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.0.3" }
+surrealdb = { version = "3.0.4", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.0.4" }
 egui_extras = { version = "0.33", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { git = "https://github.com/shadowbrok3r/egui_json_tree", features = ["serde_json"] }
