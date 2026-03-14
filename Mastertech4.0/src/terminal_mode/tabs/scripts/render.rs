@@ -616,13 +616,17 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let left_half = main_chunks[0];
         let right_half = main_chunks[1];
 
+        const SCRIPT_BUTTONS_ROW_HEIGHT: u16 = 3;
+        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 11 * SCRIPT_BUTTONS_ROW_HEIGHT; // 33
+        const SCRIPT_BUTTONS_VIEWPORT_MIN_HEIGHT: u16 = 18;
+
         let left_side_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(2),
-            Constraint::Percentage(98),
-        ])
-        .split(left_half);
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(2),  // title
+                Constraint::Min(SCRIPT_BUTTONS_VIEWPORT_MIN_HEIGHT), // button viewport
+            ])
+            .split(left_half);
 
         let para = Paragraph::new("Scripts Library")
             .block(Block::default().bg(APP_BACKGROUND))
@@ -630,12 +634,47 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         (&para).render(left_side_chunks[0], f.buffer_mut());
 
-        // Create grid layout for buttons
-        let button_grid = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Length(4); 11])
+        // Button viewport: scrollbar + content
+        let button_viewport_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(10),
+            ])
             .split(left_side_chunks[1]);
-        
+
+        let script_scrollbar_rect = button_viewport_layout[0];
+        let viewport_rect = button_viewport_layout[1];
+
+        // Clamp scroll offset so we don't scroll past content
+        let max_offset = SCRIPT_BUTTONS_VIRTUAL_HEIGHT.saturating_sub(viewport_rect.height);
+        let mut scroll_offset = *self.script_buttons_scroll_offset.borrow();
+        scroll_offset = scroll_offset.min(max_offset);
+        self.script_buttons_scroll_offset.replace(scroll_offset);
+        self.script_buttons_viewport.replace(Some(viewport_rect));
+
+        // Build slot rects: each of 11 slots has virtual height 3; compute visible part in viewport
+        let mut slot_rects: Vec<Rect> = Vec::with_capacity(11);
+        for i in 0..11u16 {
+            let row_top = i * SCRIPT_BUTTONS_ROW_HEIGHT;
+            let row_bottom = row_top + SCRIPT_BUTTONS_ROW_HEIGHT;
+            let visible_top_virtual = row_top.max(scroll_offset).min(scroll_offset + viewport_rect.height);
+            let visible_bottom_virtual = row_bottom.min(scroll_offset + viewport_rect.height).max(scroll_offset);
+            let visible_height = visible_bottom_virtual.saturating_sub(visible_top_virtual);
+            if visible_height == 0 {
+                slot_rects.push(Rect::default());
+                continue;
+            }
+            let visible_top_y = viewport_rect.y + (visible_top_virtual - scroll_offset);
+            let slot_height = (visible_height).max(3).min(viewport_rect.y + viewport_rect.height - visible_top_y);
+            slot_rects.push(Rect {
+                x: viewport_rect.x,
+                y: visible_top_y,
+                width: viewport_rect.width,
+                height: slot_height,
+            });
+        }
+
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -644,11 +683,24 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             ])
             .split(right_half);
 
-        // Render main buttons
-        f.render_widget(&self.tuneup_btn, button_grid[0].shrink(4, 1));
-        f.render_widget(&self.informational_btn, button_grid[1].shrink(4, 1));
-        f.render_widget(&self.user_scripts_btn, button_grid[2].shrink(4, 1));
-        f.render_widget(&self.service_number_field, button_grid[3].shrink(4, 1));
+        // Shrink helper: only shrink when rect height >= 3 so we don't give widgets height < 3
+        let shrink_slot = |r: Rect, px: u16, py: u16| {
+            if r.height >= 3 { r.shrink(px, py) } else { r }
+        };
+
+        // Render main buttons (only when slot has non-zero height)
+        if slot_rects[0].height > 0 {
+            f.render_widget(&self.tuneup_btn, shrink_slot(slot_rects[0], 2, 1));
+        }
+        if slot_rects[1].height > 0 {
+            f.render_widget(&self.informational_btn, shrink_slot(slot_rects[1], 2, 1));
+        }
+        if slot_rects[2].height > 0 {
+            f.render_widget(&self.user_scripts_btn, shrink_slot(slot_rects[2], 2, 1));
+        }
+        if slot_rects[3].height > 0 {
+            f.render_widget(&self.service_number_field, shrink_slot(slot_rects[3], 2, 1));
+        }
 
         let current_script = self.current_script.borrow().clone();
         let script_name = &mut String::new();
@@ -663,8 +715,10 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .border_type(BorderType::Rounded)
                 .style(Style::default().fg(CATPPUCCIN.sky))
             );
-            
-        f.render_widget(script_textarea, button_grid[4].shrink(4, 1));
+
+        if slot_rects[4].height > 0 {
+            f.render_widget(script_textarea, shrink_slot(slot_rects[4], 4, 1));
+        }
 
         let mut progress_mut = self.progress.borrow_mut();
         let mut update_progress_mut = self.update_progress.borrow_mut();
@@ -674,7 +728,9 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(progress.0 as f64 / progress.1 as f64);
 
-            f.render_widget(&gauge, button_grid[5].shrink(2, 1));
+            if slot_rects[5].height > 0 {
+                f.render_widget(&gauge, shrink_slot(slot_rects[5], 2, 1));
+            }
 
             if progress.0 == progress.1 {
                 *progress_mut = None;
@@ -692,7 +748,9 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(update_progress as f64 / 100.0);
 
-            f.render_widget(&gauge, button_grid[6].shrink(2, 1));
+            if slot_rects[6].height > 0 {
+                f.render_widget(&gauge, shrink_slot(slot_rects[6], 2, 1));
+            }
 
             if update_progress == 100 {
                 *update_progress_mut = None;
@@ -701,89 +759,105 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         } else {
             let total = self.filesystem.total_size;
             let progress = self.filesystem.progress;
-            // log::info!("PROGRESS: {:?} TOTAL: {:?}", progress, total);
-            if total != u64::MAX as f32 && total > 0.0 { // Handle known total size
+            if total != u64::MAX as f32 && total > 0.0 {
                 let ratio = if total > 0.0 {
                     (progress / total).clamp(0.0, 1.0)
                 } else {
                     0.0
                 };
 
-
                 let gauge = Gauge::default()
                     .block(Block::bordered().title(format!("{script_name} Progress")))
                     .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                     .ratio(ratio as f64);
-            
-                f.render_widget(&gauge, button_grid[7].shrink(2, 1));
+
+                if slot_rects[7].height > 0 {
+                    f.render_widget(&gauge, shrink_slot(slot_rects[7], 2, 1));
+                }
             }
         }
-        
-        if self.loading {
-            let throbber = crate::terminal_mode::widgets::throbber_widgets_tui::Throbber::default()
-                .label("Scanning Directories..")
-                .throbber_set(crate::terminal_mode::widgets::throbber_widgets_tui::VERTICAL_BLOCK);
-            f.render_widget(throbber, button_grid[8].shrink(0, 1));
-        } else {
-            // Display active robocopy processes
-            let active_processes = self.active_robocopy_processes.borrow();
-            if !active_processes.is_empty() {
-                // Create a list of active transfers to display
-                let mut transfer_lines: Vec<Line> = Vec::new();
-                for (pid, progress) in active_processes.iter() {
-                    // Extract just the folder name from source for brevity
-                    let source_name = std::path::Path::new(&progress.source)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(&progress.source);
-                    
-                    let line = Line::from(vec![
-                        Span::styled(
-                            format!("[{}] ", pid),
-                            Style::default().fg(CATPPUCCIN.mauve)
-                        ),
-                        Span::styled(
-                            format!("{}: ", source_name),
-                            Style::default().fg(CATPPUCCIN.blue)
-                        ),
-                        Span::styled(
-                            format!("R:{:.1} MB/s ", progress.bytes_read),
-                            Style::default().fg(CATPPUCCIN.green)
-                        ),
-                        Span::styled(
-                            format!("W:{:.1} MB/s", progress.bytes_written),
-                            Style::default().fg(CATPPUCCIN.peach)
-                        ),
-                    ]);
-                    transfer_lines.push(line);
+
+        if slot_rects[8].height > 0 {
+            if self.loading {
+                let throbber = crate::terminal_mode::widgets::throbber_widgets_tui::Throbber::default()
+                    .label("Scanning Directories..")
+                    .throbber_set(crate::terminal_mode::widgets::throbber_widgets_tui::VERTICAL_BLOCK);
+                f.render_widget(throbber, shrink_slot(slot_rects[8], 0, 1));
+            } else {
+                let active_processes = self.active_robocopy_processes.borrow();
+                if !active_processes.is_empty() {
+                    let mut transfer_lines: Vec<Line> = Vec::new();
+                    for (pid, progress) in active_processes.iter() {
+                        let source_name = std::path::Path::new(&progress.source)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&progress.source);
+
+                        let line = Line::from(vec![
+                            Span::styled(
+                                format!("[{}] ", pid),
+                                Style::default().fg(CATPPUCCIN.mauve)
+                            ),
+                            Span::styled(
+                                format!("{}: ", source_name),
+                                Style::default().fg(CATPPUCCIN.blue)
+                            ),
+                            Span::styled(
+                                format!("R:{:.1} MB/s ", progress.bytes_read),
+                                Style::default().fg(CATPPUCCIN.green)
+                            ),
+                            Span::styled(
+                                format!("W:{:.1} MB/s", progress.bytes_written),
+                                Style::default().fg(CATPPUCCIN.peach)
+                            ),
+                        ]);
+                        transfer_lines.push(line);
+                    }
+
+                    let transfer_count = active_processes.len();
+                    drop(active_processes);
+
+                    let transfer_block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .title(format!(" Active Transfers ({}) ", transfer_count))
+                        .border_style(Style::new().fg(CATPPUCCIN.sky));
+
+                    let transfer_list = Paragraph::new(transfer_lines)
+                        .block(transfer_block)
+                        .wrap(Wrap { trim: false });
+
+                    let combined_height = slot_rects[8].height.saturating_add(slot_rects[9].height);
+                    let combined_area = if slot_rects[9].height > 0 && combined_height >= 2 {
+                        Rect::new(
+                            slot_rects[8].x,
+                            slot_rects[8].y,
+                            slot_rects[8].width,
+                            combined_height,
+                        )
+                    } else {
+                        slot_rects[8]
+                    };
+                    f.render_widget(transfer_list, shrink_slot(combined_area, 0, 1));
                 }
-                
-                let transfer_count = active_processes.len();
-                drop(active_processes); // Release borrow before rendering
-                
-                let transfer_block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title(format!(" Active Transfers ({}) ", transfer_count))
-                    .border_style(Style::new().fg(CATPPUCCIN.sky));
-                
-                let transfer_list = Paragraph::new(transfer_lines)
-                    .block(transfer_block)
-                    .wrap(Wrap { trim: false });
-                
-                // Use button_grid[8] and button_grid[9] combined for the transfer display
-                let combined_area = Rect::new(
-                    button_grid[8].x,
-                    button_grid[8].y,
-                    button_grid[8].width,
-                    button_grid[8].height + button_grid[9].height,
-                );
-                f.render_widget(transfer_list, combined_area.shrink(0, 1));
             }
         }
 
         self.run_btn.set_disabled(self.run_button_should_be_disabled());
-        f.render_widget(&self.run_btn, button_grid[10].shrink(4, 1));
+        if slot_rects[10].height > 0 {
+            f.render_widget(&self.run_btn, shrink_slot(slot_rects[10], 4, 1));
+        }
+
+        // Script buttons column scrollbar
+        let mut scroll_state = self.script_buttons_scroll_state.borrow_mut();
+        *scroll_state = scroll_state
+            .content_length(SCRIPT_BUTTONS_VIRTUAL_HEIGHT as usize)
+            .position(scroll_offset as usize)
+            .viewport_content_length(viewport_rect.height as usize);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        f.render_stateful_widget(scrollbar, script_scrollbar_rect, &mut *scroll_state);
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);
@@ -833,7 +907,15 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         match mouse_event.kind {
             MouseEventKind::ScrollDown => {
-                // let start_scroll_down = Instant::now();
+                if let Some(viewport) = *self.script_buttons_viewport.borrow() {
+                    if viewport.contains(mouse_position) {
+                        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 33;
+                        let max_offset = SCRIPT_BUTTONS_VIRTUAL_HEIGHT.saturating_sub(viewport.height);
+                        let mut offset = *self.script_buttons_scroll_offset.borrow();
+                        offset = (offset + 1).min(max_offset);
+                        self.script_buttons_scroll_offset.replace(offset);
+                    }
+                }
                 if let Some(report_area) = *self.report_area.borrow() {
                     let report_area_contains_mouse = report_area.contains(mouse_position);
                     if report_area_contains_mouse {
@@ -874,7 +956,13 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 // log::info!("ScrollDown duration: {:?}", start_scroll_down.elapsed());
             },
             MouseEventKind::ScrollUp => {
-                // let start_scroll_up = Instant::now();
+                if let Some(viewport) = *self.script_buttons_viewport.borrow() {
+                    if viewport.contains(mouse_position) {
+                        let mut offset = *self.script_buttons_scroll_offset.borrow();
+                        offset = offset.saturating_sub(1);
+                        self.script_buttons_scroll_offset.replace(offset);
+                    }
+                }
                 if let Some(report_area) = *self.report_area.borrow() {
                     let report_area_contains_mouse = report_area.contains(mouse_position);
                     if report_area_contains_mouse {

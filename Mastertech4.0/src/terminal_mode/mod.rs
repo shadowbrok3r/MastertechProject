@@ -284,8 +284,8 @@ impl <'a>TerminalApp<'a> {
                     let layout = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
-                            Constraint::Length(4), // for tabs
-                            Constraint::Percentage(92),// rest of content
+                            Constraint::Length(4), // tab row: fixed 4 lines so it doesn't grow
+                            Constraint::Fill(1),  // content: takes the rest
                         ]);
 
                     let outer_chunks = layout.split(area);

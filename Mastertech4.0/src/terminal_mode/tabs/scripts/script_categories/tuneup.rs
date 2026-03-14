@@ -276,10 +276,48 @@ impl <'a> ScriptsTab <'a> {
     pub fn change_superantispyware_settings(&mut self, item_text: &str, category: &Category) {
         use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_scheduled_tasks;
 
-        let sas_exe = std::path::Path::new(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+        const SAS_EXE_PATH: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
+        let sas_exe = std::path::Path::new(SAS_EXE_PATH);
+
         if !sas_exe.exists() {
-            self.log_message("SUPERAntiSpyware is not installed yet. Install via Activate CPS first.");
-            self.update_checklist(category.clone(), item_text, false);
+            self.log_message("SUPERAntiSpyware not installed yet. Waiting for Activate SuperAnti to finish (polling up to 5 min)...");
+            let log_tx = self.script_log_tx.clone();
+            let checklist_tx = self.checklist_completion_tx.clone();
+            let category_clone = category.clone();
+            let item_text_clone = item_text.to_string();
+            std::thread::spawn(move || {
+                const POLL_INTERVAL_SECS: u64 = 2;
+                const TIMEOUT_SECS: u64 = 300;
+                let start = std::time::Instant::now();
+                while !std::path::Path::new(SAS_EXE_PATH).exists() {
+                    if start.elapsed().as_secs() >= TIMEOUT_SECS {
+                        let _ = log_tx.try_send("Timeout waiting for SUPERAntiSpyware to be installed.".into());
+                        let _ = checklist_tx.try_send((category_clone, item_text_clone, false));
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
+                }
+                let _ = log_tx.try_send("SUPERAntiSpyware detected; applying settings...".into());
+                let killed = kill_sas_processes();
+                let _ = log_tx.try_send(format!("Killed {killed} SAS processes"));
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let success = match configure_sas_scheduled_tasks() {
+                    Ok((update_guid, scan_guid)) => {
+                        let _ = log_tx.try_send(format!("Created SAS update task: {update_guid}"));
+                        let _ = log_tx.try_send(format!("Created SAS quick-scan task: {scan_guid}"));
+                        let _ = log_tx.try_send("SAS scheduled tasks configured. Relaunching SAS.".into());
+                        if let Err(e) = std::process::Command::new(SAS_EXE_PATH).spawn() {
+                            let _ = log_tx.try_send(format!("Failed to relaunch SAS: {e}"));
+                        }
+                        true
+                    }
+                    Err(e) => {
+                        let _ = log_tx.try_send(format!("Failed to configure SAS tasks: {e}"));
+                        false
+                    }
+                };
+                let _ = checklist_tx.try_send((category_clone, item_text_clone, success));
+            });
             return;
         }
 
@@ -287,14 +325,16 @@ impl <'a> ScriptsTab <'a> {
         let killed = kill_sas_processes();
         self.log_message(format!("Killed {killed} SAS processes"));
 
-        // Brief pause to let file locks release
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         match configure_sas_scheduled_tasks() {
             Ok((update_guid, scan_guid)) => {
                 self.log_message(format!("Created SAS update task: {update_guid}"));
                 self.log_message(format!("Created SAS quick-scan task: {scan_guid}"));
-                self.log_message("SAS scheduled tasks configured successfully.");
+                self.log_message("SAS scheduled tasks configured. Relaunching SAS.");
+                if let Err(e) = std::process::Command::new(SAS_EXE_PATH).spawn() {
+                    self.log_message(format!("Failed to relaunch SAS: {e}"));
+                }
                 self.update_checklist(category.clone(), item_text, true);
             }
             Err(e) => {

@@ -409,6 +409,22 @@ pub async fn install_supereasybackup(
                 .await?;
 
             info!("SEB installer exit status: {:?}", output.status);
+
+            // Give installer a moment to finish placing files, then launch Super Easy Backup endpoint UI
+            const SEB_DCPROTECT_PATH: &str = r"C:\Program Files (x86)\Super Easy Backup\endpoint\dcprotect.exe";
+            for _ in 0..5 {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                if std::path::Path::new(SEB_DCPROTECT_PATH).exists() {
+                    break;
+                }
+            }
+            if std::path::Path::new(SEB_DCPROTECT_PATH).exists() {
+                if let Err(e) = std::process::Command::new(SEB_DCPROTECT_PATH).spawn() {
+                    info!("Failed to launch SEB dcprotect.exe: {e}");
+                } else {
+                    info!("Launched Super Easy Backup: dcprotect.exe");
+                }
+            }
         }
     }
     Ok(())
