@@ -252,6 +252,44 @@ impl <'a> WidgetRef for Button<'a> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let (background, text, shadow, highlight) = self.colors();
 
+        // When height < 3 we cannot draw full borders + label; draw a minimal one-line representation
+        if area.height < 3 {
+            buf.set_style(area, Style::default().fg(text).bg(APP_BACKGROUND));
+            let inner_width = area.width.saturating_sub(2) as usize;
+            let label_text = self.title.clone();
+            let display_text = if label_text.width() > inner_width && inner_width > 3 {
+                let mut truncated = String::new();
+                let mut current_width = 0;
+                for ch in label_text.chars() {
+                    let ch_width = ch.width().unwrap_or(1);
+                    if current_width + ch_width + 2 > inner_width {
+                        break;
+                    }
+                    truncated.push(ch);
+                    current_width += ch_width;
+                }
+                truncated.push_str("..");
+                truncated
+            } else if label_text.width() > inner_width {
+                label_text.chars().take(inner_width.saturating_sub(1)).collect::<String>()
+            } else {
+                label_text
+            };
+            let display_width = display_text.width() as u16;
+            let available_width = area.width.saturating_sub(2);
+            let label_x = area.x + 1 + (available_width.saturating_sub(display_width)) / 2;
+            let label_y = area.y;
+            if area.width >= 2 {
+                buf.set_string(area.x, label_y, &SHORTCUT_SET.vertical_left, Style::default().fg(highlight).bg(APP_BACKGROUND));
+                buf.set_string(area.x + area.width - 1, label_y, &SHORTCUT_SET.vertical_right, Style::default().fg(highlight).bg(APP_BACKGROUND));
+            }
+            let inner_rect = Rect { x: area.x + 1, y: label_y, width: available_width, height: 1 };
+            buf.set_style(inner_rect, Style::default().fg(text).bg(APP_BACKGROUND));
+            buf.set_line(label_x, label_y, &Line::raw(display_text), available_width);
+            self.set_area(area);
+            return;
+        }
+
         buf.set_style(area, Style::default().fg(text).bg(APP_BACKGROUND));
         
         // Horizontal padding inside the button (space between text and borders)

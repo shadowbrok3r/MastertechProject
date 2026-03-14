@@ -80,6 +80,12 @@ pub struct ScriptsTab<'a> {
     total_items: RefCell<usize>,
     /// For the scrollbar area
     scroll_area: RefCell<Option<Rect>>,
+    /// Script buttons column: scroll offset in lines (0..=max_offset)
+    script_buttons_scroll_offset: RefCell<u16>,
+    /// Scrollbar state for the script buttons column
+    script_buttons_scroll_state: RefCell<ScrollbarState>,
+    /// Viewport rect for script buttons column (for scroll wheel and scrollbar)
+    script_buttons_viewport: RefCell<Option<Rect>>,
     /// (button ID, popup position)
     active_popup: RefCell<Option<(WidgetId, Rect)>>,
     frame_area: RefCell<Option<Rect>>,
@@ -269,6 +275,9 @@ impl<'a> ScriptsTab<'a> {
             visible_height: RefCell::new(0),
             total_items: RefCell::new(0),
             scroll_area: RefCell::new(None),
+            script_buttons_scroll_offset: RefCell::new(0),
+            script_buttons_scroll_state: RefCell::new(ScrollbarState::default()),
+            script_buttons_viewport: RefCell::new(None),
             active_popup: RefCell::new(None),
             frame_area: RefCell::new(None),
             popup_list_state: RefCell::new(ListState::default()),
