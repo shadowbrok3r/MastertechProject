@@ -621,7 +621,7 @@ impl ShellView {
                     let text_edit = TextEdit::singleline(&mut self.input)
                         .font(eframe::egui::FontId::monospace(13.0))
                         .desired_width(ui.available_width() - 60.0)
-                        .frame(false);
+                        .frame(Frame::NONE);
 
                     let response = ui.add(text_edit);
 

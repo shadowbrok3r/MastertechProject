@@ -80,7 +80,7 @@ impl Default for EnhancedAiPlayground {
 impl EnhancedAiPlayground {
     pub fn enhanced_ai_playground(&mut self, ui: &mut Ui) {
         // Top panel with mode selection and provider config
-        TopBottomPanel::top("enhanced_ai_top")
+        eframe::egui::Panel::top("enhanced_ai_top")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(60.)
             .show_inside(ui, |ui| {
@@ -124,7 +124,7 @@ impl EnhancedAiPlayground {
             });
 
         // Left sidebar - mode-specific panels
-        SidePanel::left("enhanced_ai_sidebar")
+        eframe::egui::Panel::left("enhanced_ai_sidebar")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_width(220.)
             .show_inside(ui, |ui| {
@@ -136,7 +136,7 @@ impl EnhancedAiPlayground {
             });
 
         // Bottom panel - input area
-        TopBottomPanel::bottom("enhanced_ai_input")
+        eframe::egui::Panel::bottom("enhanced_ai_input")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(80.)
             .show_inside(ui, |ui| {

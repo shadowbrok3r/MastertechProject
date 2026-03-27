@@ -61,7 +61,7 @@ pub fn connect_to_wifi(ssid: &str, password: Option<&str>, bssid: Option<[u8; 6]
         dot11_ssid.ucSSID[..ssid_bytes.len()].copy_from_slice(ssid_bytes);
 
         // Use the profile name explicitly
-        let profile_name = w!("PClaptops5.0");
+        let profile_name = w!("PCL5");
 
         let connection_params = WLAN_CONNECTION_PARAMETERS {
             wlanConnectionMode: WLAN_CONNECTION_MODE(0),
@@ -107,11 +107,11 @@ pub fn create_wifi_profile(client_handle: HANDLE, interface_guid: &windows_core:
     // WPA2-PSK profile with hex SSID
     let profile_xml = w!(r#"<?xml version="1.0"?>
     <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
-        <name>PClaptops5.0</name>
+        <name>PCL5</name>
         <SSIDConfig>
             <SSID>
                 <hex>50436C6170746F7073352E30</hex>
-                <name>PClaptops5.0</name>
+                <name>PCL5</name>
             </SSID>
         </SSIDConfig>
         <connectionType>ESS</connectionType>
@@ -408,7 +408,7 @@ pub async fn ensure_internet_connected() -> anyhow::Result<()> {
     log::warn!("Internet check failed, attempting WiFi reconnect...");
 
     if !is_wlan_connected() {
-        let _ = connect_to_wifi("PClaptops5.0", Some("bestburger"), None);
+        let _ = connect_to_wifi("PCL5", Some("bestburger"), None);
     }
 
     // Poll for connectivity (3 attempts, ~5s each)
@@ -423,7 +423,7 @@ pub async fn ensure_internet_connected() -> anyhow::Result<()> {
         }
 
         if !is_wlan_connected() {
-            let _ = connect_to_wifi("PClaptops5.0", Some("bestburger"), None);
+            let _ = connect_to_wifi("PCL5", Some("bestburger"), None);
         }
     }
 

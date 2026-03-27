@@ -36,7 +36,7 @@ impl TaskAuditViewer {
         if let Some(order) = self.services_viewer.selected.clone() {
             let header = &format!("{} - {}", order.customer.name, order.order.id);
 
-            SidePanel::right(Id::new("Task Audit Side Panel"))
+            eframe::egui::Panel::right(Id::new("Task Audit Side Panel"))
                 .default_width(280.)
                 .max_width(900.)
                 .resizable(true)
@@ -152,7 +152,7 @@ impl TaskAuditViewer {
             });
         }
          
-        TopBottomPanel::top("Task Audit Top Panel")
+        eframe::egui::Panel::top("Task Audit Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| 
         {

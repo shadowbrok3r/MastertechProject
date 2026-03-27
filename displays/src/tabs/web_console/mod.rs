@@ -610,7 +610,7 @@ impl WebConsole {
         let radius = CornerRadius::same(5);
 
         // Top panel with title
-        TopBottomPanel::top("web_console_top")
+        eframe::egui::Panel::top("web_console_top")
             .frame(
                 Frame::default()
                     .fill(Color32::from_rgb(17, 17, 19))
@@ -645,7 +645,7 @@ impl WebConsole {
 
         // Side panel with shell/explorer views for selected client
         if self.show_side_panel {
-            SidePanel::right("web_console_detail")
+            eframe::egui::Panel::right("web_console_detail")
                 .min_width(400.0)
                 .max_width(600.0)
                 .frame(

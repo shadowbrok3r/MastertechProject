@@ -163,7 +163,7 @@ impl PrestashopOrderForm {
     pub fn ui(&mut self, ui: &mut Ui) {
         self.receive(ui);
 
-        TopBottomPanel::top("PrestashopOrderTopPanel")
+        eframe::egui::Panel::top("PrestashopOrderTopPanel")
         .exact_height(25.)
         .frame(Frame::dark_canvas(ui.style()))
         .show_inside(ui, |ui|{

@@ -1,7 +1,7 @@
 
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, User};
-use crate::{Interaction, PlatformSpawner, Spawner};
+use crate::{Interaction, PlatformSpawner, Spawner, apply_jiff_date, to_jiff_date};
 use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use log::info;
@@ -80,9 +80,8 @@ impl Interaction for LiveTaskPayload {
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response {
         let frame_color = date_colors(ui, self.due_date.clone().into(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
-        let mut due_date = self.due_date.date_naive();
-
         let id = self.id.key_string();
+        let mut due_date = to_jiff_date(&self.due_date);
         let date_picker = DatePickerButton::new(&mut due_date)
             .format("%m/%d")
             .id_salt(id.as_str())
@@ -90,21 +89,10 @@ impl Interaction for LiveTaskPayload {
             .ui(ui);
 
         if date_picker.changed() {
-            // Combine the NaiveDate with a default time to create a DateTime<Utc>
-            let date_time = NaiveDate::from_ymd_opt(
-                due_date.year(), 
-                due_date.month(), 
-                due_date.day()
-            )
-            .unwrap_or_default()
-            .and_hms_opt(0, 0, 0)
-            .unwrap_or_default()
-            .and_local_timezone(Utc)
-            .unwrap();
-        
-            self.due_date = date_time.clone().into();
+            self.due_date = apply_jiff_date(&self.due_date, &due_date).into();
+
             let task = self.clone(); 
-            info!("new date: {date_time:?}"); 
+            info!("new date: {due_date:?}"); 
             PlatformSpawner::spawn(async move { 
                 let update = task.update_due_date().await;
                 info!("Update: {update:?}"); 

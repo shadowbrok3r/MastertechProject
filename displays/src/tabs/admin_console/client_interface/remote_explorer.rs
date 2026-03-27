@@ -635,7 +635,7 @@ impl RemoteExplorer {
         
         // Show error if any
         if let Some(error) = &self.error {
-            TopBottomPanel::bottom("RemoteExplorerError")
+            eframe::egui::Panel::bottom("RemoteExplorerError")
                 .exact_height(25.)
                 .show_inside(ui, |ui| {
                     ui.colored_label(Color32::RED, error.clone());
@@ -667,7 +667,7 @@ impl RemoteExplorer {
     }
     
     fn display_top_panel(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
-        TopBottomPanel::top("RemoteExplorerTop")
+        eframe::egui::Panel::top("RemoteExplorerTop")
             .frame(Frame::default().outer_margin(Margin::symmetric(5, 2)))
             .exact_height(35.)
             .show_inside(ui, |ui| {
@@ -742,7 +742,7 @@ impl RemoteExplorer {
             .corner_radius(radius)
             .stroke(stroke);
         
-        SidePanel::left("RemoteExplorerSidebar")
+        eframe::egui::Panel::left("RemoteExplorerSidebar")
             .frame(sidebar_frame)
             .resizable(true)
             .default_width(150.)
@@ -793,7 +793,7 @@ impl RemoteExplorer {
             .corner_radius(radius)
             .stroke(stroke);
         
-        SidePanel::right("MyToolsSidebar")
+        eframe::egui::Panel::right("MyToolsSidebar")
             .frame(sidebar_frame)
             .resizable(true)
             .default_width(280.)

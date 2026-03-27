@@ -190,7 +190,7 @@ impl RemoteScriptsViewer {
         }
 
         let panel_id = ui.id().with("scripts_top_bar");
-        TopBottomPanel::top(panel_id).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(panel_id).show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("SO #:");
                 ui.add(
@@ -246,7 +246,7 @@ impl RemoteScriptsViewer {
         });
 
         let side_id = ui.id().with("scripts_side_panel");
-        SidePanel::left(side_id)
+        eframe::egui::Panel::left(side_id)
             .resizable(false)
             .default_width(160.0)
             .show_inside(ui, |ui| {
@@ -267,7 +267,7 @@ impl RemoteScriptsViewer {
             });
 
         let log_panel_id = ui.id().with("scripts_log_panel");
-        TopBottomPanel::bottom(log_panel_id)
+        eframe::egui::Panel::bottom(log_panel_id)
             .resizable(true)
             .default_height(200.0)
             .min_height(80.0)

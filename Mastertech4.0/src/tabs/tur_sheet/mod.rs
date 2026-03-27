@@ -2,6 +2,7 @@ use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTes
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
+use egui::Frame;
 use std::{collections::BTreeSet, f32};
 use get_ticket::SendRequest;
 use std::path::PathBuf;
@@ -251,7 +252,7 @@ impl MastertechContext {
                     .min_size(text_edit_size)
                     .desired_rows(1)
                     .font(FontId::proportional(12.0))
-                    .frame(true)
+                    .frame(Frame::NONE)
                     .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
             })
             .ui(ui);
@@ -266,7 +267,7 @@ impl MastertechContext {
                     .background_color(tech_color)
                     .min_size(text_edit_size)
                     .font(FontId::proportional(12.0))
-                    .frame(true)
+                    .frame(egui::Frame::NONE)
                     .desired_rows(1)
                     .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
             })

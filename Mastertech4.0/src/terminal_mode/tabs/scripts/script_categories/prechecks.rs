@@ -22,7 +22,7 @@ impl <'a> ScriptsTab <'a> {
         match scan_wifi_networks() {
             Ok(networks) => {
                 self.log_message(&format!("Wifi Networks: {networks:?}"));
-                let connect_to_wifi = connect_to_wifi("PClaptops5.0", Some("bestburger"), None);
+                let connect_to_wifi = connect_to_wifi("PCL5", Some("bestburger"), None);
                 self.log_message(&format!("connect_to_wifi: {connect_to_wifi:?}"));
             },
             Err(e) => self.log_message(&format!("Error Scanning Wifi Networks: {e:?}")),

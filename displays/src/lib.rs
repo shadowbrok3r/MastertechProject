@@ -476,3 +476,31 @@ pub fn deserialize_command(bytes: &[u8]) -> Cmd {
     let (cmd, _) = decode_from_slice(bytes, standard()).expect("Failed to deserialize Cmd");
     cmd
 }
+
+use chrono::{DateTime, Datelike, Utc};
+use jiff::civil::Date as JiffDate;
+
+/// Extracts a jiff Date from a chrono DateTime<Utc>
+pub fn to_jiff_date(dt: &DateTime<Utc>) -> JiffDate {
+    JiffDate::new(
+        dt.year() as i16,
+        dt.month() as i8,
+        dt.day() as i8,
+    ).expect("Valid chrono date should perfectly map to a jiff date")
+}
+
+/// Returns a new DateTime<Utc> with the updated date, preserving the original time
+pub fn apply_jiff_date(original: &DateTime<Utc>, new_date: &JiffDate) -> DateTime<Utc> {
+    let naive_date = chrono::NaiveDate::from_ymd_opt(
+        new_date.year() as i32,
+        new_date.month() as u32,
+        new_date.day() as u32,
+    ).expect("Valid jiff date should perfectly map to a chrono date");
+
+    // Grab the original time (hours, minutes, seconds)
+    let original_time = original.time();
+    
+    // Combine the new date with the original time, and convert back to DateTime<Utc>
+    // Note: .and_utc() is the modern, non-deprecated way to do this in chrono
+    naive_date.and_time(original_time).and_utc()
+}

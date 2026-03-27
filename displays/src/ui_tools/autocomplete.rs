@@ -314,7 +314,7 @@ where
         Popup::new(
             id, 
             ctx.clone(), 
-            PopupAnchor::from(&text_response), 
+            PopupAnchor::from(&text_response.response), 
             LayerId::new(Order::Foreground, id)
         )
         .width(text_response.rect.width().max(250.0))
@@ -355,7 +355,7 @@ where
 
         state.store(&ctx, id);
 
-        text_response
+        text_response.response
     }
 }
 

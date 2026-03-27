@@ -12,7 +12,7 @@ impl ScriptEditor {
             ui.ctx().request_repaint();
         }
 
-        TopBottomPanel::top("Script editor top panel")
+        eframe::egui::Panel::top("Script editor top panel")
             .exact_height(40.)
             .frame(
                 Frame::default()
@@ -125,7 +125,7 @@ impl ScriptEditor {
                 });
         }
 
-        SidePanel::right(Id::new("Script editor sidebar"))
+        eframe::egui::Panel::right(Id::new("Script editor sidebar"))
         .default_width(160.)
         .frame(
             Frame::default()

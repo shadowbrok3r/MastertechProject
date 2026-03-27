@@ -57,7 +57,7 @@ impl WebSocketClient {
         let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
 
         let text_response = &mut None;
-        TopBottomPanel::bottom(id)
+        eframe::egui::Panel::bottom(id)
             .default_height(ui.available_height()/1.2) // .resizable(false)
             .show_inside(ui, |ui| 
         {

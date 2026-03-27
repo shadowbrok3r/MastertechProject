@@ -22,7 +22,7 @@ impl UserChat {
             "Select a chat to get started".to_string()
         };
 
-        TopBottomPanel::top(self.chat_title.clone())
+        eframe::egui::Panel::top(self.chat_title.clone())
             .frame(Frame::default().inner_margin(Margin::same(4)))
             .exact_height(28.)
             .show_inside(ui, |ui| {
@@ -50,7 +50,7 @@ impl UserChat {
                 });
             });
 
-        SidePanel::left("ChatHistoryPanel")
+        eframe::egui::Panel::left("ChatHistoryPanel")
             .exact_width(120.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
@@ -109,7 +109,7 @@ impl UserChat {
                 });
             });
 
-        TopBottomPanel::bottom("ChatInputPanel")
+        eframe::egui::Panel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .default_height(150.)
             .max_height(300.)

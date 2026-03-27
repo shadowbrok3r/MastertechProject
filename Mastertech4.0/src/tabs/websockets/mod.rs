@@ -17,7 +17,7 @@ use log::{error, info};
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
         if !self.show_ws_viewport.load(Ordering::Relaxed) {
-            TopBottomPanel::top("Client Top Panel").show_inside(ui, |ui| {
+            eframe::egui::Panel::top("Client Top Panel").show_inside(ui, |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.button("Connect").clicked() {
                         self.connect(ui.ctx().clone());
@@ -52,7 +52,7 @@ impl MastertechContext{
             });
 
             if !self.error.is_empty() {
-                TopBottomPanel::bottom("error").show_inside(ui, |ui| {
+                eframe::egui::Panel::bottom("error").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.colored_label(Color32::RED, format!("Error: {}", &self.error));
                     });
@@ -540,7 +540,7 @@ impl WebConsoleFrontend {
                                         };
                                         TextEdit::singleline(&mut txt.text())
                                             .id_salt(Id::new(format!("{item:?}-{count:?}")))
-                                            .frame(false)
+                                            .frame(egui::Frame::NONE)
                                             .layouter(&mut layouter)
                                             .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
                                             .ui(ui);

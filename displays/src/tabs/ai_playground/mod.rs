@@ -90,7 +90,7 @@ impl Default for AiPlayground {
 
 impl SharedContext {
     pub fn ai_playground(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top("GPT")
+        eframe::egui::Panel::top("GPT")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(50.)
             .show_inside(ui, |ui| {
@@ -142,7 +142,7 @@ impl SharedContext {
                 });
             });
 
-        SidePanel::left("ChatHistoryPanel")
+        eframe::egui::Panel::left("ChatHistoryPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_width(175.)
             .show_inside(ui, |ui| {
@@ -199,7 +199,7 @@ impl SharedContext {
                 });
             });
 
-        TopBottomPanel::bottom("ChatInputPanel")
+        eframe::egui::Panel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(75.)
             .show_inside(ui, |ui| {

@@ -479,7 +479,7 @@ impl RegistryEditor {
             .corner_radius(radius)
             .stroke(stroke);
 
-        SidePanel::left("RegistryTree")
+        eframe::egui::Panel::left("RegistryTree")
             .frame(sidebar_frame)
             .resizable(true)
             .default_width(280.)
