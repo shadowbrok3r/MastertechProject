@@ -284,7 +284,7 @@ impl ChatServer {
                 };
                 if should_update {
                     let result: Result<Option<ConnectedClient>, _> = DATABASE
-                        .query("UPDATE connected_client SET last_activity = time::now() WHERE connection_string == $room_id")
+                        .query("UPDATE connected_client SET last_update = time::now() WHERE connection_string == $room_id")
                         .bind(("room_id", room_id_for_ping.clone()))
                         .await
                         .and_then(|mut r| r.take(0));

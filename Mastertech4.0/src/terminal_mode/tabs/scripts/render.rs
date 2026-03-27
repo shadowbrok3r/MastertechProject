@@ -617,14 +617,14 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let right_half = main_chunks[1];
 
         const SCRIPT_BUTTONS_ROW_HEIGHT: u16 = 3;
-        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 11 * SCRIPT_BUTTONS_ROW_HEIGHT; // 33
-        const SCRIPT_BUTTONS_VIEWPORT_MIN_HEIGHT: u16 = 18;
+        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 11;
+        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = SCRIPT_BUTTONS_SLOT_COUNT * SCRIPT_BUTTONS_ROW_HEIGHT; // 33
 
         let left_side_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(2),  // title
-                Constraint::Min(SCRIPT_BUTTONS_VIEWPORT_MIN_HEIGHT), // button viewport
+                Constraint::Length(2), // title: exactly 2 lines
+                Constraint::Fill(1),  // button viewport: all remaining space
             ])
             .split(left_half);
 
@@ -634,45 +634,59 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
 
         (&para).render(left_side_chunks[0], f.buffer_mut());
 
-        // Button viewport: scrollbar + content
-        let button_viewport_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(10),
-            ])
-            .split(left_side_chunks[1]);
+        let buttons_area = left_side_chunks[1];
+        let needs_scroll = buttons_area.height < SCRIPT_BUTTONS_VIRTUAL_HEIGHT;
 
-        let script_scrollbar_rect = button_viewport_layout[0];
-        let viewport_rect = button_viewport_layout[1];
+        // Only allocate a scrollbar column when content overflows the viewport
+        let (viewport_rect, script_scrollbar_rect) = if needs_scroll {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(2), Constraint::Fill(1)])
+                .split(buttons_area);
+            (cols[1], Some(cols[0]))
+        } else {
+            (buttons_area, None)
+        };
 
-        // Clamp scroll offset so we don't scroll past content
+        // Clamp scroll offset (0 when everything fits)
         let max_offset = SCRIPT_BUTTONS_VIRTUAL_HEIGHT.saturating_sub(viewport_rect.height);
         let mut scroll_offset = *self.script_buttons_scroll_offset.borrow();
         scroll_offset = scroll_offset.min(max_offset);
         self.script_buttons_scroll_offset.replace(scroll_offset);
         self.script_buttons_viewport.replace(Some(viewport_rect));
 
-        // Build slot rects: each of 11 slots has virtual height 3; compute visible part in viewport
-        let mut slot_rects: Vec<Rect> = Vec::with_capacity(11);
-        for i in 0..11u16 {
-            let row_top = i * SCRIPT_BUTTONS_ROW_HEIGHT;
-            let row_bottom = row_top + SCRIPT_BUTTONS_ROW_HEIGHT;
-            let visible_top_virtual = row_top.max(scroll_offset).min(scroll_offset + viewport_rect.height);
-            let visible_bottom_virtual = row_bottom.min(scroll_offset + viewport_rect.height).max(scroll_offset);
-            let visible_height = visible_bottom_virtual.saturating_sub(visible_top_virtual);
-            if visible_height == 0 {
-                slot_rects.push(Rect::default());
-                continue;
+        // Build slot rects: each of 11 slots has virtual height SCRIPT_BUTTONS_ROW_HEIGHT
+        let mut slot_rects: Vec<Rect> = Vec::with_capacity(SCRIPT_BUTTONS_SLOT_COUNT as usize);
+        if needs_scroll {
+            for i in 0..SCRIPT_BUTTONS_SLOT_COUNT {
+                let row_top = i * SCRIPT_BUTTONS_ROW_HEIGHT;
+                let row_bottom = row_top + SCRIPT_BUTTONS_ROW_HEIGHT;
+                // Clip to the visible window [scroll_offset .. scroll_offset + viewport_height]
+                let vis_top = row_top.max(scroll_offset);
+                let vis_bot = row_bottom.min(scroll_offset + viewport_rect.height);
+                if vis_bot <= vis_top {
+                    slot_rects.push(Rect::default());
+                    continue;
+                }
+                let screen_y = viewport_rect.y + (vis_top - scroll_offset);
+                let vis_h = vis_bot - vis_top;
+                slot_rects.push(Rect {
+                    x: viewport_rect.x,
+                    y: screen_y,
+                    width: viewport_rect.width,
+                    height: vis_h,
+                });
             }
-            let visible_top_y = viewport_rect.y + (visible_top_virtual - scroll_offset);
-            let slot_height = (visible_height).max(3).min(viewport_rect.y + viewport_rect.height - visible_top_y);
-            slot_rects.push(Rect {
-                x: viewport_rect.x,
-                y: visible_top_y,
-                width: viewport_rect.width,
-                height: slot_height,
-            });
+        } else {
+            // Everything fits — give each slot its full row height inside the viewport
+            let per_slot = viewport_rect.height / SCRIPT_BUTTONS_SLOT_COUNT;
+            let remainder = viewport_rect.height % SCRIPT_BUTTONS_SLOT_COUNT;
+            let mut y = viewport_rect.y;
+            for i in 0..SCRIPT_BUTTONS_SLOT_COUNT {
+                let h = per_slot + if i < remainder { 1 } else { 0 };
+                slot_rects.push(Rect { x: viewport_rect.x, y, width: viewport_rect.width, height: h });
+                y += h;
+            }
         }
 
         let layout = Layout::default()
@@ -848,16 +862,18 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             f.render_widget(&self.run_btn, shrink_slot(slot_rects[10], 4, 1));
         }
 
-        // Script buttons column scrollbar
-        let mut scroll_state = self.script_buttons_scroll_state.borrow_mut();
-        *scroll_state = scroll_state
-            .content_length(SCRIPT_BUTTONS_VIRTUAL_HEIGHT as usize)
-            .position(scroll_offset as usize)
-            .viewport_content_length(viewport_rect.height as usize);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
-            .begin_symbol(Some("↑"))
-            .end_symbol(Some("↓"));
-        f.render_stateful_widget(scrollbar, script_scrollbar_rect, &mut *scroll_state);
+        // Script buttons column scrollbar — only when content overflows
+        if let Some(sb_rect) = script_scrollbar_rect {
+            let mut scroll_state = self.script_buttons_scroll_state.borrow_mut();
+            *scroll_state = scroll_state
+                .content_length(SCRIPT_BUTTONS_VIRTUAL_HEIGHT as usize)
+                .position(scroll_offset as usize)
+                .viewport_content_length(viewport_rect.height as usize);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalLeft)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓"));
+            f.render_stateful_widget(scrollbar, sb_rect, &mut *scroll_state);
+        }
 
         // Render log section
         self.draw_log_section::<B>(f, layout[1]);

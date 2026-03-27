@@ -1231,7 +1231,7 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
                     Color32::from_rgb(220, 220, 220)
                 };
                 
-                egui::Label::new(RichText::new(&row.name).color(name_color).underline()).sense(Sense::click()).ui(ui);
+                ui.add(egui::Label::new(RichText::new(&row.name).color(name_color).underline()).sense(Sense::click()));
             }
             2 => {
                 ui.label(

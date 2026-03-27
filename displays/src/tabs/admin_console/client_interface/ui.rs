@@ -93,7 +93,7 @@ impl WebSocketClient {
                 
                 let (status_color, status_text, status_tooltip) = if !self.client.connected {
                     (Color32::RED, "✖", "Disconnected")
-                } else if let Some(last_activity) = &self.client.last_activity {
+                } else if let Some(last_activity) = &self.client.last_update {
                     let now = chrono::Utc::now();
                     let activity_time = last_activity.to_utc();
                     let elapsed_secs = (now - activity_time).num_seconds();
@@ -122,7 +122,7 @@ impl WebSocketClient {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let os_btn_color = Color32::from_rgb(180, 180, 200);
                     
-                    if Button::new(RichText::new("⏻ Shutdown").color(os_btn_color).small())
+                    if Button::new(RichText::new("Shutdown").color(os_btn_color).small())
                         .ui(ui).clicked() 
                     {
                         let _ = self.send_cmd_tx.try_send(Cmd::ShutdownSystem);
