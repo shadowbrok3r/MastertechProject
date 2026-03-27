@@ -6,7 +6,7 @@ use super::{row_viewer::DatabaseTableSelection, DatabaseEditor};
 impl DatabaseEditor {
     pub fn ui(&mut self, ui: &mut Ui, _current_user: Option<User>) {
         self.receive();
-        TopBottomPanel::top("Database Editor Top Panel")
+        eframe::egui::Panel::top("Database Editor Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| 
         {

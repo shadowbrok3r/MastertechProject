@@ -35,7 +35,7 @@ impl Default for QueryEditor {
 
 impl QueryEditor {
     pub fn ui(&mut self, ui: &mut Ui) {
-        TopBottomPanel::bottom("query_editor_top")
+        eframe::egui::Panel::bottom("query_editor_top")
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     FileViewer::default()

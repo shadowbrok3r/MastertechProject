@@ -3,6 +3,7 @@ mod syntax;
 mod themes;
 // pub mod syntect;
 
+use eframe::egui::Frame;
 use eframe::egui::text::LayoutJob;
 use eframe::egui::widgets::text_edit::TextEditOutput;
 // use eframe::egui::{FontId, TextFormat};
@@ -191,7 +192,7 @@ impl FileViewer {
                 .id_source(format!("{}_numlines", self.id))
                 .font(eframe::egui::TextStyle::Monospace)
                 .interactive(false)
-                .frame(false)
+                .frame(Frame::NONE)
                 .desired_rows(self.rows)
                 .desired_width(width)
                 .layouter(&mut layouter),
@@ -219,7 +220,7 @@ impl FileViewer {
                             .id_source(&self.id)
                             .lock_focus(true)
                             .desired_rows(self.rows)
-                            .frame(true)
+                            .frame(eframe::egui::Frame::default())
                             .desired_width(if self.shrink { 0.0 } else { f32::MAX })
                             .layouter(&mut layouter)
                             .show(ui);

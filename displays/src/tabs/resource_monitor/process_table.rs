@@ -107,7 +107,7 @@ impl ProcessTableViewer {
     }
 
     pub fn show(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top("Process Viewer Top Panel")
+        eframe::egui::Panel::top("Process Viewer Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| 
         {
@@ -147,7 +147,7 @@ impl ProcessTableViewer {
             });
         });
 
-        TopBottomPanel::bottom(Id::new("Task Audit Hot Keys"))
+        eframe::egui::Panel::bottom(Id::new("Task Audit Hot Keys"))
             .max_height(240.)
             .show_animated_inside(ui, self.process_viewer.open_hotkeys, |ui| 
         {

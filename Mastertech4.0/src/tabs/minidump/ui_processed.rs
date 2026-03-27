@@ -66,14 +66,14 @@ impl MiniDumpApp {
 
     fn ui_processed_good(&mut self, ui: &mut Ui, ctx: &Context, state: &ProcessState) {
         // let is_symbolicated = self.cur_status == ProcessingStatus::Done;
-        egui::TopBottomPanel::top("info")
+        eframe::egui::Panel::top("info")
             .resizable(true)
             .default_height((ui.available_height() / 2.0).round())
             .frame(Frame::new())
             .show_inside(ui, |ui| {
                 self.ui_processed_data(ui, ctx, state);
             });
-        egui::TopBottomPanel::bottom("progress")
+        eframe::egui::Panel::bottom("progress")
             .frame(Frame::new())
             .show_inside(ui, |ui| {
                 ui.add_space(2.0);
@@ -125,7 +125,7 @@ impl MiniDumpApp {
             .get(self.processed_ui_state.cur_thread)
             .map(threadname)
             .unwrap_or_default();
-        egui::SidePanel::left("overall info")
+        eframe::egui::Panel::left("overall info")
             .default_width((ui.available_width() / 2.0).round())
             .frame(Frame::new())
             .show_inside(ui, |ui| {

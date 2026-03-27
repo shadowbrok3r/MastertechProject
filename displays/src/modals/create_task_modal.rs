@@ -1,6 +1,6 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType},DATABASE};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
 use database::schema::{Datetime, RecordId};
@@ -283,7 +283,7 @@ impl CreateTaskModal {
                     .desired_width(200.0)
                     .desired_rows(1)
                     .margin(vec2(10., 3.))
-                    .frame(true)
+                    .frame(Frame::NONE)
             })
             .ui(ui);
         
@@ -313,7 +313,7 @@ impl CreateTaskModal {
                         });
                 });
 
-                let mut due_date = self.due_date.date_naive();
+                let mut due_date = crate::to_jiff_date(&self.due_date);
                 let date_picker = DatePickerButton::new(&mut due_date)
                     .calendar_week(false)
                     .format("%m/%d/%y")
@@ -321,19 +321,7 @@ impl CreateTaskModal {
                     .ui(ui);
 
                 if date_picker.changed() {
-                    // Combine the NaiveDate with a default time to create a DateTime<Utc>
-                    let date_time = NaiveDate::from_ymd_opt(
-                        due_date.year(), 
-                        due_date.month(), 
-                        due_date.day()
-                    )
-                    .unwrap_or_default()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap_or_default()
-                    .and_local_timezone(Utc)
-                    .unwrap();
-                
-                    self.due_date = date_time.clone().into();
+                    self.due_date = crate::apply_jiff_date(&self.due_date, &due_date).into();
                 }
             });
 

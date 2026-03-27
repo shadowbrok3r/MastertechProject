@@ -397,13 +397,13 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::User(user) => {
                 match column {
                     0 => Some(ui.label(user.get_id().key_string())),
-                    1 => Some(TextEdit::singleline(&mut user.get_name()).show(ui).response),
-                    2 => Some(TextEdit::singleline(&mut user.get_username()).show(ui).response),
-                    3 => Some(TextEdit::singleline(&mut user.get_email()).show(ui).response),
-                    4 => Some(TextEdit::singleline(&mut user.get_store().as_str()).show(ui).response),
-                    5 => Some(TextEdit::singleline(&mut user.get_employee_id().unwrap_or(0).to_string()).show(ui).response),
-                    6 => Some(TextEdit::singleline(&mut user.get_store_id().unwrap_or(String::new())).show(ui).response),
-                    7 => Some(TextEdit::singleline(&mut user.get_authorization().as_str()).show(ui).response),
+                    1 => Some(TextEdit::singleline(&mut user.get_name()).show(ui).response.response),
+                    2 => Some(TextEdit::singleline(&mut user.get_username()).show(ui).response.response),
+                    3 => Some(TextEdit::singleline(&mut user.get_email()).show(ui).response.response),
+                    4 => Some(TextEdit::singleline(&mut user.get_store().as_str()).show(ui).response.response),
+                    5 => Some(TextEdit::singleline(&mut user.get_employee_id().unwrap_or(0).to_string()).show(ui).response.response),
+                    6 => Some(TextEdit::singleline(&mut user.get_store_id().unwrap_or(String::new())).show(ui).response.response),
+                    7 => Some(TextEdit::singleline(&mut user.get_authorization().as_str()).show(ui).response.response),
                     _ => None
                 }
                 .into()

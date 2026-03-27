@@ -1188,7 +1188,7 @@ impl FileDialog {
             }
 
             if self.config.show_top_panel {
-                egui::TopBottomPanel::top(self.window_id.with("top_panel"))
+                eframe::egui::Panel::top(self.window_id.with("top_panel"))
                     .resizable(false)
                     .show_inside(ui, |ui| {
                         self.ui_update_top_panel(ui);
@@ -1196,7 +1196,7 @@ impl FileDialog {
             }
 
             if self.config.show_left_panel {
-                egui::SidePanel::left(self.window_id.with("left_panel"))
+                eframe::egui::Panel::left(self.window_id.with("left_panel"))
                     .resizable(true)
                     .default_width(150.0)
                     .width_range(90.0..=250.0)
@@ -1207,7 +1207,7 @@ impl FileDialog {
 
             // Optionally, show a custom right panel (see `update_with_custom_right_panel`)
             if let Some(f) = right_panel_fn {
-                let mut right_panel = egui::SidePanel::right(self.window_id.with("right_panel"))
+                let mut right_panel = eframe::egui::Panel::right(self.window_id.with("right_panel"))
                     // Unlike the left panel, we have no control over the contents, so
                     // we don't restrict the width. It's up to the user to make the UI presentable.
                     .resizable(true);
@@ -1219,7 +1219,7 @@ impl FileDialog {
                 });
             }
 
-            egui::TopBottomPanel::bottom(self.window_id.with("bottom_panel"))
+            eframe::egui::Panel::bottom(self.window_id.with("bottom_panel"))
                 .resizable(false)
                 .show_inside(ui, |ui| {
                     self.ui_update_bottom_panel(ui);
@@ -1298,7 +1298,7 @@ impl FileDialog {
         // inside a window. Therefore, when rendering a modal, we render an invisible bottom panel,
         // which prevents the error.
         // This is currently a bit hacky and should be adjusted again in the future.
-        egui::TopBottomPanel::bottom(self.window_id.with("modal_bottom_panel"))
+        eframe::egui::Panel::bottom(self.window_id.with("modal_bottom_panel"))
             .resizable(false)
             .show_separator_line(false)
             .show_inside(ui, |_| {});

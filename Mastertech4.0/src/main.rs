@@ -16,25 +16,25 @@ pub mod first_run;
 pub mod data;
 
 impl eframe::App for app_state::MasterTechApp {
-    fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
-        ctx.options_mut(|options| {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        ui.options_mut(|options| {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
 
-        self.receive(frame, ctx);
-        self.menu_bar(ctx);
+        self.receive(frame, ui);
+        self.menu_bar(ui);
 
         match &self.context.shared_ctx.state {
             AppState::Authenticated(page) => match page {
-                MainPages::Tasks => self.main_page(ctx),
+                MainPages::Tasks => self.main_page(ui),
                 MainPages::UserPreferences => self
                     .context
                     .shared_ctx
-                    .account_settings_page(ctx, self.context.shared_ctx.app_state_tx.clone()),
+                    .account_settings_page(ui, self.context.shared_ctx.app_state_tx.clone()),
                 _ => {}
             },
             AppState::CreateAccount => self.context.shared_ctx.signup_page(
-                ctx,
+                ui,
                 self.context.shared_ctx.db_tx.clone(),
                 self.context.shared_ctx.app_state_tx.clone(),
             ),
@@ -43,17 +43,17 @@ impl eframe::App for app_state::MasterTechApp {
                     info!("Already connected");
                     let usr = self.context.shared_ctx.current_user.clone();
                     if let Some(user) = usr {
-                        self.context.shared_ctx.load_data(ctx, &user);
+                        self.context.shared_ctx.load_data(ui, &user);
                         let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
                     } else {
                         self.context.shared_ctx.first_run = true;
-                        self.first_run(ctx);
+                        self.first_run(ui);
                         log::error!("1");
                         self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
                     }
                 } else {
                     self.context.shared_ctx.login_page(
-                        ctx,
+                        ui,
                         self.context.shared_ctx.db_tx.clone(),
                         self.context.shared_ctx.app_state_tx.clone(),
                     )

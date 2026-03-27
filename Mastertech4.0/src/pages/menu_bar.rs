@@ -17,7 +17,7 @@ impl MasterTechApp {
             inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
         }
         
-        TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
+        eframe::egui::Panel::top("egui_dock::MenuBar").show(ctx, |ui| {
             eframe::egui::MenuBar::new()
             .config(
                 MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),

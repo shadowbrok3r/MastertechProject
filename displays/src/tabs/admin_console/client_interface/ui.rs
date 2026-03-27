@@ -22,7 +22,7 @@ impl WebSocketClient {
         self.receive(ui.ctx());
         ui.set_min_height(600.);
 
-        TopBottomPanel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
+        eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
         .exact_height(60.)
         .show_inside(ui, |ui| 
         {

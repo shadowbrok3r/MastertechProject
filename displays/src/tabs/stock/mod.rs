@@ -153,7 +153,7 @@ impl Default for StockTable {
 
 impl StockTable {
     pub fn ui(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top("StockTopPanel")
+        eframe::egui::Panel::top("StockTopPanel")
             .exact_height(30.)
             .show_inside(ui, |ui| {
                 ui.horizontal_top(|ui| {
@@ -384,7 +384,7 @@ impl StockTable {
             let selection_count = selected_products.len();
             
             if let Some(ref summary) = self.cost_summary {
-                TopBottomPanel::bottom("CostBreakdownBottom")
+                eframe::egui::Panel::bottom("CostBreakdownBottom")
                     .exact_height(30.)
                     .show_inside(ui, |ui| {
                         ui.horizontal_centered(|ui| {

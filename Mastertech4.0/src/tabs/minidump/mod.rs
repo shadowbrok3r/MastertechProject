@@ -299,7 +299,7 @@ impl MiniDumpApp {
 // out of control with all these unrelated UIs together!
 impl MiniDumpApp {
     pub fn update_ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        egui::TopBottomPanel::top("tab bar")
+        eframe::egui::Panel::top("tab bar")
             .resizable(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {

@@ -613,7 +613,7 @@ impl DisplayModal for TaskModal {
         ui.set_max_size(max_space);
         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
-        TopBottomPanel::top(format!("Top panel header {}", self.task.id.key_string())).exact_height(28.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(format!("Top panel header {}", self.task.id.key_string())).exact_height(28.).show_inside(ui, |ui| {
 
             ui.columns(3, |ui| {
                 ui[0].with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -952,7 +952,7 @@ impl SpecialPartOrder {
                                     TextEdit::singleline(&mut self.manufacturer_part_number)
                                         .hint_text("MFG P/N".to_string())
                                         .margin(Margin::same(5))
-                                        .frame(true)
+                                        .frame(Frame::NONE)
                                         .ui(ui);
 
                                     ui.add_space(15.0);

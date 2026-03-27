@@ -104,7 +104,7 @@ impl SharedContext {
         db_tx: Sender<anyhow::Result<Database, anyhow::Error>>,
         appstate_tx: Sender<AppState>,
     ) {
-        TopBottomPanel::bottom(Id::new("logger_ui")).exact_height(400.).show(ctx, |ui| crate::ui_tools::egui_logger::logger_ui().show(ui));
+        eframe::egui::Panel::bottom(Id::new("logger_ui")).exact_height(400.).show(ctx, |ui| crate::ui_tools::egui_logger::logger_ui().show(ui));
 
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))

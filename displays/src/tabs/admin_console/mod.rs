@@ -1,5 +1,5 @@
 use crate::{PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
-use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, ScrollArea, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{self, Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, ScrollArea, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, Sortable};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
@@ -102,7 +102,7 @@ impl SharedContext {
 
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
 
-        TopBottomPanel::top("Client_Top_panel")
+        eframe::egui::Panel::top("Client_Top_panel")
             .frame(
                 Frame::default()
                     .fill(Color32::from_rgb(17,17,19))
@@ -112,7 +112,7 @@ impl SharedContext {
                     .corner_radius(radius)
             )
             .show_separator_line(false)
-            .exact_height(35.)
+            .exact_size(35.)
             .show_inside(ui, |ui |
         {
             ui.with_layout(Layout::left_to_right(Align::Center),|ui | { 
@@ -157,7 +157,7 @@ impl SharedContext {
             });
         });
 
-        SidePanel::left("Client_Side_panel")
+        eframe::egui::Panel::left("Client_Side_panel")
             .frame(
                 Frame::default()
                     .fill(ui.style().visuals.extreme_bg_color)

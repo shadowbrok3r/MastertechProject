@@ -262,5 +262,5 @@ pub type HighlightCache = eframe::egui::util::cache::FrameCache<LayoutJob, Token
 
 
 pub fn highlight<T: Editor>(ctx: &eframe::egui::Context, cache: &T, text: &str) -> LayoutJob {
-    ctx.memory_mut(|mem| mem.caches.cache::<HighlightCache>().get((cache, text)))
+    ctx.memory_mut(|mem| mem.caches.cache::<HighlightCache>().get((cache, text)).clone())
 }

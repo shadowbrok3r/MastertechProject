@@ -4,7 +4,7 @@ use eframe::egui::{containers::menu::MenuConfig, *};
 
 impl SharedContext {
     pub fn menu_bar(&mut self, ctx: &Context) {
-        TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
+        eframe::egui::Panel::top("egui_dock::MenuBar").show(ctx, |ui| {
             MenuBar::new()
             .config(
                 MenuConfig::default().close_behavior(PopupCloseBehavior::CloseOnClickOutside),

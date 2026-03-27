@@ -94,7 +94,7 @@ impl Default for Koth {
 
 impl Koth {
     pub fn ui(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top("KothTopPanel")
+        eframe::egui::Panel::top("KothTopPanel")
         .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 // Search box should drive the active table's viewer
@@ -306,7 +306,7 @@ impl Koth {
         });
 
         if let KothSelection::Me = self.koth_selection {
-            TopBottomPanel::bottom("KothBottom")
+            eframe::egui::Panel::bottom("KothBottom")
             .show_inside(ui, |ui| {
                 ui.columns(9, |ui| {
                     // Summary row below the table (unchanged logic)

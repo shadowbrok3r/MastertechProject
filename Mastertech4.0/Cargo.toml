@@ -25,7 +25,7 @@ default = [ "inline" ]
 inline = []
 
 [dependencies]
-eframe = { version="0.33", features=["persistence", "serde",  "default_fonts", "glow", "wayland"], default-features=false }
+eframe = { version="0.34", features=["persistence", "serde",  "default_fonts", "glow", "wayland"], default-features=false }
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "cookies", "brotli", "native-tls-vendored", "form", "charset", "http2", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -103,7 +103,7 @@ fuzzy-matcher.workspace = true
 uuid.workspace = true
 
 [dependencies.egui]
-version = "0.33"
+version = "0.34"
 default-features = false
 features = ["rayon", "bytemuck"]
 

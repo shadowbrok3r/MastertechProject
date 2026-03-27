@@ -60,6 +60,7 @@ ratatui = { workspace = true }
 dotenv = { version = "0.15" }
 rusty-s3 = { workspace = true }
 rmcp = { workspace = true }
+jiff = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}

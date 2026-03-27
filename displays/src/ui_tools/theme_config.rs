@@ -121,7 +121,7 @@ impl Default for ThemeConfig {
 impl ThemeConfig {
     pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Arc<Style>) {
         let mut ret = (false, ctx.style());
-        TopBottomPanel::top("Theme Menu top bar")
+        eframe::egui::Panel::top("Theme Menu top bar")
         .exact_height(30.)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui|{

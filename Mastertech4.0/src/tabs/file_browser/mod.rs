@@ -240,7 +240,7 @@ impl FileBrowser {
     }
 
     pub fn top_panel(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
+        eframe::egui::Panel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let response = ui
                     .add_sized(
@@ -301,7 +301,7 @@ impl FileBrowser {
     }
 
     pub fn bottom_panel(&mut self, ui: &mut Ui) {
-        TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
+        eframe::egui::Panel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             if self.progress as u64 == self.source_dir_size && self.animated_progress {
                 self.progress = 0.0;
                 self.animated_progress = false;

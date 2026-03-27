@@ -347,7 +347,7 @@ impl ChatView {
             }
         }
 
-        TopBottomPanel::top(format!("Top panel header {:?}", task_id)).exact_height(24.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id)).exact_height(24.).show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
                 if Button::new(RichText::new("Refresh").strong().heading()).ui(ui).clicked() {
                     self.refresh_notes();
@@ -355,7 +355,7 @@ impl ChatView {
             });
         });
 
-        TopBottomPanel::bottom(id)
+        eframe::egui::Panel::bottom(id)
             .default_height(300.)
             // .max_height(500.)
             .resizable(false)

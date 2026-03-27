@@ -537,7 +537,7 @@ impl FileSystem {
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 
 
-        TopBottomPanel::top("FileBrowserTop")
+        eframe::egui::Panel::top("FileBrowserTop")
             .frame(top_panel_frame)
             .exact_height(40.)
             .show_inside(ui, |ui| 
@@ -584,7 +584,7 @@ impl FileSystem {
             });
         });
 
-        TopBottomPanel::bottom("FileBrowserBottom")
+        eframe::egui::Panel::bottom("FileBrowserBottom")
             .frame(btm_panel_frame)
             .show_separator_line(false)
             .show_inside(ui, |ui| 
@@ -599,14 +599,14 @@ impl FileSystem {
 
         if let Some(file) = self.previewed_file.as_mut() {
             if size.x > 1000. {
-                SidePanel::right(Id::new("FileBrowserSidePanel"))
+                eframe::egui::Panel::right(Id::new("FileBrowserSidePanel"))
                     .default_width(ui.available_width()/2.0)
                     .show_inside(ui, |ui| 
                 {
                     self.file_editor.show(ui, file);
                 });
             } else {
-                TopBottomPanel::bottom(Id::new("FileBrowserBottomPanel"))
+                eframe::egui::Panel::bottom(Id::new("FileBrowserBottomPanel"))
                     .default_height(ui.available_height()/2.0)
                     .show_inside(ui, |ui| 
                 {
