@@ -35,7 +35,7 @@ pub struct MenuBar<'a> {
 impl<'a> MenuBar<'a> {
     pub fn new(ctx: Arc<Mutex<TerminalContext>>, manual_start_tx: tokio::sync::mpsc::UnboundedSender<bool>) -> Self {
         // Create tab buttons with .as_tab() to enable proper effect handling
-        let mut ticket_tab = Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME).as_tab();
+        let ticket_tab = Button::new("Ticket", WidgetId("Ticket".to_owned())).theme(CATPPUCCINTHEME).as_tab();
         ticket_tab.set_selected(true); // Default selected tab
         
         Self {

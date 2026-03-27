@@ -133,13 +133,20 @@ impl TerminalWebsocketClient {
         -> anyhow::Result<()> 
     {
         let connection_url = format!("{}&room_id={}", if cfg!(debug_assertions) {WS_CLIENT_URL_LOCAL} else {WS_CLIENT_URL}, self.client.connection_string);
-        let connection = ewebsock::connect(connection_url, ewebsock::Options::default());
-        
-        match connection {
-            Ok((mut sender, receiver)) => {
-                let ready = &mut false;
-                log::info!("start_websocket_sender -> ready");
-                loop {
+
+        // After a drop (e.g. network driver during Windows Update), reconnect instead of spinning on a dead sender.
+        const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+
+        'ws_session: loop {
+            let connection = ewebsock::connect(connection_url.clone(), ewebsock::Options::default());
+
+            match connection {
+                Ok((mut sender, receiver)) => {
+                    let ready = &mut false;
+                    log::info!("start_websocket_sender -> connecting");
+                    loop {
+                        let mut socket_lost = false;
+
                     // Handle WebSocket events (e.g., READY or TerminalEvent from egui)
                     while let Some(event) = receiver.try_recv() {
                         // log::info!("Received WebSocket event: {:?}", event);
@@ -152,10 +159,20 @@ impl TerminalWebsocketClient {
                             WsEvent::Error(e) => { 
                                 log::info!("start_websocket_sender -> Error: {e:?}");
                                 let _ = connection_state_tx.send((false, format!("{e:?}"))); 
+                                let _ = start_tx.send(false);
+                                *ready = false;
+                                self.persistent_shell = None;
+                                socket_lost = true;
+                                break;
                             },
                             WsEvent::Closed => { 
-                                log::info!("start_websocket_sender -> Connection Closed");
+                                log::info!("start_websocket_sender -> Connection Closed — will reconnect");
                                 let _ = connection_state_tx.send((false, "Disconnected".to_string())); 
+                                let _ = start_tx.send(false);
+                                *ready = false;
+                                self.persistent_shell = None;
+                                socket_lost = true;
+                                break;
                             },
                             WsEvent::Message(ws_message) => {
                                 match ws_message {
@@ -260,7 +277,14 @@ impl TerminalWebsocketClient {
                     if let Ok(()) = shutdown_rx.try_recv() {
                         self.client.disconnect_client();
                         *ready = false;
-                        break;
+                        self.persistent_shell = None;
+                        return Ok(());
+                    }
+
+                    if socket_lost {
+                        log::info!("start_websocket_sender -> reconnecting after {:?}...", RECONNECT_DELAY);
+                        tokio::time::sleep(RECONNECT_DELAY).await;
+                        continue 'ws_session;
                     }
     
                     if *ready {
@@ -287,10 +311,17 @@ impl TerminalWebsocketClient {
                     // immediately. we need to give some CPU time to yield, allowing the websocket
                     // handshake to complete
                     tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to establish WebSocket connection: {e:?}");
+                    let _ = connection_state_tx.send((false, format!("Connect failed: {e:?}")));
+                    let _ = start_tx.send(false);
+                    tokio::time::sleep(RECONNECT_DELAY).await;
                 }
             }
-            Err(e) => log::error!("Failed to establish WebSocket connection: {e:?}")
         }
+        #[allow(unreachable_code)]
         Ok(())
     }
 
@@ -906,7 +937,7 @@ impl TerminalWebsocketClient {
                             .args([
                                 "/Create",
                                 "/TN", task_name,
-                                "/TR", &format!("\"{}\"", exe_path_str),
+                                "/TR", &format!("\"{}\" -t", exe_path_str),
                                 "/SC", "ONLOGON",
                                 "/RL", "HIGHEST",
                                 "/F", // Force overwrite if exists
