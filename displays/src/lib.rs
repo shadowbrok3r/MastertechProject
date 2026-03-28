@@ -327,6 +327,10 @@ pub enum Cmd {
     RemoteScriptResult { name: String, status: RemoteScriptStatus },
     RemoteScriptsComplete,
 
+    /// Run a script on the remote client by sending its text content directly.
+    /// The filename extension determines the shell: .ps1 → PowerShell, .bat/.cmd → cmd.
+    RunScriptContent { filename: String, content: String },
+
     None,
 }
 
@@ -466,6 +470,8 @@ pub enum FileSystemAction {
     CreateFile(String),
     /// Rename a file/folder: (old_path, new_name)
     Rename(String, String),
+    /// Run a script file on a connected remote client (full_path, filename)
+    RunOnRemote(String, String),
 }
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {

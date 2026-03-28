@@ -32,6 +32,7 @@ impl WebSocketClient {
                 let btn_color = ui.style().visuals.error_fg_color;
                 if Button::new(RichText::new("My Tools").color(btn_color)).ui(ui).clicked(){
                     let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
+                    let _ = self.toolbox.request_contents("/");
                 }
 
                 if Button::new(RichText::new("Explorer").color(btn_color)).ui(ui).clicked(){

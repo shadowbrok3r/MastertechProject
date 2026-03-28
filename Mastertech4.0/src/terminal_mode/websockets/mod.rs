@@ -2192,6 +2192,53 @@ if (Test-Path $path) {{
                 }
             }
 
+            Cmd::RunScriptContent { filename, content } => {
+                log::info!("RunScriptContent: filename={filename}");
+                let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+
+                let send_log = |sender: &mut ewebsock::WsSender, msg: String| {
+                    if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptLog(msg), standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                };
+
+                send_log(sender, format!("Running script: {filename}"));
+
+                let output = match ext.as_str() {
+                    "ps1" => {
+                        std::process::Command::new("powershell")
+                            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &content])
+                            .output()
+                    }
+                    "bat" | "cmd" => {
+                        std::process::Command::new("cmd")
+                            .args(["/C", &content])
+                            .output()
+                    }
+                    _ => {
+                        send_log(sender, format!("Unsupported script type: .{ext}"));
+                        return;
+                    }
+                };
+
+                match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stdout.is_empty() {
+                            send_log(sender, stdout.to_string());
+                        }
+                        if !stderr.is_empty() {
+                            send_log(sender, format!("[stderr] {stderr}"));
+                        }
+                        send_log(sender, format!("Script {filename} exited with code: {}", out.status));
+                    }
+                    Err(e) => {
+                        send_log(sender, format!("Failed to run script {filename}: {e}"));
+                    }
+                }
+            }
+
             Cmd::None => {},
             _ => {}
         }

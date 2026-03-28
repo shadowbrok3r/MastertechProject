@@ -581,7 +581,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         if *init {
             if self.filesystem.user.get_name().len() > 0 {
                 log::info!("We have a user, requesting contents");
-                log::info!("request: {:?}", self.filesystem.request_contents("Scripts"));
                 log::info!("Contents: {:?}", self.filesystem.root);
             } else {
                 log::info!("We need a user");
@@ -589,7 +588,6 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 match user {
                     Some(usr) => {
                         let _ = self.filesystem.set_user(usr);
-                        let _ = self.filesystem.request_contents("Scripts");
                         log::info!("insert_user_scripts");
                         self.check_for_scripts = true;
                     },

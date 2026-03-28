@@ -8,6 +8,14 @@ use super::{deserializer, ui::WsDisplayState, History, WebSocketClient};
 impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
         self.explorer.receive();
+        self.toolbox.receive();
+
+        // Check if the toolbox wants to run a script on the remote client
+        if let Ok((filename, content)) = self.toolbox.run_on_remote_rx.try_recv() {
+            log::info!("Running script on remote: {filename}");
+            let cmd = Cmd::RunScriptContent { filename, content };
+            self.ws_sender.send(WsMessage::Binary(serialize_command(&cmd)));
+        }
 
         #[cfg(not(target_arch="wasm32"))]
         if let Ok(diagnostic_msg) = self.diagnostic_rx.try_recv() {
@@ -92,18 +100,26 @@ impl WebSocketClient {
             }
         }
 
-        if let Ok(msg) = self.msg_to_client_rx.try_recv() {
+        while let Ok(msg) = self.msg_to_client_rx.try_recv() {
             self.ws_sender.send(msg);
         }
-        
-        if let Some(event) = self.ws_receiver.try_recv() {
-            match event{
+
+        // Drain ALL pending websocket messages in one frame to avoid backlog.
+        // For terminal binary buffers, keep only the latest to skip stale frames.
+        let mut latest_terminal_bin: Option<Vec<u8>> = None;
+        while let Some(event) = self.ws_receiver.try_recv() {
+            match event {
                 WsEvent::Message(msg) => {
-                    match msg{
-                        WsMessage::Binary(bin) => self.handle_binary_message(bin, ctx),
+                    match msg {
+                        WsMessage::Binary(bin) => {
+                            if matches!(self.state, WsDisplayState::Terminal) {
+                                latest_terminal_bin = Some(bin);
+                            } else {
+                                self.handle_binary_message(bin, ctx);
+                            }
+                        },
                         WsMessage::Text(text) => self.handle_text_message(text),
                         WsMessage::Pong(_) => {
-                            // Update pong time and connection status
                             self.last_pong_time = Some(web_time::Instant::now());
                             self.is_connected = true;
                             self.connection_status = "Connected".to_string();
@@ -144,18 +160,23 @@ impl WebSocketClient {
                 },
             }
         }
+
+        // Forward only the latest terminal buffer, skipping all stale frames
+        if let Some(bin) = latest_terminal_bin {
+            let _ = self.msg_from_client_tx.try_send(WsMessage::Binary(bin));
+        }
         
         if let Ok(state) = self.display_state_channel.1.try_recv() {
             self.state = state;
         }
 
-        // Here we will handle commands we are going to SEND to Mastertech
-        if let Ok(command) = self.send_cmd_rx.try_recv() {
+        // Handle commands we are going to SEND to Mastertech
+        while let Ok(command) = self.send_cmd_rx.try_recv() {
             self.handle_command(command);
         }
 
-        // Here we will handle commands we receive from Mastertech
-        if let Ok(command) = self.receive_cmd_rx.try_recv() {
+        // Handle commands we receive from Mastertech
+        while let Ok(command) = self.receive_cmd_rx.try_recv() {
             ctx.request_repaint();
             if let Cmd::FileSystemAction(file_system_action) = command {
                 self.helper_delegate.handle_filesystem_action(&file_system_action);
