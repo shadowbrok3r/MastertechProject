@@ -73,11 +73,21 @@ impl RenderSystem {
                                     );
                                     ctx.url = Some(connection_url.clone());
                                     ctx.store_users = get_database_users();
+                                    let ctx_clone = self.ctx.clone();
                                     tokio::spawn(async move {
 
                                         client.assigned_user = Some(usr_id.clone());
-                                        let create_client = create_client(client.clone()).await;
-                                        log::info!("Client Creation: {create_client:?}");
+                                        match create_client(client.clone()).await {
+                                            Ok(created) => {
+                                                log::info!("Client Creation OK, friendly_name: {:?}", created.friendly_name);
+                                                if let Some(name) = &created.friendly_name {
+                                                    if let Ok(mut ctx) = ctx_clone.lock() {
+                                                        ctx.friendly_name = Some(name.clone());
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => log::error!("Client Creation failed: {e:?}"),
+                                        }
                                         
                                         let tasks_result = get_tasks_for_store(tx, store).await;
                                         log::info!("Tasks result: {tasks_result:?}");

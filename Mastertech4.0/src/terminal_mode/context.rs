@@ -18,8 +18,8 @@ pub struct TerminalContext {
     pub tasks: Vec<LiveTaskPayload>,
     pub tasks_tx: Sender<Vec<LiveTaskPayload>>,
     pub tasks_rx: Receiver<Vec<LiveTaskPayload>>,
-    pub new_tasks: bool
-    
+    pub new_tasks: bool,
+    pub friendly_name: Option<String>,
 }
 
 impl TerminalContext {
@@ -41,6 +41,7 @@ impl TerminalContext {
             tasks_tx,
             tasks_rx,
             new_tasks: false,
+            friendly_name: None,
         }
     }
 }

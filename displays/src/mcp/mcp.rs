@@ -308,7 +308,7 @@ struct ReadScriptParams {
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 struct SaveScriptParams {
-    #[schemars(description = "Script filename (e.g. 'cleanup.ps1'). Will be saved under Scripts/ prefix.")]
+    #[schemars(description = "Script filename (e.g. 'cleanup.ps1'). Saved directly in the user's bucket.")]
     pub script_name: String,
     #[schemars(description = "Full script content to save")]
     pub content: String,

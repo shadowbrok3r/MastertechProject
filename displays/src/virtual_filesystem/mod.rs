@@ -42,10 +42,10 @@ pub enum StorageBackend {
 /// let fetcher = SurrealDbFetcher::new("my_bucket");
 /// 
 /// // List files
-/// let node = fetcher.request_bucket_contents("/scripts").await?;
+/// let node = fetcher.request_bucket_contents("/").await?;
 /// 
 /// // Upload a file
-/// fetcher.upload_file("/scripts/test.ps1", b"Write-Host 'Hello'".to_vec()).await?;
+/// fetcher.upload_file("/test.ps1", b"Write-Host 'Hello'".to_vec()).await?;
 /// ```
 #[derive(Debug, Clone)]
 pub struct SurrealDbFetcher {
@@ -82,7 +82,7 @@ impl SurrealDbFetcher {
     
     /// Request contents of a directory from SurrealDB bucket.
     ///
-    /// SurrealDB stores files as flat paths (e.g. `Scripts/script1.ps1`).
+    /// SurrealDB stores files as flat paths (e.g. `script1.ps1`).
     /// This method parses those paths into a hierarchical Node tree so the
     /// file browser can display proper folder structures.
     pub async fn request_bucket_contents(&self, prefix: &str) -> anyhow::Result<Node, anyhow::Error> {
@@ -1512,9 +1512,8 @@ impl FileSystem {
             StorageBackend::SurrealDb => {
                 PlatformSpawner::spawn(async move {
                     let fetcher = SurrealDbFetcher::new(&name);
-                    let path = format!("Scripts/{new_name}");
-                    match fetcher.upload_text(&path, &script_contents).await {
-                        Ok(_) => info!("Script saved to SurrealDB: {path}"),
+                    match fetcher.upload_text(&new_name, &script_contents).await {
+                        Ok(_) => info!("Script saved to SurrealDB: {new_name}"),
                         Err(e) => log::warn!("Failed to save script to SurrealDB: {e:?}"),
                     }
                     let _ = fs_tx.try_send(FileSystemAction::RequestNewContents(current_prefix));
@@ -1542,7 +1541,7 @@ impl FileSystem {
         bytes: Bytes,
         file_name: &String
     ) -> Result<(), Error> {
-        let path = format!("Scripts/{file_name}");
+        let path = file_name.to_string();
         let name = name.clone();
         let region = database::REGION;
         let client = Client::new();
@@ -1552,27 +1551,6 @@ impl FileSystem {
             STORAGE_URL.to_string().parse::<Url>()?, 
             rusty_s3::UrlStyle::Path, name, region
         )?;
-
-        // Step 1: Create the "folder" if it doesn't exist
-        let folder_path = "Scripts/"; // The "folder" key in S3
-        let create_folder_action = rusty_s3::actions::PutObject::new(&bucket, Some(&credentials), folder_path);
-        let create_folder_url = create_folder_action.sign(ONE_HOUR);
-
-        let folder_response = client
-            .put(create_folder_url)
-            .header(CONTENT_LENGTH, 0) // Empty object for the folder
-            .send()
-            .await?;
-
-        if !folder_response.status().is_success() {
-            return Err(anyhow::anyhow!(format!(
-                "Failed to create folder '{}': {}",
-                folder_path,
-                folder_response.status()
-            )));
-        }
-
-        info!("Folder '{}' ensured in the bucket.", folder_path);
 
         let action = CreateMultipartUpload::new(&bucket, Some(&credentials), &path);
         let url = action.sign(ONE_HOUR);
