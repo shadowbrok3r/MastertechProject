@@ -74,6 +74,18 @@ impl MasterTechApp {
 
     pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
         if self.context.shared_ctx.first_run { self.first_run(ctx); }
+
+        // Poll for OA3 friendly name result
+        if self.context.client_friendly_name.is_empty() {
+            if let Ok(name) = self.context.friendly_name_rx.try_recv() {
+                if !name.is_empty() {
+                    log::info!("OA3 friendly name resolved: {name}");
+                    self.context.client_friendly_name = name.clone();
+                    self.context.client_title = name;
+                }
+            }
+        }
+
         self.context.shared_ctx.receive_shared(frame, ctx);
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
@@ -203,6 +215,25 @@ impl MasterTechApp {
                 CONNECTED_CLIENT_TABLE.to_string(), 
                 url_string.clone()
             );
+
+            // Spawn OA3 friendly name lookup if we haven't resolved one yet
+            if self.context.client_friendly_name.is_empty() {
+                let fname_tx = self.context.friendly_name_tx.clone();
+                spawn(async move {
+                    #[cfg(target_os = "windows")]
+                    {
+                        use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
+                        use crate::filesystem::customer_lookup::lookup_customer_by_serial;
+                        if let Ok(raw) = get_oa_style_serial() {
+                            if let Ok(serial13) = to_oa3_13digit(&raw) {
+                                if let Ok(name) = lookup_customer_by_serial(&serial13).await {
+                                    let _ = fname_tx.try_send(name);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         if let Ok(antivirus) = self.context.current_antivirus_rx.try_recv() {

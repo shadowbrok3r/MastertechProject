@@ -3,6 +3,19 @@ use crate::{utilities::{scripts::{install_program, StartupProgram, StartupState}
 
 
 impl <'a> ScriptsTab <'a> {
+    /// When both "Activate SuperAnti" and "Change SuperAntiSpyware settings" are
+    /// selected in the same run, we must combine them into a single sequential
+    /// workflow so the settings change waits until activation finishes.
+    /// This flag is set by `activate_superanti` when it detects the combo, and
+    /// checked by `change_superantispyware_settings` to skip (it's handled in
+    /// the combined flow).
+    fn both_sas_scripts_selected(&self) -> bool {
+        let selected = self.get_selected_scripts();
+        let has_activate = selected.iter().any(|s| s.text == "Activate SuperAnti");
+        let has_settings = selected.iter().any(|s| s.text == "Change SuperAntiSpyware settings");
+        has_activate && has_settings
+    }
+
     pub fn handle_tuneup(&mut self, item_text: &str, category: &Category){
         self.current_reporter.replace(Reporter::Tuneup);
         self.log_message(&format!("Starting Tuneup script: {}", item_text));
@@ -102,8 +115,11 @@ impl <'a> ScriptsTab <'a> {
             return;
         }
 
+        let also_change_settings = self.both_sas_scripts_selected();
+
         let killed = kill_sas_processes();
         self.log_message(format!("Killed {killed} SAS processes before install"));
+        Self::wait_until_sas_not_running(5);
 
         let so = self.service_number.clone();
         let tx = self.progress_tx.clone();
@@ -123,8 +139,46 @@ impl <'a> ScriptsTab <'a> {
                 Err(e) => { let _ = log_tx.try_send(format!("SAS install error: {e}")); false }
             };
 
+            // Kill post-install SAS processes and verify they are gone
             let killed = kill_sas_processes();
             let _ = log_tx.try_send(format!("Post-install killed {killed} SAS processes"));
+            Self::wait_until_sas_not_running(10);
+
+            if also_change_settings && success {
+                // Combined flow: configure settings before relaunching SAS
+                let _ = log_tx.try_send("Combined flow: changing SAS settings before relaunch...".into());
+                std::thread::sleep(std::time::Duration::from_secs(2));
+
+                use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_scheduled_tasks;
+                match configure_sas_scheduled_tasks() {
+                    Ok((update_guid, scan_guid)) => {
+                        let _ = log_tx.try_send(format!("Created SAS update task: {update_guid}"));
+                        let _ = log_tx.try_send(format!("Created SAS quick-scan task: {scan_guid}"));
+                        let _ = log_tx.try_send("SAS scheduled tasks configured.".into());
+                        let _ = checklist_tx.try_send((category_clone.clone(), "Change SuperAntiSpyware settings".into(), true));
+                    }
+                    Err(e) => {
+                        let _ = log_tx.try_send(format!("Failed to configure SAS tasks: {e}"));
+                        let _ = checklist_tx.try_send((category_clone.clone(), "Change SuperAntiSpyware settings".into(), false));
+                    }
+                }
+            }
+
+            // Relaunch SAS and verify the process is running
+            const SAS_EXE: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
+            if std::path::Path::new(SAS_EXE).exists() {
+                let _ = log_tx.try_send("Relaunching SUPERAntiSpyware...".into());
+                if let Err(e) = std::process::Command::new(SAS_EXE).spawn() {
+                    let _ = log_tx.try_send(format!("Failed to relaunch SAS: {e}"));
+                } else {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if Self::is_sas_running() {
+                        let _ = log_tx.try_send("SUPERAntiSpyware is running.".into());
+                    } else {
+                        let _ = log_tx.try_send("Warning: SAS was launched but process not detected.".into());
+                    }
+                }
+            }
 
             let _ = checklist_tx.try_send((category_clone, item_text_clone, success));
         });
@@ -274,13 +328,18 @@ impl <'a> ScriptsTab <'a> {
     }
 
     pub fn change_superantispyware_settings(&mut self, item_text: &str, category: &Category) {
+        // If both scripts were selected, activate_superanti already handles settings
+        // in its combined flow — skip here to avoid a race.
+        if self.both_sas_scripts_selected() {
+            self.log_message("Settings will be applied by the Activate SuperAnti combined flow.");
+            return;
+        }
+
         use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_scheduled_tasks;
-
         const SAS_EXE_PATH: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
-        let sas_exe = std::path::Path::new(SAS_EXE_PATH);
 
-        if !sas_exe.exists() {
-            self.log_message("SUPERAntiSpyware not installed yet. Waiting for Activate SuperAnti to finish (polling up to 5 min)...");
+        if !std::path::Path::new(SAS_EXE_PATH).exists() {
+            self.log_message("SUPERAntiSpyware not installed yet. Waiting for it (polling up to 5 min)...");
             let log_tx = self.script_log_tx.clone();
             let checklist_tx = self.checklist_completion_tx.clone();
             let category_clone = category.clone();
@@ -300,7 +359,9 @@ impl <'a> ScriptsTab <'a> {
                 let _ = log_tx.try_send("SUPERAntiSpyware detected; applying settings...".into());
                 let killed = kill_sas_processes();
                 let _ = log_tx.try_send(format!("Killed {killed} SAS processes"));
+                Self::wait_until_sas_not_running(10);
                 std::thread::sleep(std::time::Duration::from_secs(2));
+
                 let success = match configure_sas_scheduled_tasks() {
                     Ok((update_guid, scan_guid)) => {
                         let _ = log_tx.try_send(format!("Created SAS update task: {update_guid}"));
@@ -308,6 +369,13 @@ impl <'a> ScriptsTab <'a> {
                         let _ = log_tx.try_send("SAS scheduled tasks configured. Relaunching SAS.".into());
                         if let Err(e) = std::process::Command::new(SAS_EXE_PATH).spawn() {
                             let _ = log_tx.try_send(format!("Failed to relaunch SAS: {e}"));
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            if Self::is_sas_running() {
+                                let _ = log_tx.try_send("SUPERAntiSpyware is running.".into());
+                            } else {
+                                let _ = log_tx.try_send("Warning: SAS launched but process not detected.".into());
+                            }
                         }
                         true
                     }
@@ -321,10 +389,11 @@ impl <'a> ScriptsTab <'a> {
             return;
         }
 
-        self.log_message("Killing SAS processes before modifying database...");
+        // SAS is already installed — run standalone settings change
+        self.log_message("Killing SAS processes before modifying settings...");
         let killed = kill_sas_processes();
         self.log_message(format!("Killed {killed} SAS processes"));
-
+        Self::wait_until_sas_not_running(10);
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         match configure_sas_scheduled_tasks() {
@@ -334,6 +403,13 @@ impl <'a> ScriptsTab <'a> {
                 self.log_message("SAS scheduled tasks configured. Relaunching SAS.");
                 if let Err(e) = std::process::Command::new(SAS_EXE_PATH).spawn() {
                     self.log_message(format!("Failed to relaunch SAS: {e}"));
+                } else {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if Self::is_sas_running() {
+                        self.log_message("SUPERAntiSpyware is running.");
+                    } else {
+                        self.log_message("Warning: SAS launched but process not detected.");
+                    }
                 }
                 self.update_checklist(category.clone(), item_text, true);
             }
@@ -388,6 +464,35 @@ impl <'a> ScriptsTab <'a> {
         });
         self.log_message("Windows update check finished.");
         self.update_checklist(category.clone(), item_text, true);
+    }
+
+    /// Returns true if any SUPERAntiSpyware-related process is currently running.
+    fn is_sas_running() -> bool {
+        use crate::utilities::scripts::get_running_processes;
+        if let Ok(processes) = get_running_processes() {
+            return processes.iter().any(|p| {
+                let name = p.process_name.to_lowercase();
+                let exe = p.exe_path.clone().unwrap_or_default().to_lowercase();
+                name.contains("sascore")
+                    || name.contains("sastask")
+                    || name.contains("superanti")
+                    || exe.contains("superanti")
+            });
+        }
+        false
+    }
+
+    /// Polls until no SAS processes are detected, up to `max_attempts` iterations
+    /// (1 second apart). Ensures taskkill has fully terminated the processes
+    /// before proceeding.
+    fn wait_until_sas_not_running(max_attempts: u32) {
+        for _ in 0..max_attempts {
+            if !Self::is_sas_running() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        log::warn!("SAS processes still detected after {max_attempts}s of waiting");
     }
 
 }

@@ -41,30 +41,31 @@ impl <'a> HandleWidget <'_> for MenuBar <'_> {
         let title = &mut self.client_title;
         let user = &mut User::default();
 
-        if user.get_name().is_empty() {
-            if let Ok(ctx) = self.ctx.lock() {
-                if !ctx.user.get_name().is_empty() {
-                    *user = ctx.user.clone();
-                }
+        if let Ok(ctx) = self.ctx.lock() {
+            if !ctx.user.get_name().is_empty() {
+                *user = ctx.user.clone();
+            }
+            if let Some(name) = &ctx.friendly_name {
+                *title = name.clone();
             }
         }
 
         if title.is_empty() {
             let client = get_client_hash();
             *title = client.connection_string.clone();
-        } else {
-            let para = Paragraph::new(format!("{}", &**title))
-                .block(
-                    Block::default()
-                        .title_alignment(ratatui::layout::Alignment::Center)
-                        .border_type(ratatui::widgets::BorderType::Rounded)
-                        .fg(CATPPUCCIN.lavender)
-                        .title(user.get_name())
-                )
-                .right_aligned()
-                .wrap(Wrap{ trim: false});
-            (&para).render(row[8], f.buffer_mut());
         }
+
+        let para = Paragraph::new(format!("{}", &**title))
+            .block(
+                Block::default()
+                    .title_alignment(ratatui::layout::Alignment::Center)
+                    .border_type(ratatui::widgets::BorderType::Rounded)
+                    .fg(CATPPUCCIN.lavender)
+                    .title(user.get_name())
+            )
+            .right_aligned()
+            .wrap(Wrap{ trim: false});
+        (&para).render(row[8], f.buffer_mut());
 
         let state = &self.connection_state;
         let color = if state.0 { CATPPUCCIN.green } else { CATPPUCCIN.maroon };

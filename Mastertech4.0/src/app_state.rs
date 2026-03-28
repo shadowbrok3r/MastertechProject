@@ -95,6 +95,8 @@ pub struct MastertechContext {
     pub get_settings: bool,
     pub client_friendly_name: String,
     pub client_title: String,
+    pub friendly_name_tx: Sender<String>,
+    pub friendly_name_rx: Receiver<String>,
     
     // Duplicate check and merge modal state
     pub duplicate_check_tx: Sender<DuplicateCheckResult>,
@@ -149,6 +151,7 @@ impl MasterTechApp {
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (duplicate_check_tx, duplicate_check_rx) = crossbeam::channel::unbounded::<DuplicateCheckResult>();
+        let (friendly_name_tx, friendly_name_rx) = crossbeam::channel::bounded::<String>(1);
         let client_uuid = random_record_id(CONNECTED_CLIENT_TABLE);
 
         let send_specs = true;
@@ -237,6 +240,8 @@ impl MasterTechApp {
             seb_channel,
             get_settings: true,
             client_title: Default::default(),
+            friendly_name_tx,
+            friendly_name_rx,
             
             // Duplicate check and merge modal
             duplicate_check_tx,

@@ -142,7 +142,7 @@ fn resolve_backend(backend: &str) -> String {
 /// 
 /// # Arguments
 /// * `bucket` - The bucket name (e.g., "default_bucket" or username)
-/// * `path` - The path within the bucket (e.g., "/Scripts/myscript.ps1")
+/// * `path` - The path within the bucket (e.g., "/scripts/myscript.ps1")
 /// * `data` - The file contents as bytes
 pub async fn put_file(bucket: &str, path: &str, data: Vec<u8>) -> anyhow::Result<(), anyhow::Error> {
     let bucket_name = sanitize_bucket_name(bucket);

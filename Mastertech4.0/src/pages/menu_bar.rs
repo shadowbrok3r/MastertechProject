@@ -399,8 +399,13 @@ impl MasterTechApp {
                         });
 
                         ui.add_space(20.0);
-                        ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());
-                        ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
+                        if !self.context.client_friendly_name.is_empty() {
+                            ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_friendly_name.clone()).monospace());
+                            ui.colored_label(Color32::WHITE, RichText::new("Client: ").monospace());
+                        } else {
+                            ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());
+                            ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
+                        }
 
                         ui.add_space(ui.available_width() / 5.);
                         let txt = RichText::new(format!(
