@@ -326,6 +326,7 @@ impl TerminalWebsocketClient {
     }
 
     async fn handle_command(&mut self, cmd: Cmd, sender: &mut ewebsock::WsSender) {
+        #[cfg(target_os = "windows")]
         match cmd {
             Cmd::FileSystemAction(FileSystemAction::RequestNewContents(new_path)) => {
                 let path = if new_path == "current" {
@@ -1970,8 +1971,8 @@ if (Test-Path $path) {{
                                 }
                             }
                         }
-
-                        "Disable Notifications" => {
+                        
+                        "Disable Notifications" => if cfg!(target_os = "windows") {
                             let mut msgs = Vec::new();
                             let mut ok = true;
                             macro_rules! try_reg {

@@ -20,12 +20,17 @@ impl <'a>TerminalApp<'a> {
                                 if already_connected {
                                     Err(e)
                                 } else {
+                                    #[cfg(target_os = "windows")]
                                     match crate::utilities::windows::net_adapter::ensure_internet_connected().await {
                                         Ok(()) => {
                                             log::info!("Internet restored, retrying DB signin...");
                                             Database::new(login.username, login.password, None).await
                                         }
                                         Err(_) => Err(e),
+                                    }
+                                    #[cfg(not(target_os = "windows"))]
+                                    {
+                                        Err(e)
                                     }
                                 }
                             }

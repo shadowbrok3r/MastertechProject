@@ -31,6 +31,7 @@ impl MasterTechApp {
                         Ok(d) => Ok(d),
                         Err(e) => {
                             log::warn!("Initial DB signin failed ({e}), checking connectivity...");
+                            #[cfg(target_os = "windows")]
                             match crate::utilities::windows::net_adapter::ensure_internet_connected().await {
                                 Ok(()) => {
                                     log::info!("Internet restored, retrying DB signin...");
@@ -40,6 +41,10 @@ impl MasterTechApp {
                                     log::error!("No connectivity: {net_err}");
                                     Err(e)
                                 }
+                            }
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                Err(e)
                             }
                         }
                     };
