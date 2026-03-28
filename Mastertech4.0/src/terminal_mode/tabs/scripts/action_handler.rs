@@ -34,6 +34,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     "Tuneup / QC" => Some(&self.tuneup_btn),
                     "Informational" => Some(&self.informational_btn),
                     "UserScripts" => {
+                        let _ = self.filesystem.request_contents("/");
                         self.check_for_scripts = true;
                         Some(&self.user_scripts_btn)
                     },

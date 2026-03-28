@@ -273,6 +273,21 @@ impl FileSysHelper for FileSystem {
             FileSystemAction::Rename(old_path, new_name) => {
                 self.rename_item(old_path.clone(), new_name.clone());
             },
+            FileSystemAction::RunOnRemote(full_path, filename) => {
+                let tx = self.run_on_remote_tx.clone();
+                let bucket = self.user.get_user_bucket_name();
+                let path = full_path.clone();
+                let fname = filename.clone();
+                PlatformSpawner::spawn(async move {
+                    match database::schema::file_storage::get_file_as_string(&bucket, &path).await {
+                        Ok(Some(content)) => {
+                            let _ = tx.try_send((fname, content));
+                        }
+                        Ok(None) => log::error!("Script file empty or not found: {path}"),
+                        Err(e) => log::error!("Failed to fetch script content for run-on-remote: {e}"),
+                    }
+                });
+            },
             _ => {}
         }
     }
@@ -319,6 +334,8 @@ impl Clone for FileSystem {
             show_rename_dialog: self.show_rename_dialog,
             rename_source_path: self.rename_source_path.clone(),
             rename_new_name: self.rename_new_name.clone(),
+            run_on_remote_tx: self.run_on_remote_tx.clone(),
+            run_on_remote_rx: self.run_on_remote_rx.clone(),
         }
     }
     
@@ -374,6 +391,9 @@ pub struct FileSystem {
     pub rename_source_path: String,
     /// New name for the renamed item
     pub rename_new_name: String,
+    /// Signals that the user wants to run a script on a remote client: (filename, content)
+    pub run_on_remote_tx: Sender<(String, String)>,
+    pub run_on_remote_rx: Receiver<(String, String)>,
 }
 
 impl FileSystem {
@@ -391,6 +411,8 @@ impl FileSystem {
             .with_theme(ColorTheme::TOKYO_DARK)
             .with_syntax(Syntax::powershell())
             .with_numlines(true);
+
+        let (run_on_remote_tx, run_on_remote_rx) = crossbeam::channel::unbounded();
 
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
@@ -417,6 +439,8 @@ impl FileSystem {
             show_rename_dialog: false,
             rename_source_path: String::new(),
             rename_new_name: String::new(),
+            run_on_remote_tx,
+            run_on_remote_rx,
         }
     }
     
@@ -887,6 +911,15 @@ impl FileSystem {
                                 }
 
                                 ui.add_space(5.0);
+
+                                let ext = full_path.rsplit('.').next().unwrap_or("").to_lowercase();
+                                if matches!(ext.as_str(), "ps1" | "bat" | "cmd") {
+                                    if ui.button("▶ Run on Remote").clicked(){
+                                        let _ = tx.try_send(FileSystemAction::RunOnRemote(full_path.clone(), label.clone()));
+                                        ui.close();
+                                    }
+                                    ui.add_space(5.0);
+                                }
 
                                 if ui.button("Delete File").clicked(){
                                     info!("Deleting file: {full_path}-{label}");
