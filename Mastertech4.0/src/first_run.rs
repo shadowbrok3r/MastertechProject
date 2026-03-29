@@ -72,10 +72,11 @@ impl MasterTechApp {
 
     }
 
-    pub fn receive(&mut self, frame: &mut eframe::Frame, ctx: &Context) {
+    /// All channel polling and state mutations -- no UI rendering.
+    /// Called from `fn logic` so it runs even when the window is hidden.
+    pub fn receive_logic(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         if self.context.shared_ctx.first_run { self.first_run(ctx); }
 
-        // Poll for OA3 friendly name result
         if self.context.client_friendly_name.is_empty() {
             if let Ok(name) = self.context.friendly_name_rx.try_recv() {
                 if !name.is_empty() {
@@ -86,41 +87,12 @@ impl MasterTechApp {
             }
         }
 
-        self.context.shared_ctx.receive_shared(frame, ctx);
+        self.context.shared_ctx.receive_shared_logic(frame, ctx);
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
         self.receive_github(ctx);
-        self.viewport_loader(ctx);
         self.context.scripts_tab.receive();
-        // self.context.file_browser.try_lock()
-        // ctx.request_repaint_after_secs(0.5);
 
-        // most important part of the whole app.. setting up our styling
-        let theme_res = eframe::egui::Window::new("Theme Configuration")
-        .open(&mut self.context.shared_ctx.modify_theme)
-        .max_height(600.)
-        .min_width(700.)
-        .title_bar(true)
-        .show(ctx, |ui|
-            self.context.shared_ctx.theme_config.edit_ui(ui, ctx, self.context.shared_ctx.settings_sender.clone())
-        );
-        
-        if let Some(window_res) = theme_res {
-            if let Some(r) = window_res.inner {
-                if r.0 {
-                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        user.set_color_scheme(encode_style(&r.1).unwrap_or_default());
-                        if let Some(storage) = frame.storage_mut() {
-                            storage.set_string("user_settings", serde_json::to_string(&r.1).unwrap_or_default());
-                        }
-                    }
-                    self.context.shared_ctx.theme = r.1;
-                    self.context.shared_ctx.modify_theme = false;
-                }
-            }
-        }
-        
-        // Get User settings from local storage
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;
@@ -216,7 +188,6 @@ impl MasterTechApp {
                 url_string.clone()
             );
 
-            // Spawn OA3 friendly name lookup if we haven't resolved one yet
             if self.context.client_friendly_name.is_empty() {
                 let fname_tx = self.context.friendly_name_tx.clone();
                 spawn(async move {
@@ -307,13 +278,36 @@ impl MasterTechApp {
             });
             ctx.request_repaint();
         }
+    }
+
+    /// UI rendering only -- viewports, windows, toasts, modals.
+    /// Called from `fn ui` where widget creation is allowed.
+    pub fn receive_ui(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        self.viewport_loader(ctx);
+        self.context.shared_ctx.receive_shared_ui(ctx);
+
+        let theme_res = eframe::egui::Window::new("Theme Configuration")
+        .open(&mut self.context.shared_ctx.modify_theme)
+        .max_height(600.)
+        .min_width(700.)
+        .title_bar(true)
+        .show(ctx, |ui|
+            self.context.shared_ctx.theme_config.edit_ui(ui, ctx, self.context.shared_ctx.settings_sender.clone())
+        );
         
-        // if let Some(dialog) = &mut self.context.open_file_dialog {
-        //     if dialog.show(ctx).selected() {
-        //         if let Some(file) = dialog.path() {
-        //             self.context.opened_file = Some(file.to_path_buf());
-        //         }
-        //     }
-        // }
+        if let Some(window_res) = theme_res {
+            if let Some(r) = window_res.inner {
+                if r.0 {
+                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                        user.set_color_scheme(encode_style(&r.1).unwrap_or_default());
+                        if let Some(storage) = frame.storage_mut() {
+                            storage.set_string("user_settings", serde_json::to_string(&r.1).unwrap_or_default());
+                        }
+                    }
+                    self.context.shared_ctx.theme = r.1;
+                    self.context.shared_ctx.modify_theme = false;
+                }
+            }
+        }
     }
 }

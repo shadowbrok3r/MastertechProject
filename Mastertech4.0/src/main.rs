@@ -16,12 +16,33 @@ pub mod first_run;
 pub mod data;
 
 impl eframe::App for app_state::MasterTechApp {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.receive_logic(ctx, frame);
+
+        // Handle "Already connected" state recovery in logic phase
+        if let AppState::NoAuth(reason) = &self.context.shared_ctx.state {
+            if reason.contains("Already connected") {
+                info!("Already connected");
+                let usr = self.context.shared_ctx.current_user.clone();
+                if let Some(user) = usr {
+                    self.context.shared_ctx.load_data(ctx, &user);
+                    let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
+                } else {
+                    self.context.shared_ctx.first_run = true;
+                    self.first_run(ctx);
+                    log::error!("1");
+                    self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
+                }
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         ui.options_mut(|options| {
             options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
 
-        self.receive(frame, ui);
+        self.receive_ui(ui.ctx(), frame);
         self.menu_bar(ui);
 
         match &self.context.shared_ctx.state {
@@ -39,19 +60,7 @@ impl eframe::App for app_state::MasterTechApp {
                 self.context.shared_ctx.app_state_tx.clone(),
             ),
             AppState::NoAuth(reason) => {
-                if reason.to_string().contains("Already connected") {
-                    info!("Already connected");
-                    let usr = self.context.shared_ctx.current_user.clone();
-                    if let Some(user) = usr {
-                        self.context.shared_ctx.load_data(ui, &user);
-                        let _ = self.context.shared_ctx.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
-                    } else {
-                        self.context.shared_ctx.first_run = true;
-                        self.first_run(ui);
-                        log::error!("1");
-                        self.context.shared_ctx.state = AppState::NoAuth("No user detected".to_string());
-                    }
-                } else {
+                if !reason.contains("Already connected") {
                     self.context.shared_ctx.login_page(
                         ui,
                         self.context.shared_ctx.db_tx.clone(),
