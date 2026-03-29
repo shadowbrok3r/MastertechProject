@@ -7,6 +7,9 @@ use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{self, Color32, Event, RichText, Ui};
 use std::collections::HashMap;
 
+/// `RUST_LOG=egui_remote=debug` for pointer-move spam; `=error` for milestones only.
+const EGUI_REMOTE_LOG: &str = "egui_remote";
+
 /// Inline egui frame viewer for the admin console client interface.
 ///
 /// Renders remote frames with **texture id remapping** (avoids clobbering the local font atlas)
@@ -23,6 +26,8 @@ pub struct InlineEguiViewer {
     remote_canvas_was_hovered: bool,
     /// Keyboard forwarding without calling [`egui::Response::has_focus`] (avoids nested `ctx` locks).
     remote_kb_focus: bool,
+    /// Throttle `PointerMoved` error logs (still use debug each move when log level allows).
+    remote_diag_tick: u32,
 }
 
 impl InlineEguiViewer {
@@ -38,6 +43,7 @@ impl InlineEguiViewer {
             has_received_frame: false,
             remote_canvas_was_hovered: false,
             remote_kb_focus: false,
+            remote_diag_tick: 0,
         }
     }
 
@@ -123,6 +129,7 @@ impl InlineEguiViewer {
 
         self.apply_pending_textures(ui.ctx());
         let inp = ui.ctx().input(|i| i.clone());
+        self.remote_diag_tick = self.remote_diag_tick.wrapping_add(1);
 
         ui.horizontal(|ui| {
             ui.label(
@@ -150,6 +157,10 @@ impl InlineEguiViewer {
 
         let hovered = response.hovered();
         if self.remote_canvas_was_hovered && !hovered {
+            log::error!(
+                target: EGUI_REMOTE_LOG,
+                "[admin_inline] PointerLeave (was hovered, now not)"
+            );
             send_input(EguiInputEvent::PointerLeave);
             self.remote_kb_focus = false;
         }
@@ -181,16 +192,53 @@ impl InlineEguiViewer {
             |p: egui::Pos2| egui::pos2(screen_min_x, screen_min_y) + (p - canvas_min) / scale;
 
         if response.hovered() {
-            if let Some(pos) = inp.pointer.hover_pos() {
-                if canvas_rect.contains(pos) {
+            match inp.pointer.hover_pos() {
+                Some(pos) if canvas_rect.contains(pos) => {
                     let r = to_host(pos);
+                    log::debug!(
+                        target: EGUI_REMOTE_LOG,
+                        "[admin_inline] PointerMoved host=({:.1},{:.1}) canvas_rect={:?}",
+                        r.x,
+                        r.y,
+                        canvas_rect
+                    );
+                    if self.remote_diag_tick % 45 == 0 {
+                        log::error!(
+                            target: EGUI_REMOTE_LOG,
+                            "[admin_inline] PointerMoved (every 45 frames) host=({:.1},{:.1}) scale={scale:.3}",
+                            r.x,
+                            r.y
+                        );
+                    }
                     send_input(EguiInputEvent::PointerMoved { x: r.x, y: r.y });
+                }
+                Some(pos) => {
+                    if self.remote_diag_tick % 60 == 0 {
+                        log::error!(
+                            target: EGUI_REMOTE_LOG,
+                            "[admin_inline] hovered but hover_pos outside canvas: pos={pos:?} canvas={canvas_rect:?}"
+                        );
+                    }
+                }
+                None => {
+                    if self.remote_diag_tick % 60 == 0 {
+                        log::error!(
+                            target: EGUI_REMOTE_LOG,
+                            "[admin_inline] response.hovered but pointer.hover_pos() is None"
+                        );
+                    }
                 }
             }
         }
 
         if inp.pointer.primary_pressed() {
-            if let Some(pos) = inp.pointer.interact_pos() {
+            let ip = inp.pointer.interact_pos();
+            let inside = ip.is_some_and(|p| canvas_rect.contains(p));
+            log::error!(
+                target: EGUI_REMOTE_LOG,
+                "[admin_inline] primary_pressed interact_pos={ip:?} canvas_contains={inside} canvas={canvas_rect:?}"
+            );
+            if let Some(pos) = ip {
                 if canvas_rect.contains(pos) {
                     self.remote_kb_focus = true;
                     let r = to_host(pos);
@@ -204,7 +252,12 @@ impl InlineEguiViewer {
             }
         }
         if inp.pointer.primary_released() {
-            if let Some(pos) = inp.pointer.interact_pos() {
+            let ip = inp.pointer.interact_pos();
+            log::error!(
+                target: EGUI_REMOTE_LOG,
+                "[admin_inline] primary_released interact_pos={ip:?}"
+            );
+            if let Some(pos) = ip {
                 let r = to_host(pos);
                 send_input(EguiInputEvent::PointerButton {
                     x: r.x,
@@ -217,6 +270,12 @@ impl InlineEguiViewer {
 
         let scroll = inp.smooth_scroll_delta;
         if scroll != egui::Vec2::ZERO && response.hovered() {
+            log::error!(
+                target: EGUI_REMOTE_LOG,
+                "[admin_inline] Scroll delta=({:.2},{:.2}) (scaled to host points)",
+                scroll.x / scale,
+                scroll.y / scale
+            );
             send_input(EguiInputEvent::Scroll {
                 delta_x: scroll.x / scale,
                 delta_y: scroll.y / scale,
@@ -232,6 +291,11 @@ impl InlineEguiViewer {
                         modifiers,
                         ..
                     } => {
+                        log::error!(
+                            target: EGUI_REMOTE_LOG,
+                            "[admin_inline] Key {:?} pressed={pressed} -> forwarding",
+                            key.name()
+                        );
                         send_input(EguiInputEvent::Key {
                             key_name: key.name().to_string(),
                             pressed: *pressed,
@@ -239,6 +303,11 @@ impl InlineEguiViewer {
                         });
                     }
                     Event::Text(t) => {
+                        log::error!(
+                            target: EGUI_REMOTE_LOG,
+                            "[admin_inline] Text len={} -> forwarding",
+                            t.len()
+                        );
                         send_input(EguiInputEvent::Text(t.clone()));
                     }
                     _ => {}

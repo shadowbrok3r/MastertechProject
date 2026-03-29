@@ -39,11 +39,17 @@ impl eframe::App for app_state::MasterTechApp {
             );
             ctx.add_plugin(handle);
 
-            // Spawn the plugin MCP server on port 9003
-            let mgr_for_mcp = self.context.plugin_manager.clone();
+            // Plugin MCP: TCP 9003 (raw stream) + HTTP 9004 /mcp (Cursor / Streamable HTTP)
+            let mgr_tcp = self.context.plugin_manager.clone();
             tokio::spawn(async move {
-                if let Err(e) = displays::plugins::mcp_bridge::run_plugin_mcp_server(mgr_for_mcp).await {
-                    log::error!("Plugin MCP server error: {e:?}");
+                if let Err(e) = displays::plugins::mcp_bridge::run_plugin_mcp_server(mgr_tcp).await {
+                    log::error!("Plugin MCP TCP server error: {e:?}");
+                }
+            });
+            let mgr_http = self.context.plugin_manager.clone();
+            tokio::spawn(async move {
+                if let Err(e) = displays::plugins::mcp_bridge::run_plugin_mcp_server_http(mgr_http).await {
+                    log::error!("Plugin MCP HTTP server error: {e:?}");
                 }
             });
         }

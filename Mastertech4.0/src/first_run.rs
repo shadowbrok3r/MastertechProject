@@ -93,6 +93,13 @@ impl MasterTechApp {
         self.receive_github(ctx);
         self.context.scripts_tab.receive();
 
+        // Pump WebSocket receive even when the Web Console tab / viewport is closed.
+        // Otherwise auto-connected clients never drain `ws_receiver` and admin→client
+        // egui input (EGUI_INPUT_TAG) is never processed.
+        if let Some(ref mut frontend) = self.context.frontend {
+            let _ = frontend.receive();
+        }
+
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;

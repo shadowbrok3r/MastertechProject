@@ -21,7 +21,7 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<Mutex<PluginManager>>) {
             ui.add_space(40.0);
             ui.label(RichText::new("No plugins loaded").color(Color32::GRAY).size(16.0));
             ui.add_space(10.0);
-            ui.label("Plugins can be registered at startup or loaded via the MCP server on port 9003.");
+            ui.label("Plugins: MCP TCP on port 9003 (raw stream). Cursor / HTTP clients: http://127.0.0.1:9004/mcp");
         });
         return;
     }
