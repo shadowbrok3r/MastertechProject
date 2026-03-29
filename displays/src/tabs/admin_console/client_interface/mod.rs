@@ -333,10 +333,40 @@ Get-WmiObject")
             ..
         } = self;
         egui_viewer.ui(ui, |input_ev: EguiInputEvent| {
-            if let Ok(ser) = bincode::serde::encode_to_vec(&input_ev, bincode::config::standard()) {
-                let mut v = vec![tag];
-                v.extend(ser);
-                let _ = ws_sender.send(WsMessage::Binary(v));
+            let loud = matches!(
+                &input_ev,
+                EguiInputEvent::PointerButton { .. }
+                    | EguiInputEvent::PointerLeave
+                    | EguiInputEvent::Scroll { .. }
+                    | EguiInputEvent::Key { .. }
+                    | EguiInputEvent::Text(_)
+            );
+            match bincode::serde::encode_to_vec(&input_ev, bincode::config::standard()) {
+                Ok(ser) => {
+                    let mut v = vec![tag];
+                    v.extend(ser);
+                    if loud {
+                        log::error!(
+                            target: "egui_remote",
+                            "[admin_ws_popout] send {:?} ({} bytes)",
+                            input_ev,
+                            v.len()
+                        );
+                    } else {
+                        log::debug!(
+                            target: "egui_remote",
+                            "[admin_ws_popout] send PointerMoved ({} bytes)",
+                            v.len()
+                        );
+                    }
+                    ws_sender.send(WsMessage::Binary(v));
+                }
+                Err(e) => {
+                    log::error!(
+                        target: "egui_remote",
+                        "[admin_ws_popout] bincode encode failed for {input_ev:?}: {e}"
+                    );
+                }
             }
         });
     }

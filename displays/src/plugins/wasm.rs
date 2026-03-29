@@ -309,19 +309,22 @@ impl MastertechPlugin for WasmPlugin {
 
     fn on_load(&mut self, _host: &PluginHost) {
         if let Ok(mut inner) = self.inner.lock() {
-            call_void_export(&inner.instance, &mut inner.store, "on_load");
+            let WasmPluginInner { ref instance, ref mut store } = *inner;
+            call_void_export(instance, store, "on_load");
         }
     }
 
     fn on_unload(&mut self) {
         if let Ok(mut inner) = self.inner.lock() {
-            call_void_export(&inner.instance, &mut inner.store, "on_unload");
+            let WasmPluginInner { ref instance, ref mut store } = *inner;
+            call_void_export(instance, store, "on_unload");
         }
     }
 
     fn logic(&mut self, _host: &PluginHost) {
         if let Ok(mut inner) = self.inner.lock() {
-            call_void_export(&inner.instance, &mut inner.store, "logic");
+            let WasmPluginInner { ref instance, ref mut store } = *inner;
+            call_void_export(instance, store, "logic");
         }
     }
 
@@ -335,7 +338,8 @@ impl MastertechPlugin for WasmPlugin {
         let Ok(mut inner) = self.inner.lock() else {
             return vec![];
         };
-        match call_string_export(&inner.instance, &mut inner.store, "mcp_tools") {
+        let WasmPluginInner { ref instance, ref mut store } = *inner;
+        match call_string_export(instance, store, "mcp_tools") {
             Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
             Err(_) => vec![],
         }
@@ -347,29 +351,25 @@ impl MastertechPlugin for WasmPlugin {
         args: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         let mut inner = self.inner.lock().map_err(|e| e.to_string())?;
+        let WasmPluginInner { ref instance, ref mut store } = *inner;
 
         let tool_bytes = tool.as_bytes();
         let args_bytes = serde_json::to_vec(&args).map_err(|e| e.to_string())?;
 
-        let (tool_ptr, tool_len) = write_to_wasm(&inner.instance, &mut inner.store, tool_bytes)?;
-        let (args_ptr, args_len) =
-            write_to_wasm(&inner.instance, &mut inner.store, &args_bytes)?;
+        let (tool_ptr, tool_len) = write_to_wasm(instance, store, tool_bytes)?;
+        let (args_ptr, args_len) = write_to_wasm(instance, store, &args_bytes)?;
 
-        let func = inner
-            .instance
-            .get_typed_func::<(i32, i32, i32, i32), u64>(&mut inner.store, "handle_mcp_call")
+        let func = instance
+            .get_typed_func::<(i32, i32, i32, i32), u64>(&mut *store, "handle_mcp_call")
             .map_err(|e| format!("Missing 'handle_mcp_call' export: {e}"))?;
 
         let packed = func
-            .call(
-                &mut inner.store,
-                (tool_ptr, tool_len, args_ptr, args_len),
-            )
+            .call(&mut *store, (tool_ptr, tool_len, args_ptr, args_len))
             .map_err(|e| format!("handle_mcp_call failed: {e}"))?;
 
         let (rptr, rlen) = unpack_ptr_len(packed);
-        let memory = get_memory(&inner.instance, &mut inner.store)?;
-        let json_str = read_wasm_string(&memory, &inner.store, rptr, rlen)?;
+        let memory = get_memory(instance, store)?;
+        let json_str = read_wasm_string(&memory, store, rptr, rlen)?;
         serde_json::from_str(&json_str).map_err(|e| format!("Invalid JSON from WASM: {e}"))
     }
 }

@@ -12,7 +12,7 @@ pub use remote::{
     wire_to_clipped_primitive, wire_to_clipped_primitive_for_viewer,
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
-pub use mcp_bridge::run_plugin_mcp_server;
+pub use mcp_bridge::{run_plugin_mcp_server, run_plugin_mcp_server_http};
 
 use crossbeam::channel::Receiver;
 use eframe::egui;

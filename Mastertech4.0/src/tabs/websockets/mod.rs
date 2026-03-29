@@ -248,12 +248,54 @@ impl WebConsoleFrontend {
                     match msg{
                         WsMessage::Binary(bin) => {
                             if bin.first().copied() == Some(EGUI_INPUT_TAG) {
-                                if let Some(tx) = &self.egui_input_tx {
-                                    if let Ok((ev, _)) = bincode::serde::decode_from_slice::<EguiInputEvent, _>(
-                                        &bin[1..],
-                                        standard(),
-                                    ) {
-                                        let _ = tx.try_send(ev);
+                                match &self.egui_input_tx {
+                                    None => {
+                                        error!(
+                                            target: "egui_remote",
+                                            "[client_ws] EGUI_INPUT binary ({} bytes) but egui_input_tx is None — frame capture bridge not wired",
+                                            bin.len()
+                                        );
+                                    }
+                                    Some(tx) => {
+                                        match bincode::serde::decode_from_slice::<EguiInputEvent, _>(
+                                            &bin[1..],
+                                            standard(),
+                                        ) {
+                                            Ok((ev, _)) => {
+                                                let loud = matches!(
+                                                    &ev,
+                                                    EguiInputEvent::PointerButton { .. }
+                                                        | EguiInputEvent::PointerLeave
+                                                        | EguiInputEvent::Scroll { .. }
+                                                        | EguiInputEvent::Key { .. }
+                                                        | EguiInputEvent::Text(_)
+                                                );
+                                                if loud {
+                                                    error!(
+                                                        target: "egui_remote",
+                                                        "[client_ws] decoded + enqueue: {ev:?}"
+                                                    );
+                                                } else {
+                                                    log::debug!(
+                                                        target: "egui_remote",
+                                                        "[client_ws] decoded PointerMoved (enqueue)"
+                                                    );
+                                                }
+                                                if let Err(e) = tx.try_send(ev) {
+                                                    error!(
+                                                        target: "egui_remote",
+                                                        "[client_ws] try_send to egui_input_tx failed (channel full?): {e}"
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    target: "egui_remote",
+                                                    "[client_ws] bincode decode EguiInputEvent failed: {e} (payload {} bytes)",
+                                                    bin.len().saturating_sub(1)
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 continue;

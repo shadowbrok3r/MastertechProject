@@ -451,7 +451,10 @@ impl MastertechPlugin for EguiFrameCapture {
         if !self.enabled {
             return;
         }
+        let mut drained = 0u32;
         while let Ok(event) = self.input_rx.try_recv() {
+            drained += 1;
+            log::debug!(target: "egui_remote", "[host_capture] inject from channel: {event:?}");
             match event {
                 EguiInputEvent::PointerMoved { x, y } => {
                     let p = egui::pos2(x, y);
@@ -501,7 +504,19 @@ impl MastertechPlugin for EguiFrameCapture {
                 }
             }
         }
+        if drained > 0 {
+            log::error!(
+                target: "egui_remote",
+                "[host_capture] input_hook drained {drained} remote event(s) from channel"
+            );
+        }
         if let Some(p) = self.remote_pointer_pos {
+            log::debug!(
+                target: "egui_remote",
+                "[host_capture] replay PointerMoved after channel drain: ({:.1},{:.1})",
+                p.x,
+                p.y
+            );
             input.events.push(egui::Event::PointerMoved(p));
         }
     }
@@ -712,33 +727,69 @@ impl MastertechPlugin for EguiRemoteViewer {
                     if let Some(pos) = inp.pointer.hover_pos() {
                         if canvas_rect.contains(pos) {
                             let r = remote_origin + (pos - canvas_rect.min);
-                            let _ = input_tx.try_send(EguiInputEvent::PointerMoved { x: r.x, y: r.y });
+                            if input_tx
+                                .try_send(EguiInputEvent::PointerMoved { x: r.x, y: r.y })
+                                .is_err()
+                            {
+                                log::error!(
+                                    target: "egui_remote",
+                                    "[admin_plugin_window] try_send PointerMoved failed (channel full?)"
+                                );
+                            }
                         }
                     }
                 }
 
                 if inp.pointer.primary_pressed() {
-                    if let Some(pos) = inp.pointer.interact_pos() {
+                    let ip = inp.pointer.interact_pos();
+                    let inside = ip.is_some_and(|p| canvas_rect.contains(p));
+                    log::error!(
+                        target: "egui_remote",
+                        "[admin_plugin_window] primary_pressed interact_pos={ip:?} inside_canvas={inside}"
+                    );
+                    if let Some(pos) = ip {
                         if canvas_rect.contains(pos) {
                             let r = remote_origin + (pos - canvas_rect.min);
-                            let _ = input_tx.try_send(EguiInputEvent::PointerButton {
-                                x: r.x,
-                                y: r.y,
-                                button: 0,
-                                pressed: true,
-                            });
+                            if input_tx
+                                .try_send(EguiInputEvent::PointerButton {
+                                    x: r.x,
+                                    y: r.y,
+                                    button: 0,
+                                    pressed: true,
+                                })
+                                .is_err()
+                            {
+                                log::error!(
+                                    target: "egui_remote",
+                                    "[admin_plugin_window] try_send PointerButton down failed"
+                                );
+                            }
                         }
                     }
                 }
                 if inp.pointer.primary_released() {
                     if let Some(pos) = inp.pointer.interact_pos() {
                         let r = remote_origin + (pos - canvas_rect.min);
-                        let _ = input_tx.try_send(EguiInputEvent::PointerButton {
-                            x: r.x,
-                            y: r.y,
-                            button: 0,
-                            pressed: false,
-                        });
+                        log::error!(
+                            target: "egui_remote",
+                            "[admin_plugin_window] primary_released -> send release at ({:.1},{:.1})",
+                            r.x,
+                            r.y
+                        );
+                        if input_tx
+                            .try_send(EguiInputEvent::PointerButton {
+                                x: r.x,
+                                y: r.y,
+                                button: 0,
+                                pressed: false,
+                            })
+                            .is_err()
+                        {
+                            log::error!(
+                                target: "egui_remote",
+                                "[admin_plugin_window] try_send PointerButton up failed"
+                            );
+                        }
                     }
                 }
             });

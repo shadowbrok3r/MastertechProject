@@ -14,7 +14,10 @@
 //! - `plugin_rollback` — revert to the previous artifact
 //! - `plugin_watch` — collect runtime behavior report over N frames
 //!
-//! Binds on TCP 9003, separate from the existing desktop (9001) and diagnostic (9002) servers.
+//! - **TCP 9003** — raw MCP stream (`transport-async-rw`) for CLI/SDK clients.
+//! - **HTTP 9004** — [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)
+//!   at `http://127.0.0.1:9004/mcp` for Cursor and other HTTP MCP clients.
+//!   (Pointing those clients at port 9003 fails: they send HTTP, not framed JSON-RPC bytes.)
 
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
@@ -318,7 +321,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "plugin_compile",
-        description = "Compile a WASM plugin from its source directory. Requires `wasm32-wasip2` target installed. Returns compiler output or the compiled artifact size."
+        description = "Compile a WASM plugin from its source directory. Requires `wasm32-wasip1` (classic core module for wasmtime::Module). `wasm32-wasip2` emits components and will not load. Returns compiler output or artifact size."
     )]
     async fn plugin_compile(
         &self,
@@ -338,7 +341,7 @@ impl PluginToolProvider {
             .args([
                 "build",
                 "--target",
-                "wasm32-wasip2",
+                "wasm32-wasip1",
                 "--release",
                 "--message-format=json",
             ])
@@ -364,15 +367,25 @@ impl PluginToolProvider {
         }
 
         let crate_name = sanitize_id(&p.plugin_id);
-        let wasm_path = dir
-            .join("target")
-            .join("wasm32-wasip2")
-            .join("release")
-            .join(format!("{crate_name}.wasm"));
-
-        let artifact_bytes = tokio::fs::read(&wasm_path)
-            .await
-            .map_err(|e| to_internal(format!("Read artifact: {e}")))?;
+        // Cargo names the cdylib `.wasm` with hyphens turned into underscores.
+        let release_dir = dir.join("target").join("wasm32-wasip1").join("release");
+        let primary = release_dir.join(format!("{}.wasm", crate_name.replace('-', "_")));
+        let fallback = release_dir.join(format!("{crate_name}.wasm"));
+        let (wasm_path, artifact_bytes) = if tokio::fs::try_exists(&primary).await.unwrap_or(false) {
+            let bytes = tokio::fs::read(&primary)
+                .await
+                .map_err(|e| to_internal(format!("Read artifact: {e}")))?;
+            (primary, bytes)
+        } else {
+            let bytes = tokio::fs::read(&fallback).await.map_err(|e| {
+                to_internal(format!(
+                    "Read artifact: {e} (tried {} and {})",
+                    primary.display(),
+                    fallback.display()
+                ))
+            })?;
+            (fallback, bytes)
+        };
 
         let size = artifact_bytes.len();
 
@@ -611,4 +624,31 @@ pub async fn run_plugin_mcp_server(manager: Arc<Mutex<PluginManager>>) -> anyhow
             Err(e) => log::error!("Plugin MCP: failed to serve {client_addr}: {e:?}"),
         }
     }
+}
+
+/// Streamable HTTP MCP (MCP spec 2025-06-18 / Cursor “HTTP” transport).
+///
+/// Cursor and similar clients must use `http://127.0.0.1:9004/mcp`, **not** TCP 9003.
+pub async fn run_plugin_mcp_server_http(manager: Arc<Mutex<PluginManager>>) -> anyhow::Result<()> {
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager,
+        StreamableHttpServerConfig, StreamableHttpService,
+    };
+
+    let addr = "127.0.0.1:9004";
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let mgr = manager.clone();
+    let service = StreamableHttpService::new(
+        move || Ok(PluginToolProvider::new(mgr.clone())),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+    let router = axum::Router::new().nest_service("/mcp", service);
+
+    log::info!(
+        "Plugin MCP (Streamable HTTP) listening at http://{addr}/mcp — set Cursor MCP URL to this (not :9003 TCP)"
+    );
+
+    axum::serve(listener, router).await?;
+    Ok(())
 }

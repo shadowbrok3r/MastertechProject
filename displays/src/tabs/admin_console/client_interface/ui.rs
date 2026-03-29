@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, Color32, Id, Layout, RichText, Ui, Widget};
-use crate::{Cmd, EGUI_INPUT_TAG};
+use crate::{plugins::remote::EguiInputEvent, Cmd, EGUI_INPUT_TAG};
 use bincode::config::standard;
 use ewebsock::WsMessage;
 use super::WebSocketClient;
@@ -242,10 +242,40 @@ impl WebSocketClient {
                             if !*egui_remote_popout {
                                 let tag = EGUI_INPUT_TAG;
                                 egui_viewer.ui(ui, |ev| {
-                                    if let Ok(ser) = bincode::serde::encode_to_vec(&ev, standard()) {
-                                        let mut v = vec![tag];
-                                        v.extend(ser);
-                                        let _ = ws_sender.send(WsMessage::Binary(v));
+                                    let loud = matches!(
+                                        &ev,
+                                        EguiInputEvent::PointerButton { .. }
+                                            | EguiInputEvent::PointerLeave
+                                            | EguiInputEvent::Scroll { .. }
+                                            | EguiInputEvent::Key { .. }
+                                            | EguiInputEvent::Text(_)
+                                    );
+                                    match bincode::serde::encode_to_vec(&ev, standard()) {
+                                        Ok(ser) => {
+                                            let mut v = vec![tag];
+                                            v.extend(ser);
+                                            if loud {
+                                                log::error!(
+                                                    target: "egui_remote",
+                                                    "[admin_ws_embed] send {:?} ({} bytes)",
+                                                    ev,
+                                                    v.len()
+                                                );
+                                            } else {
+                                                log::debug!(
+                                                    target: "egui_remote",
+                                                    "[admin_ws_embed] send PointerMoved ({} bytes)",
+                                                    v.len()
+                                                );
+                                            }
+                                            ws_sender.send(WsMessage::Binary(v));
+                                        }
+                                        Err(e) => {
+                                            log::error!(
+                                                target: "egui_remote",
+                                                "[admin_ws_embed] bincode encode failed for {ev:?}: {e}"
+                                            );
+                                        }
                                     }
                                 });
                             } else {

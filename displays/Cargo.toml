@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "4.7.5"
+version = "4.7.6"
 edition = "2024"
 
 [features]
@@ -61,6 +61,7 @@ ratatui = { workspace = true }
 dotenv = { version = "0.15" }
 rusty-s3 = { workspace = true }
 rmcp = { workspace = true }
+axum = { workspace = true }
 wasmtime = { workspace = true, optional = true }
 jiff = "0.2"
 
