@@ -170,17 +170,24 @@ impl crate::app_state::SharedContext {
         toast.add(auth_toast);
     }
 
+    /// Backward-compatible method that calls both logic and UI halves.
+    /// Used by MtechServer2.0 which hasn't split fn logic / fn ui yet.
     pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
+        self.receive_shared_logic(frame, ctx);
+        self.receive_shared_ui(ctx);
+    }
+
+    /// All channel polling and state mutations -- no UI rendering.
+    /// Called from `fn logic` so it runs even when the window is hidden.
+    pub fn receive_shared_logic(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
         
-        // Check for live query connection errors (Connection Reset in WASM)
         #[cfg(target_arch = "wasm32")]
         if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
             log::warn!("Live query connection error detected: {}", error_msg);
             if error_msg.contains("connection reset") || error_msg.contains("reset") || error_msg.contains("I/O") {
                 log::warn!("Connection reset detected - setting needs_reconnect flag");
                 self.needs_reconnect = true;
-                // Show a toast to inform the user
                 self.toasts.add(Toast {
                     kind: ToastKind::Warning,
                     text: "Connection lost. Reconnecting...".into(),
@@ -208,84 +215,14 @@ impl crate::app_state::SharedContext {
             }
 
             self.state = state;
-
-            /* 
-            if state == crate::app_state::AppState::Authenticated(MainPages::Tasks)
-                && self.state == AppState::NoAuth("Needs Login".to_string()) 
-            {
-                
-            } else {
-                match state {
-                    AppState::Authenticated(main_pages) => {
-                        match main_pages {
-                            MainPages::Tasks => {
-                                if self.state == AppState::NoAuth("Needs Login".to_string()) {
-                                } else {
-                                    self.state = state;
-                                }
-                            },
-                            MainPages::Downloads => todo!(),
-                            MainPages::UserPreferences => todo!(),
-                        }
-                    },
-                    AppState::CreateAccount => self.signup_page(
-                        ctx,
-                        self.db_tx.clone(),
-                        self.app_state_tx.clone(),
-                    ),
-                    AppState::NoAuth(_) => todo!(),
-                } 
-            }
-            */
             ctx.request_repaint();
         }
 
-        // match self.state {
-        //     AppState::Authenticated(page) => match page {
-        //         MainPages::UserPreferences => self.account_settings_page(ctx, self.app_state_tx.clone()),
-        //         _ => {}
-        //     },
-        //     AppState::Authenticated(page) => {      
-        //         if self.current_user.is_none() {
-        //             self.state = AppState::NoAuth("AppState was Authenticated, but user is not set.".to_string());
-        //         }
-        //     },
-        //     AppState::NoAuth(reason) => {
-        //         if reason.to_string().contains("Already connected") {
-        //             info!("Already connected");
-        //             let usr = self.current_user.clone();
-        //             if let Some(user) = usr {
-        //                 self.load_data(ctx, &user);
-        //                 self.state = AppState::Authenticated(MainPages::Tasks);
-        //             } else {
-        //                 self.first_run = true;
-        //                 self.first_run(frame);
-        //                 log::error!("1");
-        //                 self.state = AppState::NoAuth("No user detected".to_string());
-        //             }
-        //         } else {
-        //             self.login_page(
-        //                 ctx,
-        //                 self.db_tx.clone(),
-        //                 self.app_state_tx.clone(),
-        //             )
-        //         }
-        //     },
-        //     AppState::CreateAccount => self.signup_page(
-        //         ctx,
-        //         self.db_tx.clone(),
-        //         self.app_state_tx.clone(),
-        //     ),
-        //     _ => {}
-        // }
-
-        self.admin_notification_ui(ctx);
         self.koth.receive();
         self.query_editor.receive();
         self.receive_ui_action();
         self.receive_users();
         self.receive_task();
-        // self.receive_ticket();
         self.receive_notes();
         self.receive_notification();
         self.stock_tables.receive(self.ui_actions_tx.clone());
@@ -294,10 +231,7 @@ impl crate::app_state::SharedContext {
         self.receive_prestashop();
         self.receive_extracted_specs();
         self.filesystem.receive();
-        self.handle_viewports(ctx);
-        self.handle_modals(ctx);
         
-        // Process toast messages from async contexts
         let toast_rx = get_toast_receiver();
         while let Ok(msg) = toast_rx.try_recv() {
             let (kind, text) = match msg {
@@ -345,46 +279,15 @@ impl crate::app_state::SharedContext {
             self.ai_playground.selected_thread = thread_obj.id;
             self.ai_playground.set_threads(thread_map);
         }
+    }
 
+    /// UI rendering only -- toasts, modals, viewports, admin notifications.
+    /// Called from `fn ui` where widget creation is allowed.
+    pub fn receive_shared_ui(&mut self, ctx: &eframe::egui::Context) {
+        self.admin_notification_ui(ctx);
+        self.handle_viewports(ctx);
+        self.handle_modals(ctx);
         self.toasts.show(ctx);
-        // Handle changes to state from various places, such as
-        // hitting the login button, clicking the 'home page' button
-        // (which is clicking Mtechserver in the top middle of the page),
-        // if session cookie expires (gets checked in the first_run method),
-        // if manually logged out, etc
-        // match &self.state {
-        //     AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-        //     AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-        //     AppState::Authenticated(MainPages::UserPreferences) => self.account_settings_page(ctx, self.app_state_tx.clone()),
-        //     AppState::Authenticated(_) => self.main_page(ctx),
-        //     AppState::CreateAccount => self.signup_page(
-        //         ctx,
-        //         self.db_tx.clone(),
-        //         self.app_state_tx.clone(),
-        //     ),
-        //     AppState::NoAuth(reason) => {
-        //         if reason.to_string().contains("Already connected") {
-        //             info!("Already connected");
-        //             if self.current_user.is_some() {
-        //                 if !self.load_data(ctx) {
-        //                     self.first_run = true;
-        //                     self.first_run(frame);
-        //                     self.state = AppState::NoAuth("No user detected".to_string());
-        //                 }
-        //             } else {
-        //                 self.first_run = true;
-        //                 self.first_run(frame)
-        //             }
-        //             self.state = AppState::Authenticated(MainPages::Tasks);
-        //         } else {
-        //             self.login_page(
-        //                 ctx,
-        //                 self.db_tx.clone(),
-        //                 self.app_state_tx.clone(),
-        //             )
-        //         }
-        //     }
-        // }
     }
 }
 
