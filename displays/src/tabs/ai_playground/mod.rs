@@ -1,5 +1,5 @@
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget
 };
 use crate::{ai::{oa_client::new_oa_client, tool_call::{assistant_call_with_response_ai_tools, get_or_retrieve_thread}}, app_state::SharedContext, markdown_editor::viewer, openai::Threads, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{code_view_ui, CodeTheme};
@@ -92,7 +92,7 @@ impl SharedContext {
     pub fn ai_playground(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("GPT")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_height(50.)
+            .exact_size(50.)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     let title = if let Some(title) = self
@@ -201,7 +201,7 @@ impl SharedContext {
 
         eframe::egui::Panel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_height(75.)
+            .exact_size(75.)
             .show_inside(ui, |ui| {
                 self.ai_playground.chat(ui);
             });

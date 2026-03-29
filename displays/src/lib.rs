@@ -477,6 +477,13 @@ pub enum FileSystemAction {
     RunOnRemote(String, String),
 }
 
+/// Tag byte prepended to binary WebSocket messages carrying an `EguiFrameMessage`.
+/// Terminal buffer messages start with zstd magic (0x28), so 0xEF is unambiguous.
+pub const EGUI_FRAME_TAG: u8 = 0xEF;
+
+/// Admin → client: serialized `plugins::remote::EguiInputEvent` for remote control.
+pub const EGUI_INPUT_TAG: u8 = 0xEE;
+
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     encode_to_vec(system_info, standard()).expect("Failed to serialize SystemInformation")
 }

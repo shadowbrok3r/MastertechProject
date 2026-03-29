@@ -21,7 +21,7 @@ pub struct RemoteTerminal {
     last_log_frame_count: usize,
     pub current_area: Rect,
     last_target_area: Rect,
-    latest_frame_index: u64, // Track the latest rendered frame
+    pub(crate) latest_frame_index: u64,
     msg_to_client: Sender<ewebsock::WsMessage>,
 }
 

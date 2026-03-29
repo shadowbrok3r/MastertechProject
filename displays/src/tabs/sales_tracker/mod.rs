@@ -8,7 +8,7 @@ use database::schema::{
 	sales_tracker::{get_sales_notes_for_user, upsert_sales_note, SalesNote},
 	User,
 };
-use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
+use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, Ui, Widget, scroll_area};
 use egui_data_table::{DataTable, Renderer};
 
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};

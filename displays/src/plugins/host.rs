@@ -104,7 +104,7 @@ pub struct PluginHost {
 
 impl PluginHost {
     pub fn new() -> Self {
-        let (event_tx, event_rx) = crossbeam::channel::unbounded();
+        let (event_tx, _event_rx) = crossbeam::channel::unbounded();
         let (broadcast_tx, broadcast_rx) = crossbeam::channel::unbounded();
         Self {
             event_tx,

@@ -1,5 +1,5 @@
 use database::schema::User;
-use eframe::egui::{CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, scroll_area};
+use eframe::egui::{CentralPanel, ComboBox, TextEdit, Ui, scroll_area};
 use egui_data_table::{egui::Widget, Renderer};
 use super::{row_viewer::DatabaseTableSelection, DatabaseEditor};
 
@@ -7,7 +7,7 @@ impl DatabaseEditor {
     pub fn ui(&mut self, ui: &mut Ui, _current_user: Option<User>) {
         self.receive();
         eframe::egui::Panel::top("Database Editor Top Panel")
-            .exact_height(30.)
+            .exact_size(30.)
             .show_inside(ui, |ui| 
         {
             ui.horizontal_top(|ui| {

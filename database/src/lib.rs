@@ -184,20 +184,25 @@ impl Database {
                 Ok( Self { jwt: Some(jwt.into()), user } )
             }
             None => {
-                info!("No JWT, sigining in: {:?}", email.clone());
+                
                 let full_email = if email.ends_with("@pclaptops.com") {
                     email.clone()
                 } else {
                     format!("{}@pclaptops.com", email.clone())
                 };
+
+                let creds = SurrealRec {
+                    namespace: NS.to_string(),
+                    database: DB.to_string(),
+                    access: USER_SCOPE.to_string(),
+                    params: Auth { email: full_email.clone(), password },
+                };
+
+                info!("No JWT, sigining in: {:?}\n{:?}\n{:?}\n{:?}\n", full_email, creds.namespace, creds.database, creds.access);
+
                 // Select a specific namespace / database
                 let jwt = DATABASE
-                    .signin(SurrealRec {
-                        namespace: NS.to_string(),
-                        database: DB.to_string(),
-                        access: USER_SCOPE.to_string(),
-                        params: Auth { email: full_email, password },
-                    })
+                    .signin(creds)
                     .await?;
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;

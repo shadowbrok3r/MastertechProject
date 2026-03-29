@@ -1,4 +1,4 @@
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, TopBottomPanel, Ui, Vec2, Visuals, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
 use crate::{ui_tools::{encode_style, tokyo_dark::{TokyoNight, TokyoNightStorm}}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
@@ -122,7 +122,7 @@ impl ThemeConfig {
     pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Arc<Style>) {
         let mut ret = (false, ctx.style());
         eframe::egui::Panel::top("Theme Menu top bar")
-        .exact_height(30.)
+        .exact_size(30.)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui|{
                 let reset = Button::new("Reset to Default")

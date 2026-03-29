@@ -12,7 +12,7 @@
 
 use eframe::egui::{
     self, Align, CentralPanel, Color32, Frame, Key, KeyboardShortcut, Layout, Margin,
-    RichText, ScrollArea, Sense, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui,
+    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui,
     Vec2, CornerRadius, scroll_area, Widget
 };
 use crossbeam::channel::{Sender, Receiver};
@@ -636,7 +636,7 @@ impl RemoteExplorer {
         // Show error if any
         if let Some(error) = &self.error {
             eframe::egui::Panel::bottom("RemoteExplorerError")
-                .exact_height(25.)
+                .exact_size(25.)
                 .show_inside(ui, |ui| {
                     ui.colored_label(Color32::RED, error.clone());
                 });
@@ -669,7 +669,7 @@ impl RemoteExplorer {
     fn display_top_panel(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         eframe::egui::Panel::top("RemoteExplorerTop")
             .frame(Frame::default().outer_margin(Margin::symmetric(5, 2)))
-            .exact_height(35.)
+            .exact_size(35.)
             .show_inside(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     // Navigation buttons
@@ -745,9 +745,9 @@ impl RemoteExplorer {
         eframe::egui::Panel::left("RemoteExplorerSidebar")
             .frame(sidebar_frame)
             .resizable(true)
-            .default_width(150.)
-            .min_width(120.)
-            .max_width(250.)
+            .default_size(150.)
+            .min_size(120.)
+            .max_size(250.)
             .show_inside(ui, |ui| {
                 let mut navigate_to_path: Option<String> = None;
                 
@@ -796,7 +796,7 @@ impl RemoteExplorer {
         eframe::egui::Panel::right("MyToolsSidebar")
             .frame(sidebar_frame)
             .resizable(true)
-            .default_width(280.)
+            .default_size(280.)
             .min_width(200.)
             .max_width(450.)
             .show_inside(ui, |ui| {

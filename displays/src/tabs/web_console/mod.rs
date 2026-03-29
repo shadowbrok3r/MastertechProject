@@ -12,8 +12,8 @@ use database::schema::{
     utilities::get_connected_clients, ComputerData, ConnectedClient, RecordIdExt, User,
 };
 use eframe::egui::{
-    CentralPanel, Color32, Context, CornerRadius, Frame, Margin, RichText, SidePanel, Stroke,
-    TopBottomPanel, Ui,
+    CentralPanel, Color32, Context, CornerRadius, Frame, Margin, RichText, Stroke,
+    Ui,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -618,7 +618,7 @@ impl WebConsole {
                     .stroke(stroke)
                     .corner_radius(radius),
             )
-            .exact_height(40.0)
+            .exact_size(40.0)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(

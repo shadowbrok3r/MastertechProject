@@ -1,10 +1,11 @@
-use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget}, epaint::Shadow};
 use database::{schema::{utilities::{compress_data, query_id}, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use egui::TextBuffer;
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::Path, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
-use displays::{channel_manager::ChannelManager, deserialize_command, serialize_system_info, virtual_filesystem::FileSystem, Cmd, FileSystemAction};
+use displays::{channel_manager::ChannelManager, deserialize_command, serialize_system_info, virtual_filesystem::FileSystem, Cmd, EGUI_INPUT_TAG, FileSystemAction};
+use displays::plugins::EguiInputEvent;
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
@@ -133,7 +134,11 @@ impl MastertechContext{
                 ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
                 
                 if self.frontend.is_none() {
-                    self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
+                    self.frontend = Some(WebConsoleFrontend::new(
+                        ws_sender,
+                        ws_receiver,
+                        self.egui_input_tx.clone(),
+                    ));
                 }
 
                 spawn(async move {
@@ -165,6 +170,7 @@ impl MastertechContext{
 pub struct WebConsoleFrontend {
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
+    pub egui_input_tx: Option<Sender<EguiInputEvent>>,
 
     pub tx: Sender<Vec<u8>>,
     pub rx: Receiver<Vec<u8>>,
@@ -186,13 +192,17 @@ pub struct WebConsoleFrontend {
 }
 
 impl WebConsoleFrontend {
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
+    pub fn new(
+        ws_sender: WsSender,
+        ws_receiver: WsReceiver,
+        egui_input_tx: Option<Sender<EguiInputEvent>>,
+    ) -> Self {
         let (tx, rx) = crossbeam::channel::unbounded::<Vec<u8>>();
         let (command_tx, command_rx) = crossbeam::channel::unbounded::<Vec<u8>>();
         let interactive_input = String::create_unbounded_channel();
         
         Self {
-            ws_sender, ws_receiver,
+            ws_sender, ws_receiver, egui_input_tx,
             command_tx, command_rx,
             tx, rx,
             events: Default::default(),
@@ -237,10 +247,27 @@ impl WebConsoleFrontend {
                     connected = true;
                     match msg{
                         WsMessage::Binary(bin) => {
-                            self.history.push(format!("{:?}", deserialize_command(&bin.clone())));
-                            let cmd: Cmd = deserialize_command(&bin.clone());
-                            info!("websockets -> Binary Message: {cmd:?}");
-                            self.handle_command(cmd);
+                            if bin.first().copied() == Some(EGUI_INPUT_TAG) {
+                                if let Some(tx) = &self.egui_input_tx {
+                                    if let Ok((ev, _)) = bincode::serde::decode_from_slice::<EguiInputEvent, _>(
+                                        &bin[1..],
+                                        standard(),
+                                    ) {
+                                        let _ = tx.try_send(ev);
+                                    }
+                                }
+                                continue;
+                            }
+                            match decode_from_slice::<Cmd, _>(&bin, standard()) {
+                                Ok((cmd, _)) => {
+                                    self.history.push(format!("{cmd:?}"));
+                                    info!("websockets -> Binary Message: {cmd:?}");
+                                    self.handle_command(cmd);
+                                }
+                                Err(e) => {
+                                    log::debug!("websockets -> Ignoring non-Cmd binary ({} bytes): {e}", bin.len());
+                                }
+                            }
                         },
                         WsMessage::Text(txt) => {
                             info!("websockets -> Got txt from websocket connection: {:?}", txt.clone());

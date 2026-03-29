@@ -126,7 +126,7 @@ impl MiniDumpApp {
             .map(threadname)
             .unwrap_or_default();
         eframe::egui::Panel::left("overall info")
-            .default_width((ui.available_width() / 2.0).round())
+            .default_size((ui.available_width() / 2.0).round())
             .frame(Frame::new())
             .show_inside(ui, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {

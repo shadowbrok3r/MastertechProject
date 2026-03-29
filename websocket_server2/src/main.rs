@@ -46,9 +46,9 @@ struct Room {
     master_last_activity: Option<Instant>,
     /// Last time we received any message from the client
     client_last_activity: Option<Instant>,
-    /// Last time we updated last_activity in DB for master (for rate limiting)
+    /// Last time we updated last_update in DB for master (for rate limiting)
     master_db_update: Option<Instant>,
-    /// Last time we updated last_activity in DB for client (for rate limiting)
+    /// Last time we updated last_update in DB for client (for rate limiting)
     client_db_update: Option<Instant>,
 }
 
@@ -65,7 +65,7 @@ impl Default for Room {
     }
 }
 
-/// Minimum interval between database updates for last_activity (prevents excessive writes)
+/// Minimum interval between database updates for last_update (prevents excessive writes)
 const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
@@ -276,7 +276,7 @@ impl ChatServer {
                 }
                 drop(sender);
                 
-                // Update last_activity in DB (rate-limited) after successful ping
+                // Update last_update in DB (rate-limited) after successful ping
                 // This ensures activity is tracked even when no messages are being relayed
                 let should_update = match last_db_update {
                     Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
@@ -290,7 +290,7 @@ impl ChatServer {
                         .and_then(|mut r| r.take(0));
                     
                     if let Err(e) = result {
-                        log::warn!("Failed to update last_activity from ping task for room {}: {:?}", room_id_for_ping, e);
+                        log::warn!("Failed to update last_update from ping task for room {}: {:?}", room_id_for_ping, e);
                     }
                     last_db_update = Some(Instant::now());
                 }
@@ -299,7 +299,7 @@ impl ChatServer {
         });
 
         // Note: Status broadcast task removed - activity status is now tracked
-        // via SurrealDB connected_client.last_activity field instead of websocket messages
+        // via SurrealDB connected_client.last_update field instead of websocket messages
     }
 
     async fn handle_message(&self, call: ChatMessage) {
@@ -350,13 +350,13 @@ impl ChatServer {
                         let room_id_for_db = room_id.clone();
                         tokio::spawn(async move {
                             let result: Result<Option<ConnectedClient>, _> = DATABASE
-                                .query("UPDATE connected_client SET last_activity = time::now() WHERE connection_string == $room_id")
+                                .query("UPDATE connected_client SET last_update = time::now() WHERE connection_string == $room_id")
                                 .bind(("room_id", room_id_for_db.clone()))
                                 .await
                                 .and_then(|mut r| r.take(0));
                             
                             if let Err(e) = result {
-                                log::warn!("Failed to update last_activity for room {}: {:?}", room_id_for_db, e);
+                                log::warn!("Failed to update last_update for room {}: {:?}", room_id_for_db, e);
                             }
                         });
                     }

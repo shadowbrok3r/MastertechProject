@@ -20,6 +20,8 @@ pub mod presta_order;
 pub mod checkin_form;
 pub mod sales_tracker;
 pub mod web_console;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod plugins_tab;
 
 pub enum Tabs {
     #[cfg(not(target_arch="wasm32"))]
@@ -58,6 +60,7 @@ pub enum SharedTabs {
     Koth,
     CreatePrestashopOrder,
     Logs,
+    Plugins,
 }
 
 impl Tabs {
@@ -97,6 +100,7 @@ impl Tabs {
                     SharedTabs::Koth => "Koth",
                     SharedTabs::CreatePrestashopOrder => "Create Prestashop Order",
                     SharedTabs::Logs => "Logs",
+                    SharedTabs::Plugins => "Plugins",
                 }
             },
         }
@@ -121,6 +125,7 @@ impl Tabs {
             "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
             "Threads" => Self::Shared(SharedTabs::Threads),
             "Bug Tracker" => Self::Shared(SharedTabs::BugReport),
+            "Plugins" => Self::Shared(SharedTabs::Plugins),
             #[cfg(not(target_arch="wasm32"))]
             "TUR Sheet" => Self::Mastertech(MastertechTabs::TurSheet),
             #[cfg(not(target_arch="wasm32"))]
@@ -168,7 +173,7 @@ pub const TABS: [&str; 16] = [
 ];
 
 #[cfg(not(target_arch="wasm32"))]
-pub const TABS: [&str; 26] = [
+pub const TABS: [&str; 27] = [
     "TUR Sheet",
     "Part Order",
     "KOTH",
@@ -195,6 +200,7 @@ pub const TABS: [&str; 26] = [
     "Query Editor",
     "Create Prestashop Order",
     "Threads",
+    "Plugins",
 ];
 
 impl SharedContext {
@@ -276,7 +282,20 @@ impl egui_dock::TabViewer for SharedContext {
             },
             "KOTH" => self.koth.ui(ui),
             "Create Prestashop Order" => self.prestashop_order_form.ui(ui),
-            // "Ai" => self.ai_playground(ui),
+            #[cfg(not(target_arch = "wasm32"))]
+            "Plugins" => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label("Plugin management is available in the desktop application.");
+                });
+            },
+            #[cfg(target_arch = "wasm32")]
+            "Plugins" => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label("Plugin management is not available in web mode.");
+                });
+            },
             _ => {}
         }
     }

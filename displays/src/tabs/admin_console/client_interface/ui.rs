@@ -1,5 +1,7 @@
-use eframe::egui::{Align, Button, Color32, Id, Layout, RichText, TopBottomPanel, Ui, Widget};
-use crate::Cmd;
+use eframe::egui::{Align, Button, Color32, Id, Layout, RichText, Ui, Widget};
+use crate::{Cmd, EGUI_INPUT_TAG};
+use bincode::config::standard;
+use ewebsock::WsMessage;
 use super::WebSocketClient;
 
 
@@ -23,7 +25,7 @@ impl WebSocketClient {
         ui.set_min_height(600.);
 
         eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
-        .exact_height(60.)
+        .exact_size(60.)
         .show_inside(ui, |ui| 
         {
             ui.add_space(2.);
@@ -66,7 +68,7 @@ impl WebSocketClient {
                     }
                 }
 
-                if Button::new(RichText::new("Mastertech TUI").color(btn_color)).ui(ui).clicked(){
+                if Button::new(RichText::new("Mastertech Viewer").color(btn_color)).ui(ui).clicked(){
                     let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
                 }
 
@@ -216,7 +218,68 @@ impl WebSocketClient {
             WsDisplayState::Shell => self.show_shell(ui),
             WsDisplayState::Terminal => {
                 #[cfg(feature="tokio")]
-                self.remote_terminal.ui(ui)
+                {
+                    self.egui_viewer.poll_frames();
+
+                    let terminal_has_data = self.remote_terminal.latest_frame_index > 0;
+                    let egui_has_data = self.egui_viewer.has_received_frame;
+
+                    if terminal_has_data {
+                        self.remote_terminal.ui(ui);
+                    } else if egui_has_data {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let Self {
+                                egui_remote_popout,
+                                egui_viewer,
+                                ws_sender,
+                                ..
+                            } = self;
+                            ui.checkbox(
+                                egui_remote_popout,
+                                "Open remote UI in separate window",
+                            );
+                            if !*egui_remote_popout {
+                                let tag = EGUI_INPUT_TAG;
+                                egui_viewer.ui(ui, |ev| {
+                                    if let Ok(ser) = bincode::serde::encode_to_vec(&ev, standard()) {
+                                        let mut v = vec![tag];
+                                        v.extend(ser);
+                                        let _ = ws_sender.send(WsMessage::Binary(v));
+                                    }
+                                });
+                            } else {
+                                ui.label(
+                                    RichText::new(
+                                        "Remote UI is in a separate window. Close that window or uncheck above to embed here.",
+                                    )
+                                    .color(Color32::GRAY)
+                                    .small(),
+                                );
+                            }
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            self.egui_viewer.ui(ui, |_| {});
+                        }
+                    } else {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.label(
+                                RichText::new("Connecting to remote viewer...")
+                                    .color(Color32::GRAY)
+                                    .size(14.0),
+                            );
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("Waiting for terminal or egui frame data from the remote instance.")
+                                    .color(Color32::from_rgb(120, 120, 140))
+                                    .small(),
+                            );
+                            ui.spinner();
+                        });
+                    }
+                }
             },
             WsDisplayState::EventLog => {
                 let cmd_tx = self.send_cmd_tx.clone();

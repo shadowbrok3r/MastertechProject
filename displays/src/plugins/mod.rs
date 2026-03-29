@@ -6,11 +6,18 @@ pub mod remote;
 pub mod wasm;
 
 pub use host::{PluginHost, PluginEvent, NotificationKind, ClientSnapshot, SystemInfoSnapshot, UserSnapshot};
-pub use remote::{EguiFrameCapture, EguiRemoteViewer, EguiFrameMessage, EguiInputEvent};
+pub use remote::{
+    apply_wire_textures_delta_for_viewer, EguiFrameCapture, EguiFrameMessage, EguiInputEvent,
+    EguiRemoteViewer, WireClippedMesh, WireTextureId, WireTexturesDelta, decompress,
+    wire_to_clipped_primitive, wire_to_clipped_primitive_for_viewer,
+};
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub use mcp_bridge::run_plugin_mcp_server;
 
 use crossbeam::channel::Receiver;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Descriptor for an MCP tool that a plugin exposes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +85,24 @@ pub trait MastertechPlugin: Send + Sync + 'static {
     }
 }
 
+// ─── Event Dispatcher ──────────────────────────────────────────────────────────
+
+/// Trait for dispatching plugin events to the host application.
+///
+/// Injected into `PluginManager` to decouple the plugin system from the app's
+/// WebSocket client, notification system, and script runner. The host app
+/// implements this trait and passes in an `Arc`.
+pub trait EventDispatcher: Send + Sync + 'static {
+    /// Run a script on a connected remote client.
+    fn run_script(&self, client_id: &str, filename: &str, content: &str);
+
+    /// Send a raw WebSocket command payload to a connected client.
+    fn send_ws_command(&self, client_id: &str, payload: &[u8]);
+
+    /// Display a notification in the host app's UI.
+    fn show_notification(&self, title: &str, body: &str, kind: &NotificationKind);
+}
+
 // ─── Plugin Manager ────────────────────────────────────────────────────────────
 
 /// Manages all `MastertechPlugin` instances and bridges them into egui's `Plugin` system.
@@ -88,6 +113,9 @@ pub struct PluginManager {
     pub(crate) host: PluginHost,
     event_rx: Receiver<PluginEvent>,
     pub(crate) setup_done: bool,
+    dispatcher: Option<Arc<dyn EventDispatcher>>,
+    #[cfg(feature = "wasm-plugins")]
+    wasm_runtime: wasm::WasmRuntime,
 }
 
 impl PluginManager {
@@ -108,6 +136,9 @@ impl PluginManager {
             host,
             event_rx,
             setup_done: false,
+            dispatcher: None,
+            #[cfg(feature = "wasm-plugins")]
+            wasm_runtime: wasm::WasmRuntime::default(),
         }
     }
 
@@ -191,13 +222,25 @@ impl PluginManager {
                     }
                 }
                 PluginEvent::ShowNotification { title, body, kind } => {
-                    log::info!("Plugin notification [{kind:?}]: {title} - {body}");
+                    if let Some(d) = &self.dispatcher {
+                        d.show_notification(title, body, kind);
+                    } else {
+                        log::info!("Plugin notification [{kind:?}]: {title} - {body}");
+                    }
                 }
-                PluginEvent::RunScript { client_id, filename, .. } => {
-                    log::info!("Plugin requests script run: {filename} on {client_id}");
+                PluginEvent::RunScript { client_id, filename, content } => {
+                    if let Some(d) = &self.dispatcher {
+                        d.run_script(client_id, filename, content);
+                    } else {
+                        log::info!("Plugin requests script run: {filename} on {client_id}");
+                    }
                 }
-                PluginEvent::SendWsCommand { client_id, .. } => {
-                    log::info!("Plugin sends WS command to {client_id}");
+                PluginEvent::SendWsCommand { client_id, payload } => {
+                    if let Some(d) = &self.dispatcher {
+                        d.send_ws_command(client_id, payload);
+                    } else {
+                        log::info!("Plugin sends WS command to {client_id}");
+                    }
                 }
                 PluginEvent::Custom { plugin_id, event_type, .. } => {
                     log::debug!("Custom event from {plugin_id}: {event_type}");
@@ -205,6 +248,11 @@ impl PluginManager {
                 _ => {}
             }
         }
+    }
+
+    /// Set the event dispatcher for routing plugin events to the host app.
+    pub fn set_dispatcher(&mut self, dispatcher: Arc<dyn EventDispatcher>) {
+        self.dispatcher = Some(dispatcher);
     }
 
     pub fn host(&self) -> &PluginHost {
@@ -224,16 +272,117 @@ impl PluginManager {
     }
 
     #[cfg(feature = "wasm-plugins")]
-    pub fn load_wasm(&mut self, _bytes: Vec<u8>) -> Result<(), String> {
-        let plugin = wasm::WasmPlugin::from_bytes(_bytes)?;
+    pub fn load_wasm(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        let event_tx = self.host.event_tx.clone();
+        let plugin = wasm::WasmPlugin::from_bytes(bytes, self.wasm_runtime.engine(), event_tx)?;
         self.register(Box::new(plugin));
         Ok(())
+    }
+
+    // ── Broadcast (host → plugins) ──────────────────────────────────────
+
+    pub fn broadcast_client_connected(&mut self, client: ClientSnapshot) {
+        self.host.broadcast(PluginEvent::ClientConnected(client));
+    }
+
+    pub fn broadcast_client_disconnected(&mut self, connection_string: String) {
+        self.host.broadcast(PluginEvent::ClientDisconnected(connection_string));
+    }
+
+    pub fn broadcast_system_info_updated(&mut self, info: SystemInfoSnapshot) {
+        self.host.broadcast(PluginEvent::SystemInfoUpdated(info));
+    }
+
+    pub fn broadcast_script_completed(
+        &mut self,
+        client_id: String,
+        filename: String,
+        success: bool,
+        output: String,
+    ) {
+        self.host.broadcast(PluginEvent::ScriptCompleted {
+            client_id,
+            filename,
+            success,
+            output,
+        });
     }
 }
 
 impl Default for PluginManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ─── Plugin Client Command ─────────────────────────────────────────────────────
+
+/// Commands routed from plugins to connected clients via the `EventDispatcher`.
+///
+/// The app drains these from the `DefaultEventDispatcher`'s receiver and routes
+/// them to the appropriate WebSocket `ConnectionManager`.
+#[derive(Debug, Clone)]
+pub enum PluginClientCommand {
+    RunScript {
+        client_id: String,
+        filename: String,
+        content: String,
+    },
+    SendPayload {
+        client_id: String,
+        payload: Vec<u8>,
+    },
+}
+
+// ─── Default EventDispatcher ───────────────────────────────────────────────────
+
+/// A ready-to-use `EventDispatcher` that routes:
+/// - Notifications → the global `ToastMessage` channel
+/// - Client commands → a dedicated `PluginClientCommand` channel
+///
+/// Create with `DefaultEventDispatcher::new()`, which returns the dispatcher
+/// and a `Receiver<PluginClientCommand>` the host app should drain each frame.
+pub struct DefaultEventDispatcher {
+    toast_tx: crossbeam::channel::Sender<crate::ToastMessage>,
+    cmd_tx: crossbeam::channel::Sender<PluginClientCommand>,
+}
+
+impl DefaultEventDispatcher {
+    pub fn new() -> (Arc<Self>, crossbeam::channel::Receiver<PluginClientCommand>) {
+        let (cmd_tx, cmd_rx) = crossbeam::channel::unbounded();
+        let dispatcher = Arc::new(Self {
+            toast_tx: crate::get_toast_sender(),
+            cmd_tx,
+        });
+        (dispatcher, cmd_rx)
+    }
+}
+
+impl EventDispatcher for DefaultEventDispatcher {
+    fn run_script(&self, client_id: &str, filename: &str, content: &str) {
+        let _ = self.cmd_tx.try_send(PluginClientCommand::RunScript {
+            client_id: client_id.to_string(),
+            filename: filename.to_string(),
+            content: content.to_string(),
+        });
+    }
+
+    fn send_ws_command(&self, client_id: &str, payload: &[u8]) {
+        let _ = self.cmd_tx.try_send(PluginClientCommand::SendPayload {
+            client_id: client_id.to_string(),
+            payload: payload.to_vec(),
+        });
+    }
+
+    fn show_notification(&self, title: &str, body: &str, kind: &NotificationKind) {
+        let msg = format!("{title}: {body}");
+        let toast = match kind {
+            NotificationKind::Success => crate::ToastMessage::Success(msg),
+            NotificationKind::Error => crate::ToastMessage::Error(msg),
+            NotificationKind::Warning => crate::ToastMessage::Warning(msg),
+            NotificationKind::Info => crate::ToastMessage::Info(msg),
+        };
+        let _ = self.toast_tx.try_send(toast);
     }
 }
 

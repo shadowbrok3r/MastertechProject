@@ -136,6 +136,37 @@ impl MasterTechApp {
                 });
             } 
         }
+
+        if self.context.shared_ctx.current_user.is_some()
+            && !self.context.ws_auto_connected
+            && self.context.frontend.is_none()
+        {
+            self.context.ws_auto_connected = true;
+            log::info!("Auto-connecting to WebSocket server...");
+            self.context.connect(ctx.clone());
+        }
+
+        let mut egui_frames = Vec::new();
+        if let Some(ref rx) = self.context.egui_frame_rx {
+            while let Ok(frame) = rx.try_recv() {
+                egui_frames.push(frame);
+            }
+        }
+        if !egui_frames.is_empty() {
+            if let Some(ref mut frontend) = self.context.frontend {
+                for frame in egui_frames {
+                    if let Ok(serialized) = bincode::serde::encode_to_vec(
+                        &frame,
+                        bincode::config::standard(),
+                    ) {
+                        let mut tagged = Vec::with_capacity(1 + serialized.len());
+                        tagged.push(displays::EGUI_FRAME_TAG);
+                        tagged.extend_from_slice(&serialized);
+                        frontend.ws_sender.send(ewebsock::WsMessage::Binary(tagged));
+                    }
+                }
+            }
+        }
         
         while let Ok(message) = self.context.rx.try_recv() {
             if let Ok(keys) = serde_json::from_str::<GetKeysResponse>(&message) {
@@ -188,21 +219,20 @@ impl MasterTechApp {
                 url_string.clone()
             );
 
+            #[cfg(target_os = "windows")]
             if self.context.client_friendly_name.is_empty() {
                 let fname_tx = self.context.friendly_name_tx.clone();
                 spawn(async move {
-                    #[cfg(target_os = "windows")]
-                    {
-                        use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
-                        use crate::filesystem::customer_lookup::lookup_customer_by_serial;
-                        if let Ok(raw) = get_oa_style_serial() {
-                            if let Ok(serial13) = to_oa3_13digit(&raw) {
-                                if let Ok(name) = lookup_customer_by_serial(&serial13).await {
-                                    let _ = fname_tx.try_send(name);
-                                }
+                    use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
+                    use crate::filesystem::customer_lookup::lookup_customer_by_serial;
+                    if let Ok(raw) = get_oa_style_serial() {
+                        if let Ok(serial13) = to_oa3_13digit(&raw) {
+                            if let Ok(name) = lookup_customer_by_serial(&serial13).await {
+                                let _ = fname_tx.try_send(name);
                             }
                         }
                     }
+                    
                 });
             }
         }

@@ -1,4 +1,4 @@
-use eframe::egui::{collapsing_header::CollapsingState, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 #[allow(deprecated)]
 use eframe::egui::popup_below_widget;
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
@@ -563,7 +563,7 @@ impl FileSystem {
 
         eframe::egui::Panel::top("FileBrowserTop")
             .frame(top_panel_frame)
-            .exact_height(40.)
+            .exact_size(40.)
             .show_inside(ui, |ui| 
         {
             ui.horizontal_centered(|ui| {
@@ -624,7 +624,7 @@ impl FileSystem {
         if let Some(file) = self.previewed_file.as_mut() {
             if size.x > 1000. {
                 eframe::egui::Panel::right(Id::new("FileBrowserSidePanel"))
-                    .default_width(ui.available_width()/2.0)
+                    .default_size(ui.available_width()/2.0)
                     .show_inside(ui, |ui| 
                 {
                     self.file_editor.show(ui, file);

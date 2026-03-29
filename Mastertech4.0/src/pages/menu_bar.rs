@@ -1,4 +1,4 @@
-use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, TopBottomPanel, Vec2, Widget, vec2};
+use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, Vec2, Widget, vec2};
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
@@ -47,6 +47,7 @@ impl MasterTechApp {
                             &"Inventory".to_string(),
                             &"Task Audit".to_string(),
                             &"Create Prestashop Order".to_string(),
+                            &"Plugins".to_string(),
                             &"Downloads".to_string(),
                             &"Threads".to_string(),
                             &"Logs".to_string(),
