@@ -21,7 +21,7 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<Mutex<PluginManager>>) {
             ui.add_space(40.0);
             ui.label(RichText::new("No plugins loaded").color(Color32::GRAY).size(16.0));
             ui.add_space(10.0);
-            ui.label("Plugins: MCP TCP on port 9003 (raw stream). Cursor / HTTP clients: http://127.0.0.1:9004/mcp");
+            ui.label("Plugins: MCP :9004/mcp — remote_egui_list_widget_anchors, click_anchor, perform_steps, list_targets; plugin_emit_clock_wasm / plugin_compile_wat.");
         });
         return;
     }

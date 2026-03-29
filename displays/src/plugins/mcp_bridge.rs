@@ -7,12 +7,21 @@
 //!
 //! **Management:** `list_plugins`, `enable_plugin`, `disable_plugin`, `call_plugin_tool`
 //!
+//! **Remote egui (admin Web Console):** `remote_egui_list_targets`, `remote_egui_get_last_frame_meta`,
+//! `remote_egui_list_widget_anchors`, `remote_egui_click_anchor`,
+//! `remote_egui_perform_steps` (batch: click, click_anchor, text, key_tap, move_pointer, scroll, sleep_ms),
+//! `remote_egui_send_input`, `remote_egui_click`, `remote_egui_type` — inject
+//! [`EguiInputEvent`](super::remote::EguiInputEvent) when an operator has an active Web Console
+//! WebSocket session (same binary format as the Mastertech Viewer tab).
+//!
 //! **Authoring (WASM plugin lifecycle):**
 //! - `plugin_source` — read or write Rust source for a plugin
 //! - `plugin_compile` — compile source to a WASM artifact
 //! - `plugin_deploy` — hot-swap a running plugin with a new artifact
 //! - `plugin_rollback` — revert to the previous artifact
 //! - `plugin_watch` — collect runtime behavior report over N frames
+//! - `plugin_emit_clock_wasm` — build a **clock** guest via WAT + `wat` + **wasmtime** validation (no nested `cargo build`)
+//! - `plugin_compile_wat` — turn arbitrary WAT into wasm bytes (validated with wasmtime)
 //!
 //! - **TCP 9003** — raw MCP stream (`transport-async-rw`) for CLI/SDK clients.
 //! - **HTTP 9004** — [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)
@@ -194,6 +203,271 @@ pub struct PluginWatchParams {
     pub duration_secs: Option<u64>,
 }
 
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginEmitClockParams {
+    #[schemars(description = "Plugin ID (e.g. com.mastertech.wasm-clock)")]
+    pub plugin_id: String,
+    #[schemars(description = "Display name shown in list_plugins (default: Mastertech Clock)")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginCompileWatParams {
+    #[schemars(description = "Plugin ID for artifact store / plugin directory")]
+    pub plugin_id: String,
+    #[schemars(description = "Full WebAssembly text (WAT) module source")]
+    pub wat_source: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiListTargetsParams {}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiSendInputParams {
+    #[schemars(description = "Web Console room id — same as ConnectedClient.connection_string; admin must be connected.")]
+    pub connection_string: String,
+    #[schemars(description = "One EguiInputEvent as JSON (serde externally-tagged enum), e.g. {\"PointerMoved\":{\"x\":100.0,\"y\":200.0}}, {\"PointerButton\":{\"x\":100.0,\"y\":200.0,\"button\":0,\"pressed\":true}}, \"PointerLeave\", {\"Key\":{\"key_name\":\"Enter\",\"pressed\":true,\"modifiers\":{\"alt\":false,\"ctrl\":false,\"shift\":false,\"command\":false}}}, {\"Text\":\"hello\"}, {\"Scroll\":{\"delta_x\":0.0,\"delta_y\":1.0}}")]
+    pub event: serde_json::Value,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiGetLastFrameMetaParams {
+    #[schemars(description = "Web Console room id; metadata is updated when egui frames arrive on the admin socket.")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiClickParams {
+    #[schemars(description = "Web Console room id.")]
+    pub connection_string: String,
+    pub x: f32,
+    pub y: f32,
+    #[schemars(description = "Mouse button: 0=primary, 1=secondary, 2=middle")]
+    #[serde(default)]
+    pub button: u8,
+    #[schemars(description = "If true (default), enqueue PointerMoved before press/release.")]
+    #[serde(default = "default_remote_egui_true")]
+    pub hover_first: bool,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiTypeParams {
+    #[schemars(description = "Web Console room id.")]
+    pub connection_string: String,
+    #[schemars(description = "Unicode text to inject as egui Text events (focused widget receives input).")]
+    pub text: String,
+}
+
+/// One step for [`remote_egui_perform_steps`]. Use tag `"step"` (snake_case values).
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum RemoteEguiStep {
+    /// Primary click: optional hover PointerMoved, then press + release.
+    Click {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        #[schemars(description = "0=primary, 1=secondary, 2=middle")]
+        button: u8,
+        #[serde(default = "default_remote_egui_true")]
+        hover_first: bool,
+    },
+    /// Single egui `Text` event (focused widget).
+    Text {
+        value: String,
+    },
+    /// Key down + up (e.g. key Tab, Enter, A).
+    KeyTap {
+        key: String,
+        #[serde(default)]
+        modifiers: super::remote::EguiModifiers,
+    },
+    PointerMoved {
+        x: f32,
+        y: f32,
+    },
+    Scroll {
+        delta_x: f32,
+        delta_y: f32,
+    },
+    /// Pause between steps so the remote UI can process input (focus changes, popups).
+    SleepMs {
+        ms: u64,
+    },
+    /// Click using a widget key from [`remote_egui_list_widget_anchors`] (host must register anchors).
+    ClickAnchor {
+        key: String,
+        #[serde(default)]
+        button: u8,
+        #[serde(default = "default_remote_egui_true")]
+        hover_first: bool,
+        #[serde(default = "default_anchor_placement")]
+        placement: String,
+    },
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiPerformStepsParams {
+    #[schemars(description = "Web Console room id.")]
+    pub connection_string: String,
+    #[schemars(description = "Ordered steps. Prefer this over many separate tool calls when filling forms (no View-menu toggles). Example: click service field, text, key_tap Tab, text, …")]
+    pub steps: Vec<RemoteEguiStep>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiListWidgetAnchorsParams {
+    #[schemars(description = "Web Console room id.")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RemoteEguiClickAnchorParams {
+    #[schemars(description = "Web Console room id.")]
+    pub connection_string: String,
+    #[schemars(description = "Exact key from remote_egui_list_widget_anchors (e.g. tur.service_number).")]
+    pub key: String,
+    #[schemars(description = "center (default) or top_left")]
+    #[serde(default = "default_anchor_placement")]
+    pub placement: String,
+}
+
+fn default_remote_egui_true() -> bool {
+    true
+}
+
+fn default_anchor_placement() -> String {
+    "center".to_string()
+}
+
+fn resolve_widget_anchor<'a>(
+    anchors: &'a [super::remote::WidgetAnchor],
+    key: &str,
+) -> Option<&'a super::remote::WidgetAnchor> {
+    anchors.iter().find(|a| a.key == key)
+}
+
+fn remote_egui_point_for_anchor(
+    a: &super::remote::WidgetAnchor,
+    placement: &str,
+) -> (f32, f32) {
+    match placement {
+        "top_left" => a.top_left(),
+        _ => a.center(),
+    }
+}
+
+fn remote_egui_apply_step(
+    hub: &super::remote_egui_control::RemoteEguiControlHub,
+    connection_string: &str,
+    step: &RemoteEguiStep,
+) -> Result<usize, String> {
+    use super::remote::EguiInputEvent;
+    match step {
+        RemoteEguiStep::SleepMs { .. } => Ok(0),
+        RemoteEguiStep::Click {
+            x,
+            y,
+            button,
+            hover_first,
+        } => {
+            let mut seq = Vec::with_capacity(3);
+            if *hover_first {
+                seq.push(EguiInputEvent::PointerMoved { x: *x, y: *y });
+            }
+            seq.push(EguiInputEvent::PointerButton {
+                x: *x,
+                y: *y,
+                button: *button,
+                pressed: true,
+            });
+            seq.push(EguiInputEvent::PointerButton {
+                x: *x,
+                y: *y,
+                button: *button,
+                pressed: false,
+            });
+            let n = seq.len();
+            hub.send_events(connection_string, &seq)?;
+            Ok(n)
+        }
+        RemoteEguiStep::Text { value } => {
+            hub.send_event(connection_string, EguiInputEvent::Text(value.clone()))?;
+            Ok(1)
+        }
+        RemoteEguiStep::KeyTap { key, modifiers } => {
+            let k = key.clone();
+            let m = modifiers.clone();
+            hub.send_event(
+                connection_string,
+                EguiInputEvent::Key {
+                    key_name: k.clone(),
+                    pressed: true,
+                    modifiers: m.clone(),
+                },
+            )?;
+            hub.send_event(
+                connection_string,
+                EguiInputEvent::Key {
+                    key_name: k,
+                    pressed: false,
+                    modifiers: m,
+                },
+            )?;
+            Ok(2)
+        }
+        RemoteEguiStep::PointerMoved { x, y } => {
+            hub.send_event(
+                connection_string,
+                EguiInputEvent::PointerMoved { x: *x, y: *y },
+            )?;
+            Ok(1)
+        }
+        RemoteEguiStep::Scroll { delta_x, delta_y } => {
+            hub.send_event(
+                connection_string,
+                EguiInputEvent::Scroll {
+                    delta_x: *delta_x,
+                    delta_y: *delta_y,
+                },
+            )?;
+            Ok(1)
+        }
+        RemoteEguiStep::ClickAnchor {
+            key,
+            button,
+            hover_first,
+            placement,
+        } => {
+            let anchors = hub.get_last_widget_anchors(connection_string);
+            let a = resolve_widget_anchor(&anchors, key).ok_or_else(|| {
+                format!(
+                    "unknown anchor key {key:?}; call remote_egui_list_widget_anchors (remote UI must expose anchors)"
+                )
+            })?;
+            let (x, y) = remote_egui_point_for_anchor(a, placement.as_str());
+            let mut seq = Vec::with_capacity(3);
+            if *hover_first {
+                seq.push(EguiInputEvent::PointerMoved { x, y });
+            }
+            seq.push(EguiInputEvent::PointerButton {
+                x,
+                y,
+                button: *button,
+                pressed: true,
+            });
+            seq.push(EguiInputEvent::PointerButton {
+                x,
+                y,
+                button: *button,
+                pressed: false,
+            });
+            let n = seq.len();
+            hub.send_events(connection_string, &seq)?;
+            Ok(n)
+        }
+    }
+}
+
 // ─── Tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
@@ -263,6 +537,234 @@ impl PluginToolProvider {
         Ok(CallToolResult::success(vec![
             Content::json(result).map_err(to_internal)?
         ]))
+    }
+
+    // ── Remote egui (MCP → Web Console WebSocket) ───────────────────────────────
+
+    #[tool(
+        name = "remote_egui_list_targets",
+        description = "List connection_string values for remote clients that currently have an active admin Web Console WebSocket session. MCP can only inject remote egui input for these targets."
+    )]
+    async fn remote_egui_list_targets(
+        &self,
+        Parameters(_p): Parameters<RemoteEguiListTargetsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let targets = super::remote_egui_control::hub().list_targets();
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "targets": targets,
+            "note": "Connect from Web Console first. Use remote_egui_list_widget_anchors + click_anchor when the remote app registers anchors; else perform_steps.",
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_egui_get_last_frame_meta",
+        description = "Return the latest remote egui frame metadata (width, height, pixels_per_point, screen origin) for a connected client. Updated when frames stream in; use before choosing click coordinates."
+    )]
+    async fn remote_egui_get_last_frame_meta(
+        &self,
+        Parameters(p): Parameters<RemoteEguiGetLastFrameMetaParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = super::remote_egui_control::hub();
+        if let Some(meta) = hub.get_last_frame_meta(&p.connection_string) {
+            Ok(CallToolResult::success(vec![
+                Content::json(meta).map_err(to_internal)?,
+            ]))
+        } else {
+            Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+                "ok": false,
+                "connection_string": p.connection_string,
+                "detail": "No egui frame recorded yet. Open Mastertech Viewer for this client and wait until the remote UI appears.",
+            }))
+            .map_err(to_internal)?]))
+        }
+    }
+
+    #[tool(
+        name = "remote_egui_send_input",
+        description = "Send one remote egui input event to the connected Mastertech client (bincode + EGUI_INPUT_TAG). Coordinates are in remote screen space from the captured frame."
+    )]
+    async fn remote_egui_send_input(
+        &self,
+        Parameters(p): Parameters<RemoteEguiSendInputParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let event: super::remote::EguiInputEvent =
+            serde_json::from_value(p.event).map_err(|e| {
+                to_internal(format!("invalid event JSON (expect EguiInputEvent): {e}"))
+            })?;
+        super::remote_egui_control::hub()
+            .send_event(&p.connection_string, event)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true,
+            "connection_string": p.connection_string,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_egui_click",
+        description = "Primary/secondary/middle click at (x,y) in remote screen space: optional PointerMoved, then button press and release."
+    )]
+    async fn remote_egui_click(
+        &self,
+        Parameters(p): Parameters<RemoteEguiClickParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut seq: Vec<super::remote::EguiInputEvent> = Vec::with_capacity(3);
+        if p.hover_first {
+            seq.push(super::remote::EguiInputEvent::PointerMoved { x: p.x, y: p.y });
+        }
+        seq.push(super::remote::EguiInputEvent::PointerButton {
+            x: p.x,
+            y: p.y,
+            button: p.button,
+            pressed: true,
+        });
+        seq.push(super::remote::EguiInputEvent::PointerButton {
+            x: p.x,
+            y: p.y,
+            button: p.button,
+            pressed: false,
+        });
+        let n = seq.len();
+        super::remote_egui_control::hub()
+            .send_events(&p.connection_string, &seq)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true,
+            "connection_string": p.connection_string,
+            "events_enqueued": n,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_egui_type",
+        description = "Inject text as a single egui Text event (same as typing when a text field is focused on the remote UI)."
+    )]
+    async fn remote_egui_type(
+        &self,
+        Parameters(p): Parameters<RemoteEguiTypeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        super::remote_egui_control::hub()
+            .send_event(
+                &p.connection_string,
+                super::remote::EguiInputEvent::Text(p.text.clone()),
+            )
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true,
+            "connection_string": p.connection_string,
+            "chars": p.text.chars().count(),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_egui_perform_steps",
+        description = "Run multiple remote egui actions in order in one call: click, text, key_tap (key down+up), pointer_moved, scroll, sleep_ms. Use when a tab is already open—avoid re-clicking View menu entries (they toggle tabs off)."
+    )]
+    async fn remote_egui_perform_steps(
+        &self,
+        Parameters(p): Parameters<RemoteEguiPerformStepsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = super::remote_egui_control::hub();
+        let mut events_enqueued = 0usize;
+        for step in &p.steps {
+            match step {
+                RemoteEguiStep::SleepMs { ms } => {
+                    tokio::time::sleep(std::time::Duration::from_millis(*ms)).await;
+                }
+                other => {
+                    events_enqueued +=
+                        remote_egui_apply_step(&hub, &p.connection_string, other).map_err(to_internal)?;
+                }
+            }
+        }
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true,
+            "connection_string": p.connection_string,
+            "steps_run": p.steps.len(),
+            "events_enqueued": events_enqueued,
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_egui_list_widget_anchors",
+        description = "List widget rectangles (keys + bounds in host screen space) from the last remote frame. Keys are registered by the remote app (e.g. TUR: tur.service_number). Use remote_egui_click_anchor or perform_steps ClickAnchor to hit them without guessing coordinates."
+    )]
+    async fn remote_egui_list_widget_anchors(
+        &self,
+        Parameters(p): Parameters<RemoteEguiListWidgetAnchorsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let anchors = super::remote_egui_control::hub().get_last_widget_anchors(&p.connection_string);
+        let listed: Vec<serde_json::Value> = anchors
+            .iter()
+            .map(|a| {
+                let (cx, cy) = a.center();
+                serde_json::json!({
+                    "key": a.key,
+                    "min_x": a.min_x,
+                    "min_y": a.min_y,
+                    "max_x": a.max_x,
+                    "max_y": a.max_y,
+                    "center_x": cx,
+                    "center_y": cy,
+                })
+            })
+            .collect();
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "connection_string": p.connection_string,
+            "anchors": listed,
+            "count": listed.len(),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "remote_egui_click_anchor",
+        description = "Primary click at the center (or top_left) of a registered widget anchor. Requires a recent frame that included anchors; refresh by having the remote UI visible."
+    )]
+    async fn remote_egui_click_anchor(
+        &self,
+        Parameters(p): Parameters<RemoteEguiClickAnchorParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let hub = super::remote_egui_control::hub();
+        let anchors = hub.get_last_widget_anchors(&p.connection_string);
+        let a = resolve_widget_anchor(&anchors, &p.key).ok_or_else(|| {
+            to_internal(format!(
+                "unknown anchor key {:?}; use remote_egui_list_widget_anchors",
+                p.key
+            ))
+        })?;
+        let (x, y) = remote_egui_point_for_anchor(a, p.placement.as_str());
+        let seq = vec![
+            super::remote::EguiInputEvent::PointerMoved { x, y },
+            super::remote::EguiInputEvent::PointerButton {
+                x,
+                y,
+                button: 0,
+                pressed: true,
+            },
+            super::remote::EguiInputEvent::PointerButton {
+                x,
+                y,
+                button: 0,
+                pressed: false,
+            },
+        ];
+        hub.send_events(&p.connection_string, &seq)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": true,
+            "connection_string": p.connection_string,
+            "key": p.key,
+            "x": x,
+            "y": y,
+            "events_enqueued": seq.len(),
+        }))
+        .map_err(to_internal)?]))
     }
 
     // ── Authoring tools ─────────────────────────────────────────────────
@@ -562,6 +1064,94 @@ impl PluginToolProvider {
         )
         .map_err(to_internal)?]))
     }
+
+    #[tool(
+        name = "plugin_emit_clock_wasm",
+        description = "Generate a WASM plugin (WAT → wasm via wat crate) that exposes MCP tool `current_time` with real UTC from the host (`host_fill_clock_json`). Validated with wasmtime::Module::new. Stores artifact for plugin_deploy — no cargo build in the plugin folder."
+    )]
+    async fn plugin_emit_clock_wasm(
+        &self,
+        Parameters(p): Parameters<PluginEmitClockParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        #[cfg(not(feature = "wasm-plugins"))]
+        return Err(to_internal(
+            "plugin_emit_clock_wasm requires displays built with feature wasm-plugins.",
+        ));
+
+        #[cfg(feature = "wasm-plugins")]
+        {
+            let display = p
+                .display_name
+                .clone()
+                .unwrap_or_else(|| "Mastertech Clock".to_string());
+            let wat = super::plugin_wasm_factory::clock_plugin_wat(&p.plugin_id, &display);
+            let wasm = super::plugin_wasm_factory::wat_to_wasm_validated(&wat)
+                .map_err(to_internal)?;
+            let dir = plugin_dir(&p.plugin_id);
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .map_err(|e| to_internal(format!("mkdir: {e}")))?;
+            tokio::fs::write(dir.join("clock_pluginEmitted.wat"), wat.as_bytes())
+                .await
+                .map_err(|e| to_internal(format!("write wat: {e}")))?;
+            let sz = wasm.len();
+            self.artifacts
+                .lock()
+                .map_err(|e| to_internal(e.to_string()))?
+                .store(&p.plugin_id, wasm);
+            Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "display_name": display,
+                    "artifact_bytes": sz,
+                    "wat_path": dir.join("clock_pluginEmitted.wat").display().to_string(),
+                    "next": "plugin_deploy with this plugin_id",
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+    }
+
+    #[tool(
+        name = "plugin_compile_wat",
+        description = "Parse WAT source to a WebAssembly 1.0 module (wat crate) and validate with wasmtime::Module::new. Writes plugin.wat under the plugin directory and stores bytes for plugin_deploy."
+    )]
+    async fn plugin_compile_wat(
+        &self,
+        Parameters(p): Parameters<PluginCompileWatParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        #[cfg(not(feature = "wasm-plugins"))]
+        return Err(to_internal(
+            "plugin_compile_wat requires displays built with feature wasm-plugins.",
+        ));
+
+        #[cfg(feature = "wasm-plugins")]
+        {
+            let wasm = super::plugin_wasm_factory::wat_to_wasm_validated(&p.wat_source)
+                .map_err(to_internal)?;
+            let dir = plugin_dir(&p.plugin_id);
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .map_err(|e| to_internal(format!("mkdir: {e}")))?;
+            tokio::fs::write(dir.join("plugin.wat"), p.wat_source.as_bytes())
+                .await
+                .map_err(|e| to_internal(format!("write wat: {e}")))?;
+            let sz = wasm.len();
+            self.artifacts
+                .lock()
+                .map_err(|e| to_internal(e.to_string()))?
+                .store(&p.plugin_id, wasm);
+            Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "success": true,
+                    "artifact_bytes": sz,
+                    "wat_path": dir.join("plugin.wat").display().to_string(),
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+    }
 }
 
 // ─── Server handler ────────────────────────────────────────────────────────────
@@ -570,7 +1160,8 @@ const INSTRUCTIONS: &str = "Mastertech Plugin System MCP Server. \
 Use list_plugins to see registered plugins. \
 Use enable_plugin/disable_plugin to control plugin lifecycle. \
 Use call_plugin_tool to invoke tools exposed by individual plugins. \
-Use plugin_source → plugin_compile → plugin_deploy for the WASM authoring loop. \
+Remote egui: list_targets → get_last_frame_meta → list_widget_anchors / click_anchor (or perform_steps) → click/type/send_input (admin Web Console connected). \
+Use plugin_source → plugin_compile (Rust, wasm32-wasip1) → plugin_deploy, or plugin_emit_clock_wasm / plugin_compile_wat (WAT + wasmtime validation) → plugin_deploy. \
 Use plugin_rollback to revert a bad deploy. Use plugin_watch to observe behavior.";
 
 #[tool_handler]

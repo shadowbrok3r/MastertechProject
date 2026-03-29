@@ -1,15 +1,19 @@
 pub mod host;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_bridge;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod remote_egui_control;
 pub mod remote;
 #[cfg(feature = "wasm-plugins")]
 pub mod wasm;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio", feature = "wasm-plugins"))]
+pub mod plugin_wasm_factory;
 
 pub use host::{PluginHost, PluginEvent, NotificationKind, ClientSnapshot, SystemInfoSnapshot, UserSnapshot};
 pub use remote::{
     apply_wire_textures_delta_for_viewer, EguiFrameCapture, EguiFrameMessage, EguiInputEvent,
-    EguiRemoteViewer, WireClippedMesh, WireTextureId, WireTexturesDelta, decompress,
-    wire_to_clipped_primitive, wire_to_clipped_primitive_for_viewer,
+    EguiRemoteViewer, WireClippedMesh, WireTextureId, WireTexturesDelta, WidgetAnchor, decompress,
+    push_widget_anchor, wire_to_clipped_primitive, wire_to_clipped_primitive_for_viewer,
 };
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub use mcp_bridge::{run_plugin_mcp_server, run_plugin_mcp_server_http};

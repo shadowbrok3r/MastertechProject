@@ -241,7 +241,10 @@ impl WebSocketClient {
                             );
                             if !*egui_remote_popout {
                                 let tag = EGUI_INPUT_TAG;
-                                egui_viewer.ui(ui, |ev| {
+                                let mcp_sess = self.client.connection_string.as_str();
+                                egui_viewer.ui(
+                                    ui,
+                                    |ev| {
                                     let loud = matches!(
                                         &ev,
                                         EguiInputEvent::PointerButton { .. }
@@ -277,7 +280,9 @@ impl WebSocketClient {
                                             );
                                         }
                                     }
-                                });
+                                    },
+                                    Some(mcp_sess),
+                                );
                             } else {
                                 ui.label(
                                     RichText::new(
@@ -290,7 +295,7 @@ impl WebSocketClient {
                         }
                         #[cfg(target_arch = "wasm32")]
                         {
-                            self.egui_viewer.ui(ui, |_| {});
+                            self.egui_viewer.ui(ui, |_| {}, None);
                         }
                     } else {
                         ui.vertical_centered(|ui| {
