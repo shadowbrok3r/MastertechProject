@@ -1,6 +1,7 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
+use displays::plugins::push_widget_anchor;
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use egui::Frame;
 use std::{collections::BTreeSet, f32};
@@ -194,6 +195,7 @@ impl MastertechContext {
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
                 .ui(ui);
+            push_widget_anchor("tur.service_number", service_num.rect);
 
             service_num.clone().on_hover_text("(hint) Press Enter to pull ticket after typing SO#");
 
@@ -209,27 +211,30 @@ impl MastertechContext {
                 self.ticket_data.service_number = service_num;
             }
 
-            TextEdit::singleline(&mut self.customer_data.name)
+            let tur_name = TextEdit::singleline(&mut self.customer_data.name)
                 .hint_text(" Customer Name  ")
                 .background_color(name_color)
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
                 .ui(ui);
+            push_widget_anchor("tur.customer_name", tur_name.rect);
 
-            TextEdit::singleline(&mut self.customer_data.phone_number)
+            let tur_phone = TextEdit::singleline(&mut self.customer_data.phone_number)
                 .hint_text(" Phone Number 1")
                 .background_color(phone_number_color)
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size).ui(ui);
+            push_widget_anchor("tur.phone_number", tur_phone.rect);
 
-            TextEdit::singleline(&mut self.customer_data.email)
+            let tur_email = TextEdit::singleline(&mut self.customer_data.email)
                 .hint_text(" Customer email")
                 .vertical_align(Align::Center)
                 .margin(vec2(4.0, 4.0))
                 .min_size(text_edit_size)
                 .ui(ui);
+            push_widget_anchor("tur.customer_email", tur_email.rect);
 
             ui.end_row();
 
@@ -241,7 +246,7 @@ impl MastertechContext {
                 inputs.insert(user.get_username().to_string());
             }
             
-            let _ = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
+            let tur_salesman = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
                 .highlight_matches(true)
                 .max_suggestions(3)
                 .set_text_edit_properties(move |text_edit| 
@@ -256,8 +261,9 @@ impl MastertechContext {
                     .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
             })
             .ui(ui);
+            push_widget_anchor("tur.salesman", tur_salesman.rect);
 
-            let _ = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
+            let tur_tech = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
                 .highlight_matches(true)
                 .max_suggestions(3)
                 .set_text_edit_properties(move |text_edit| 
@@ -272,6 +278,7 @@ impl MastertechContext {
                     .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
             })
             .ui(ui);
+            push_widget_anchor("tur.tech", tur_tech.rect);
             
             ui.label("");
 
@@ -811,13 +818,14 @@ impl MastertechContext {
             .num_columns(2)
             .show(ui, |ui| 
         {
-            TextEdit::multiline(&mut self.ticket_data.checkin_notes)
+            let tur_checkin = TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                 .hint_text(RichText::new("Checkin Notes").weak())
                 .font(FontId::proportional(14.0))
                 .margin(Margin::symmetric(10, 6))
                 .desired_width(f32::INFINITY)
                 .desired_rows(13)
                 .ui(ui);
+            push_widget_anchor("tur.checkin_notes", tur_checkin.rect);
     
             let recommendations_check = self.task_data.task_description.is_empty();
             
@@ -827,7 +835,7 @@ impl MastertechContext {
                 ui.style().visuals.extreme_bg_color
             };
 
-            TextEdit::multiline(&mut self.task_data.task_description)
+            let tur_rec = TextEdit::multiline(&mut self.task_data.task_description)
                 .hint_text(RichText::new("Recommendations").weak())
                 .background_color(color)
                 .font(FontId::proportional(14.0))
@@ -835,6 +843,7 @@ impl MastertechContext {
                 .desired_width(f32::INFINITY)
                 .desired_rows(13)
                 .ui(ui);
+            push_widget_anchor("tur.recommendations", tur_rec.rect);
         });
     }
 }

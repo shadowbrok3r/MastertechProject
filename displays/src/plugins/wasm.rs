@@ -30,6 +30,7 @@
 //! | `host_log`        | `(ptr: i32, len: i32) -> ()` | Log a UTF-8 message                  |
 //! | `host_emit_event` | `(ptr: i32, len: i32) -> ()` | Emit a PluginEvent (JSON bytes)      |
 //! | `host_repaint`    | `() -> ()`                   | Request a UI repaint                 |
+//! | `host_fill_clock_json` | `(ptr: i32, max_len: i32) -> i32` | Writes UTC clock JSON into guest memory; returns byte length (≤ max_len) |
 
 use super::{MastertechPlugin, PluginEvent, PluginHost, PluginToolDescriptor};
 use once_cell::sync::Lazy;
@@ -177,6 +178,34 @@ impl WasmPlugin {
                 },
             )
             .map_err(|e| format!("host_repaint link failed: {e}"))?;
+
+        linker
+            .func_wrap(
+                "env",
+                "host_fill_clock_json",
+                |mut caller: wasmtime::Caller<'_, WasmPluginState>, ptr: i32, max_len: i32| -> i32 {
+                    let now = chrono::Utc::now();
+                    let json = serde_json::json!({
+                        "unix_ms": now.timestamp_millis(),
+                        "iso_utc": now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                    });
+                    let s = match serde_json::to_string(&json) {
+                        Ok(s) => s,
+                        Err(_) => r#"{"error":"json"}"#.to_string(),
+                    };
+                    let bytes = s.as_bytes();
+                    let cap = max_len.max(0) as usize;
+                    let n = bytes.len().min(cap);
+                    let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                        return 0;
+                    };
+                    if mem.write(&mut caller, ptr as usize, &bytes[..n]).is_err() {
+                        return 0;
+                    }
+                    n as i32
+                },
+            )
+            .map_err(|e| format!("host_fill_clock_json link failed: {e}"))?;
 
         // ── Instantiate ─────────────────────────────────────────────────────
 

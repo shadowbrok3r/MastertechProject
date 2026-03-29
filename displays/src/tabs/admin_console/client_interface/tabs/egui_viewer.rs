@@ -4,7 +4,7 @@ use crate::plugins::remote::{
     WireTexturesDelta,
 };
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{self, Color32, Event, RichText, Ui};
+use eframe::egui::{self, Color32, Event, RichText, Stroke, Ui};
 use std::collections::HashMap;
 
 /// `RUST_LOG=egui_remote=debug` for pointer-move spam; `=error` for milestones only.
@@ -94,7 +94,13 @@ impl InlineEguiViewer {
     }
 
     /// Draw the remote frame. Pass `|_| {}` for `send_input` when not forwarding input.
-    pub fn ui(&mut self, ui: &mut Ui, mut send_input: impl FnMut(EguiInputEvent)) {
+    /// When `mcp_pointer_session` is `Some(connection_string)`, draws the last MCP-injected pointer on the canvas (yellow reticle).
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        mut send_input: impl FnMut(EguiInputEvent),
+        mcp_pointer_session: Option<&str>,
+    ) {
         self.poll_frames();
 
         let Some(frame) = &self.latest_frame else {
@@ -183,6 +189,39 @@ impl InlineEguiViewer {
                 let clip = prim.clip_rect.intersect(canvas_rect);
                 if clip.width() > 0.0 && clip.height() > 0.0 {
                     painter.with_clip_rect(clip).add(egui::Shape::mesh(mesh));
+                }
+            }
+        }
+
+        if let Some(session) = mcp_pointer_session {
+            if let Some((hx, hy)) =
+                crate::plugins::remote_egui_control::hub().get_last_injected_pointer(session)
+            {
+                let hp = egui::pos2(hx, hy);
+                let local =
+                    canvas_rect.min + (hp - egui::pos2(screen_min_x, screen_min_y)) * scale;
+                if canvas_rect.contains(local) {
+                    painter.circle_filled(
+                        local,
+                        5.0,
+                        Color32::from_rgba_unmultiplied(255, 200, 0, 200),
+                    );
+                    painter.circle_stroke(local, 9.0, Stroke::new(1.2, Color32::WHITE));
+                    let arm = 12.0f32;
+                    painter.line_segment(
+                        [
+                            local - egui::vec2(arm, 0.0),
+                            local + egui::vec2(arm, 0.0),
+                        ],
+                        Stroke::new(1.0, Color32::YELLOW),
+                    );
+                    painter.line_segment(
+                        [
+                            local - egui::vec2(0.0, arm),
+                            local + egui::vec2(0.0, arm),
+                        ],
+                        Stroke::new(1.0, Color32::YELLOW),
+                    );
                 }
             }
         }

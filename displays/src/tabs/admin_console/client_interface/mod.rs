@@ -121,6 +121,9 @@ pub struct WebSocketClient {
     /// Last inner size we applied to the remote-UI pop-out (avoid resizing every frame).
     #[cfg(not(target_arch = "wasm32"))]
     pub egui_remote_popout_inner_sent: Option<(u32, u32)>,
+    /// MCP-injected remote egui input; drained in `WebSocketClient::receive`.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    pub remote_egui_mcp_rx: Option<crossbeam::channel::Receiver<Vec<u8>>>,
     /// Remote filesystem explorer (websocket-based)
     pub remote_explorer: RemoteExplorer,
     /// Pending file download - stores the filename being downloaded
@@ -142,6 +145,10 @@ impl Drop for WebSocketClient {
             if let Some(stop_tx) = &self.stop_tx {
                 let _ = stop_tx.send(());
             }
+        }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if self.remote_egui_mcp_rx.is_some() {
+            crate::plugins::remote_egui_control::hub().unregister(&self.client.connection_string);
         }
     }
 }
@@ -255,6 +262,8 @@ Get-WmiObject")
             egui_remote_popout: false,
             #[cfg(not(target_arch = "wasm32"))]
             egui_remote_popout_inner_sent: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            remote_egui_mcp_rx: None,
             remote_explorer: {
                 let mut explorer = RemoteExplorer::new();
                 // Set the bucket name from the current user for My Tools
@@ -277,9 +286,16 @@ Get-WmiObject")
 
     #[cfg(not(target_arch="wasm32"))]
     pub fn start_receiving_buffers(&mut self) {
+        #[cfg(feature = "tokio")]
+        if self.remote_egui_mcp_rx.is_none() {
+            let rx = crate::plugins::remote_egui_control::hub()
+                .register(self.client.connection_string.clone());
+            self.remote_egui_mcp_rx = Some(rx);
+        }
         let rx = self.msg_from_client_rx.clone();
         let terminal_tx = self.remote_terminal.buffer_tx.clone();
         let egui_frame_tx = self.egui_viewer.frame_tx.clone();
+        let conn_for_egui_meta = self.client.connection_string.clone();
         let current_area = self.remote_terminal.current_area;
         let size_rx = self.size_rx.clone();
         let stop_rx = self.stop_rx.clone();
@@ -298,6 +314,9 @@ Get-WmiObject")
                                 &buffer_array[1..],
                                 bincode::config::standard(),
                             ) {
+                                #[cfg(feature = "tokio")]
+                                crate::plugins::remote_egui_control::hub()
+                                    .record_last_frame(&conn_for_egui_meta, &frame);
                                 let _ = egui_frame_tx.try_send(frame);
                             }
                         } else {
@@ -330,9 +349,13 @@ Get-WmiObject")
         let Self {
             egui_viewer,
             ws_sender,
+            client,
             ..
         } = self;
-        egui_viewer.ui(ui, |input_ev: EguiInputEvent| {
+        let mcp_sess = client.connection_string.as_str();
+        egui_viewer.ui(
+            ui,
+            |input_ev: EguiInputEvent| {
             let loud = matches!(
                 &input_ev,
                 EguiInputEvent::PointerButton { .. }
@@ -368,7 +391,9 @@ Get-WmiObject")
                     );
                 }
             }
-        });
+            },
+            Some(mcp_sess),
+        );
     }
 }
 

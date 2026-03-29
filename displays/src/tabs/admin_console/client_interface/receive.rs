@@ -7,6 +7,13 @@ use super::{deserializer, ui::WsDisplayState, History, WebSocketClient};
 
 impl WebSocketClient {
     pub fn receive(&mut self, ctx: &Context) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        if let Some(rx) = self.remote_egui_mcp_rx.as_ref() {
+            while let Ok(bin) = rx.try_recv() {
+                self.ws_sender.send(WsMessage::Binary(bin));
+            }
+        }
+
         self.explorer.receive();
         self.toolbox.receive();
 

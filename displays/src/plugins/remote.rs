@@ -27,13 +27,55 @@
 
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use super::{MastertechPlugin, PluginHost};
 
 // ─── Wire types ────────────────────────────────────────────────────────────────
+
+/// Named rectangle in **host / capture screen space** (same coordinates as [`EguiInputEvent`] pointer).
+/// Registered during UI via [`push_widget_anchor`], attached to the next [`EguiFrameMessage`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WidgetAnchor {
+    pub key: String,
+    pub min_x: f32,
+    pub min_y: f32,
+    pub max_x: f32,
+    pub max_y: f32,
+}
+
+impl WidgetAnchor {
+    pub fn center(&self) -> (f32, f32) {
+        (
+            (self.min_x + self.max_x) * 0.5,
+            (self.min_y + self.max_y) * 0.5,
+        )
+    }
+
+    pub fn top_left(&self) -> (f32, f32) {
+        (self.min_x, self.min_y)
+    }
+}
+
+/// Buffer filled during UI; drained into the outgoing frame in [`EguiFrameCapture::output_hook`].
+static WIDGET_ANCHORS_BUF: Mutex<Vec<WidgetAnchor>> = Mutex::new(Vec::new());
+
+/// Record a widget rectangle for the current frame (call right after building a `TextEdit`, `Button`, etc.).
+/// Keys should be stable dotted paths, e.g. `tur.service_number`, for MCP `remote_egui_click_anchor`.
+pub fn push_widget_anchor(key: impl Into<String>, rect: egui::Rect) {
+    let mut g = WIDGET_ANCHORS_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    g.push(WidgetAnchor {
+        key: key.into(),
+        min_x: rect.min.x,
+        min_y: rect.min.y,
+        max_x: rect.max.x,
+        max_y: rect.max.y,
+    });
+}
 
 /// A captured egui frame for transmission to a remote viewer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +92,9 @@ pub struct EguiFrameMessage {
     /// `Context::screen_rect().min` on the capture side (for coordinate remap).
     pub screen_min_x: f32,
     pub screen_min_y: f32,
+    /// Widgets that called [`push_widget_anchor`] during this frame (may be empty).
+    #[serde(default)]
+    pub widget_anchors: Vec<WidgetAnchor>,
 }
 
 /// A tessellated, clipped mesh ready for wire transmission.
@@ -347,7 +392,7 @@ pub enum EguiInputEvent {
     Scroll { delta_x: f32, delta_y: f32 },
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EguiModifiers {
     pub alt: bool,
     pub ctrl: bool,
@@ -548,6 +593,11 @@ impl MastertechPlugin for EguiFrameCapture {
         let tex_bytes = bincode::serde::encode_to_vec(&wire_tex, bincode::config::standard())
             .unwrap_or_default();
 
+        let widget_anchors = {
+            let mut g = WIDGET_ANCHORS_BUF.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *g)
+        };
+
         let msg = EguiFrameMessage {
             frame_count: self.frame_count,
             timestamp_ms: std::time::SystemTime::now()
@@ -561,6 +611,7 @@ impl MastertechPlugin for EguiFrameCapture {
             pixels_per_point: ppp,
             screen_min_x: screen_rect.min.x,
             screen_min_y: screen_rect.min.y,
+            widget_anchors,
         };
 
         let _ = self.frame_tx.try_send(msg);
