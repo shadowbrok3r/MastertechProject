@@ -27,6 +27,14 @@
 //! - **HTTP 9004** — [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)
 //!   at `http://127.0.0.1:9004/mcp` for Cursor and other HTTP MCP clients.
 //!   (Pointing those clients at port 9003 fails: they send HTTP, not framed JSON-RPC bytes.)
+//!
+//!   **Session lifecycle:** After `initialize`, the client must POST `notifications/initialized`
+//!   on the same `Mcp-Session-Id` before `tools/call` or other requests. Skipping that leaves the
+//!   session worker waiting and the POST appears to hang.
+//!
+//!   **PluginManager mutex:** The egui frame holds `Arc<Mutex<PluginManager>>` during plugin
+//!   hooks. MCP tools use `try_lock` and return a clear error if the UI is mid-frame instead of
+//!   blocking a Tokio worker indefinitely (which freezes the whole app).
 
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
@@ -138,6 +146,27 @@ impl PluginToolProvider {
             tool_router: Self::tool_router(),
             manager,
             artifacts: Arc::new(Mutex::new(ArtifactStore::new())),
+        }
+    }
+
+    fn try_lock_manager(&self) -> Result<std::sync::MutexGuard<'_, PluginManager>, ErrorData> {
+        match self.manager.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(e)) => Err(to_internal(e.to_string())),
+            Err(std::sync::TryLockError::WouldBlock) => Err(to_internal(
+                "PluginManager is locked by the Mastertech UI (egui is running plugin hooks). \
+                 Retry in a few milliseconds. Never call MCP from inside plugin logic/ui/input/output hooks.",
+            )),
+        }
+    }
+
+    fn try_lock_artifacts(&self) -> Result<std::sync::MutexGuard<'_, ArtifactStore>, ErrorData> {
+        match self.artifacts.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(e)) => Err(to_internal(e.to_string())),
+            Err(std::sync::TryLockError::WouldBlock) => Err(to_internal(
+                "Plugin artifact store is busy (another MCP tool is using it). Retry shortly.",
+            )),
         }
     }
 }
@@ -482,7 +511,7 @@ impl PluginToolProvider {
         &self,
         Parameters(_p): Parameters<ListPluginsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mgr = self.manager.lock().map_err(|e| to_internal(e.to_string()))?;
+        let mgr = self.try_lock_manager()?;
         let plugins = mgr.list_plugins();
         Ok(CallToolResult::success(vec![
             Content::json(plugins).map_err(to_internal)?
@@ -497,7 +526,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<EnablePluginParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.manager.lock().map_err(|e| to_internal(e.to_string()))?;
+        let mut mgr = self.try_lock_manager()?;
         let ok = mgr.set_plugin_enabled(&p.plugin_id, true);
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "plugin_id": p.plugin_id, "enabled": ok }),
@@ -513,7 +542,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<DisablePluginParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.manager.lock().map_err(|e| to_internal(e.to_string()))?;
+        let mut mgr = self.try_lock_manager()?;
         let ok = mgr.set_plugin_enabled(&p.plugin_id, false);
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "plugin_id": p.plugin_id, "disabled": ok }),
@@ -529,7 +558,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<CallPluginToolParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.manager.lock().map_err(|e| to_internal(e.to_string()))?;
+        let mut mgr = self.try_lock_manager()?;
         let args = p.args.unwrap_or(serde_json::Value::Null);
         let result = mgr
             .dispatch_mcp_call(&p.plugin_id, &p.tool_name, args)
@@ -891,9 +920,7 @@ impl PluginToolProvider {
 
         let size = artifact_bytes.len();
 
-        self.artifacts
-            .lock()
-            .map_err(|e| to_internal(e.to_string()))?
+        self.try_lock_artifacts()?
             .store(&p.plugin_id, artifact_bytes);
 
         Ok(CallToolResult::success(vec![Content::json(
@@ -916,10 +943,7 @@ impl PluginToolProvider {
         Parameters(p): Parameters<PluginDeployParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let artifact = {
-            let store = self
-                .artifacts
-                .lock()
-                .map_err(|e| to_internal(e.to_string()))?;
+            let store = self.try_lock_artifacts()?;
             store
                 .get_current(&p.plugin_id)
                 .cloned()
@@ -931,10 +955,7 @@ impl PluginToolProvider {
                 })?
         };
 
-        let mut mgr = self
-            .manager
-            .lock()
-            .map_err(|e| to_internal(e.to_string()))?;
+        let mut mgr = self.try_lock_manager()?;
 
         mgr.unregister(&p.plugin_id);
 
@@ -971,18 +992,13 @@ impl PluginToolProvider {
         Parameters(p): Parameters<PluginRollbackParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let prev_artifact = self
-            .artifacts
-            .lock()
-            .map_err(|e| to_internal(e.to_string()))?
+            .try_lock_artifacts()?
             .rollback(&p.plugin_id)
             .ok_or_else(|| {
                 to_internal(format!("No previous artifact for '{}'", p.plugin_id))
             })?;
 
-        let mut mgr = self
-            .manager
-            .lock()
-            .map_err(|e| to_internal(e.to_string()))?;
+        let mut mgr = self.try_lock_manager()?;
 
         mgr.unregister(&p.plugin_id);
 
@@ -1022,10 +1038,7 @@ impl PluginToolProvider {
         let start = std::time::Instant::now();
 
         let (info, broadcast_rx) = {
-            let mgr = self
-                .manager
-                .lock()
-                .map_err(|e| to_internal(e.to_string()))?;
+            let mgr = self.try_lock_manager()?;
 
             let info = mgr
                 .list_plugins()
@@ -1095,10 +1108,7 @@ impl PluginToolProvider {
                 .await
                 .map_err(|e| to_internal(format!("write wat: {e}")))?;
             let sz = wasm.len();
-            self.artifacts
-                .lock()
-                .map_err(|e| to_internal(e.to_string()))?
-                .store(&p.plugin_id, wasm);
+            self.try_lock_artifacts()?.store(&p.plugin_id, wasm);
             Ok(CallToolResult::success(vec![Content::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
@@ -1137,10 +1147,7 @@ impl PluginToolProvider {
                 .await
                 .map_err(|e| to_internal(format!("write wat: {e}")))?;
             let sz = wasm.len();
-            self.artifacts
-                .lock()
-                .map_err(|e| to_internal(e.to_string()))?
-                .store(&p.plugin_id, wasm);
+            self.try_lock_artifacts()?.store(&p.plugin_id, wasm);
             Ok(CallToolResult::success(vec![Content::json(
                 serde_json::json!({
                     "plugin_id": p.plugin_id,
