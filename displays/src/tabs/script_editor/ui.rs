@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CentralPanel, Color32, FontId, Frame, Id, Layout, Margin, RichText, ScrollArea, SidePanel, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, Color32, FontId, Frame, Id, Layout, Margin, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Vec2, Widget};
 use crate::{file_viewer::{ColorTheme, FileViewer, Syntax}, get_current_user_from_auth};
 use log::info;
 
@@ -13,7 +13,7 @@ impl ScriptEditor {
         }
 
         eframe::egui::Panel::top("Script editor top panel")
-            .exact_height(40.)
+            .exact_size(40.)
             .frame(
                 Frame::default()
                 .fill(ui.style().visuals.extreme_bg_color)
@@ -126,7 +126,7 @@ impl ScriptEditor {
         }
 
         eframe::egui::Panel::right(Id::new("Script editor sidebar"))
-        .default_width(160.)
+        .default_size(160.)
         .frame(
             Frame::default()
             .inner_margin(Margin::symmetric(4, 2))

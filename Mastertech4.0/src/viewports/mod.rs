@@ -1,4 +1,4 @@
-use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId};
+use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportCommand, ViewportId};
 use std::{sync::{atomic::Ordering, Arc}, time::Duration};
 use displays::tabs::admin_console::AdminConsole;
 use crate::app_state::MasterTechApp;
@@ -119,5 +119,65 @@ impl MasterTechApp{
             }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        for client in self.context.shared_ctx.clients.clone() {
+            let conn = client.connection_string.clone();
+            let pop = self
+                .context
+                .shared_ctx
+                .web_console_layout
+                .ws_clients
+                .get(&conn)
+                .map(|w| w.egui_remote_popout)
+                .unwrap_or(false);
+            if !pop {
+                continue;
+            }
+
+            let title = format!(
+                "Remote UI — {}",
+                client.friendly_name.clone().unwrap_or_else(|| conn.clone())
+            );
+            let viewport_id = ViewportId::from_hash_of(format!("egui_remote_popout {conn}"));
+            let viewport_builder = ViewportBuilder::default()
+                .with_title(title)
+                .with_inner_size([960.0, 720.0]);
+
+            ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
+                let layout = &mut self.context.shared_ctx.web_console_layout;
+                if let Some(ws) = layout.ws_clients.get_mut(&conn) {
+                    ws.egui_viewer.poll_frames();
+                    if let Some((rw, rh)) = ws.egui_viewer.remote_canvas_points() {
+                        let inner_w = (rw + 32.0).max(320.0);
+                        let inner_h = (rh + 72.0).max(240.0);
+                        let key = ((inner_w * 2.0) as u32, (inner_h * 2.0) as u32);
+                        if ws.egui_remote_popout_inner_sent != Some(key) {
+                            ws.egui_remote_popout_inner_sent = Some(key);
+                            ctx.send_viewport_cmd(ViewportCommand::InnerSize(
+                                eframe::egui::vec2(inner_w, inner_h),
+                            ));
+                        }
+                    }
+                }
+                CentralPanel::default().show(ctx, |ui| {
+                    let layout = &mut self.context.shared_ctx.web_console_layout;
+                    if let Some(ws) = layout.ws_clients.get_mut(&conn) {
+                        ws.show_egui_remote_viewport_panel(ui, ctx);
+                    }
+                });
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    if let Some(ws) = self
+                        .context
+                        .shared_ctx
+                        .web_console_layout
+                        .ws_clients
+                        .get_mut(&conn)
+                    {
+                        ws.egui_remote_popout = false;
+                        ws.egui_remote_popout_inner_sent = None;
+                    }
+                }
+            });
+        }
     }
 }

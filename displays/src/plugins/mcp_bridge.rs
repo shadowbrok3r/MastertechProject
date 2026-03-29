@@ -1,7 +1,18 @@
 //! MCP tool bridge for the Mastertech plugin system.
 //!
 //! Exposes a `PluginToolProvider` that aggregates MCP tools from all registered plugins
-//! and provides management tools (list, enable, disable, call).
+//! and provides management + authoring tools.
+//!
+//! ## Tools
+//!
+//! **Management:** `list_plugins`, `enable_plugin`, `disable_plugin`, `call_plugin_tool`
+//!
+//! **Authoring (WASM plugin lifecycle):**
+//! - `plugin_source` — read or write Rust source for a plugin
+//! - `plugin_compile` — compile source to a WASM artifact
+//! - `plugin_deploy` — hot-swap a running plugin with a new artifact
+//! - `plugin_rollback` — revert to the previous artifact
+//! - `plugin_watch` — collect runtime behavior report over N frames
 //!
 //! Binds on TCP 9003, separate from the existing desktop (9001) and diagnostic (9002) servers.
 
@@ -15,15 +26,98 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::PluginManager;
+
+// ─── Artifact store ────────────────────────────────────────────────────────────
+
+/// Stores compiled WASM artifacts and their previous versions for rollback.
+struct ArtifactStore {
+    current: HashMap<String, Vec<u8>>,
+    previous: HashMap<String, Vec<u8>>,
+}
+
+impl ArtifactStore {
+    fn new() -> Self {
+        Self {
+            current: HashMap::new(),
+            previous: HashMap::new(),
+        }
+    }
+
+    fn store(&mut self, plugin_id: &str, bytes: Vec<u8>) {
+        if let Some(old) = self.current.remove(plugin_id) {
+            self.previous.insert(plugin_id.to_string(), old);
+        }
+        self.current.insert(plugin_id.to_string(), bytes);
+    }
+
+    fn get_current(&self, plugin_id: &str) -> Option<&Vec<u8>> {
+        self.current.get(plugin_id)
+    }
+
+    fn rollback(&mut self, plugin_id: &str) -> Option<Vec<u8>> {
+        let prev = self.previous.remove(plugin_id)?;
+        if let Some(cur) = self.current.remove(plugin_id) {
+            self.previous.insert(plugin_id.to_string(), cur);
+        }
+        self.current.insert(plugin_id.to_string(), prev.clone());
+        Some(prev)
+    }
+}
+
+// ─── Plugin store directory ────────────────────────────────────────────────────
+
+fn plugin_store_root() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".local").join("share").join("mastertech").join("plugins")
+    } else if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+        PathBuf::from(appdata).join("Mastertech").join("plugins")
+    } else {
+        PathBuf::from(".mastertech").join("plugins")
+    }
+}
+
+fn plugin_dir(plugin_id: &str) -> PathBuf {
+    plugin_store_root().join(sanitize_id(plugin_id))
+}
+
+fn sanitize_id(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Standard Cargo.toml template for a WASM plugin crate.
+fn plugin_cargo_toml(plugin_id: &str) -> String {
+    format!(
+        r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = {{ version = "1", features = ["derive"] }}
+serde_json = "1"
+"#,
+        name = sanitize_id(plugin_id),
+    )
+}
+
+// ─── PluginToolProvider ────────────────────────────────────────────────────────
 
 /// MCP server that exposes plugin management and plugin-provided tools.
 #[derive(Clone)]
 pub struct PluginToolProvider {
     tool_router: ToolRouter<Self>,
     manager: Arc<Mutex<PluginManager>>,
+    artifacts: Arc<Mutex<ArtifactStore>>,
 }
 
 impl PluginToolProvider {
@@ -31,11 +125,12 @@ impl PluginToolProvider {
         Self {
             tool_router: Self::tool_router(),
             manager,
+            artifacts: Arc::new(Mutex::new(ArtifactStore::new())),
         }
     }
 }
 
-// ── Parameter types ────────────────────────────────────────────────────────────
+// ─── Parameter types ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct ListPluginsParams {}
@@ -62,10 +157,46 @@ pub struct CallPluginToolParams {
     pub args: Option<serde_json::Value>,
 }
 
-// ── Tool implementations ───────────────────────────────────────────────────────
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginSourceParams {
+    #[schemars(description = "Plugin ID (e.g. 'com.mastertech.my-plugin')")]
+    pub plugin_id: String,
+    #[schemars(description = "If provided, writes this Rust source as the plugin's lib.rs. If omitted, reads the current source.")]
+    pub source: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginCompileParams {
+    #[schemars(description = "Plugin ID to compile")]
+    pub plugin_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginDeployParams {
+    #[schemars(description = "Plugin ID to deploy (must have been compiled first)")]
+    pub plugin_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginRollbackParams {
+    #[schemars(description = "Plugin ID to rollback to its previous artifact")]
+    pub plugin_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginWatchParams {
+    #[schemars(description = "Plugin ID to observe")]
+    pub plugin_id: String,
+    #[schemars(description = "Number of seconds to observe (default 5)")]
+    pub duration_secs: Option<u64>,
+}
+
+// ─── Tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
 impl PluginToolProvider {
+    // ── Management tools ────────────────────────────────────────────────
+
     #[tool(
         name = "list_plugins",
         description = "List all registered Mastertech plugins with their status, version, and tool count."
@@ -130,12 +261,304 @@ impl PluginToolProvider {
             Content::json(result).map_err(to_internal)?
         ]))
     }
+
+    // ── Authoring tools ─────────────────────────────────────────────────
+
+    #[tool(
+        name = "plugin_source",
+        description = "Read or write the Rust source for a WASM plugin. If 'source' is provided, writes it as src/lib.rs and creates the Cargo.toml scaffold. If omitted, reads the current source. Returns the source code."
+    )]
+    async fn plugin_source(
+        &self,
+        Parameters(p): Parameters<PluginSourceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let dir = plugin_dir(&p.plugin_id);
+        let src_dir = dir.join("src");
+        let lib_rs = src_dir.join("lib.rs");
+        let cargo_toml = dir.join("Cargo.toml");
+
+        if let Some(source) = p.source {
+            tokio::fs::create_dir_all(&src_dir)
+                .await
+                .map_err(|e| to_internal(format!("mkdir: {e}")))?;
+
+            tokio::fs::write(&lib_rs, &source)
+                .await
+                .map_err(|e| to_internal(format!("write lib.rs: {e}")))?;
+
+            if !cargo_toml.exists() {
+                tokio::fs::write(&cargo_toml, plugin_cargo_toml(&p.plugin_id))
+                    .await
+                    .map_err(|e| to_internal(format!("write Cargo.toml: {e}")))?;
+            }
+
+            Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "action": "written",
+                    "path": lib_rs.display().to_string(),
+                    "bytes": source.len(),
+                }),
+            )
+            .map_err(to_internal)?]))
+        } else {
+            let source = tokio::fs::read_to_string(&lib_rs)
+                .await
+                .map_err(|e| to_internal(format!("read lib.rs: {e}")))?;
+
+            Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "source": source,
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+    }
+
+    #[tool(
+        name = "plugin_compile",
+        description = "Compile a WASM plugin from its source directory. Requires `wasm32-wasip2` target installed. Returns compiler output or the compiled artifact size."
+    )]
+    async fn plugin_compile(
+        &self,
+        Parameters(p): Parameters<PluginCompileParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let dir = plugin_dir(&p.plugin_id);
+        let lib_rs = dir.join("src").join("lib.rs");
+
+        if !lib_rs.exists() {
+            return Err(to_internal(format!(
+                "No source found for plugin '{}'. Use plugin_source to write source first.",
+                p.plugin_id
+            )));
+        }
+
+        let output = tokio::process::Command::new("cargo")
+            .args([
+                "build",
+                "--target",
+                "wasm32-wasip2",
+                "--release",
+                "--message-format=json",
+            ])
+            .current_dir(&dir)
+            .env("CARGO_TARGET_DIR", dir.join("target"))
+            .output()
+            .await
+            .map_err(|e| to_internal(format!("Failed to run cargo: {e}")))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if !output.status.success() {
+            return Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "success": false,
+                    "stderr": stderr,
+                    "stdout": stdout,
+                }),
+            )
+            .map_err(to_internal)?]));
+        }
+
+        let crate_name = sanitize_id(&p.plugin_id);
+        let wasm_path = dir
+            .join("target")
+            .join("wasm32-wasip2")
+            .join("release")
+            .join(format!("{crate_name}.wasm"));
+
+        let artifact_bytes = tokio::fs::read(&wasm_path)
+            .await
+            .map_err(|e| to_internal(format!("Read artifact: {e}")))?;
+
+        let size = artifact_bytes.len();
+
+        self.artifacts
+            .lock()
+            .map_err(|e| to_internal(e.to_string()))?
+            .store(&p.plugin_id, artifact_bytes);
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "plugin_id": p.plugin_id,
+                "success": true,
+                "artifact_bytes": size,
+                "wasm_path": wasm_path.display().to_string(),
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "plugin_deploy",
+        description = "Deploy (hot-swap) a compiled WASM plugin. Unregisters the old instance and loads the new artifact. Requires the 'wasm-plugins' feature."
+    )]
+    async fn plugin_deploy(
+        &self,
+        Parameters(p): Parameters<PluginDeployParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let artifact = {
+            let store = self
+                .artifacts
+                .lock()
+                .map_err(|e| to_internal(e.to_string()))?;
+            store
+                .get_current(&p.plugin_id)
+                .cloned()
+                .ok_or_else(|| {
+                    to_internal(format!(
+                        "No artifact for '{}'. Run plugin_compile first.",
+                        p.plugin_id
+                    ))
+                })?
+        };
+
+        let mut mgr = self
+            .manager
+            .lock()
+            .map_err(|e| to_internal(e.to_string()))?;
+
+        mgr.unregister(&p.plugin_id);
+
+        #[cfg(feature = "wasm-plugins")]
+        {
+            mgr.load_wasm(artifact)
+                .map_err(|e| to_internal(format!("WASM load failed: {e}")))?;
+
+            Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "deployed": true,
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+
+        #[cfg(not(feature = "wasm-plugins"))]
+        {
+            drop(mgr);
+            let _ = artifact;
+            Err(to_internal(
+                "WASM plugin support not enabled. Rebuild with feature 'wasm-plugins'.",
+            ))
+        }
+    }
+
+    #[tool(
+        name = "plugin_rollback",
+        description = "Rollback a deployed WASM plugin to its previous artifact version."
+    )]
+    async fn plugin_rollback(
+        &self,
+        Parameters(p): Parameters<PluginRollbackParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let prev_artifact = self
+            .artifacts
+            .lock()
+            .map_err(|e| to_internal(e.to_string()))?
+            .rollback(&p.plugin_id)
+            .ok_or_else(|| {
+                to_internal(format!("No previous artifact for '{}'", p.plugin_id))
+            })?;
+
+        let mut mgr = self
+            .manager
+            .lock()
+            .map_err(|e| to_internal(e.to_string()))?;
+
+        mgr.unregister(&p.plugin_id);
+
+        #[cfg(feature = "wasm-plugins")]
+        {
+            mgr.load_wasm(prev_artifact)
+                .map_err(|e| to_internal(format!("Rollback load failed: {e}")))?;
+
+            Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "plugin_id": p.plugin_id,
+                    "rolled_back": true,
+                }),
+            )
+            .map_err(to_internal)?]))
+        }
+
+        #[cfg(not(feature = "wasm-plugins"))]
+        {
+            drop(mgr);
+            let _ = prev_artifact;
+            Err(to_internal(
+                "WASM plugin support not enabled. Rebuild with feature 'wasm-plugins'.",
+            ))
+        }
+    }
+
+    #[tool(
+        name = "plugin_watch",
+        description = "Observe a plugin's behavior for a specified duration. Returns timing stats and any events it emitted."
+    )]
+    async fn plugin_watch(
+        &self,
+        Parameters(p): Parameters<PluginWatchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let duration = std::time::Duration::from_secs(p.duration_secs.unwrap_or(5));
+        let start = std::time::Instant::now();
+
+        let (info, broadcast_rx) = {
+            let mgr = self
+                .manager
+                .lock()
+                .map_err(|e| to_internal(e.to_string()))?;
+
+            let info = mgr
+                .list_plugins()
+                .into_iter()
+                .find(|info| info.id == p.plugin_id)
+                .ok_or_else(|| to_internal(format!("Plugin '{}' not found", p.plugin_id)))?;
+
+            let broadcast_rx = mgr.host().broadcast_rx.clone();
+            (info, broadcast_rx)
+        };
+
+        let mut events_captured: Vec<String> = Vec::new();
+
+        while start.elapsed() < duration {
+            while let Ok(event) = broadcast_rx.try_recv() {
+                events_captured.push(format!("{event:?}"));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        let elapsed_ms = start.elapsed().as_millis();
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "plugin_id": p.plugin_id,
+                "observed_ms": elapsed_ms,
+                "plugin_info": {
+                    "name": info.name,
+                    "version": info.version,
+                    "enabled": info.enabled,
+                    "tool_count": info.tool_count,
+                },
+                "broadcast_events_seen": events_captured.len(),
+                "sample_events": events_captured.into_iter().take(20).collect::<Vec<_>>(),
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
 }
+
+// ─── Server handler ────────────────────────────────────────────────────────────
 
 const INSTRUCTIONS: &str = "Mastertech Plugin System MCP Server. \
 Use list_plugins to see registered plugins. \
 Use enable_plugin/disable_plugin to control plugin lifecycle. \
-Use call_plugin_tool to invoke tools exposed by individual plugins.";
+Use call_plugin_tool to invoke tools exposed by individual plugins. \
+Use plugin_source → plugin_compile → plugin_deploy for the WASM authoring loop. \
+Use plugin_rollback to revert a bad deploy. Use plugin_watch to observe behavior.";
 
 #[tool_handler]
 impl ServerHandler for PluginToolProvider {
@@ -156,7 +579,7 @@ fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
     ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
 }
 
-// ── TCP server ─────────────────────────────────────────────────────────────────
+// ─── TCP server ────────────────────────────────────────────────────────────────
 
 /// Start the plugin MCP server on TCP port 9003.
 pub async fn run_plugin_mcp_server(manager: Arc<Mutex<PluginManager>>) -> anyhow::Result<()> {

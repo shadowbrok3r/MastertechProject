@@ -1,5 +1,5 @@
 use database::schema::{helper_traits::EmployeeHelper, prestashop::{generate_orders_report, get_order_payments, Employee, Order, OrderPayment, OrderState, PayPeriod, OrderType}, Store, User};
-use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
+use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, Ui, Widget, scroll_area};
 use crate::{get_current_user_from_auth, PlatformSpawner, Spawner};
 use egui_data_table::{DataTable, Renderer};
 use crossbeam::channel::{Receiver, Sender};

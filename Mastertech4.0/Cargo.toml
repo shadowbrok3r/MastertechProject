@@ -25,7 +25,7 @@ default = [ "inline" ]
 inline = []
 
 [dependencies]
-eframe = { version="0.34", features=["persistence", "serde",  "default_fonts", "glow", "wayland"], default-features=false }
+eframe = { version="0.34", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false }
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "cookies", "brotli", "native-tls-vendored", "form", "charset", "http2", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -75,7 +75,7 @@ env_logger = "*"
 dunce = "1.0.5"
 directories = "6.0.0"
 image-meta = "0.1.4"
-rusqlite = { version = "0.38.0", features = ["bundled"] }
+rusqlite = { version = "0.39.0", features = ["bundled"] }
 
 # nvme = "0.2.2"
 

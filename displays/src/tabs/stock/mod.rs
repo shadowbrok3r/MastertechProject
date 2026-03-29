@@ -1,4 +1,4 @@
-use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Order, RichText, Spinner, TextEdit, TopBottomPanel, Ui, Widget, scroll_area};
+use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Order, RichText, Spinner, TextEdit, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::channel_manager::ChannelManager;
 use crate::tabs::task_audit::row_viewer::BASE_URL;
@@ -154,7 +154,7 @@ impl Default for StockTable {
 impl StockTable {
     pub fn ui(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("StockTopPanel")
-            .exact_height(30.)
+            .exact_size(30.)
             .show_inside(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     ComboBox::new("Stock Selection", "")
@@ -385,7 +385,7 @@ impl StockTable {
             
             if let Some(ref summary) = self.cost_summary {
                 eframe::egui::Panel::bottom("CostBreakdownBottom")
-                    .exact_height(30.)
+                    .exact_size(30.)
                     .show_inside(ui, |ui| {
                         ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing.x = 25.0;

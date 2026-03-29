@@ -1,5 +1,5 @@
 use eframe::egui::{
-    CentralPanel, Color32, ComboBox, Frame, Key, Margin, RichText, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui
+    CentralPanel, Color32, ComboBox, Frame, Key, Margin, RichText, ScrollArea, TextEdit, Ui
 };
 use crate::{
     PlatformSpawner, Spawner,
@@ -82,7 +82,7 @@ impl EnhancedAiPlayground {
         // Top panel with mode selection and provider config
         eframe::egui::Panel::top("enhanced_ai_top")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_height(60.)
+            .exact_size(60.)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Mode selection
@@ -138,7 +138,7 @@ impl EnhancedAiPlayground {
         // Bottom panel - input area
         eframe::egui::Panel::bottom("enhanced_ai_input")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_height(80.)
+            .exact_size(80.)
             .show_inside(ui, |ui| {
                 match self.current_mode {
                     AiMode::Chat => self.show_chat_input(ui),

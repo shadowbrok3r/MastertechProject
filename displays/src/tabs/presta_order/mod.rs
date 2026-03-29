@@ -1,5 +1,5 @@
 use database::{schema::{odoo::{search_odoo_products, ExtraInventoryData}, prestashop::{Address, Customer, DesktopModel, Device, DeviceMfg, LaptopModel, Order, PrestashopOrderType, ServiceOrder}, User}, PlatformSpawner, Spawner};
-use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, TextEdit, TopBottomPanel, Ui, UiBuilder, Widget};
+use eframe::egui::{pos2, vec2, Align, CentralPanel, Checkbox, ComboBox, Direction, FontId, Frame, Grid, Id, Layout, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Widget};
 use crate::{get_current_user_from_auth, get_database_users, modals::tabs::return_colors};
 use crossbeam::channel::{Receiver, Sender};
 use web_time::{Duration, Instant};
@@ -164,7 +164,7 @@ impl PrestashopOrderForm {
         self.receive(ui);
 
         eframe::egui::Panel::top("PrestashopOrderTopPanel")
-        .exact_height(25.)
+        .exact_size(25.)
         .frame(Frame::dark_canvas(ui.style()))
         .show_inside(ui, |ui|{
             ui.horizontal_top(|ui| {

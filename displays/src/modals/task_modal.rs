@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, UiBuilder, Vec2, Widget};
+use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{COMPUTER_TABLE, CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
 use database::schema::prestashop::{Prestashop, Customer, Address, OrderState};
@@ -613,7 +613,7 @@ impl DisplayModal for TaskModal {
         ui.set_max_size(max_space);
         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
-        eframe::egui::Panel::top(format!("Top panel header {}", self.task.id.key_string())).exact_height(28.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(format!("Top panel header {}", self.task.id.key_string())).exact_size(28.).show_inside(ui, |ui| {
 
             ui.columns(3, |ui| {
                 ui[0].with_layout(Layout::left_to_right(Align::Center), |ui| {

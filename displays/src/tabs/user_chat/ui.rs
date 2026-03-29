@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, SidePanel, Stroke, Style, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Image, ImageSource, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use database::schema::{ChatAction, ChatMessageType, ChatThread, RecordIdExt, UserMessage};
 use crate::{markdown_editor::viewer::easy_mark, PlatformSpawner, Spawner};
 use std::{borrow::Cow, sync::Arc};
@@ -24,7 +24,7 @@ impl UserChat {
 
         eframe::egui::Panel::top(self.chat_title.clone())
             .frame(Frame::default().inner_margin(Margin::same(4)))
-            .exact_height(28.)
+            .exact_size(28.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     if !self.edit_title {

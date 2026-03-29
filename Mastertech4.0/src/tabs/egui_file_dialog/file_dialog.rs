@@ -1198,7 +1198,7 @@ impl FileDialog {
             if self.config.show_left_panel {
                 eframe::egui::Panel::left(self.window_id.with("left_panel"))
                     .resizable(true)
-                    .default_width(150.0)
+                    .default_size(150.0)
                     .width_range(90.0..=250.0)
                     .show_inside(ui, |ui| {
                         self.ui_update_left_panel(ui);
@@ -1212,7 +1212,7 @@ impl FileDialog {
                     // we don't restrict the width. It's up to the user to make the UI presentable.
                     .resizable(true);
                 if let Some(width) = self.config.right_panel_width {
-                    right_panel = right_panel.default_width(width);
+                    right_panel = right_panel.default_size(width);
                 }
                 right_panel.show_inside(ui, |ui| {
                     f(ui, self);

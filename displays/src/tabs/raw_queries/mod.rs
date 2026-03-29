@@ -1,5 +1,5 @@
 use crate::{file_viewer::{ColorTheme, FileViewer, Syntax}, PlatformSpawner, Spawner};
-use eframe::egui::{CentralPanel, ScrollArea, TopBottomPanel, Ui};
+use eframe::egui::{CentralPanel, ScrollArea, Ui};
 use crossbeam::channel::{Receiver, Sender};
 use database::DATABASE;
 use serde_json::Value;

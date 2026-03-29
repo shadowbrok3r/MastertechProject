@@ -19,6 +19,7 @@ use web_time::Instant;
 #[cfg(not(target_arch="wasm32"))]
 use {
     tabs::terminal_viewer::RemoteTerminal,
+    tabs::egui_viewer::InlineEguiViewer,
     crate::mcp::{CommandCompletion, DiagnosticResponse, McpService},
 };
 
@@ -86,6 +87,8 @@ pub struct WebSocketClient {
     #[cfg(not(target_arch="wasm32"))]
     remote_terminal: RemoteTerminal,
     #[cfg(not(target_arch="wasm32"))]
+    pub egui_viewer: InlineEguiViewer,
+    #[cfg(not(target_arch="wasm32"))]
     stop_tx: Option<crossbeam::channel::Sender<()>>,
     #[cfg(not(target_arch="wasm32"))]
     size_rx: Receiver<ratatui::layout::Rect>,
@@ -112,6 +115,12 @@ pub struct WebSocketClient {
     pub pending_completion: Option<String>,
     /// Track if live stats (resource monitor) is actively streaming data
     pub live_stats_active: bool,
+    /// Show remote egui capture in a separate OS window (clearer than embedding in admin chrome).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub egui_remote_popout: bool,
+    /// Last inner size we applied to the remote-UI pop-out (avoid resizing every frame).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub egui_remote_popout_inner_sent: Option<(u32, u32)>,
     /// Remote filesystem explorer (websocket-based)
     pub remote_explorer: RemoteExplorer,
     /// Pending file download - stores the filename being downloaded
@@ -188,6 +197,8 @@ Get-WmiObject")
             #[cfg(not(target_arch="wasm32"))]
             remote_terminal,
             #[cfg(not(target_arch="wasm32"))]
+            egui_viewer: InlineEguiViewer::new(),
+            #[cfg(not(target_arch="wasm32"))]
             stop_tx: if cfg!(not(target_arch="wasm32")) { Some(stop_tx) } else { None },
             client,
             msg_to_client_rx,
@@ -240,6 +251,10 @@ Get-WmiObject")
             #[cfg(not(target_arch="wasm32"))]
             pending_completion: None,
             live_stats_active: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            egui_remote_popout: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            egui_remote_popout_inner_sent: None,
             remote_explorer: {
                 let mut explorer = RemoteExplorer::new();
                 // Set the bucket name from the current user for My Tools
@@ -263,29 +278,65 @@ Get-WmiObject")
     #[cfg(not(target_arch="wasm32"))]
     pub fn start_receiving_buffers(&mut self) {
         let rx = self.msg_from_client_rx.clone();
-        let tx = self.remote_terminal.buffer_tx.clone();
+        let terminal_tx = self.remote_terminal.buffer_tx.clone();
+        let egui_frame_tx = self.egui_viewer.frame_tx.clone();
         let current_area = self.remote_terminal.current_area;
         let size_rx = self.size_rx.clone();
         let stop_rx = self.stop_rx.clone();
         PlatformSpawner::spawn(async move {
             loop {
-                // Check for stop signal
                 if stop_rx.try_recv().is_ok() {
                     log::info!("Stopping RemoteTerminal receive_buffer task");
                     break;
                 }
                 while let Ok(msg) = rx.try_recv() {
                     if let WsMessage::Binary(buffer_array) = msg {
-                        RemoteTerminal::receive_buffer(
-                            tx.clone(), 
-                            &size_rx, 
-                            buffer_array, 
-                            current_area
-                        );
+                        if buffer_array.first() == Some(&crate::EGUI_FRAME_TAG) {
+                            if let Ok((frame, _)) = bincode::serde::decode_from_slice::<
+                                crate::plugins::EguiFrameMessage, _,
+                            >(
+                                &buffer_array[1..],
+                                bincode::config::standard(),
+                            ) {
+                                let _ = egui_frame_tx.try_send(frame);
+                            }
+                        } else {
+                            RemoteTerminal::receive_buffer(
+                                terminal_tx.clone(),
+                                &size_rx,
+                                buffer_array,
+                                current_area,
+                            );
+                        }
                     }
                 }
-                // Add a small sleep to avoid busy-waiting
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        });
+    }
+
+    /// Pop-out window body: receive WS, paint remote egui, forward pointer/scroll as `EGUI_INPUT_TAG` binary.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn show_egui_remote_viewport_panel(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        ctx: &eframe::egui::Context,
+    ) {
+        use crate::plugins::remote::EguiInputEvent;
+        use crate::EGUI_INPUT_TAG;
+        self.receive(ctx);
+        self.egui_viewer.poll_frames();
+        let tag = EGUI_INPUT_TAG;
+        let Self {
+            egui_viewer,
+            ws_sender,
+            ..
+        } = self;
+        egui_viewer.ui(ui, |input_ev: EguiInputEvent| {
+            if let Ok(ser) = bincode::serde::encode_to_vec(&input_ev, bincode::config::standard()) {
+                let mut v = vec![tag];
+                v.extend(ser);
+                let _ = ws_sender.send(WsMessage::Binary(v));
             }
         });
     }

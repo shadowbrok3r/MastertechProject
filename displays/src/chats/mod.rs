@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
@@ -347,7 +347,7 @@ impl ChatView {
             }
         }
 
-        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id)).exact_height(24.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top(format!("Top panel header {:?}", task_id)).exact_size(24.).show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
                 if Button::new(RichText::new("Refresh").strong().heading()).ui(ui).clicked() {
                     self.refresh_notes();

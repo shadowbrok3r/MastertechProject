@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
-use eframe::egui::{Button, CentralPanel, ComboBox, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget, scroll_area};
+use eframe::egui::{Button, CentralPanel, ComboBox, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget, scroll_area};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::Process;
 use egui_extras::Column;
@@ -108,7 +108,7 @@ impl ProcessTableViewer {
 
     pub fn show(&mut self, ui: &mut Ui) {
         eframe::egui::Panel::top("Process Viewer Top Panel")
-            .exact_height(30.)
+            .exact_size(30.)
             .show_inside(ui, |ui| 
         {
             ui.horizontal_top(|ui| {

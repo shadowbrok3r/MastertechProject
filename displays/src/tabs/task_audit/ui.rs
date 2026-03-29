@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Vec2, Widget};
 use eframe::egui::{Color32, Grid, Style, scroll_area};
 use database::schema::prestashop::OrderState;
 use crate::{PlatformSpawner, TaskUiActions};
@@ -37,7 +37,7 @@ impl TaskAuditViewer {
             let header = &format!("{} - {}", order.customer.name, order.order.id);
 
             eframe::egui::Panel::right(Id::new("Task Audit Side Panel"))
-                .default_width(280.)
+                .default_size(280.)
                 .max_width(900.)
                 .resizable(true)
                 .show_separator_line(true)
@@ -153,7 +153,7 @@ impl TaskAuditViewer {
         }
          
         eframe::egui::Panel::top("Task Audit Top Panel")
-            .exact_height(30.)
+            .exact_size(30.)
             .show_inside(ui, |ui| 
         {
             ui.horizontal_top(|ui| {

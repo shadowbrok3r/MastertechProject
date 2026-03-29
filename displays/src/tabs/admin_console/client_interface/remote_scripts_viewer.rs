@@ -1,7 +1,7 @@
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{
-    self, Align, Color32, Label, Layout, RichText, ScrollArea, SidePanel, TextEdit,
-    TopBottomPanel, Ui,
+    self, Align, Color32, Label, Layout, RichText, ScrollArea, TextEdit,
+    Ui,
 };
 
 use crate::{Cmd, PlatformSpawner, RemoteScriptItem, RemoteScriptStatus, Spawner};
@@ -248,7 +248,7 @@ impl RemoteScriptsViewer {
         let side_id = ui.id().with("scripts_side_panel");
         eframe::egui::Panel::left(side_id)
             .resizable(false)
-            .default_width(160.0)
+            .default_size(160.0)
             .show_inside(ui, |ui| {
                 ui.heading("Categories");
                 ui.separator();

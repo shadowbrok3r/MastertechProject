@@ -1,10 +1,10 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
 use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
-use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::PluginManager, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{random_record_id, RecordId};
+use database::schema::RecordId;
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
 use eframe::egui::Align2;
@@ -108,6 +108,10 @@ pub struct MastertechContext {
     pub pending_tur_data: Option<PendingTurData>,
     pub plugin_manager: Arc<Mutex<PluginManager>>,
     pub plugin_manager_registered: bool,
+    pub plugin_cmd_rx: Receiver<PluginClientCommand>,
+    pub ws_auto_connected: bool,
+    pub egui_frame_rx: Option<Receiver<displays::plugins::EguiFrameMessage>>,
+    pub egui_input_tx: Option<Sender<displays::plugins::EguiInputEvent>>,
 }
 
 /// State machine for TUR submission workflow
@@ -154,18 +158,38 @@ impl MasterTechApp {
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let (duplicate_check_tx, duplicate_check_rx) = crossbeam::channel::unbounded::<DuplicateCheckResult>();
         let (friendly_name_tx, friendly_name_rx) = crossbeam::channel::bounded::<String>(1);
-        let client_uuid = random_record_id(CONNECTED_CLIENT_TABLE);
+
+        let sys = sysinfo::System::new_all();
+        let hostname = sysinfo::System::host_name().unwrap_or_default();
+        let cpu_brand = sys.cpus().first().map(|c| c.brand().trim().to_string()).unwrap_or_default();
+        let client_hash = crate::filesystem::system_info::generate_client_id(hostname.clone(), cpu_brand.clone());
+        let url_string = format!("{}:{}", hostname, client_hash.split_at(9).0);
+        let client_uuid = RecordId::new(CONNECTED_CLIENT_TABLE.to_string(), url_string.clone());
+        let client_title = url_string.clone();
+        let ws_url = format!(
+            "{}&room_id={}",
+            if cfg!(debug_assertions) { database::WS_CLIENT_URL_LOCAL } else { database::WS_CLIENT_URL },
+            url_string,
+        );
+        log::info!("Client ID: {url_string} | WS URL: {ws_url}");
 
         let send_specs = true;
         // if cfg!(target_os = "windows") { true } else { false };
         
+        let (plugin_dispatcher, plugin_cmd_rx) = DefaultEventDispatcher::new();
+        let plugin_manager = {
+            let mut mgr = PluginManager::new();
+            mgr.set_dispatcher(plugin_dispatcher);
+            Arc::new(Mutex::new(mgr))
+        };
+
         let mastertech_context = MastertechContext {
             shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             client_friendly_name: String::new(),
             order_rows: Vec::new(),
-            url: None,
+            url: Some(ws_url),
             error: Default::default(),
             frontend: None,
 
@@ -175,7 +199,12 @@ impl MasterTechApp {
             },
 
             task_data: LiveTaskPayload::default(),
-            computer_data: ComputerData::default(),
+            computer_data: {
+                let mut cd = ComputerData::default();
+                cd.hostname = hostname;
+                cd.cpu = cpu_brand;
+                cd
+            },
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
@@ -241,7 +270,7 @@ impl MasterTechApp {
             // Data table shit
             seb_channel,
             get_settings: true,
-            client_title: Default::default(),
+            client_title,
             friendly_name_tx,
             friendly_name_rx,
             
@@ -251,8 +280,12 @@ impl MasterTechApp {
             duplicate_merge_modal: None,
             tur_submit_state: TurSubmitState::Idle,
             pending_tur_data: None,
-            plugin_manager: Arc::new(Mutex::new(PluginManager::new())),
+            plugin_manager,
             plugin_manager_registered: false,
+            plugin_cmd_rx,
+            ws_auto_connected: false,
+            egui_frame_rx: None,
+            egui_input_tx: None,
         };
         
         let context = mastertech_context;

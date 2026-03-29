@@ -4,7 +4,7 @@ use database::{Database, DATABASE};
 use serde::{Deserialize, Serialize};
 use crate::{PlatformSpawner, Spawner};
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, TopBottomPanel, Vec2, Widget
+    Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget
 };
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
@@ -104,7 +104,7 @@ impl SharedContext {
         db_tx: Sender<anyhow::Result<Database, anyhow::Error>>,
         appstate_tx: Sender<AppState>,
     ) {
-        eframe::egui::Panel::bottom(Id::new("logger_ui")).exact_height(400.).show(ctx, |ui| crate::ui_tools::egui_logger::logger_ui().show(ui));
+        eframe::egui::Panel::bottom(Id::new("logger_ui")).exact_size(400.).show(ctx, |ui| crate::ui_tools::egui_logger::logger_ui().show(ui));
 
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))

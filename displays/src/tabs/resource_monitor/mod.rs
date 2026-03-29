@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, RichText, ScrollArea, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, RichText, ScrollArea, Ui, Vec2, Widget};
 use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -154,7 +154,7 @@ impl ResourceMonitor {
         self.receive();
 
         ui.ctx().request_repaint(); // .request_repaint_after_secs(2.);
-        eframe::egui::Panel::top("Resource Monitor Top Panel").exact_height(25.).show_inside(ui, |ui| {
+        eframe::egui::Panel::top("Resource Monitor Top Panel").exact_size(25.).show_inside(ui, |ui| {
             eframe::egui::MenuBar::new().ui(ui, |ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
                     let button_stroke = ui.style().visuals.window_stroke;

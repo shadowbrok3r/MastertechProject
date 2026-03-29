@@ -124,6 +124,7 @@ impl TabViewer for MastertechContext {
             },
             "Create Prestashop Order" => self.shared_ctx.prestashop_order_form.ui(ui),
             "Threads" => self.shared_ctx.user_chat.ui(ui),
+            "Plugins" => displays::tabs::plugins_tab::plugins_tab_ui(ui, &self.plugin_manager),
             _ => {}
         }
     }

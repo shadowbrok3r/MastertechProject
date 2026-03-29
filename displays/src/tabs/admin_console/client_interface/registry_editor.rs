@@ -1,6 +1,6 @@
 use eframe::egui::{
     self, Align, Color32, Frame, KeyboardShortcut, Layout, Margin, RichText, ScrollArea,
-    SidePanel, Stroke, TextEdit, Ui, Widget, scroll_area, CornerRadius,
+    Stroke, TextEdit, Ui, Widget, scroll_area, CornerRadius,
 };
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
@@ -482,9 +482,9 @@ impl RegistryEditor {
         eframe::egui::Panel::left("RegistryTree")
             .frame(sidebar_frame)
             .resizable(true)
-            .default_width(280.)
-            .min_width(200.)
-            .max_width(500.)
+            .default_size(280.)
+            .min_size(200.)
+            .max_size(500.)
             .show_inside(ui, |ui| {
                 ui.label(RichText::new("Registry Keys").strong().color(Color32::LIGHT_GRAY));
                 ui.separator();

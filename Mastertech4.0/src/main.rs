@@ -20,6 +20,20 @@ impl eframe::App for app_state::MasterTechApp {
         // One-time: register PluginManager bridge with egui
         if !self.context.plugin_manager_registered {
             self.context.plugin_manager_registered = true;
+
+            let (egui_frame_rx, egui_input_tx) = {
+                let mut mgr = self.context.plugin_manager.lock().unwrap();
+                let capture = displays::plugins::EguiFrameCapture::new();
+                let rx = capture.frame_rx.clone();
+                let input_tx = capture.input_tx.clone();
+                mgr.register(Box::new(capture));
+                mgr.set_plugin_enabled("com.mastertech.egui-frame-capture", true);
+                mgr.register(Box::new(displays::plugins::EguiRemoteViewer::new()));
+                (rx, input_tx)
+            };
+            self.context.egui_frame_rx = Some(egui_frame_rx);
+            self.context.egui_input_tx = Some(egui_input_tx);
+
             let handle = displays::plugins::PluginManagerHandle(
                 self.context.plugin_manager.clone(),
             );
