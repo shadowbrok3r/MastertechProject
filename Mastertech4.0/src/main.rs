@@ -17,6 +17,23 @@ pub mod data;
 
 impl eframe::App for app_state::MasterTechApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // One-time: register PluginManager bridge with egui
+        if !self.context.plugin_manager_registered {
+            self.context.plugin_manager_registered = true;
+            let handle = displays::plugins::PluginManagerHandle(
+                self.context.plugin_manager.clone(),
+            );
+            ctx.add_plugin(handle);
+
+            // Spawn the plugin MCP server on port 9003
+            let mgr_for_mcp = self.context.plugin_manager.clone();
+            tokio::spawn(async move {
+                if let Err(e) = displays::plugins::mcp_bridge::run_plugin_mcp_server(mgr_for_mcp).await {
+                    log::error!("Plugin MCP server error: {e:?}");
+                }
+            });
+        }
+
         self.receive_logic(ctx, frame);
 
         // Handle "Already connected" state recovery in logic phase

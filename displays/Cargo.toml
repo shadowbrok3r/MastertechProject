@@ -7,6 +7,7 @@ edition = "2024"
 default = [ "wasm" ]
 tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
+wasm-plugins = ["dep:wasmtime"]
 
 [dependencies]
 structdiff = { version = "0.7", features = ["rustc_hash"] }
@@ -60,6 +61,7 @@ ratatui = { workspace = true }
 dotenv = { version = "0.15" }
 rusty-s3 = { workspace = true }
 rmcp = { workspace = true }
+wasmtime = { workspace = true, optional = true }
 jiff = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
