@@ -553,14 +553,19 @@ impl ChatServer {
         let mut session_map = self.session_map.lock().await;
         let mut user_map = self.user_map.lock().await;
         
-        // Update connected status in database
-        let client: Option<ConnectedClient> = DATABASE
-            .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $connection_id")
-            .bind(("connection_id", room_id.clone()))
-            .await?
-            .take(0)?;
-
-        log::info!("Connected Client Updated: {client:?}");
+        // Only mark the remote Mastertech client as disconnected in DB when the
+        // CLIENT role drops. When the MASTER (admin console) disconnects (e.g. switching
+        // to a different client), the remote client is still running and connected.
+        if role == "client" {
+            let client: Option<ConnectedClient> = DATABASE
+                .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $connection_id")
+                .bind(("connection_id", room_id.clone()))
+                .await?
+                .take(0)?;
+            log::info!("Client role disconnected, DB updated: {client:?}");
+        } else {
+            log::info!("Master role disconnected from room {room_id}, DB not updated (client still connected)");
+        }
 
         // Check if already cleaned up
         let was_in_session_map = session_map.remove(session_id).is_some();

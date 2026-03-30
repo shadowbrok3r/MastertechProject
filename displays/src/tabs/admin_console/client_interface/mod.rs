@@ -136,6 +136,8 @@ pub struct WebSocketClient {
     pub registry_editor: RegistryEditor,
     pub startup_apps_viewer: StartupAppsViewer,
     pub remote_scripts_viewer: RemoteScriptsViewer,
+    /// Whether the remote egui frame capture is actively streaming.
+    pub egui_viewer_active: bool,
 }
 
 impl Drop for WebSocketClient {
@@ -280,6 +282,7 @@ Get-WmiObject")
             registry_editor: RegistryEditor::new(),
             startup_apps_viewer: StartupAppsViewer::new(),
             remote_scripts_viewer: RemoteScriptsViewer::new(),
+            egui_viewer_active: false,
         }
     }
 

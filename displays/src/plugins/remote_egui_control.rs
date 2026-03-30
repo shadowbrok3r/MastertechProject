@@ -197,6 +197,27 @@ impl RemoteEguiControlHub {
     }
 }
 
+impl RemoteEguiControlHub {
+    /// Send raw binary (e.g. a bincode-serialized `Cmd`) to the remote client via the admin WebSocket.
+    /// Unlike `send_event`, this does NOT prepend `EGUI_INPUT_TAG` — the remote client
+    /// will deserialize the bytes directly as a `Cmd`.
+    pub fn send_raw_binary(
+        &self,
+        connection_string: &str,
+        data: Vec<u8>,
+    ) -> Result<(), String> {
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = g.targets.get(connection_string).ok_or_else(|| {
+            format!(
+                "no active admin WebSocket session for {:?}; connect from Web Console first",
+                connection_string
+            )
+        })?;
+        tx.try_send(data)
+            .map_err(|e| format!("remote command queue full or disconnected: {e}"))
+    }
+}
+
 fn encode_tagged_input(event: &EguiInputEvent) -> Result<Vec<u8>, String> {
     let mut v = vec![EGUI_INPUT_TAG];
     let ser = bincode::serde::encode_to_vec(event, bincode::config::standard())

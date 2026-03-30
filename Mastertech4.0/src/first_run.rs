@@ -153,24 +153,22 @@ impl MasterTechApp {
             self.context.connect(ctx.clone());
         }
 
-        let mut egui_frames = Vec::new();
+        let mut latest_egui_frame = None;
         if let Some(ref rx) = self.context.egui_frame_rx {
             while let Ok(frame) = rx.try_recv() {
-                egui_frames.push(frame);
+                latest_egui_frame = Some(frame);
             }
         }
-        if !egui_frames.is_empty() {
+        if let Some(frame) = latest_egui_frame {
             if let Some(ref mut frontend) = self.context.frontend {
-                for frame in egui_frames {
-                    if let Ok(serialized) = bincode::serde::encode_to_vec(
-                        &frame,
-                        bincode::config::standard(),
-                    ) {
-                        let mut tagged = Vec::with_capacity(1 + serialized.len());
-                        tagged.push(displays::EGUI_FRAME_TAG);
-                        tagged.extend_from_slice(&serialized);
-                        frontend.ws_sender.send(ewebsock::WsMessage::Binary(tagged));
-                    }
+                if let Ok(serialized) = bincode::serde::encode_to_vec(
+                    &frame,
+                    bincode::config::standard(),
+                ) {
+                    let mut tagged = Vec::with_capacity(1 + serialized.len());
+                    tagged.push(displays::EGUI_FRAME_TAG);
+                    tagged.extend_from_slice(&serialized);
+                    frontend.ws_sender.send(ewebsock::WsMessage::Binary(tagged));
                 }
             }
         }

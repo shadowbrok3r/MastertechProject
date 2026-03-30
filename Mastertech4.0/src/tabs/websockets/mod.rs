@@ -472,8 +472,18 @@ impl WebConsoleFrontend {
                 let _ = self.interactive_input.0.try_send("quit".to_string());
             },
             Cmd::Quit => { self.connected = false; }
+            Cmd::LoadWasmPlugin { plugin_id, wasm_bytes } => {
+                let size = wasm_bytes.len();
+                log::info!("Received remote WASM plugin '{plugin_id}' ({size} bytes) via egui WS");
+                let tx = displays::plugins::wasm_load_sender();
+                let _ = tx.try_send((plugin_id, wasm_bytes));
+            }
+            Cmd::SetFrameCapture { enabled } => {
+                log::info!("SetFrameCapture received via egui WS: enabled={enabled}");
+                let tx = displays::plugins::frame_capture_sender();
+                let _ = tx.try_send(enabled);
+            }
             _ => {},
-            // Cmd::Command => todo!(),
         }
     }
 

@@ -1,4 +1,5 @@
 pub mod host;
+pub mod demo_plugin;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_bridge;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -10,6 +11,7 @@ pub mod wasm;
 pub mod plugin_wasm_factory;
 
 pub use host::{PluginHost, PluginEvent, NotificationKind, ClientSnapshot, SystemInfoSnapshot, UserSnapshot};
+pub use demo_plugin::{HelloMastertechPlugin, HELLO_PLUGIN_ID};
 pub use remote::{
     apply_wire_textures_delta_for_viewer, EguiFrameCapture, EguiFrameMessage, EguiInputEvent,
     EguiRemoteViewer, WireClippedMesh, WireTextureId, WireTexturesDelta, WidgetAnchor, decompress,
@@ -18,10 +20,41 @@ pub use remote::{
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub use mcp_bridge::{run_plugin_mcp_server, run_plugin_mcp_server_http};
 
-use crossbeam::channel::Receiver;
+use crossbeam::channel::{Receiver, Sender};
 use eframe::egui;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+// ─── Global WASM plugin loading channel ─────────────────────────────────────────
+//
+// Bridges terminal mode (WebSocket handler) → egui (PluginManager).
+// The WS handler sends (plugin_id, wasm_bytes); the PluginManager drains each frame.
+
+static WASM_LOAD_CHANNEL: Lazy<(
+    Sender<(String, Vec<u8>)>,
+    Receiver<(String, Vec<u8>)>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+/// Get a cloneable sender for submitting WASM plugin bytes to be loaded by the PluginManager.
+/// Call from anywhere (e.g. terminal mode WebSocket handler).
+pub fn wasm_load_sender() -> Sender<(String, Vec<u8>)> {
+    WASM_LOAD_CHANNEL.0.clone()
+}
+
+// ─── Global frame capture enable/disable channel ────────────────────────────
+//
+// Bridges WebSocket handler → egui (PluginManager).
+// The WS handler sends a bool (true=enable, false=disable); the PluginManager
+// drains each frame and calls set_enabled on EguiFrameCapture.
+
+static FRAME_CAPTURE_CHANNEL: Lazy<(Sender<bool>, Receiver<bool>)> =
+    Lazy::new(|| crossbeam::channel::bounded(4));
+
+/// Send a frame-capture enable/disable request from any thread.
+pub fn frame_capture_sender() -> Sender<bool> {
+    FRAME_CAPTURE_CHANNEL.0.clone()
+}
 
 /// Descriptor for an MCP tool that a plugin exposes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +283,45 @@ impl PluginManager {
                     log::debug!("Custom event from {plugin_id}: {event_type}");
                 }
                 _ => {}
+            }
+        }
+
+        // Drain WASM plugin loading channel (bytes arrive from WebSocket handler / terminal mode)
+        #[cfg(feature = "wasm-plugins")]
+        while let Ok((plugin_id, wasm_bytes)) = WASM_LOAD_CHANNEL.1.try_recv() {
+            let size = wasm_bytes.len();
+            log::info!("Loading remote WASM plugin '{plugin_id}' ({size} bytes)...");
+            self.unregister(&plugin_id);
+            match self.load_wasm(wasm_bytes) {
+                Ok(()) => {
+                    log::info!("Remote WASM plugin '{plugin_id}' loaded successfully");
+                    if let Some(d) = &self.dispatcher {
+                        d.show_notification(
+                            "Plugin Loaded",
+                            &format!("{plugin_id} ({size} bytes)"),
+                            &NotificationKind::Success,
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to load remote WASM plugin '{plugin_id}': {e}");
+                    if let Some(d) = &self.dispatcher {
+                        d.show_notification(
+                            "Plugin Load Failed",
+                            &format!("{plugin_id}: {e}"),
+                            &NotificationKind::Error,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Drain frame-capture enable/disable channel
+        while let Ok(enabled) = FRAME_CAPTURE_CHANNEL.1.try_recv() {
+            const CAPTURE_ID: &str = "com.mastertech.egui-frame-capture";
+            if let Some(p) = self.plugins.iter_mut().find(|p| p.id() == CAPTURE_ID) {
+                log::info!("SetFrameCapture: setting EguiFrameCapture enabled={enabled}");
+                p.set_enabled(enabled);
             }
         }
     }

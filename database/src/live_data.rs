@@ -263,10 +263,9 @@ pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std
                         return Err(anyhow::anyhow!("Live query was killed"));
                     },
                 };
-                info!("Data: {:?}", action);
-                match tx.try_send((action, data)) {
-                    Ok(_) => info!("Sent notification"),
-                    Err(e) => error!("Error Sending notification {e:?}"),
+                debug!("Data: {:?}", action);
+                if let Err(e) = tx.try_send((action, data)) {
+                    error!("Error Sending notification {e:?}");
                 }
             },
             Err(e) => {

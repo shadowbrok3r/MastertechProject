@@ -2239,6 +2239,34 @@ if (Test-Path $path) {{
                 }
             }
 
+            Cmd::LoadWasmPlugin { plugin_id, wasm_bytes } => {
+                let size = wasm_bytes.len();
+                log::info!("Received remote WASM plugin '{plugin_id}' ({size} bytes)");
+                let tx = displays::plugins::wasm_load_sender();
+                let result_cmd = if tx.try_send((plugin_id.clone(), wasm_bytes)).is_ok() {
+                    Cmd::LoadWasmPluginResult {
+                        plugin_id,
+                        success: true,
+                        message: format!("Plugin queued for loading ({size} bytes)"),
+                    }
+                } else {
+                    Cmd::LoadWasmPluginResult {
+                        plugin_id,
+                        success: false,
+                        message: "WASM load channel full or disconnected".to_string(),
+                    }
+                };
+                if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            Cmd::SetFrameCapture { enabled } => {
+                log::info!("SetFrameCapture received: enabled={enabled}");
+                let tx = displays::plugins::frame_capture_sender();
+                let _ = tx.try_send(enabled);
+            }
+
             Cmd::None => {},
             _ => {}
         }

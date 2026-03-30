@@ -68,8 +68,19 @@ impl WebSocketClient {
                     }
                 }
 
-                if Button::new(RichText::new("Mastertech Viewer").color(btn_color)).ui(ui).clicked(){
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
+                if self.egui_viewer_active {
+                    if Button::new(RichText::new("■ Stop Viewer").color(Color32::RED)).ui(ui).clicked(){
+                        self.egui_viewer_active = false;
+                        let cmd = Cmd::SetFrameCapture { enabled: false };
+                        let _ = self.send_cmd_tx.try_send(cmd);
+                    }
+                } else {
+                    if Button::new(RichText::new("▶ Start Viewer").color(btn_color)).ui(ui).clicked(){
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
+                        self.egui_viewer_active = true;
+                        let cmd = Cmd::SetFrameCapture { enabled: true };
+                        let _ = self.send_cmd_tx.try_send(cmd);
+                    }
                 }
 
                 let notifs = if let WsDisplayState::Shell = self.state {
