@@ -24,6 +24,25 @@ impl WebSocketClient {
             self.ws_sender.send(WsMessage::Binary(serialize_command(&cmd)));
         }
 
+        // Drain file-transfer chunks produced by background thread and send to remote
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(rx) = &self.file_transfer_rx {
+            let mut done = false;
+            while let Ok(cmd) = rx.try_recv() {
+                if let Cmd::DirectFileTransfer { ref filename, chunk_index, total_chunks, .. } = cmd {
+                    self.file_transfer_progress = Some((filename.clone(), chunk_index + 1, total_chunks));
+                    if chunk_index + 1 == total_chunks {
+                        done = true;
+                    }
+                }
+                self.ws_sender.send(WsMessage::Binary(serialize_command(&cmd)));
+            }
+            if done {
+                self.file_transfer_rx = None;
+                self.file_transfer_progress = None;
+            }
+        }
+
         #[cfg(not(target_arch="wasm32"))]
         if let Ok(diagnostic_msg) = self.diagnostic_rx.try_recv() {
             // log::warn!("Diagnostic info: {diagnostic_msg:?}");
@@ -420,6 +439,14 @@ impl WebSocketClient {
                         self.history.push(History {
                             from: "System".to_string(),
                             message: format!("WASM plugin '{plugin_id}': {message}"),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
+                        self.notifications += 1;
+                    } else if let Cmd::DirectFileTransferResult { filename, success, message } = cmd {
+                        log::info!("File transfer result: {filename} success={success} {message}");
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message: format!("File transfer '{filename}': {message}"),
                             timestamp: chrono::Local::now().to_rfc3339(),
                         });
                         self.notifications += 1;

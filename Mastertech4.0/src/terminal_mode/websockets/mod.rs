@@ -87,12 +87,14 @@ pub struct TerminalWebsocketClient {
     // process: Arc<Mutex<Option<ChildStdin>>>,
     interactive_input_tx: tokio::sync::mpsc::UnboundedSender<String>, 
     interactive_input_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    client: ConnectedClient, // Store client info
+    client: ConnectedClient,
     live_stats_stop_tx: Option<tokio::sync::watch::Sender<bool>>,
     sysinfo_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     sysinfo_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     join_handle: Option<tokio::task::JoinHandle<()>>,
     persistent_shell: Option<PersistentShell>,
+    /// Accumulates chunks for direct file transfers: filename → (total_chunks, received_chunks_data)
+    file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
 }
 
 impl TerminalWebsocketClient {
@@ -117,7 +119,7 @@ impl TerminalWebsocketClient {
             live_stats_stop_tx: None,
             join_handle: None,
             persistent_shell: None,
-            // explorer: FileSystem::new()
+            file_transfer_buffers: std::collections::HashMap::new(),
         }
     }
     
@@ -2265,6 +2267,48 @@ if (Test-Path $path) {{
                 log::info!("SetFrameCapture received: enabled={enabled}");
                 let tx = displays::plugins::frame_capture_sender();
                 let _ = tx.try_send(enabled);
+            }
+
+            Cmd::DirectFileTransfer { filename, chunk_index, total_chunks, data } => {
+                log::info!("DirectFileTransfer: {filename} chunk {chunk_index}/{total_chunks} ({} bytes)", data.len());
+                let entry = self.file_transfer_buffers
+                    .entry(filename.clone())
+                    .or_insert_with(|| (total_chunks, Vec::new()));
+                entry.1.push((chunk_index, data));
+
+                if entry.1.len() as u32 == total_chunks {
+                    let (_, mut chunks) = self.file_transfer_buffers.remove(&filename).unwrap();
+                    chunks.sort_by_key(|(idx, _)| *idx);
+                    let full_data: Vec<u8> = chunks.into_iter().flat_map(|(_, d)| d).collect();
+                    let size = full_data.len();
+
+                    let transfer_dir = std::env::var("USERPROFILE")
+                        .map(|p| std::path::PathBuf::from(p).join("Desktop"))
+                        .unwrap_or_else(|_| std::env::temp_dir());
+                    let _ = std::fs::create_dir_all(&transfer_dir);
+                    let save_path = transfer_dir.join(&filename);
+                    let result_cmd = match std::fs::write(&save_path, &full_data) {
+                        Ok(()) => {
+                            log::info!("File saved: {} ({size} bytes)", save_path.display());
+                            Cmd::DirectFileTransferResult {
+                                filename,
+                                success: true,
+                                message: format!("Saved to {} ({size} bytes)", save_path.display()),
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to save file {}: {e}", save_path.display());
+                            Cmd::DirectFileTransferResult {
+                                filename,
+                                success: false,
+                                message: format!("Write failed: {e}"),
+                            }
+                        }
+                    };
+                    if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                }
             }
 
             Cmd::None => {},

@@ -73,6 +73,7 @@ impl WebSocketClient {
                         self.egui_viewer_active = false;
                         let cmd = Cmd::SetFrameCapture { enabled: false };
                         let _ = self.send_cmd_tx.try_send(cmd);
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                     }
                 } else {
                     if Button::new(RichText::new("▶ Start Viewer").color(btn_color)).ui(ui).clicked(){
@@ -215,6 +216,29 @@ impl WebSocketClient {
                         let _ = self.send_cmd_tx.try_send(Cmd::GetRemoteScriptList);
                     }
                 }
+
+                ui.add_space(10.0);
+
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some((ref name, sent, total)) = self.file_transfer_progress {
+                    let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
+                    ui.colored_label(
+                        Color32::YELLOW,
+                        format!("Sending {short}  {sent}/{total}"),
+                    );
+                } else {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if Button::new(RichText::new("Send File").color(sys_color).small()).ui(ui).clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            let path_str = path.display().to_string();
+                            let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
+                            self.file_transfer_rx = Some(rx);
+                            std::thread::spawn(move || {
+                                Self::chunk_and_send_file(&path_str, tx);
+                            });
+                        }
+                    }
+                }
             });
             ui.add_space(2.);
         });
@@ -352,5 +376,42 @@ impl WebSocketClient {
                 self.remote_scripts_viewer.display(ui, &cmd_tx);
             },
         };
+    }
+
+    /// Read a file in 512 KB chunks and send each as a `Cmd::DirectFileTransfer`.
+    /// Runs on a background thread; chunks are picked up by `receive()` via the channel.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn chunk_and_send_file(path: &str, tx: crossbeam::channel::Sender<Cmd>) {
+        const CHUNK_SIZE: usize = 512 * 1024;
+
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("Failed to read file for transfer: {path}: {e}");
+                return;
+            }
+        };
+
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string());
+
+        let total_chunks = ((data.len() + CHUNK_SIZE - 1) / CHUNK_SIZE).max(1) as u32;
+
+        for (i, chunk) in data.chunks(CHUNK_SIZE).enumerate() {
+            let cmd = Cmd::DirectFileTransfer {
+                filename: filename.clone(),
+                chunk_index: i as u32,
+                total_chunks,
+                data: chunk.to_vec(),
+            };
+            if tx.send(cmd).is_err() {
+                log::error!("File transfer channel closed at chunk {i}/{total_chunks}");
+                return;
+            }
+        }
+
+        log::info!("File transfer queued: {filename} ({} bytes, {total_chunks} chunks)", data.len());
     }
 }
