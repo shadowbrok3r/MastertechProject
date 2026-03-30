@@ -116,7 +116,7 @@ impl EasyMarkEditor {
             //     .set_text_edit_properties(|text_edit: TextEdit<'_>| {
             //         text_edit
             //             .desired_width(f32::INFINITY)
-            //             .font(FontId::proportional(12.0))
+            //             .font(FontId::monospace(12.0))
             //             .frame(true)
             //             .desired_rows(10)
             //             .code_editor()

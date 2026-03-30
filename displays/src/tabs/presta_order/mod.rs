@@ -367,7 +367,7 @@ impl PrestashopOrderForm {
                     ui.vertical_centered(|ui| {
                         ui.set_width(350.);
                         ui.group(|ui| {
-                            ui.heading(RichText::new("Device Details").underline().font(FontId::proportional(15.)));
+                            ui.heading(RichText::new("Device Details").underline().font(FontId::monospace(15.)));
                             ui.add_space(10.);
                             ui.separator();
                             ui.add_space(10.);
@@ -539,7 +539,7 @@ impl PrestashopOrderForm {
                 ui.add_space(10.);
 
                 *product_search_rect = ui.group(|ui| {
-                    ui.heading(RichText::new("Product Search Results").underline().font(FontId::proportional(15.)));
+                    ui.heading(RichText::new("Product Search Results").underline().font(FontId::monospace(15.)));
                     ui.add_space(10.);
                     ui.separator();
                     ui.add_space(10.);
@@ -593,7 +593,7 @@ impl PrestashopOrderForm {
                 ui.vertical_centered(|ui| {
                     ui.set_width(435.);
                     ui.group(|ui| {
-                        ui.heading(RichText::new("Service Details").underline().font(FontId::proportional(15.)));
+                        ui.heading(RichText::new("Service Details").underline().font(FontId::monospace(15.)));
                         ui.add_space(10.);
                         ui.separator();
                         ui.add_space(10.);
@@ -705,7 +705,7 @@ impl PrestashopOrderForm {
                 }
 
                 ui.group(|ui| {
-                    ui.heading(RichText::new("Added Products").underline().font(FontId::proportional(15.)));
+                    ui.heading(RichText::new("Added Products").underline().font(FontId::monospace(15.)));
                     ui.add_space(10.);
                     ui.separator();
                     ui.add_space(10.);

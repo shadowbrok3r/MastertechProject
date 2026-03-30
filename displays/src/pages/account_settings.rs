@@ -80,7 +80,7 @@ impl SharedContext {
                             s.cell(|ui| 
                             {
                                 ui.vertical_centered(|ui| {
-                                    let font = FontId::proportional(15.0);
+                                    let font = FontId::monospace(15.0);
                                     ui.style_mut().override_font_id = Some(font);
                                     
                                     let avail_size = vec2(ui.available_width()/3.2, 222.);
@@ -380,7 +380,7 @@ impl SharedContext {
 
                                                     ui.horizontal(|ui| ui.label("Minio Secret Key: "));
                                                     ui.scope(|ui| {
-                                                        ui.style_mut().override_font_id = Some(FontId::proportional(12.));
+                                                        ui.style_mut().override_font_id = Some(FontId::monospace(12.));
                                                         ui.horizontal(|ui| ui.colored_label(ui.style().visuals.error_fg_color, self.account_mod.user.get_minio_secret_key().unwrap_or_default()));
                                                     });
                                                     

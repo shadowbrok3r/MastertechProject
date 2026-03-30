@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use eframe::egui::{text::{CCursor, CCursorRange}, vec2, Color32, CursorIcon, FontId, Margin, TextEdit, Ui, UiKind};
+use eframe::egui::{text::{CCursor, CCursorRange}, vec2, Color32, CursorIcon, Margin, TextEdit, Ui, UiKind};
 use egui_json_tree::{
     delimiters::ExpandableDelimiter,
     pointer::JsonPointerSegment,
@@ -437,7 +437,7 @@ impl Show for QueryEditor {
                 }
             ),
             abbreviate_root: false,
-            font_id: Some(FontId::proportional(14.0)),
+            font_id: Some(eframe::egui::FontId::monospace(14.0)),
             ..Default::default()
         })
         .show(ui);

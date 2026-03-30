@@ -392,11 +392,12 @@ impl EventDispatcher for DefaultEventDispatcher {
 
 // ─── egui::Plugin bridge ───────────────────────────────────────────────────────
 
-/// Thin wrapper around `Arc<Mutex<PluginManager>>` that implements `egui::Plugin`.
+/// Thin wrapper around `Arc<RwLock<PluginManager>>` that implements `egui::Plugin`.
 ///
 /// Register with `ctx.add_plugin(PluginManagerHandle(arc.clone()))`.
-/// The `Arc<Mutex<PluginManager>>` remains accessible for MCP bridge and external callers.
-pub struct PluginManagerHandle(pub std::sync::Arc<std::sync::Mutex<PluginManager>>);
+/// The `Arc` remains accessible for MCP bridge and external callers. The UI takes a **write** lock
+/// during each hook; MCP uses `try_read` / `try_write` so read-only tools need not block on the frame.
+pub struct PluginManagerHandle(pub std::sync::Arc<std::sync::RwLock<PluginManager>>);
 
 impl egui::Plugin for PluginManagerHandle {
     fn debug_name(&self) -> &'static str {
@@ -404,7 +405,7 @@ impl egui::Plugin for PluginManagerHandle {
     }
 
     fn setup(&mut self, ctx: &egui::Context) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.0.write() {
             let mgr = &mut *guard;
             mgr.host.ctx = Some(ctx.clone());
             mgr.setup_done = true;
@@ -419,7 +420,7 @@ impl egui::Plugin for PluginManagerHandle {
     }
 
     fn on_begin_pass(&mut self, _ui: &mut egui::Ui) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.0.write() {
             let mgr = &mut *guard;
             mgr.process_events();
             for plugin in &mut mgr.plugins {
@@ -431,7 +432,7 @@ impl egui::Plugin for PluginManagerHandle {
     }
 
     fn on_end_pass(&mut self, ui: &mut egui::Ui) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.0.write() {
             let mgr = &mut *guard;
             for plugin in &mut mgr.plugins {
                 if plugin.enabled() {
@@ -442,7 +443,7 @@ impl egui::Plugin for PluginManagerHandle {
     }
 
     fn input_hook(&mut self, input: &mut egui::RawInput) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.0.write() {
             for plugin in &mut guard.plugins {
                 if plugin.enabled() {
                     plugin.input_hook(input);
@@ -452,7 +453,7 @@ impl egui::Plugin for PluginManagerHandle {
     }
 
     fn output_hook(&mut self, output: &mut egui::FullOutput) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.0.write() {
             for plugin in &mut guard.plugins {
                 if plugin.enabled() {
                     plugin.output_hook(output);

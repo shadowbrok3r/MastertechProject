@@ -22,7 +22,7 @@ impl eframe::App for app_state::MasterTechApp {
             self.context.plugin_manager_registered = true;
 
             let (egui_frame_rx, egui_input_tx) = {
-                let mut mgr = self.context.plugin_manager.lock().unwrap();
+                let mut mgr = self.context.plugin_manager.write().unwrap();
                 let capture = displays::plugins::EguiFrameCapture::new();
                 let rx = capture.frame_rx.clone();
                 let input_tx = capture.input_tx.clone();

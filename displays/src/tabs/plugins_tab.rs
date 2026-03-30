@@ -1,17 +1,42 @@
 use eframe::egui::{self, Color32, RichText, Ui};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::plugins::PluginManager;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<Mutex<PluginManager>>) {
+pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) {
     ui.heading("Plugin Manager");
     ui.separator();
 
-    let Ok(mut mgr) = plugin_manager.lock() else {
-        ui.colored_label(Color32::RED, "Failed to acquire plugin manager lock");
-        return;
+    ui.collapsing(
+    RichText::new("MCP :9004/mcp — Cursor & remote egui").strong(),
+    |ui| {
+        ui.label(
+            RichText::new("URL: http://127.0.0.1:9004/mcp — after initialize, send notifications/initialized on the same session before tools/call.")
+                .small(),
+        );
+        ui.add_space(4.0);
+        ui.label(RichText::new("Remote client UI (admin Web Console connected): list_targets → list_widget_anchors → click_anchor / type, or remote_egui_perform_steps (use sleep_ms between steps).").small());
+        ui.label(RichText::new("Switch dock tab via View menu: click_anchor nav.menu.view, sleep ~450ms, then nav.tab.<slug> (e.g. nav.tab.koth, nav.tab.tur_sheet). Slug = lowercase tab name with non-alphanumeric → underscore.").small());
+        ui.label(RichText::new("TUR Sheet fields: tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations.").small());
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Full tool list, every View tab with a one-line description, and pitfalls are in the MCP server instructions (initialize response → instructions).")
+                .italics()
+                .small()
+                .color(Color32::from_rgb(140, 160, 180)),
+        );
+    });
+    
+    ui.add_space(6.0);
+
+    let mut mgr = match plugin_manager.write() {
+        Ok(g) => g,
+        Err(e) => {
+            ui.colored_label(Color32::RED, format!("Plugin manager lock poisoned: {e}"));
+            return;
+        }
     };
 
     let plugins = mgr.list_plugins();
@@ -21,7 +46,7 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<Mutex<PluginManager>>) {
             ui.add_space(40.0);
             ui.label(RichText::new("No plugins loaded").color(Color32::GRAY).size(16.0));
             ui.add_space(10.0);
-            ui.label("Plugins: MCP :9004/mcp — remote_egui_list_widget_anchors, click_anchor, perform_steps, list_targets; plugin_emit_clock_wasm / plugin_compile_wat.");
+            ui.label(RichText::new("Enable egui frame capture on the machine being viewed; use Plugins MCP tools to author WASM plugins (plugin_emit_clock_wasm / plugin_compile_wat, plugin_deploy).").small());
         });
         return;
     }

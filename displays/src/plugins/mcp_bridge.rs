@@ -32,9 +32,13 @@
 //!   on the same `Mcp-Session-Id` before `tools/call` or other requests. Skipping that leaves the
 //!   session worker waiting and the POST appears to hang.
 //!
-//!   **PluginManager mutex:** The egui frame holds `Arc<Mutex<PluginManager>>` during plugin
-//!   hooks. MCP tools use `try_lock` and return a clear error if the UI is mid-frame instead of
-//!   blocking a Tokio worker indefinitely (which freezes the whole app).
+//!   **PluginManager:** Wrapped in `Arc<RwLock<PluginManager>>`. The UI holds a **write** lock during
+//!   plugin hooks. MCP tools that only read metadata use `try_read()` so they can run concurrently
+//!   with each other and do not block behind the UI unless it is mutating plugins. Mutating tools use
+//!   `try_write()` and fail fast if the UI holds the writer.
+//!
+//! **Server `instructions` field** (initialize response) lists every main **View** tab, typical use, and
+//! `nav.tab.*` anchor slugs for `remote_egui_click_anchor` after opening **View** (`nav.menu.view`).
 
 use rmcp::{
     handler::server::{wrapper::Parameters, tool::ToolRouter, ServerHandler},
@@ -48,7 +52,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use super::PluginManager;
 
@@ -136,12 +140,12 @@ serde_json = "1"
 #[derive(Clone)]
 pub struct PluginToolProvider {
     tool_router: ToolRouter<Self>,
-    manager: Arc<Mutex<PluginManager>>,
+    manager: Arc<RwLock<PluginManager>>,
     artifacts: Arc<Mutex<ArtifactStore>>,
 }
 
 impl PluginToolProvider {
-    pub fn new(manager: Arc<Mutex<PluginManager>>) -> Self {
+    pub fn new(manager: Arc<RwLock<PluginManager>>) -> Self {
         Self {
             tool_router: Self::tool_router(),
             manager,
@@ -149,13 +153,22 @@ impl PluginToolProvider {
         }
     }
 
-    fn try_lock_manager(&self) -> Result<std::sync::MutexGuard<'_, PluginManager>, ErrorData> {
-        match self.manager.try_lock() {
+    fn try_read_manager(&self) -> Result<std::sync::RwLockReadGuard<'_, PluginManager>, ErrorData> {
+        match self.manager.try_read() {
             Ok(guard) => Ok(guard),
             Err(std::sync::TryLockError::Poisoned(e)) => Err(to_internal(e.to_string())),
             Err(std::sync::TryLockError::WouldBlock) => Err(to_internal(
-                "PluginManager is locked by the Mastertech UI (egui is running plugin hooks). \
-                 Retry in a few milliseconds. Never call MCP from inside plugin logic/ui/input/output hooks.",
+                "PluginManager is locked for writing by the Mastertech UI (egui). Retry shortly.",
+            )),
+        }
+    }
+
+    fn try_write_manager(&self) -> Result<std::sync::RwLockWriteGuard<'_, PluginManager>, ErrorData> {
+        match self.manager.try_write() {
+            Ok(guard) => Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(e)) => Err(to_internal(e.to_string())),
+            Err(std::sync::TryLockError::WouldBlock) => Err(to_internal(
+                "PluginManager is locked by the Mastertech UI or another MCP tool. Retry shortly.",
             )),
         }
     }
@@ -511,7 +524,7 @@ impl PluginToolProvider {
         &self,
         Parameters(_p): Parameters<ListPluginsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mgr = self.try_lock_manager()?;
+        let mgr = self.try_read_manager()?;
         let plugins = mgr.list_plugins();
         Ok(CallToolResult::success(vec![
             Content::json(plugins).map_err(to_internal)?
@@ -526,7 +539,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<EnablePluginParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.try_lock_manager()?;
+        let mut mgr = self.try_write_manager()?;
         let ok = mgr.set_plugin_enabled(&p.plugin_id, true);
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "plugin_id": p.plugin_id, "enabled": ok }),
@@ -542,7 +555,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<DisablePluginParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.try_lock_manager()?;
+        let mut mgr = self.try_write_manager()?;
         let ok = mgr.set_plugin_enabled(&p.plugin_id, false);
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "plugin_id": p.plugin_id, "disabled": ok }),
@@ -558,7 +571,7 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<CallPluginToolParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mut mgr = self.try_lock_manager()?;
+        let mut mgr = self.try_write_manager()?;
         let args = p.args.unwrap_or(serde_json::Value::Null);
         let result = mgr
             .dispatch_mcp_call(&p.plugin_id, &p.tool_name, args)
@@ -955,7 +968,7 @@ impl PluginToolProvider {
                 })?
         };
 
-        let mut mgr = self.try_lock_manager()?;
+        let mut mgr = self.try_write_manager()?;
 
         mgr.unregister(&p.plugin_id);
 
@@ -998,7 +1011,7 @@ impl PluginToolProvider {
                 to_internal(format!("No previous artifact for '{}'", p.plugin_id))
             })?;
 
-        let mut mgr = self.try_lock_manager()?;
+        let mut mgr = self.try_write_manager()?;
 
         mgr.unregister(&p.plugin_id);
 
@@ -1038,7 +1051,7 @@ impl PluginToolProvider {
         let start = std::time::Instant::now();
 
         let (info, broadcast_rx) = {
-            let mgr = self.try_lock_manager()?;
+            let mgr = self.try_read_manager()?;
 
             let info = mgr
                 .list_plugins()
@@ -1163,13 +1176,52 @@ impl PluginToolProvider {
 
 // ─── Server handler ────────────────────────────────────────────────────────────
 
-const INSTRUCTIONS: &str = "Mastertech Plugin System MCP Server. \
-Use list_plugins to see registered plugins. \
-Use enable_plugin/disable_plugin to control plugin lifecycle. \
-Use call_plugin_tool to invoke tools exposed by individual plugins. \
-Remote egui: list_targets → get_last_frame_meta → list_widget_anchors / click_anchor (or perform_steps) → click/type/send_input (admin Web Console connected). \
-Use plugin_source → plugin_compile (Rust, wasm32-wasip1) → plugin_deploy, or plugin_emit_clock_wasm / plugin_compile_wat (WAT + wasmtime validation) → plugin_deploy. \
-Use plugin_rollback to revert a bad deploy. Use plugin_watch to observe behavior.";
+/// Shown to MCP clients in `initialize` (`ServerInfo.instructions`). Keep in sync with View menu + `nav_tab_anchor_key` in Mastertech `menu_bar.rs`.
+const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech desktop + admin Web Console).
+
+=== Session (HTTP :9004/mcp) ===
+After initialize, POST notifications/initialized with the same Mcp-Session-Id before tools/call.
+
+=== Plugins & WASM ===
+- list_plugins, enable_plugin, disable_plugin, call_plugin_tool — native + WASM plugin MCP tools.
+- plugin_source → plugin_compile (wasm32-wasip1) → plugin_deploy; or plugin_emit_clock_wasm / plugin_compile_wat → plugin_deploy; plugin_rollback; plugin_watch.
+
+=== Remote egui (operator must connect Web Console to a client first) ===
+Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
+- nav.menu.view — click to open the View menu (top bar).
+- nav.tab.<slug> — tab row inside View menu. Slug = tab label lowercased with non-alphanumeric → '_', trim '_' (e.g. KOTH → nav.tab.koth; TUR Sheet → nav.tab.tur_sheet; File Browser 📂 → nav.tab.file_browser). Tab anchors exist only while View menu is open: click nav.menu.view, sleep ~400–500ms, then click nav.tab.* .
+- TUR Sheet widgets (when that tab is visible): tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations.
+
+=== View tabs (names match menu; add/close tab toggles dock) ===
+- TUR Sheet — Service intake / walk-in form (customer, tech, notes, recommendations).
+- KOTH — Store “king of the hill” / display board.
+- Sales Tracker — Sales totals and tracking.
+- Scene Editor — Scene/layout tools (dock tab).
+- Scripts — Saved scripts and tooling.
+- File Browser 📂 — File browser / workspace files.
+- SysInfo — Machine and environment summary.
+- Minidump Analysis — Crash dump analysis (Windows; when enabled).
+- Ai — AI playground (models, prompts).
+- Resource Monitor — Processes and resource usage.
+- My Tasks — Personal task queue layout.
+- Store Tasks — Store-wide open tasks layout.
+- Completed Tasks — Completed task layout.
+- Bug Tracker — GitHub issue tracking.
+- Websockets — WebSocket sessions and messaging.
+- Admin Console — Remote clients: shell, files, viewers (connect to agents here).
+- Web Console — In-app web/shell console.
+- Inventory — Stock / inventory tables.
+- Task Audit — History and audit of task changes.
+- Create Prestashop Order — PrestaShop order entry.
+- Plugins — Plugin list; MCP :9004; enable frame capture / remote viewer on the client being viewed.
+- Downloads — App releases / downloads.
+- Threads — Operator chat threads.
+- Logs — Egui log viewer (filters/categories).
+
+Other dock tabs (context menus / layouts, not all in View list): Part Order, My Tools, QC, Query Editor (admins). Use dock UI or existing flows to open them.
+
+=== Remote egui pitfalls ===
+Do not skip notifications/initialized. Prefer perform_steps with sleep_ms between opening View menu and clicking nav.tab.*. If click_anchor fails with unknown key, call list_widget_anchors again (stale frame)."#;
 
 #[tool_handler]
 impl ServerHandler for PluginToolProvider {
@@ -1193,7 +1245,7 @@ fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
 // ─── TCP server ────────────────────────────────────────────────────────────────
 
 /// Start the plugin MCP server on TCP port 9003.
-pub async fn run_plugin_mcp_server(manager: Arc<Mutex<PluginManager>>) -> anyhow::Result<()> {
+pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyhow::Result<()> {
     use tokio::net::TcpListener;
 
     let addr = "127.0.0.1:9003";
@@ -1227,7 +1279,7 @@ pub async fn run_plugin_mcp_server(manager: Arc<Mutex<PluginManager>>) -> anyhow
 /// Streamable HTTP MCP (MCP spec 2025-06-18 / Cursor “HTTP” transport).
 ///
 /// Cursor and similar clients must use `http://127.0.0.1:9004/mcp`, **not** TCP 9003.
-pub async fn run_plugin_mcp_server_http(manager: Arc<Mutex<PluginManager>>) -> anyhow::Result<()> {
+pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> anyhow::Result<()> {
     use rmcp::transport::streamable_http_server::{
         session::local::LocalSessionManager,
         StreamableHttpServerConfig, StreamableHttpService,

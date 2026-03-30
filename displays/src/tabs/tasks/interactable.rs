@@ -2,7 +2,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{LiveTaskPayload, Priority, RecordIdExt, Status, User};
 use crate::{Interaction, PlatformSpawner, Spawner, apply_jiff_date, to_jiff_date};
-use chrono::{Datelike, NaiveDate, Utc};
 use egui_extras::DatePickerButton;
 use log::info;
 
@@ -11,7 +10,7 @@ use super::task_cards::date_colors;
 impl Interaction for LiveTaskPayload {
     fn interact_service_number(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-        ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
+        ui.style_mut().override_font_id = Some(FontId::monospace(12.0));
         let mut default = String::new();
         let service_number = self.service_number.as_mut().unwrap_or(&mut default);
         let text_edit = TextEdit::singleline(service_number)
@@ -35,7 +34,7 @@ impl Interaction for LiveTaskPayload {
 
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-        ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
+        ui.style_mut().override_font_id = Some(FontId::monospace(12.0));
         // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
             .desired_width(320.)

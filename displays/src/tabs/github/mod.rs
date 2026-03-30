@@ -177,7 +177,7 @@ impl SharedContext {
                 ui.with_layout(
                     Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
                     |ui| {
-                        ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
+                        ui.style_mut().override_font_id = Some(FontId::monospace(15.0));
                         let releases = self.github_releases.clone();
 
                         TableBuilder::new(ui)

@@ -4,7 +4,7 @@ use eframe::egui::popup_below_widget;
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
 use database::schema::{Node, User, buckets::{list_buckets, normalize_prefix}, file_storage}; 
-use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
+use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
 use futures::{StreamExt, Future};
@@ -631,7 +631,7 @@ impl FileSystem {
                 });
             } else {
                 eframe::egui::Panel::bottom(Id::new("FileBrowserBottomPanel"))
-                    .default_height(ui.available_height()/2.0)
+                    .default_size(ui.available_height()/2.0)
                     .show_inside(ui, |ui| 
                 {
                     self.file_editor.show(ui, file);

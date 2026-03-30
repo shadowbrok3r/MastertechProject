@@ -137,7 +137,7 @@ impl SharedContext {
                                     ui.add_space(100.0);
 
                                     ui.label(RichText::new("Signup").heading());
-                                    let font = FontId::proportional(18.0);
+                                    let font = FontId::monospace(18.0);
                                     ui.style_mut().override_font_id = Some(font);
     
                                     ui.add_space(20.0);
