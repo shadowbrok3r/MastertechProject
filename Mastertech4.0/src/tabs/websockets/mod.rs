@@ -188,7 +188,8 @@ pub struct WebConsoleFrontend {
     pub timeout_counter: Instant,
     pub process: Arc<Mutex<Option<ChildStdin>>>,
     pub explorer: FileSystem, 
-    live_stats: bool
+    live_stats: bool,
+    file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
 }
 
 impl WebConsoleFrontend {
@@ -216,7 +217,8 @@ impl WebConsoleFrontend {
             process: Arc::new(Mutex::new(None)),
             explorer: FileSystem::new(),
             interactive_input,
-            live_stats: false
+            live_stats: false,
+            file_transfer_buffers: std::collections::HashMap::new(),
         }
     }
 
@@ -482,6 +484,47 @@ impl WebConsoleFrontend {
                 log::info!("SetFrameCapture received via egui WS: enabled={enabled}");
                 let tx = displays::plugins::frame_capture_sender();
                 let _ = tx.try_send(enabled);
+            }
+            Cmd::DirectFileTransfer { filename, chunk_index, total_chunks, data } => {
+                log::info!("DirectFileTransfer via egui WS: {filename} chunk {chunk_index}/{total_chunks} ({} bytes)", data.len());
+                let entry = self.file_transfer_buffers
+                    .entry(filename.clone())
+                    .or_insert_with(|| (total_chunks, Vec::new()));
+                entry.1.push((chunk_index, data));
+
+                if entry.1.len() as u32 == total_chunks {
+                    let (_, mut chunks) = self.file_transfer_buffers.remove(&filename).unwrap();
+                    chunks.sort_by_key(|(idx, _)| *idx);
+                    let full_data: Vec<u8> = chunks.into_iter().flat_map(|(_, d)| d).collect();
+                    let size = full_data.len();
+
+                    let transfer_dir = std::env::var("USERPROFILE")
+                        .map(|p| std::path::PathBuf::from(p).join("Desktop"))
+                        .unwrap_or_else(|_| std::env::temp_dir());
+                    let _ = std::fs::create_dir_all(&transfer_dir);
+                    let save_path = transfer_dir.join(&filename);
+                    let result_cmd = match std::fs::write(&save_path, &full_data) {
+                        Ok(()) => {
+                            log::info!("File saved: {} ({size} bytes)", save_path.display());
+                            Cmd::DirectFileTransferResult {
+                                filename,
+                                success: true,
+                                message: format!("Saved to {} ({size} bytes)", save_path.display()),
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to save file {}: {e}", save_path.display());
+                            Cmd::DirectFileTransferResult {
+                                filename,
+                                success: false,
+                                message: format!("Write failed: {e}"),
+                            }
+                        }
+                    };
+                    if let Ok(payload) = bincode::serde::encode_to_vec(&result_cmd, bincode::config::standard()) {
+                        self.ws_sender.send(ewebsock::WsMessage::Binary(payload));
+                    }
+                }
             }
             _ => {},
         }

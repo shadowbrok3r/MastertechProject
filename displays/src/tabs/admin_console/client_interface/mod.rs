@@ -138,6 +138,11 @@ pub struct WebSocketClient {
     pub remote_scripts_viewer: RemoteScriptsViewer,
     /// Whether the remote egui frame capture is actively streaming.
     pub egui_viewer_active: bool,
+    /// File transfer progress: (filename, chunks_sent, total_chunks)
+    pub file_transfer_progress: Option<(String, u32, u32)>,
+    /// Channel receiving chunked Cmds from the background file-read thread
+    #[cfg(not(target_arch = "wasm32"))]
+    pub file_transfer_rx: Option<Receiver<Cmd>>,
 }
 
 impl Drop for WebSocketClient {
@@ -283,6 +288,9 @@ Get-WmiObject")
             startup_apps_viewer: StartupAppsViewer::new(),
             remote_scripts_viewer: RemoteScriptsViewer::new(),
             egui_viewer_active: false,
+            file_transfer_progress: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_transfer_rx: None,
         }
     }
 

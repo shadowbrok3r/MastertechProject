@@ -345,6 +345,22 @@ pub enum Cmd {
     /// Sent from admin console to start/stop frame streaming.
     SetFrameCapture { enabled: bool },
 
+    /// Push a file chunk from admin console → remote client.
+    /// Files are split into ≤512 KB chunks and reassembled on the client.
+    DirectFileTransfer {
+        filename: String,
+        chunk_index: u32,
+        total_chunks: u32,
+        data: Vec<u8>,
+    },
+
+    /// Acknowledgement after all chunks of a direct file transfer have been received and written.
+    DirectFileTransferResult {
+        filename: String,
+        success: bool,
+        message: String,
+    },
+
     None,
 }
 
