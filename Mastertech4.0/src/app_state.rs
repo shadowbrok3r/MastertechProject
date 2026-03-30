@@ -1,7 +1,7 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
 use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
 use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
-use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex}};
+use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::RecordId;
@@ -106,7 +106,7 @@ pub struct MastertechContext {
     pub tur_submit_state: TurSubmitState,
     /// Pending TUR data waiting for duplicate resolution
     pub pending_tur_data: Option<PendingTurData>,
-    pub plugin_manager: Arc<Mutex<PluginManager>>,
+    pub plugin_manager: Arc<RwLock<PluginManager>>,
     pub plugin_manager_registered: bool,
     pub plugin_cmd_rx: Receiver<PluginClientCommand>,
     pub ws_auto_connected: bool,
@@ -180,7 +180,7 @@ impl MasterTechApp {
         let plugin_manager = {
             let mut mgr = PluginManager::new();
             mgr.set_dispatcher(plugin_dispatcher);
-            Arc::new(Mutex::new(mgr))
+            Arc::new(RwLock::new(mgr))
         };
 
         let mastertech_context = MastertechContext {

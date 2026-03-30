@@ -63,7 +63,7 @@ impl SharedContext {
                                         notification.notification_description
                                     ))
                                     .color(Color32::LIGHT_GREEN)
-                                    .font(FontId::proportional(15.))
+                                    .font(FontId::monospace(15.))
                                     .into(),
                                     options: ToastOptions::default().duration(None),
                                     style: ToastStyle::default(),

@@ -216,7 +216,7 @@ impl ResourceMonitor {
                         RichText::new("Resource monitor")
                             .color(Color32::LIGHT_RED)
                             .heading()
-                            .font(FontId::proportional(20.))
+                            .font(FontId::monospace(20.))
                     );
                 });
             });
@@ -255,7 +255,7 @@ impl ResourceMonitor {
                                         .underline()
                                         .color(ui.style().visuals.error_fg_color)
                                         .heading()
-                                        .font(FontId::proportional(18.))
+                                        .font(FontId::monospace(18.))
                                     );
                                     ui.add_space(20.);
                                     
@@ -273,7 +273,7 @@ impl ResourceMonitor {
                                         .underline()
                                         .color(ui.style().visuals.error_fg_color)
                                         .heading()
-                                        .font(FontId::proportional(18.))
+                                        .font(FontId::monospace(18.))
                                     );
                                     ui.add_space(10.);
                                     self.ram_usage_chart.ui(ui, "RAM Usage", Color32::from_rgb(242, 7, 179));
@@ -288,7 +288,7 @@ impl ResourceMonitor {
                                         .underline()
                                         .color(ui.style().visuals.error_fg_color)
                                         .heading()
-                                        .font(FontId::proportional(18.))
+                                        .font(FontId::monospace(18.))
                                     );
                                     ui.add_space(20.);
                                     
@@ -306,7 +306,7 @@ impl ResourceMonitor {
                                         .underline()
                                         .color(ui.style().visuals.error_fg_color)
                                         .heading()
-                                        .font(FontId::proportional(18.))
+                                        .font(FontId::monospace(18.))
                                     );
                                     ui.add_space(10.);
                                     self.component_temp_plot.ui(ui, "Component Temps", &mut colors.clone());
@@ -325,7 +325,7 @@ impl ResourceMonitor {
                                         .underline()
                                         .color(ui.style().visuals.error_fg_color)
                                         .heading()
-                                        .font(FontId::proportional(18.))
+                                        .font(FontId::monospace(18.))
                                     );
                                     ui.add_space(10.);
                                     self.disk_usage_plot.ui(ui, "Disk Usage", &mut colors.clone());
@@ -339,7 +339,7 @@ impl ResourceMonitor {
                                         .underline()
                                         .color(ui.style().visuals.error_fg_color)
                                         .heading()
-                                        .font(FontId::proportional(18.))
+                                        .font(FontId::monospace(18.))
                                     );
                                     ui.add_space(10.);
                                     self.network_interface_plot.ui(ui, "Network Usage", &mut colors.clone());

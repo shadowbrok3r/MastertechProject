@@ -122,7 +122,7 @@ impl SharedContext {
                     } else {
                         let edit = TextEdit::singleline(title)
                         .margin(Margin::same(5))
-                        .font(FontId::proportional(12.))
+                        .font(FontId::monospace(12.))
                         .ui(ui);
                         // request keyboard focus somehow..
                         ui.add_space(10.);

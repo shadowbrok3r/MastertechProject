@@ -118,7 +118,7 @@ impl SharedContext {
                     .vertical(|mut s| {
                         s.cell(|ui| {
                             ui.add_space(50.0);
-                            let font = FontId::proportional(30.0);
+                            let font = FontId::monospace(30.0);
                             ui.style_mut().override_font_id = Some(font);
                             ui.label(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")));
                         });

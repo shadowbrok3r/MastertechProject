@@ -213,7 +213,7 @@ pub fn display_ticket_page(
 
                 ui.colored_label(Color32::LIGHT_RED, "Split Rep");
                 // Split Rep (sales_rep field maps to this) ComboBox
-                if let Some(service_number) = task.service_number.as_ref() {
+                if let Some(_) = task.service_number.as_ref() {
                     let current_split = &ticket.sales_rep;
                     ComboBox::from_id_salt(Id::new(format!("splitrep_combo_{}", task.id.key_string())))
                         .selected_text(if current_split.is_empty() { "None" } else { current_split.as_str() })

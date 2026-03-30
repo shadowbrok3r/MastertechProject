@@ -82,7 +82,7 @@ impl MastertechContext {
                 
                     ui.horizontal(|ui| {
                         ui.add_space(200.);
-                        ui.label(RichText::new("Hardware").strong().underline().font(FontId::proportional(13.)).underline().heading());
+                        ui.label(RichText::new("Hardware").strong().underline().font(FontId::monospace(13.)).underline().heading());
                     });
                 });
 
@@ -112,7 +112,7 @@ impl MastertechContext {
 
                         ui.horizontal(|ui| {
                             ui.add_space(178.);
-                            ui.label(RichText::new("Device Info").strong().underline().font(FontId::proportional(13.)).heading());
+                            ui.label(RichText::new("Device Info").strong().underline().font(FontId::monospace(13.)).heading());
                         });
 
                         ui.group(|ui| self.device_info_grid(ui) );
@@ -121,7 +121,7 @@ impl MastertechContext {
 
                         ui.horizontal(|ui| {
                             ui.add_space(180.);
-                            ui.label(RichText::new("SEB Info").strong().underline().font(FontId::proportional(13.)).heading());
+                            ui.label(RichText::new("SEB Info").strong().underline().font(FontId::monospace(13.)).heading());
                         });
 
                         ui.group(|ui| self.seb_info_grid(ui) );
@@ -130,7 +130,7 @@ impl MastertechContext {
 
                         ui.horizontal(|ui| {
                             ui.add_space(180.);
-                            ui.label(RichText::new("Products").strong().underline().font(FontId::proportional(13.)).heading());
+                            ui.label(RichText::new("Products").strong().underline().font(FontId::monospace(13.)).heading());
                         });
                         
                         ui.group(|ui| self.product_info_grid(ui) );
@@ -256,7 +256,7 @@ impl MastertechContext {
                     .background_color(salesman_color)
                     .min_size(text_edit_size)
                     .desired_rows(1)
-                    .font(FontId::proportional(12.0))
+                    .font(FontId::monospace(12.0))
                     .frame(Frame::NONE)
                     .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
             })
@@ -272,7 +272,7 @@ impl MastertechContext {
                     .hint_text(" Tech")
                     .background_color(tech_color)
                     .min_size(text_edit_size)
-                    .font(FontId::proportional(12.0))
+                    .font(FontId::monospace(12.0))
                     .frame(egui::Frame::NONE)
                     .desired_rows(1)
                     .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
@@ -820,7 +820,7 @@ impl MastertechContext {
         {
             let tur_checkin = TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                 .hint_text(RichText::new("Checkin Notes").weak())
-                .font(FontId::proportional(14.0))
+                .font(FontId::monospace(14.0))
                 .margin(Margin::symmetric(10, 6))
                 .desired_width(f32::INFINITY)
                 .desired_rows(13)
@@ -838,7 +838,7 @@ impl MastertechContext {
             let tur_rec = TextEdit::multiline(&mut self.task_data.task_description)
                 .hint_text(RichText::new("Recommendations").weak())
                 .background_color(color)
-                .font(FontId::proportional(14.0))
+                .font(FontId::monospace(14.0))
                 .margin(Margin::symmetric(10, 6))
                 .desired_width(f32::INFINITY)
                 .desired_rows(13)

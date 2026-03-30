@@ -176,6 +176,11 @@ impl RemoteEguiControlHub {
         connection_string: &str,
         events: &[EguiInputEvent],
     ) -> Result<(), String> {
+        // Update pointer overlay without holding `inner` while locked — `maybe_note_pointer_for_event`
+        // calls `note_injected_pointer`, which takes the same mutex (non-reentrant `std::sync::Mutex`).
+        for ev in events {
+            self.maybe_note_pointer_for_event(connection_string, ev);
+        }
         let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let tx = g.targets.get(connection_string).ok_or_else(|| {
             format!(
@@ -184,7 +189,6 @@ impl RemoteEguiControlHub {
             )
         })?;
         for ev in events {
-            self.maybe_note_pointer_for_event(connection_string, ev);
             let bin = encode_tagged_input(ev)?;
             tx.try_send(bin)
                 .map_err(|e| format!("remote egui queue full or disconnected: {e}"))?;

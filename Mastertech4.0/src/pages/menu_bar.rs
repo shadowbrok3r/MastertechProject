@@ -2,11 +2,29 @@ use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layou
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
-use displays::{app_state::{default_tree, AppState, MainPages}, TaskUiActions};
+use displays::{app_state::{default_tree, AppState, MainPages}, plugins::push_widget_anchor, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
 use log::{error, info};
 use tokio::spawn;
+
+/// Stable MCP / remote-egui anchor for a View-menu tab label (see `nav.menu.view` + click).
+fn nav_tab_anchor_key(tab: &str) -> String {
+    let slug: String = tab
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let slug = slug
+        .trim_matches('_')
+        .replace("__", "_");
+    format!("nav.tab.{slug}")
+}
 
 impl MasterTechApp {
     pub fn menu_bar(&mut self, ctx: &Context) {
@@ -24,7 +42,7 @@ impl MasterTechApp {
             )
             .ui(ui, |ui| {
                 if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
-                    ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
+                    let view_menu = ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
                         // allow certain tabs to be toggled
                         for tab in &[
                             &"TUR Sheet".to_string(),
@@ -52,10 +70,9 @@ impl MasterTechApp {
                             &"Threads".to_string(),
                             &"Logs".to_string(),
                         ] {
-                            if ui
-                                .selectable_label(self.context.open_tabs.contains(*tab), *tab)
-                                .clicked()
-                            {
+                            let item = ui.selectable_label(self.context.open_tabs.contains(*tab), *tab);
+                            push_widget_anchor(nav_tab_anchor_key(tab), item.rect);
+                            if item.clicked() {
                                 if let Some(index) = self.tree.find_tab(&tab.to_string()) {
                                     self.tree.remove_tab(index);
                                     self.context.open_tabs.remove(*tab);
@@ -67,6 +84,7 @@ impl MasterTechApp {
                             }
                         }
                     });
+                    push_widget_anchor("nav.menu.view", view_menu.response.rect);
                     
                     // Global task search
                     ui.add_space(20.0);
@@ -175,7 +193,7 @@ impl MasterTechApp {
                                 if Button::new(
                                     RichText::new("Update")
                                         .monospace()
-                                        .font(FontId::proportional(14.0)),
+                                        .font(FontId::monospace(14.0)),
                                 )
                                 .stroke(Stroke::new(0.5, Color32::LIGHT_RED))
                                 .min_size(Vec2::new(36.0, 20.0))
@@ -193,7 +211,7 @@ impl MasterTechApp {
                                 if Button::new(
                                     RichText::new("Terminal Mode")
                                         .monospace()
-                                        .font(FontId::proportional(14.0)),
+                                        .font(FontId::monospace(14.0)),
                                 )
                                 .stroke(Stroke::new(0.5, Color32::MAGENTA))
                                 .min_size(Vec2::new(36.0, 20.0))
