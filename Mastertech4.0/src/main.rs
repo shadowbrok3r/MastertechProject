@@ -29,6 +29,7 @@ impl eframe::App for app_state::MasterTechApp {
                 mgr.register(Box::new(capture));
                 mgr.set_plugin_enabled("com.mastertech.egui-frame-capture", true);
                 mgr.register(Box::new(displays::plugins::EguiRemoteViewer::new()));
+                mgr.register(Box::new(displays::plugins::HelloMastertechPlugin::default()));
                 (rx, input_tx)
             };
             self.context.egui_frame_rx = Some(egui_frame_rx);

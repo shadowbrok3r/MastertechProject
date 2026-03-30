@@ -28,6 +28,8 @@ pub struct InlineEguiViewer {
     remote_kb_focus: bool,
     /// Throttle `PointerMoved` error logs (still use debug each move when log level allows).
     remote_diag_tick: u32,
+    /// Last host-space position we actually sent to the remote, for de-duplication.
+    last_sent_host_pos: Option<(f32, f32)>,
 }
 
 impl InlineEguiViewer {
@@ -44,6 +46,7 @@ impl InlineEguiViewer {
             remote_canvas_was_hovered: false,
             remote_kb_focus: false,
             remote_diag_tick: 0,
+            last_sent_host_pos: None,
         }
     }
 
@@ -54,11 +57,29 @@ impl InlineEguiViewer {
             .map(|f| (f.width, f.height))
     }
 
-    pub fn poll_frames(&mut self) {
+    /// Returns `true` when a new frame was decoded (caller should request repaint).
+    pub fn poll_frames(&mut self) -> bool {
+        let mut newest: Option<EguiFrameMessage> = None;
+        let mut skipped = 0u32;
         while let Ok(frame) = self.frame_rx.try_recv() {
+            if newest.is_some() {
+                skipped += 1;
+            }
+            newest = Some(frame);
+        }
+        if let Some(frame) = newest {
+            if skipped > 0 {
+                log::debug!(
+                    target: EGUI_REMOTE_LOG,
+                    "[admin_inline] poll_frames: decoded 1 frame, skipped {skipped} stale"
+                );
+            }
             self.decode_frame(&frame);
             self.latest_frame = Some(frame);
             self.has_received_frame = true;
+            true
+        } else {
+            false
         }
     }
 
@@ -101,7 +122,7 @@ impl InlineEguiViewer {
         mut send_input: impl FnMut(EguiInputEvent),
         mcp_pointer_session: Option<&str>,
     ) {
-        self.poll_frames();
+        let got_new_frame = self.poll_frames();
 
         let Some(frame) = &self.latest_frame else {
             ui.vertical_centered(|ui| {
@@ -124,11 +145,9 @@ impl InlineEguiViewer {
             return;
         };
 
-        let frame_count = frame.frame_count;
+
         let width = frame.width.max(1.0);
         let height = frame.height.max(1.0);
-        let ppp = frame.pixels_per_point;
-        let mesh_count = self.cached_meshes.len();
         let remote_origin = egui::pos2(frame.screen_min_x, frame.screen_min_y);
         let screen_min_x = frame.screen_min_x;
         let screen_min_y = frame.screen_min_y;
@@ -137,18 +156,22 @@ impl InlineEguiViewer {
         let inp = ui.ctx().input(|i| i.clone());
         self.remote_diag_tick = self.remote_diag_tick.wrapping_add(1);
 
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!(
-                    "Frame #{frame_count} | {}x{} @{ppp:.1}x | {mesh_count} meshes",
-                    width as u32,
-                    height as u32,
-                ))
-                .color(Color32::from_rgb(140, 180, 140))
-                .small(),
-            );
-        });
-        ui.separator();
+        // let frame_count = frame.frame_count;
+
+        // let ppp = frame.pixels_per_point;
+        // let mesh_count = self.cached_meshes.len();
+        // ui.horizontal(|ui| {
+        //     ui.label(
+        //         RichText::new(format!(
+        //             "Frame #{frame_count} | {}x{} @{ppp:.1}x | {mesh_count} meshes",
+        //             width as u32,
+        //             height as u32,
+        //         ))
+        //         .color(Color32::from_rgb(140, 180, 140))
+        //         .small(),
+        //     );
+        // });
+        // ui.separator();
 
         let max_w = ui.available_width();
         let max_h = ui.available_height().max(120.0);
@@ -234,39 +257,30 @@ impl InlineEguiViewer {
             match inp.pointer.hover_pos() {
                 Some(pos) if canvas_rect.contains(pos) => {
                     let r = to_host(pos);
-                    log::debug!(
-                        target: EGUI_REMOTE_LOG,
-                        "[admin_inline] PointerMoved host=({:.1},{:.1}) canvas_rect={:?}",
-                        r.x,
-                        r.y,
-                        canvas_rect
-                    );
-                    if self.remote_diag_tick % 45 == 0 {
-                        log::error!(
+                    let moved_enough = match self.last_sent_host_pos {
+                        Some((lx, ly)) => (r.x - lx).abs() >= 3.0 || (r.y - ly).abs() >= 3.0,
+                        None => true,
+                    };
+                    if moved_enough {
+                        self.last_sent_host_pos = Some((r.x, r.y));
+                        log::debug!(
                             target: EGUI_REMOTE_LOG,
-                            "[admin_inline] PointerMoved (every 45 frames) host=({:.1},{:.1}) scale={scale:.3}",
+                            "[admin_inline] PointerMoved host=({:.1},{:.1})",
                             r.x,
-                            r.y
+                            r.y,
                         );
+                        send_input(EguiInputEvent::PointerMoved { x: r.x, y: r.y });
                     }
-                    send_input(EguiInputEvent::PointerMoved { x: r.x, y: r.y });
                 }
                 Some(pos) => {
                     if self.remote_diag_tick % 60 == 0 {
-                        log::error!(
+                        log::debug!(
                             target: EGUI_REMOTE_LOG,
                             "[admin_inline] hovered but hover_pos outside canvas: pos={pos:?} canvas={canvas_rect:?}"
                         );
                     }
                 }
-                None => {
-                    if self.remote_diag_tick % 60 == 0 {
-                        log::error!(
-                            target: EGUI_REMOTE_LOG,
-                            "[admin_inline] response.hovered but pointer.hover_pos() is None"
-                        );
-                    }
-                }
+                None => {}
             }
         }
 
@@ -354,6 +368,10 @@ impl InlineEguiViewer {
             }
         }
 
-        ui.ctx().request_repaint();
+        if got_new_frame {
+            ui.ctx().request_repaint();
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(32));
+        }
     }
 }

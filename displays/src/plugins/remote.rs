@@ -425,6 +425,14 @@ impl From<egui::Modifiers> for EguiModifiers {
 
 // ─── Frame Capture Plugin ──────────────────────────────────────────────────────
 
+/// Max remote [`EguiInputEvent`]s applied in a single [`egui::RawInput`] pass.
+///
+/// If we enqueue an entire MCP sequence (many clicks + `Text` events) into one frame, egui can
+/// process all `Event::Text` against the **pre-frame** focused widget (often a multiline field),
+/// so only the last-focused field appears to update. One click sequence is hover + press + release
+/// (3) plus one `Text` (1) = 4 events per field.
+const MAX_REMOTE_EGUI_EVENTS_PER_FRAME: usize = 4;
+
 /// Captures egui output each frame, tessellates to meshes, serializes + compresses,
 /// and sends via a channel. The transport layer (WebSocket) consumes `frame_rx`.
 pub struct EguiFrameCapture {
@@ -438,6 +446,7 @@ pub struct EguiFrameCapture {
     pub frame_rx: Receiver<EguiFrameMessage>,
     pub input_tx: Sender<EguiInputEvent>,
     pub input_rx: Receiver<EguiInputEvent>,
+    last_capture_time: std::time::Instant,
 }
 
 impl EguiFrameCapture {
@@ -453,6 +462,7 @@ impl EguiFrameCapture {
             frame_rx,
             input_tx,
             input_rx,
+            last_capture_time: std::time::Instant::now(),
         }
     }
 }
@@ -497,7 +507,12 @@ impl MastertechPlugin for EguiFrameCapture {
             return;
         }
         let mut drained = 0u32;
-        while let Ok(event) = self.input_rx.try_recv() {
+        let mut backlog = false;
+        for _ in 0..MAX_REMOTE_EGUI_EVENTS_PER_FRAME {
+            let event = match self.input_rx.try_recv() {
+                Ok(e) => e,
+                Err(_) => break,
+            };
             drained += 1;
             log::debug!(target: "egui_remote", "[host_capture] inject from channel: {event:?}");
             match event {
@@ -549,11 +564,20 @@ impl MastertechPlugin for EguiFrameCapture {
                 }
             }
         }
+        if !self.input_rx.is_empty() {
+            backlog = true;
+        }
         if drained > 0 {
             log::error!(
                 target: "egui_remote",
-                "[host_capture] input_hook drained {drained} remote event(s) from channel"
+                "[host_capture] input_hook drained {drained} remote event(s) from channel (cap {} per frame; backlog={backlog})",
+                MAX_REMOTE_EGUI_EVENTS_PER_FRAME
             );
+        }
+        if backlog {
+            if let Some(ctx) = &self.ctx {
+                ctx.request_repaint();
+            }
         }
         if let Some(p) = self.remote_pointer_pos {
             log::debug!(
@@ -572,49 +596,68 @@ impl MastertechPlugin for EguiFrameCapture {
         }
         let Some(ctx) = &self.ctx else { return };
 
+        const MIN_CAPTURE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(66);
+        if self.last_capture_time.elapsed() < MIN_CAPTURE_INTERVAL {
+            return;
+        }
+        self.last_capture_time = std::time::Instant::now();
+
         self.frame_count += 1;
 
         let ppp = ctx.pixels_per_point();
         let screen_rect = ctx.screen_rect();
 
+        // Tessellate synchronously — requires `ctx` and happens quickly.
         let shapes = output.shapes.clone();
         let primitives = ctx.tessellate(shapes, ppp);
-
         let wire_meshes: Vec<WireClippedMesh> = primitives
             .iter()
             .filter_map(clipped_primitive_to_wire)
             .collect();
 
-        let meshes_bytes = bincode::serde::encode_to_vec(&wire_meshes, bincode::config::standard())
-            .unwrap_or_default();
-
         let mut wire_tex = textures_delta_to_wire(&output.textures_delta);
         merge_full_default_font_texture_for_remote(ctx, &mut wire_tex);
-        let tex_bytes = bincode::serde::encode_to_vec(&wire_tex, bincode::config::standard())
-            .unwrap_or_default();
 
         let widget_anchors = {
             let mut g = WIDGET_ANCHORS_BUF.lock().unwrap_or_else(|e| e.into_inner());
             std::mem::take(&mut *g)
         };
 
-        let msg = EguiFrameMessage {
-            frame_count: self.frame_count,
-            timestamp_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-            meshes_data: compress(&meshes_bytes),
-            textures_data: compress(&tex_bytes),
-            width: screen_rect.width(),
-            height: screen_rect.height(),
-            pixels_per_point: ppp,
-            screen_min_x: screen_rect.min.x,
-            screen_min_y: screen_rect.min.y,
-            widget_anchors,
-        };
+        let frame_count = self.frame_count;
+        let frame_tx = self.frame_tx.clone();
+        let width = screen_rect.width();
+        let height = screen_rect.height();
+        let screen_min_x = screen_rect.min.x;
+        let screen_min_y = screen_rect.min.y;
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
 
-        let _ = self.frame_tx.try_send(msg);
+        // Offload bincode serialization + zstd compression to a background blocking thread.
+        // This releases the PluginManager write lock immediately, so MCP tools can acquire
+        // read/write access between frames without being starved by compression.
+        std::thread::spawn(move || {
+            let meshes_bytes =
+                bincode::serde::encode_to_vec(&wire_meshes, bincode::config::standard())
+                    .unwrap_or_default();
+            let tex_bytes =
+                bincode::serde::encode_to_vec(&wire_tex, bincode::config::standard())
+                    .unwrap_or_default();
+            let msg = EguiFrameMessage {
+                frame_count,
+                timestamp_ms,
+                meshes_data: compress(&meshes_bytes),
+                textures_data: compress(&tex_bytes),
+                width,
+                height,
+                pixels_per_point: ppp,
+                screen_min_x,
+                screen_min_y,
+                widget_anchors,
+            };
+            let _ = frame_tx.try_send(msg);
+        });
     }
 }
 

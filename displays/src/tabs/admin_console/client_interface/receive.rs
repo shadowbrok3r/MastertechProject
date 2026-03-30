@@ -281,6 +281,9 @@ impl WebSocketClient {
     }
 
     fn handle_binary_message(&mut self, bin: Vec<u8>, ctx: &Context) {
+        if bin.first() == Some(&crate::EGUI_FRAME_TAG) {
+            return;
+        }
         match self.state {
             WsDisplayState::LiveStats => {
                 // let bin = &self.handle_binary_message(bin);
@@ -412,6 +415,14 @@ impl WebSocketClient {
                     } else if let Cmd::RemoteScriptsComplete = cmd {
                         log::info!("All remote scripts completed");
                         self.remote_scripts_viewer.set_complete();
+                    } else if let Cmd::LoadWasmPluginResult { plugin_id, success, message } = cmd {
+                        log::info!("WASM plugin deploy result: {plugin_id} success={success} {message}");
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message: format!("WASM plugin '{plugin_id}': {message}"),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
+                        self.notifications += 1;
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }

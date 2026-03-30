@@ -334,6 +334,17 @@ pub enum Cmd {
     /// The filename extension determines the shell: .ps1 → PowerShell, .bat/.cmd → cmd.
     RunScriptContent { filename: String, content: String },
 
+    /// Load a WASM plugin on the receiving Mastertech instance.
+    /// Sent from admin console → remote client to hot-deploy a plugin without recompiling.
+    LoadWasmPlugin { plugin_id: String, wasm_bytes: Vec<u8> },
+
+    /// Response after a WASM plugin load attempt.
+    LoadWasmPluginResult { plugin_id: String, success: bool, message: String },
+
+    /// Enable or disable the EguiFrameCapture plugin on the remote client.
+    /// Sent from admin console to start/stop frame streaming.
+    SetFrameCapture { enabled: bool },
+
     None,
 }
 

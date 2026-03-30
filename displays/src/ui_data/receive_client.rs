@@ -10,7 +10,7 @@ impl SharedContext {
     pub fn receive_client(&mut self) {
         // Process only ONE notification per frame to avoid duplicates
         if let Ok((action, new_client)) = self.live_clients_rx.try_recv() {
-            log::info!("new_client: {action:?} // connected={} // {}", new_client.connected, new_client.connection_string);
+            log::debug!("new_client: {action:?} // connected={} // {}", new_client.connected, new_client.connection_string);
 
             // Check if this is a meaningful change (Create action or actual connection state change)
             let should_notify = if let (Some(usr), Some(current_user)) = (&new_client.assigned_user, &self.current_user) {

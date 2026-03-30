@@ -262,6 +262,14 @@ pub struct PluginCompileWatParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginDeployRemoteParams {
+    #[schemars(description = "Plugin ID whose compiled artifact will be deployed")]
+    pub plugin_id: String,
+    #[schemars(description = "Web Console connection_string of the remote client to deploy to")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct RemoteEguiListTargetsParams {}
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -1136,6 +1144,51 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "plugin_deploy_remote",
+        description = "Deploy a compiled WASM plugin to a remote Mastertech client over the admin WebSocket session. Requires: (1) a compiled artifact in the artifact store (run plugin_compile or plugin_emit_clock_wasm first), (2) an active Web Console session to the target (check remote_egui_list_targets). The remote client loads the plugin into its PluginManager without recompiling."
+    )]
+    async fn plugin_deploy_remote(
+        &self,
+        Parameters(p): Parameters<PluginDeployRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let artifact = {
+            let store = self.try_lock_artifacts()?;
+            store
+                .get_current(&p.plugin_id)
+                .cloned()
+                .ok_or_else(|| {
+                    to_internal(format!(
+                        "No artifact for '{}'. Run plugin_compile or plugin_emit_clock_wasm first.",
+                        p.plugin_id
+                    ))
+                })?
+        };
+
+        let size = artifact.len();
+        let cmd = crate::Cmd::LoadWasmPlugin {
+            plugin_id: p.plugin_id.clone(),
+            wasm_bytes: artifact,
+        };
+        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+        super::remote_egui_control::hub()
+            .send_raw_binary(&p.connection_string, serialized)
+            .map_err(to_internal)?;
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "plugin_id": p.plugin_id,
+                "connection_string": p.connection_string,
+                "deployed_remote": true,
+                "artifact_bytes": size,
+                "note": "Plugin bytes sent to remote client. It will load asynchronously; check list_plugins on the remote MCP or watch for a toast notification.",
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "plugin_compile_wat",
         description = "Parse WAT source to a WebAssembly 1.0 module (wat crate) and validate with wasmtime::Module::new. Writes plugin.wat under the plugin directory and stores bytes for plugin_deploy."
     )]
@@ -1184,7 +1237,7 @@ After initialize, POST notifications/initialized with the same Mcp-Session-Id be
 
 === Plugins & WASM ===
 - list_plugins, enable_plugin, disable_plugin, call_plugin_tool — native + WASM plugin MCP tools.
-- plugin_source → plugin_compile (wasm32-wasip1) → plugin_deploy; or plugin_emit_clock_wasm / plugin_compile_wat → plugin_deploy; plugin_rollback; plugin_watch.
+- plugin_source → plugin_compile (wasm32-wasip1) → plugin_deploy (local) or plugin_deploy_remote (to a connected client); or plugin_emit_clock_wasm / plugin_compile_wat → plugin_deploy / plugin_deploy_remote; plugin_rollback; plugin_watch.
 
 === Remote egui (operator must connect Web Console to a client first) ===
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
