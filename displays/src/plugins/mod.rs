@@ -71,6 +71,20 @@ pub fn remote_tool_result_receiver() -> Receiver<RemoteToolResponse> {
     REMOTE_TOOL_RESULT_CHANNEL.1.clone()
 }
 
+// ─── Global WASM bytes cache + background engine ──────────────────────────────
+//
+// Stores the raw bytes of every loaded WASM plugin so that remote tool calls
+// can dispatch on a background thread (fresh Store per call) without blocking
+// the egui main thread during `on_begin_pass`.
+// WASM_BG_ENGINE is a dedicated wasmtime Engine for background dispatch threads;
+// it shares compiled module caches with the main engine via ARC internals.
+#[cfg(feature = "wasm-plugins")]
+static WASM_BYTES_CACHE: Lazy<std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+#[cfg(feature = "wasm-plugins")]
+static WASM_BG_ENGINE: Lazy<wasmtime::Engine> = Lazy::new(wasmtime::Engine::default);
+
 // ─── Global frame capture enable/disable channel ────────────────────────────
 //
 // Bridges WebSocket handler → egui (PluginManager).
@@ -321,6 +335,12 @@ impl PluginManager {
             let size = wasm_bytes.len();
             log::info!("Loading remote WASM plugin '{plugin_id}' ({size} bytes)...");
             self.unregister(&plugin_id);
+
+            // Cache bytes before loading so remote tool calls can dispatch on background threads
+            if let Ok(mut cache) = WASM_BYTES_CACHE.lock() {
+                cache.insert(plugin_id.clone(), wasm_bytes.clone());
+            }
+
             match self.load_wasm(wasm_bytes) {
                 Ok(()) => {
                     log::info!("Remote WASM plugin '{plugin_id}' loaded successfully");
@@ -345,15 +365,58 @@ impl PluginManager {
             }
         }
 
-        // Drain remote plugin tool call requests
+        // Drain remote plugin tool call requests.
+        // Each call is dispatched on a background OS thread using a fresh WASM Store
+        // so the egui main thread (`on_begin_pass`) is never blocked by PowerShell execution.
         while let Ok((request_id, plugin_id, tool_name, args_json)) = REMOTE_TOOL_CALL_CHANNEL.1.try_recv() {
-            let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
-            let result = self.dispatch_mcp_call(&plugin_id, &tool_name, args);
-            let (success, result_json) = match result {
-                Ok(val) => (true, serde_json::to_string(&val).unwrap_or_default()),
-                Err(e) => (false, e),
-            };
-            let _ = REMOTE_TOOL_RESULT_CHANNEL.0.try_send((request_id, success, result_json));
+            #[cfg(feature = "wasm-plugins")]
+            {
+                let bytes_opt = WASM_BYTES_CACHE.lock().ok()
+                    .and_then(|c| c.get(&plugin_id).cloned());
+
+                if let Some(wasm_bytes) = bytes_opt {
+                    let result_tx = REMOTE_TOOL_RESULT_CHANNEL.0.clone();
+                    std::thread::spawn(move || {
+                        log::info!("[remote-dispatch] Running {plugin_id}::{tool_name} on background thread");
+                        let args: serde_json::Value =
+                            serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
+                        // Throwaway event channel — background plugin just needs somewhere to send logs
+                        let (event_tx, _event_rx) = crossbeam::channel::bounded::<crate::plugins::PluginEvent>(16);
+                        let engine = &*WASM_BG_ENGINE;
+                        let (success, result_json) = match crate::plugins::wasm::WasmPlugin::from_bytes(wasm_bytes, engine, event_tx) {
+                            Ok(mut plugin) => {
+                                match plugin.handle_mcp_call(&tool_name, args) {
+                                    Ok(val) => (true, serde_json::to_string(&val).unwrap_or_default()),
+                                    Err(e) => (false, e),
+                                }
+                            }
+                            Err(e) => (false, format!("WASM reload failed for remote dispatch: {e}")),
+                        };
+                        log::info!("[remote-dispatch] {plugin_id}::{tool_name} done (success={success})");
+                        let _ = result_tx.try_send((request_id, success, result_json));
+                    });
+                } else {
+                    // Plugin not in bytes cache — try dispatch through live plugin (fallback)
+                    let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
+                    let result = self.dispatch_mcp_call(&plugin_id, &tool_name, args);
+                    let (success, result_json) = match result {
+                        Ok(val) => (true, serde_json::to_string(&val).unwrap_or_default()),
+                        Err(e) => (false, e),
+                    };
+                    let _ = REMOTE_TOOL_RESULT_CHANNEL.0.try_send((request_id, success, result_json));
+                }
+            }
+            #[cfg(not(feature = "wasm-plugins"))]
+            {
+                // No WASM support: attempt live dispatch (for native Rust plugins)
+                let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
+                let result = self.dispatch_mcp_call(&plugin_id, &tool_name, args);
+                let (success, result_json) = match result {
+                    Ok(val) => (true, serde_json::to_string(&val).unwrap_or_default()),
+                    Err(e) => (false, e),
+                };
+                let _ = REMOTE_TOOL_RESULT_CHANNEL.0.try_send((request_id, success, result_json));
+            }
         }
 
         // Drain frame-capture enable/disable channel

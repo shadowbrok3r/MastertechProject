@@ -2282,7 +2282,8 @@ if (Test-Path $path) {{
                             break;
                         }
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    // Yield to tokio so the PluginManager background task can run and process the call
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 let (success, result_json) = result.unwrap_or((
                     false,

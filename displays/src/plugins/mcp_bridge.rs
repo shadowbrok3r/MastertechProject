@@ -1253,11 +1253,11 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
 
         let (success, result_json) = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
+            std::time::Duration::from_secs(60),
             rx,
         )
         .await
-        .map_err(|_| to_internal("Remote plugin tool call timed out after 15 seconds"))?
+        .map_err(|_| to_internal("Remote plugin tool call timed out after 60 seconds"))?
         .map_err(|_| to_internal("Response channel closed (remote client may have disconnected)"))?;
 
         if success {
