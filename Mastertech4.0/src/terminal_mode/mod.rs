@@ -46,7 +46,8 @@ pub struct TerminalApp<'a> {
     ctx: Arc<Mutex<TerminalContext>>,
     render_system: Arc<RenderSystem>,
     data_system: Arc<DataSystem>,
-    manual_connect_rx: tokio::sync::mpsc::UnboundedReceiver<bool>
+    manual_connect_rx: tokio::sync::mpsc::UnboundedReceiver<bool>,
+    plugin_manager: Arc<std::sync::RwLock<displays::plugins::PluginManager>>,
 }
 
 pub async fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
@@ -136,6 +137,10 @@ impl Default for TerminalApp <'_>{
         event_manager.register_handler(menu_bar.clone());
         event_manager.register_handler(tasks_tab.clone());
 
+        let plugin_manager = Arc::new(std::sync::RwLock::new(
+            displays::plugins::PluginManager::new(),
+        ));
+
         Self {
             ctx,
             menu_bar,
@@ -152,6 +157,7 @@ impl Default for TerminalApp <'_>{
             logger: Logger::new(),
             event_handler: EventHandler::new(),
             manual_connect_rx,
+            plugin_manager,
         }
     }
 }
@@ -181,6 +187,21 @@ impl <'a>TerminalApp<'a> {
         let shutdown_rx_data = shutdown_tx.subscribe();
         let shutdown_rx_websocket = shutdown_tx.subscribe();
         let shutdown_rx_render = shutdown_tx.subscribe();
+
+        // Spawn a background task to drain the WASM plugin load channel
+        let pm_bg = self.plugin_manager.clone();
+        let mut shutdown_rx_plugins = shutdown_tx.subscribe();
+        join_handles.push(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx_plugins.recv() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                }
+                if let Ok(mut mgr) = pm_bg.write() {
+                    mgr.process_events();
+                }
+            }
+        }));
         let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
         let (start_tx, mut start_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<LocalTermEvent>();

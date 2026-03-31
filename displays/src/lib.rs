@@ -361,6 +361,24 @@ pub enum Cmd {
         message: String,
     },
 
+    /// Call an MCP tool on a remote client's plugin, routed via the admin WebSocket.
+    /// The admin console sends this → remote client handles it → replies with the result.
+    CallRemotePluginTool {
+        request_id: String,
+        plugin_id: String,
+        tool_name: String,
+        args_json: String,
+    },
+
+    /// Response from a remote client after handling a CallRemotePluginTool.
+    RemotePluginToolResult {
+        request_id: String,
+        plugin_id: String,
+        tool_name: String,
+        success: bool,
+        result_json: String,
+    },
+
     None,
 }
 

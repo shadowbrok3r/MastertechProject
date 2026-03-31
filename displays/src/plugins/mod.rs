@@ -42,6 +42,35 @@ pub fn wasm_load_sender() -> Sender<(String, Vec<u8>)> {
     WASM_LOAD_CHANNEL.0.clone()
 }
 
+// ─── Global remote plugin tool call channel ─────────────────────────────────
+//
+// Bridges WebSocket handler → PluginManager for remote MCP tool calls.
+// (request_id, plugin_id, tool_name, args_json)
+type RemoteToolRequest = (String, String, String, String);
+// (request_id, success, result_json)
+type RemoteToolResponse = (String, bool, String);
+
+static REMOTE_TOOL_CALL_CHANNEL: Lazy<(
+    Sender<RemoteToolRequest>,
+    Receiver<RemoteToolRequest>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+static REMOTE_TOOL_RESULT_CHANNEL: Lazy<(
+    Sender<RemoteToolResponse>,
+    Receiver<RemoteToolResponse>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+/// Send a remote plugin tool call request for the PluginManager to handle.
+pub fn remote_tool_call_sender() -> Sender<RemoteToolRequest> {
+    REMOTE_TOOL_CALL_CHANNEL.0.clone()
+}
+
+/// Receive results from PluginManager after handling remote tool calls.
+/// The WebSocket handler drains this to send `RemotePluginToolResult` back.
+pub fn remote_tool_result_receiver() -> Receiver<RemoteToolResponse> {
+    REMOTE_TOOL_RESULT_CHANNEL.1.clone()
+}
+
 // ─── Global frame capture enable/disable channel ────────────────────────────
 //
 // Bridges WebSocket handler → egui (PluginManager).
@@ -250,7 +279,7 @@ impl PluginManager {
         plugin.handle_mcp_call(tool_name, args)
     }
 
-    pub(crate) fn process_events(&mut self) {
+    pub fn process_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match &event {
                 PluginEvent::RequestRepaint => {
@@ -314,6 +343,17 @@ impl PluginManager {
                     }
                 }
             }
+        }
+
+        // Drain remote plugin tool call requests
+        while let Ok((request_id, plugin_id, tool_name, args_json)) = REMOTE_TOOL_CALL_CHANNEL.1.try_recv() {
+            let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
+            let result = self.dispatch_mcp_call(&plugin_id, &tool_name, args);
+            let (success, result_json) = match result {
+                Ok(val) => (true, serde_json::to_string(&val).unwrap_or_default()),
+                Err(e) => (false, e),
+            };
+            let _ = REMOTE_TOOL_RESULT_CHANNEL.0.try_send((request_id, success, result_json));
         }
 
         // Drain frame-capture enable/disable channel

@@ -450,6 +450,9 @@ impl WebSocketClient {
                             timestamp: chrono::Local::now().to_rfc3339(),
                         });
                         self.notifications += 1;
+                    } else if let Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } = cmd {
+                        log::info!("Remote plugin tool result: {plugin_id}::{tool_name} req={request_id} success={success}");
+                        crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }
