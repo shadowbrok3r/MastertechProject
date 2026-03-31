@@ -7,7 +7,7 @@ edition = "2024"
 default = [ "wasm" ]
 tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
-wasm-plugins = ["dep:wasmtime", "dep:wat"]
+wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
 
 [dependencies]
 structdiff = { version = "0.7", features = ["rustc_hash"] }
@@ -63,6 +63,7 @@ rusty-s3 = { workspace = true }
 rmcp = { workspace = true }
 axum = { workspace = true }
 wasmtime = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
 jiff = "0.2"
 

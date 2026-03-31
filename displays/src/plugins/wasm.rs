@@ -38,6 +38,8 @@ use super::{MastertechPlugin, PluginEvent, PluginHost, PluginToolDescriptor};
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::sync::Mutex;
+use wasmtime_wasi::p1::WasiP1Ctx;
+use wasmtime_wasi::WasiCtxBuilder;
 
 // ─── String interning ──────────────────────────────────────────────────────────
 
@@ -93,6 +95,7 @@ impl Default for WasmRuntime {
 pub struct WasmPluginState {
     pub plugin_id: String,
     pub event_tx: crossbeam::channel::Sender<PluginEvent>,
+    pub wasi: WasiP1Ctx,
 }
 
 // ─── WasmPlugin internals ──────────────────────────────────────────────────────
@@ -126,12 +129,20 @@ impl WasmPlugin {
         let module = wasmtime::Module::new(engine, &bytes)
             .map_err(|e| format!("WASM compilation failed: {e}"))?;
 
+        // Build a minimal WASI context (no filesystem, no network, but allows std allocation).
+        // This satisfies `wasi_snapshot_preview1::fd_write` and friends used by Rust's std.
+        let wasi = WasiCtxBuilder::new().build_p1();
         let state = WasmPluginState {
             plugin_id: String::new(),
             event_tx: event_tx.clone(),
+            wasi,
         };
         let mut store = wasmtime::Store::new(engine, state);
         let mut linker = wasmtime::Linker::<WasmPluginState>::new(engine);
+
+        // Link all WASI preview1 host functions (fd_write, fd_read, proc_exit, etc.)
+        wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |s: &mut WasmPluginState| &mut s.wasi)
+            .map_err(|e| format!("WASI preview1 link failed: {e}"))?;
 
         // ── Host imports ────────────────────────────────────────────────────
 

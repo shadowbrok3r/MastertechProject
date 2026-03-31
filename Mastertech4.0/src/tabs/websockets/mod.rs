@@ -190,6 +190,8 @@ pub struct WebConsoleFrontend {
     pub explorer: FileSystem, 
     live_stats: bool,
     file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
+    /// Pending remote plugin tool calls awaiting PluginManager response: (request_id, plugin_id, tool_name)
+    pending_plugin_calls: Vec<(String, String, String)>,
 }
 
 impl WebConsoleFrontend {
@@ -219,6 +221,7 @@ impl WebConsoleFrontend {
             interactive_input,
             live_stats: false,
             file_transfer_buffers: std::collections::HashMap::new(),
+            pending_plugin_calls: Vec::new(),
         }
     }
 
@@ -239,6 +242,28 @@ impl WebConsoleFrontend {
         
         while let Ok(cmd_output) = &mut self.command_rx.try_recv() {
             self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
+        }
+
+        // Drain pending remote plugin tool call results (non-blocking; avoids main-thread deadlock)
+        if !self.pending_plugin_calls.is_empty() {
+            let result_rx = displays::plugins::remote_tool_result_receiver();
+            let mut resolved = Vec::new();
+            while let Ok((rid, success, rjson)) = result_rx.try_recv() {
+                if let Some(pos) = self.pending_plugin_calls.iter().position(|(id, _, _)| id == &rid) {
+                    let (request_id, plugin_id, tool_name) = self.pending_plugin_calls.remove(pos);
+                    let result_cmd = displays::Cmd::RemotePluginToolResult {
+                        request_id,
+                        plugin_id,
+                        tool_name,
+                        success,
+                        result_json: rjson,
+                    };
+                    if let Ok(payload) = bincode::serde::encode_to_vec(&result_cmd, bincode::config::standard()) {
+                        self.ws_sender.send(ewebsock::WsMessage::Binary(payload));
+                    }
+                    resolved.push(rid);
+                }
+            }
         }
 
         // if self.timeout_counter.elapsed().as_secs() > 10 { info!("websockets -> Its been over 10 seconds since last ping"); }
@@ -489,31 +514,8 @@ impl WebConsoleFrontend {
                 log::info!("CallRemotePluginTool via egui WS: {plugin_id}::{tool_name} req={request_id}");
                 let call_tx = displays::plugins::remote_tool_call_sender();
                 let _ = call_tx.try_send((request_id.clone(), plugin_id.clone(), tool_name.clone(), args_json));
-                let result_rx = displays::plugins::remote_tool_result_receiver();
-                let mut result: Option<(bool, String)> = None;
-                for _ in 0..200 {
-                    if let Ok((rid, success, rjson)) = result_rx.try_recv() {
-                        if rid == request_id {
-                            result = Some((success, rjson));
-                            break;
-                        }
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                let (success, result_json) = result.unwrap_or((
-                    false,
-                    "PluginManager did not process the call within 2 seconds".to_string(),
-                ));
-                let result_cmd = Cmd::RemotePluginToolResult {
-                    request_id,
-                    plugin_id,
-                    tool_name,
-                    success,
-                    result_json,
-                };
-                if let Ok(payload) = bincode::serde::encode_to_vec(&result_cmd, bincode::config::standard()) {
-                    self.ws_sender.send(ewebsock::WsMessage::Binary(payload));
-                }
+                // Store as pending; result is flushed non-blockingly each receive() frame
+                self.pending_plugin_calls.push((request_id, plugin_id, tool_name));
             }
             Cmd::DirectFileTransfer { filename, chunk_index, total_chunks, data } => {
                 log::info!("DirectFileTransfer via egui WS: {filename} chunk {chunk_index}/{total_chunks} ({} bytes)", data.len());
