@@ -485,6 +485,36 @@ impl WebConsoleFrontend {
                 let tx = displays::plugins::frame_capture_sender();
                 let _ = tx.try_send(enabled);
             }
+            Cmd::CallRemotePluginTool { request_id, plugin_id, tool_name, args_json } => {
+                log::info!("CallRemotePluginTool via egui WS: {plugin_id}::{tool_name} req={request_id}");
+                let call_tx = displays::plugins::remote_tool_call_sender();
+                let _ = call_tx.try_send((request_id.clone(), plugin_id.clone(), tool_name.clone(), args_json));
+                let result_rx = displays::plugins::remote_tool_result_receiver();
+                let mut result: Option<(bool, String)> = None;
+                for _ in 0..200 {
+                    if let Ok((rid, success, rjson)) = result_rx.try_recv() {
+                        if rid == request_id {
+                            result = Some((success, rjson));
+                            break;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                let (success, result_json) = result.unwrap_or((
+                    false,
+                    "PluginManager did not process the call within 2 seconds".to_string(),
+                ));
+                let result_cmd = Cmd::RemotePluginToolResult {
+                    request_id,
+                    plugin_id,
+                    tool_name,
+                    success,
+                    result_json,
+                };
+                if let Ok(payload) = bincode::serde::encode_to_vec(&result_cmd, bincode::config::standard()) {
+                    self.ws_sender.send(ewebsock::WsMessage::Binary(payload));
+                }
+            }
             Cmd::DirectFileTransfer { filename, chunk_index, total_chunks, data } => {
                 log::info!("DirectFileTransfer via egui WS: {filename} chunk {chunk_index}/{total_chunks} ({} bytes)", data.len());
                 let entry = self.file_transfer_buffers

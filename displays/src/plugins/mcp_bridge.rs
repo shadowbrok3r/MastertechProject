@@ -56,6 +56,32 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use super::PluginManager;
 
+// ─── Remote plugin tool call response routing ───────────────────────────────────
+
+use once_cell::sync::Lazy;
+use tokio::sync::oneshot;
+
+type PendingRequests = std::sync::Mutex<HashMap<String, oneshot::Sender<(bool, String)>>>;
+static REMOTE_TOOL_PENDING: Lazy<PendingRequests> = Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Register a pending request and return a receiver that resolves when the remote client replies.
+fn register_pending_request(request_id: String) -> oneshot::Receiver<(bool, String)> {
+    let (tx, rx) = oneshot::channel();
+    if let Ok(mut map) = REMOTE_TOOL_PENDING.lock() {
+        map.insert(request_id, tx);
+    }
+    rx
+}
+
+/// Called by the admin console's receive handler when a `RemotePluginToolResult` arrives.
+pub fn resolve_pending_request(request_id: &str, success: bool, result_json: String) {
+    if let Ok(mut map) = REMOTE_TOOL_PENDING.lock() {
+        if let Some(tx) = map.remove(request_id) {
+            let _ = tx.send((success, result_json));
+        }
+    }
+}
+
 // ─── Artifact store ────────────────────────────────────────────────────────────
 
 /// Stores compiled WASM artifacts and their previous versions for rollback.
@@ -267,6 +293,18 @@ pub struct PluginDeployRemoteParams {
     pub plugin_id: String,
     #[schemars(description = "Web Console connection_string of the remote client to deploy to")]
     pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CallRemotePluginToolParams {
+    #[schemars(description = "Web Console connection_string of the remote client")]
+    pub connection_string: String,
+    #[schemars(description = "Plugin ID on the remote client (e.g. 'com.mastertech.status-reporter')")]
+    pub plugin_id: String,
+    #[schemars(description = "Tool name exposed by the remote plugin")]
+    pub tool_name: String,
+    #[schemars(description = "JSON arguments for the tool (default: {})")]
+    pub args: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -1186,6 +1224,53 @@ impl PluginToolProvider {
             }),
         )
         .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "call_remote_plugin_tool",
+        description = "Call an MCP tool on a remote client's plugin over the admin WebSocket session. The call is proxied: admin → remote client → PluginManager → plugin's handle_mcp_call → result back. Requires an active Web Console session and a deployed plugin on the remote."
+    )]
+    async fn call_remote_plugin_tool(
+        &self,
+        Parameters(p): Parameters<CallRemotePluginToolParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request_id = format!("rpt-{}", uuid::Uuid::new_v4());
+        let args = p.args.unwrap_or(serde_json::json!({}));
+
+        let cmd = crate::Cmd::CallRemotePluginTool {
+            request_id: request_id.clone(),
+            plugin_id: p.plugin_id.clone(),
+            tool_name: p.tool_name.clone(),
+            args_json: serde_json::to_string(&args).map_err(|e| to_internal(e.to_string()))?,
+        };
+        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+        let rx = register_pending_request(request_id.clone());
+
+        super::remote_egui_control::hub()
+            .send_raw_binary(&p.connection_string, serialized)
+            .map_err(to_internal)?;
+
+        let (success, result_json) = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            rx,
+        )
+        .await
+        .map_err(|_| to_internal("Remote plugin tool call timed out after 15 seconds"))?
+        .map_err(|_| to_internal("Response channel closed (remote client may have disconnected)"))?;
+
+        if success {
+            let value: serde_json::Value = serde_json::from_str(&result_json)
+                .unwrap_or(serde_json::Value::String(result_json));
+            Ok(CallToolResult::success(vec![
+                Content::json(value).map_err(to_internal)?,
+            ]))
+        } else {
+            Ok(CallToolResult::error(vec![
+                Content::text(result_json),
+            ]))
+        }
     }
 
     #[tool(

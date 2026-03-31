@@ -31,6 +31,8 @@
 //! | `host_emit_event` | `(ptr: i32, len: i32) -> ()` | Emit a PluginEvent (JSON bytes)      |
 //! | `host_repaint`    | `() -> ()`                   | Request a UI repaint                 |
 //! | `host_fill_clock_json` | `(ptr: i32, max_len: i32) -> i32` | Writes UTC clock JSON into guest memory; returns byte length (≤ max_len) |
+//! | `host_get_hostname` | `(ptr: i32, max_len: i32) -> i32` | Writes hostname into guest memory; returns byte length |
+//! | `host_run_command` | `(cmd_ptr, cmd_len, out_ptr, out_max) -> i32` | Run a shell command (PowerShell on Windows, sh on Linux); writes stdout into guest memory; returns byte length |
 
 use super::{MastertechPlugin, PluginEvent, PluginHost, PluginToolDescriptor};
 use once_cell::sync::Lazy;
@@ -206,6 +208,85 @@ impl WasmPlugin {
                 },
             )
             .map_err(|e| format!("host_fill_clock_json link failed: {e}"))?;
+
+        // ── Diagnostic host imports ─────────────────────────────────────────
+
+        linker
+            .func_wrap(
+                "env",
+                "host_get_hostname",
+                |mut caller: wasmtime::Caller<'_, WasmPluginState>, ptr: i32, max_len: i32| -> i32 {
+                    let hostname = std::env::var("COMPUTERNAME")
+                        .or_else(|_| std::env::var("HOSTNAME"))
+                        .unwrap_or_else(|_| "unknown".to_string());
+                    let bytes = hostname.as_bytes();
+                    let cap = max_len.max(0) as usize;
+                    let n = bytes.len().min(cap);
+                    let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                        return 0;
+                    };
+                    if mem.write(&mut caller, ptr as usize, &bytes[..n]).is_err() {
+                        return 0;
+                    }
+                    n as i32
+                },
+            )
+            .map_err(|e| format!("host_get_hostname link failed: {e}"))?;
+
+        linker
+            .func_wrap(
+                "env",
+                "host_run_command",
+                |mut caller: wasmtime::Caller<'_, WasmPluginState>,
+                 cmd_ptr: i32, cmd_len: i32,
+                 out_ptr: i32, out_max: i32| -> i32 {
+                    let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                        return 0;
+                    };
+                    let data = mem.data(&caller);
+                    let cmd_slice = match data.get(cmd_ptr as usize..(cmd_ptr as usize + cmd_len as usize)) {
+                        Some(s) => s,
+                        None => return 0,
+                    };
+                    let cmd_str = match std::str::from_utf8(cmd_slice) {
+                        Ok(s) => s.to_string(),
+                        Err(_) => return 0,
+                    };
+
+                    log::info!("[WASM {}] host_run_command: {}", caller.data().plugin_id, cmd_str);
+
+                    #[cfg(target_os = "windows")]
+                    let output = std::process::Command::new("powershell")
+                        .args(["-NoProfile", "-NonInteractive", "-Command", &cmd_str])
+                        .output();
+                    #[cfg(not(target_os = "windows"))]
+                    let output = std::process::Command::new("sh")
+                        .args(["-c", &cmd_str])
+                        .output();
+
+                    let result = match output {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout);
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            if stderr.is_empty() {
+                                stdout.to_string()
+                            } else {
+                                format!("{stdout}\n[stderr] {stderr}")
+                            }
+                        }
+                        Err(e) => format!("[error] {e}"),
+                    };
+
+                    let bytes = result.as_bytes();
+                    let cap = out_max.max(0) as usize;
+                    let n = bytes.len().min(cap);
+                    if mem.write(&mut caller, out_ptr as usize, &bytes[..n]).is_err() {
+                        return 0;
+                    }
+                    n as i32
+                },
+            )
+            .map_err(|e| format!("host_run_command link failed: {e}"))?;
 
         // ── Instantiate ─────────────────────────────────────────────────────
 
