@@ -150,6 +150,7 @@ impl WebSocketClient {
                                     match decoded {
                                         Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } => {
                                             log::info!("Remote plugin tool result (terminal state): {plugin_id}::{tool_name} req={request_id} success={success}");
+                                            #[cfg(not(target_arch = "wasm32"))]
                                             crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                                             handled_as_admin_cmd = true;
                                         }
@@ -493,6 +494,7 @@ impl WebSocketClient {
                         self.notifications += 1;
                     } else if let Cmd::RemotePluginToolResult { request_id, plugin_id, tool_name, success, result_json } = cmd {
                         log::info!("Remote plugin tool result: {plugin_id}::{tool_name} req={request_id} success={success}");
+                        #[cfg(not(target_arch = "wasm32"))]
                         crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);

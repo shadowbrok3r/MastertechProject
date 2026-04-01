@@ -8,7 +8,7 @@ default = []
 desktop = ["rfd"]  # Include GUI dependencies for desktop builds
 
 [dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 xml = "1"
 # surrealdb-alpha ={ workspace = true }
 surrealdb.workspace = true

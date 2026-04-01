@@ -16,7 +16,7 @@ impl MtechServer {
         match serde_json::from_str::<Style>(displays::STYLE) {
             Ok(theme) => {
                 let style = Arc::new(theme);
-                ctx.set_style(style);
+                ctx.set_global_style(style);
             }
             Err(e) => log::error!("Error setting theme: {e:?}")
         };
@@ -51,7 +51,7 @@ impl MtechServer {
             // }
 
             if let Some(user) = self.shared_ctx.current_user.as_ref() {
-                ctx.set_style(
+                ctx.set_global_style(
                     decode_style(&user.get_color_scheme()
                 )
                 .unwrap_or_else(|e| {
@@ -88,7 +88,7 @@ impl MtechServer {
                 }
             } else {
                 let custom_style = set_custom_style(&self.shared_ctx.theme_config);
-                ctx.set_style((*custom_style).clone());
+                ctx.set_global_style((*custom_style).clone());
             }
             
             if let Some(version) = storage.get_string("version") {
@@ -299,7 +299,7 @@ impl MtechServer {
                         log::info!("7");
                         let usr = self.shared_ctx.current_user.clone();
                         if let Some(user) = usr {
-                            ctx.set_style(decode_style(&user.get_color_scheme()).unwrap_or_default());
+                            ctx.set_global_style(decode_style(&user.get_color_scheme()).unwrap_or_default());
                             self.shared_ctx.load_data(ctx, &user);
                             let _ = self.shared_ctx.app_state_tx.try_send(AppState::Authenticated(displays::app_state::MainPages::Tasks));
                             let toast = &mut self.shared_ctx.toasts;
@@ -361,7 +361,7 @@ impl MtechServer {
                 if r.0 {
                     if let Some(user) = self.shared_ctx.current_user.clone().as_mut() {
                         user.set_color_scheme(encode_style(&r.1.clone()).unwrap_or_default());
-                        ctx.set_style(r.1.clone());
+                        ctx.set_global_style(r.1.clone());
                         if let Some(storage) = frame.storage_mut() {
                             storage.set_string("user_settings", serde_json::to_string(&user.get_user_settings()).unwrap_or_default());
                         }
