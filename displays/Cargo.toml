@@ -11,7 +11,7 @@ wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
 
 [dependencies]
 structdiff = { version = "0.7", features = ["rustc_hash"] }
-reqwest = { version = "0.13", default-features = false, features = ["stream", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }
 compact_str = { version = "0.9.0", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
 rpc-router = "0.2.0"
@@ -48,6 +48,7 @@ serde.workspace = true
 bytes.workspace = true
 regex.workspace = true
 rfd = { workspace = true }
+jiff = "0.2"
 log.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
@@ -65,7 +66,6 @@ axum = { workspace = true }
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
-jiff = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}

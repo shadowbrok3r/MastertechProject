@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0", "websocket_server2" ]
+members = [ "database" , "displays", "MtechServer2.0" ]
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -58,11 +58,11 @@ debug = true
 strip = false
 lto = false
 
-[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-strip = true
+# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+# strip = true
 # lto = true
-panic = "unwind"
-debug = false
+# panic = "unwind"
+# debug = false
 # opt-level = 3
 # codegen-units = 1
 
