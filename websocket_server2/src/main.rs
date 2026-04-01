@@ -66,7 +66,7 @@ impl Default for Room {
 }
 
 /// Minimum interval between database updates for last_update (prevents excessive writes)
-const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
+const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 struct ChatServer {
