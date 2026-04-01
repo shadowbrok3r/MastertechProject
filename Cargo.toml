@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "MtechServer2.0" ]
+members = [ "database" , "displays", "websocket_server2" ]
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -39,7 +39,7 @@ mime_guess = "2"
 crossbeam = "0.8"
 futures = "0.3"
 fuzzy-matcher = "0.3"
-rusty-s3 = "0.8.1"
+rusty-s3 = "0.9.0"
 wasmtime = "43"
 wasmtime-wasi = "43"
 wat = "1.222.0"
@@ -58,13 +58,13 @@ debug = true
 strip = false
 lto = false
 
-# [profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
-# strip = true
-# lto = true
-# panic = "unwind"
-# debug = false
-# opt-level = 3
-# codegen-units = 1
+[profile.release] # YOU NEED TO DISABLE 'STRIP = true' WHEN PUSHING WASM TO PRODUCTION
+strip = true
+lto = true
+panic = "unwind"
+debug = false
+opt-level = 3
+codegen-units = 1
 
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"
