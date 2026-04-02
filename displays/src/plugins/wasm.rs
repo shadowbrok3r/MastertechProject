@@ -299,6 +299,40 @@ impl WasmPlugin {
             )
             .map_err(|e| format!("host_run_command link failed: {e}"))?;
 
+        // ── Plugin UI host imports ────────────────────────────────────────────
+
+        linker
+            .func_wrap(
+                "env",
+                "host_ui_log",
+                |mut caller: wasmtime::Caller<'_, WasmPluginState>, ptr: i32, len: i32| {
+                    let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
+                        return;
+                    };
+                    let data = mem.data(&caller);
+                    if let Some(slice) = data.get(ptr as usize..(ptr as usize + len as usize)) {
+                        if let Ok(json) = std::str::from_utf8(slice) {
+                            let pid = caller.data().plugin_id.clone();
+                            super::plugin_ui_append(&pid, json.to_string());
+                            let _ = caller.data().event_tx.try_send(PluginEvent::RequestRepaint);
+                        }
+                    }
+                },
+            )
+            .map_err(|e| format!("host_ui_log link failed: {e}"))?;
+
+        linker
+            .func_wrap(
+                "env",
+                "host_ui_clear",
+                |caller: wasmtime::Caller<'_, WasmPluginState>| {
+                    let pid = caller.data().plugin_id.clone();
+                    super::plugin_ui_clear(&pid);
+                    let _ = caller.data().event_tx.try_send(PluginEvent::RequestRepaint);
+                },
+            )
+            .map_err(|e| format!("host_ui_clear link failed: {e}"))?;
+
         // ── Instantiate ─────────────────────────────────────────────────────
 
         let instance = linker
@@ -449,10 +483,31 @@ impl MastertechPlugin for WasmPlugin {
         }
     }
 
-    fn ui(&mut self, _ui: &mut eframe::egui::Ui, _host: &PluginHost) {
-        // WASM draw commands require the WireShape deserialization protocol.
-        // The guest calls `ui_commands()` → packed ptr|len of serialized commands.
-        // Rendering these into egui will be wired in a future iteration.
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, _host: &PluginHost) {
+        let state = super::PLUGIN_UI_STATES.lock().ok()
+            .and_then(|s| s.get(self.id).cloned());
+        let Some(state) = state else { return; };
+        if state.entries.is_empty() || !state.visible { return; }
+
+        let ctx = ui.ctx().clone();
+        let mut open = true;
+        eframe::egui::Window::new(format!("📋 {} Report", self.name))
+            .id(eframe::egui::Id::new(format!("plugin_ui_window_{}", self.id)))
+            .default_width(680.0)
+            .default_height(500.0)
+            .open(&mut open)
+            .vscroll(true)
+            .show(&ctx, |ui| {
+                render_plugin_ui_entries(ui, &state.entries);
+            });
+
+        if !open {
+            if let Ok(mut map) = super::PLUGIN_UI_STATES.lock() {
+                if let Some(s) = map.get_mut(self.id) {
+                    s.visible = false;
+                }
+            }
+        }
     }
 
     fn mcp_tools(&self) -> Vec<PluginToolDescriptor> {
@@ -492,5 +547,186 @@ impl MastertechPlugin for WasmPlugin {
         let memory = get_memory(instance, store)?;
         let json_str = read_wasm_string(&memory, store, rptr, rlen)?;
         serde_json::from_str(&json_str).map_err(|e| format!("Invalid JSON from WASM: {e}"))
+    }
+}
+
+// ─── Plugin UI renderer ─────────────────────────────────────────────────────
+//
+// Parses JSON entries from PLUGIN_UI_STATES and renders them as egui widgets.
+//
+// Supported entry types:
+//   header   — large heading + optional subtitle
+//   section  — collapsing section with nested items
+//   status   — colored pass/fail/warn/info badge + label + detail
+//   text     — plain or colored text
+//   separator
+//   table    — column headers + rows
+//   log      — timestamped log entry with level coloring
+//   progress — labeled progress bar
+
+fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginUiEntry]) {
+    use eframe::egui;
+
+    for entry in entries {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&entry.json) else {
+            ui.colored_label(egui::Color32::RED, format!("⚠ Bad UI entry: {}", &entry.json[..entry.json.len().min(80)]));
+            continue;
+        };
+        let entry_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+
+        match entry_type {
+            "header" => {
+                let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("Report");
+                let subtitle = v.get("subtitle").and_then(|t| t.as_str());
+                ui.add_space(4.0);
+                ui.heading(egui::RichText::new(title).strong().size(20.0));
+                if let Some(sub) = subtitle {
+                    ui.label(egui::RichText::new(sub).weak().italics());
+                }
+                ui.add_space(4.0);
+            }
+
+            "section" => {
+                let header = v.get("header").and_then(|t| t.as_str()).unwrap_or("Section");
+                let default_open = v.get("default_open").and_then(|b| b.as_bool()).unwrap_or(true);
+                let status = v.get("status").and_then(|t| t.as_str());
+                let badge = match status {
+                    Some("pass") => "✅ ",
+                    Some("fail") => "❌ ",
+                    Some("warn") => "⚠️ ",
+                    _ => "",
+                };
+                let id = egui::Id::new(format!("plugin_section_{}", header));
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(format!("{badge}{header}")).strong()
+                )
+                .id_salt(id)
+                .default_open(default_open)
+                .show(ui, |ui| {
+                    if let Some(items) = v.get("items").and_then(|a| a.as_array()) {
+                        let sub_entries: Vec<super::PluginUiEntry> = items
+                            .iter()
+                            .map(|item| super::PluginUiEntry { json: item.to_string() })
+                            .collect();
+                        render_plugin_ui_entries(ui, &sub_entries);
+                    }
+                });
+            }
+
+            "status" => {
+                let label = v.get("label").and_then(|t| t.as_str()).unwrap_or("");
+                let status = v.get("status").and_then(|t| t.as_str()).unwrap_or("info");
+                let detail = v.get("detail").and_then(|t| t.as_str()).unwrap_or("");
+                let (icon, color) = match status {
+                    "pass" => ("✅", egui::Color32::from_rgb(80, 200, 80)),
+                    "fail" => ("❌", egui::Color32::from_rgb(220, 60, 60)),
+                    "warn" => ("⚠️", egui::Color32::from_rgb(220, 180, 40)),
+                    _ =>      ("ℹ️", egui::Color32::from_rgb(120, 170, 220)),
+                };
+                ui.horizontal(|ui| {
+                    ui.label(icon);
+                    ui.colored_label(color, egui::RichText::new(label).strong());
+                    if !detail.is_empty() {
+                        ui.label(egui::RichText::new(format!("— {detail}")).weak());
+                    }
+                });
+            }
+
+            "text" => {
+                let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                if let Some(color_arr) = v.get("color").and_then(|c| c.as_array()) {
+                    let r = color_arr.first().and_then(|v| v.as_u64()).unwrap_or(200) as u8;
+                    let g = color_arr.get(1).and_then(|v| v.as_u64()).unwrap_or(200) as u8;
+                    let b = color_arr.get(2).and_then(|v| v.as_u64()).unwrap_or(200) as u8;
+                    ui.colored_label(egui::Color32::from_rgb(r, g, b), text);
+                } else {
+                    let mono = v.get("mono").and_then(|b| b.as_bool()).unwrap_or(false);
+                    if mono {
+                        ui.label(egui::RichText::new(text).monospace().size(12.0));
+                    } else {
+                        ui.label(text);
+                    }
+                }
+            }
+
+            "separator" => {
+                ui.separator();
+            }
+
+            "table" => {
+                let headers = v.get("headers").and_then(|a| a.as_array());
+                let rows = v.get("rows").and_then(|a| a.as_array());
+                if let (Some(headers), Some(rows)) = (headers, rows) {
+                    let col_count = headers.len();
+                    egui::Grid::new(format!("plugin_table_{}", entries.len()))
+                        .num_columns(col_count)
+                        .striped(true)
+                        .spacing([12.0, 4.0])
+                        .show(ui, |ui| {
+                            for h in headers {
+                                let text = h.as_str().unwrap_or("");
+                                ui.label(egui::RichText::new(text).strong().underline());
+                            }
+                            ui.end_row();
+                            for row in rows {
+                                if let Some(cells) = row.as_array() {
+                                    for cell in cells {
+                                        let text = cell.as_str().unwrap_or("");
+                                        let rt = if text.contains("PASS") || text.contains("CLEAN") {
+                                            egui::RichText::new(text).color(egui::Color32::from_rgb(80, 200, 80))
+                                        } else if text.contains("FAIL") {
+                                            egui::RichText::new(text).color(egui::Color32::from_rgb(220, 60, 60))
+                                        } else if text.contains("WARN") || text.contains("ATTENTION") {
+                                            egui::RichText::new(text).color(egui::Color32::from_rgb(220, 180, 40))
+                                        } else {
+                                            egui::RichText::new(text)
+                                        };
+                                        ui.label(rt);
+                                    }
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                }
+            }
+
+            "log" => {
+                let ts = v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
+                let level = v.get("level").and_then(|t| t.as_str()).unwrap_or("info");
+                let msg = v.get("message").and_then(|t| t.as_str()).unwrap_or("");
+                let color = match level {
+                    "error" => egui::Color32::from_rgb(220, 60, 60),
+                    "warn"  => egui::Color32::from_rgb(220, 180, 40),
+                    "pass" | "success" => egui::Color32::from_rgb(80, 200, 80),
+                    _ =>       egui::Color32::from_rgb(160, 160, 160),
+                };
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(ts).monospace().weak().size(11.0));
+                    ui.colored_label(color, egui::RichText::new(format!("[{level}]")).monospace().size(11.0));
+                    ui.label(egui::RichText::new(msg).monospace().size(11.0));
+                });
+            }
+
+            "progress" => {
+                let label = v.get("label").and_then(|t| t.as_str()).unwrap_or("");
+                let value = v.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    let bar = egui::ProgressBar::new(value)
+                        .text(format!("{:.0}%", value * 100.0))
+                        .desired_width(200.0);
+                    ui.add(bar);
+                });
+            }
+
+            "space" => {
+                let px = v.get("px").and_then(|v| v.as_f64()).unwrap_or(8.0) as f32;
+                ui.add_space(px);
+            }
+
+            _ => {
+                ui.label(egui::RichText::new(format!("Unknown UI type: {entry_type}")).weak());
+            }
+        }
     }
 }

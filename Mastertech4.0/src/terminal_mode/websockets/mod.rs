@@ -924,7 +924,7 @@ impl TerminalWebsocketClient {
                     }
                 }
             }
-            Cmd::RebootSystem { persist_mastertech } => {
+            Cmd::RebootSystem { persist_mastertech, terminal_mode } => {
                 log::info!("websockets -> Reboot system command received (persist={})", persist_mastertech);
                 #[cfg(target_os = "windows")]
                 {
@@ -934,13 +934,19 @@ impl TerminalWebsocketClient {
                         let exe_path = std::env::current_exe().unwrap_or_default();
                         let exe_path_str = exe_path.to_string_lossy();
                         
+                        let command = if terminal_mode {
+                            format!("\"{}\" -t", exe_path_str)
+                        } else {
+                            format!("\"{}\"", exe_path_str)
+                        };
+
                         // Create a scheduled task that runs once at next logon then deletes itself
                         let task_name = "MastertechAutoRestart";
                         let create_task = tokio::process::Command::new("schtasks")
                             .args([
                                 "/Create",
                                 "/TN", task_name,
-                                "/TR", &format!("\"{}\" -t", exe_path_str),
+                                "/TR", &command,
                                 "/SC", "ONLOGON",
                                 "/RL", "HIGHEST",
                                 "/F", // Force overwrite if exists

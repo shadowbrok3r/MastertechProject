@@ -283,7 +283,7 @@ pub enum Cmd {
     /// Response indicating save result
     SaveResult(bool, String),
     /// Reboot the remote system (with optional persistence flag for auto-restart)
-    RebootSystem { persist_mastertech: bool },
+    RebootSystem { persist_mastertech: bool, terminal_mode: bool },
     /// Shutdown the remote system
     ShutdownSystem,
     /// Lock the remote workstation

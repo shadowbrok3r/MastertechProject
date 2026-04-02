@@ -145,10 +145,16 @@ impl WebSocketClient {
                         let _ = self.send_cmd_tx.try_send(Cmd::ShutdownSystem);
                     }
                     
+                    if Button::new(RichText::new("🔄 Reboot in Terminal Mode").color(os_btn_color).small())
+                        .ui(ui).clicked() 
+                    {
+                        let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem { persist_mastertech: true, terminal_mode: true });
+                    }
+
                     if Button::new(RichText::new("🔄 Reboot").color(os_btn_color).small())
                         .ui(ui).clicked() 
                     {
-                        let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem { persist_mastertech: true });
+                        let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem { persist_mastertech: true, terminal_mode: false });
                     }
                     
                     if Button::new(RichText::new("🚪 Log Off").color(os_btn_color).small())
