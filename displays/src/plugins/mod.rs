@@ -85,6 +85,47 @@ static WASM_BYTES_CACHE: Lazy<std::sync::Mutex<std::collections::HashMap<String,
 #[cfg(feature = "wasm-plugins")]
 static WASM_BG_ENGINE: Lazy<wasmtime::Engine> = Lazy::new(wasmtime::Engine::default);
 
+// ─── Plugin UI state store ──────────────────────────────────────────────────
+//
+// Host-side storage for plugin UI panels. WASM plugins (including background
+// dispatch threads) write structured entries here via `host_ui_log`.  The main
+// plugin instance's `ui()` reads from here each frame and renders egui widgets.
+
+/// A single UI entry emitted by a plugin.  Stored as raw JSON so the renderer
+/// can parse it lazily and the schema can evolve without recompiling the host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginUiEntry {
+    pub json: String,
+}
+
+/// Accumulated UI state for one plugin.
+#[derive(Debug, Clone, Default)]
+pub struct PluginUiState {
+    pub entries: Vec<PluginUiEntry>,
+    pub visible: bool,
+}
+
+pub static PLUGIN_UI_STATES: Lazy<std::sync::Mutex<std::collections::HashMap<String, PluginUiState>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Append a UI log entry for a plugin (callable from any thread).
+pub fn plugin_ui_append(plugin_id: &str, json: String) {
+    if let Ok(mut map) = PLUGIN_UI_STATES.lock() {
+        let state = map.entry(plugin_id.to_string()).or_default();
+        state.entries.push(PluginUiEntry { json });
+        state.visible = true;
+    }
+}
+
+/// Clear all UI entries for a plugin.
+pub fn plugin_ui_clear(plugin_id: &str) {
+    if let Ok(mut map) = PLUGIN_UI_STATES.lock() {
+        if let Some(state) = map.get_mut(plugin_id) {
+            state.entries.clear();
+        }
+    }
+}
+
 // ─── Global frame capture enable/disable channel ────────────────────────────
 //
 // Bridges WebSocket handler → egui (PluginManager).
