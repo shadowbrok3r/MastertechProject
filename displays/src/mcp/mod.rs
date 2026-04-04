@@ -62,7 +62,11 @@ impl McpService {
 
 // --- TCP Server Function ---
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+static MCP_SERVER_STARTED: std::sync::Once = std::sync::Once::new();
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub fn run_mcp_server_tcp() -> anyhow::Result<()> {
+    MCP_SERVER_STARTED.call_once(|| {
     <crate::PlatformSpawner as crate::Spawner>::spawn(async move {
         let result: anyhow::Result<(), anyhow::Error> = async {
             let addr = "127.0.0.1:9002"; // The TCP address to listen on
@@ -95,5 +99,6 @@ pub fn run_mcp_server_tcp() -> anyhow::Result<()> {
 
         log::warn!("mcp server run result: {result:?}");
     });
+    }); // Once guard
     Ok(())
 }
