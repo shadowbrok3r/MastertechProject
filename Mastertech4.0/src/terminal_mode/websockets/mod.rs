@@ -2357,7 +2357,7 @@ if (Test-Path $path) {{
 
 /// Convert HBITMAP to PNG bytes (Windows only)
 #[cfg(target_os = "windows")]
-fn hbitmap_to_png_bytes(
+pub fn hbitmap_to_png_bytes(
     hbmp: windows::Win32::Graphics::Gdi::HBITMAP,
 ) -> Result<Vec<u8>, String> {
     use windows::Win32::Graphics::Gdi::*;
