@@ -29,6 +29,8 @@ pub mod sales_tracker;
 pub mod everest;
 pub mod duplicate_check;
 pub mod file_storage;
+pub mod plugin_registry;
+pub mod diagnostic;
 
 pub use task::*;
 pub use task_note::*;
@@ -43,6 +45,8 @@ pub use everest::*;
 pub use utilities::TaskCreationResult;
 pub use duplicate_check::*;
 pub use file_storage::*;
+pub use plugin_registry::*;
+pub use diagnostic::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -61,6 +65,9 @@ pub const CHAT_THREAD_TABLE: &str = "chat_thread";
 pub const USER_MESSAGE_TABLE: &str = "user_message";
 pub const QC_TABLE: &str = "qc";
 pub const SALES_NOTE_TABLE: &str = "sales_note";
+pub const PLUGIN_REGISTRY_TABLE: &str = "plugin_registry";
+pub const DIAGNOSTIC_SESSION_TABLE: &str = "diagnostic_session";
+pub const DIAGNOSTIC_ENTRY_TABLE: &str = "diagnostic_entry";
 
 pub use prestashop as prestashop_schema;
 
