@@ -419,6 +419,164 @@ pub struct RemoteEguiClickAnchorParams {
     pub placement: String,
 }
 
+// ─── Shared param helpers ────────────────────────────────────────────────────
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema, Clone)]
+pub struct PluginUsageRefParam {
+    pub plugin_id: String,
+    pub tool_name: String,
+}
+
+// ─── Plugin Registry parameter types ────────────────────────────────────────
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SearchPluginsParams {
+    #[schemars(description = "Keyword to search across plugin names, descriptions, tool names, and IDs")]
+    pub query: String,
+    #[schemars(description = "Optional tag filter — only return plugins that have at least one of these tags")]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetPluginInfoParams {
+    #[schemars(description = "Plugin ID to look up (e.g. 'com.mastertech.hw-diag')")]
+    pub plugin_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PublishPluginParams {
+    #[schemars(description = "Plugin ID to publish (must have been compiled first)")]
+    pub plugin_id: String,
+    #[schemars(description = "Human-readable description of what this plugin does")]
+    pub description: String,
+    #[schemars(description = "Tags for searchability (e.g. ['diagnostics', 'gpu', 'windows'])")]
+    pub tags: Option<Vec<String>>,
+    #[schemars(description = "Whether to store the Rust source code alongside the WASM binary (default: true)")]
+    pub store_source: Option<bool>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct FetchPluginParams {
+    #[schemars(description = "Plugin ID to fetch from the SurrealDB registry")]
+    pub plugin_id: String,
+    #[schemars(description = "Specific version to fetch (default: latest)")]
+    pub version: Option<String>,
+}
+
+// ─── Diagnostic Knowledge Base parameter types ──────────────────────────────
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CreateDiagnosticSessionParams {
+    #[schemars(description = "Web Console connection_string of the client being diagnosed")]
+    pub connection_string: String,
+    #[schemars(description = "Hostname of the machine being diagnosed")]
+    pub hostname: String,
+    #[schemars(description = "Customer name (if known)")]
+    pub customer_name: Option<String>,
+    #[schemars(description = "Technician performing the diagnosis")]
+    pub tech: Option<String>,
+    #[schemars(description = "Initial tags for categorizing this session")]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct LogDiagnosticEntryParams {
+    #[schemars(description = "Session ID returned by create_diagnostic_session")]
+    pub session_id: String,
+    #[schemars(description = "Category: finding, action, resolution, or note")]
+    pub category: String,
+    #[schemars(description = "Short title for this entry")]
+    pub title: String,
+    #[schemars(description = "Detailed description of the finding/action/resolution")]
+    pub detail: String,
+    #[schemars(description = "Optional structured data (JSON) — e.g. event logs, command output")]
+    pub data: Option<serde_json::Value>,
+    #[schemars(description = "Plugins used for this entry, e.g. [{\"plugin_id\": \"com.mastertech.hw-diag\", \"tool_name\": \"whea_errors\"}]")]
+    pub plugins_used: Option<Vec<PluginUsageRefParam>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct CloseDiagnosticSessionParams {
+    #[schemars(description = "Session ID to close")]
+    pub session_id: String,
+    #[schemars(description = "Final status: resolved, escalated, or open")]
+    pub status: String,
+    #[schemars(description = "AI-written summary of findings, actions taken, and outcome")]
+    pub summary: String,
+    #[schemars(description = "Final tags to apply (appends to/replaces existing tags)")]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SearchDiagnosticsParams {
+    #[schemars(description = "Free-text search across session summaries, hostnames, customer names, and tags")]
+    pub query: String,
+    #[schemars(description = "Filter by exact hostname")]
+    pub hostname: Option<String>,
+    #[schemars(description = "Filter by customer name (fuzzy)")]
+    pub customer_name: Option<String>,
+    #[schemars(description = "Filter by exact connection_string")]
+    pub connection_string: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetDiagnosticSessionParams {
+    #[schemars(description = "Session ID to retrieve (with all entries)")]
+    pub session_id: String,
+}
+
+// ─── Customer / Service data parameter types ────────────────────────────────
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SearchCustomersParams {
+    #[schemars(description = "Search by name, email, or phone number")]
+    pub query: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetCustomerDetailsParams {
+    #[schemars(description = "Customer record ID (e.g. 'customer:abc123' or just the key 'abc123')")]
+    pub customer_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetServiceOrderParams {
+    #[schemars(description = "Service number to look up (e.g. 'SO-12345')")]
+    pub service_number: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SearchServiceOrdersParams {
+    #[schemars(description = "Search by customer name, service number, or checkin notes")]
+    pub query: String,
+    #[schemars(description = "Filter by technician name")]
+    pub tech: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct GetComputerDetailsParams {
+    #[schemars(description = "Computer record ID (e.g. 'computer:abc123' or just the key)")]
+    pub computer_id: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SearchPrestashopOrdersParams {
+    #[schemars(description = "Customer email, customer name, or order reference to search for")]
+    pub query: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct SearchOdooInventoryParams {
+    #[schemars(description = "Product code or name to search for")]
+    pub query: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct QuerySurrealDbParams {
+    #[schemars(description = "Read-only SurrealQL query. Must start with SELECT or RETURN.")]
+    pub query: String,
+}
+
 fn default_remote_egui_true() -> bool {
     true
 }
@@ -1310,6 +1468,552 @@ impl PluginToolProvider {
             .map_err(to_internal)?]))
         }
     }
+
+    // ── Plugin Registry tools ────────────────────────────────────────────
+
+    #[tool(
+        name = "search_plugins",
+        description = "Search the SurrealDB plugin registry by keyword across plugin names, descriptions, tool names, and tags. Use this BEFORE writing a new plugin to check if one already exists."
+    )]
+    async fn search_plugins(
+        &self,
+        Parameters(p): Parameters<SearchPluginsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let tags = p.tags.as_deref();
+        let results = database::schema::PluginRegistryEntry::search(&p.query, tags)
+            .await
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![
+            Content::json(serde_json::json!({
+                "count": results.len(),
+                "plugins": results.iter().map(|r| serde_json::json!({
+                    "plugin_id": r.plugin_id,
+                    "name": r.name,
+                    "description": r.description,
+                    "version": r.version,
+                    "tags": r.tags,
+                    "tools": r.tools,
+                    "has_source": r.source_code.is_some(),
+                    "has_wasm": r.wasm_bucket_path.is_some(),
+                })).collect::<Vec<_>>(),
+            })).map_err(to_internal)?
+        ]))
+    }
+
+    #[tool(
+        name = "get_plugin_info",
+        description = "Get full details for a plugin from the SurrealDB registry, including source code and tool list."
+    )]
+    async fn get_plugin_info(
+        &self,
+        Parameters(p): Parameters<GetPluginInfoParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let entry = database::schema::PluginRegistryEntry::get_by_plugin_id(&p.plugin_id)
+            .await
+            .map_err(to_internal)?;
+        match entry {
+            Some(e) => Ok(CallToolResult::success(vec![
+                Content::json(serde_json::json!(e)).map_err(to_internal)?
+            ])),
+            None => Ok(CallToolResult::success(vec![
+                Content::text(format!("No plugin found with ID '{}'", p.plugin_id))
+            ])),
+        }
+    }
+
+    #[tool(
+        name = "publish_plugin",
+        description = "Publish a compiled plugin to the SurrealDB registry. Stores the WASM binary in the 'plugins' bucket and metadata in the plugin_registry table. Call after plugin_compile for reusable plugins."
+    )]
+    async fn publish_plugin(
+        &self,
+        Parameters(p): Parameters<PublishPluginParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let wasm_bytes = self
+            .try_lock_artifacts()?
+            .get_current(&p.plugin_id)
+            .cloned();
+
+        let store_source = p.store_source.unwrap_or(true);
+
+        let source_code = if store_source {
+            let lib_rs = plugin_dir(&p.plugin_id).join("src").join("lib.rs");
+            tokio::fs::read_to_string(&lib_rs).await.ok()
+        } else {
+            None
+        };
+
+        let (name, version, tools_json) = {
+            let mgr = self.try_read_manager()?;
+            let plugin_info = mgr.list_plugins();
+            let matching = plugin_info.iter().find(|pi| pi.id == p.plugin_id);
+
+            let name = matching
+                .map(|pi| pi.name.clone())
+                .unwrap_or_else(|| p.plugin_id.clone());
+            let version = matching
+                .map(|pi| pi.version.clone())
+                .unwrap_or_else(|| "0.1.0".to_string());
+
+            let tools_json: Vec<database::schema::PluginToolInfo> = mgr.plugins.iter()
+                .find(|plug| plug.id() == p.plugin_id)
+                .map(|plug| plug.mcp_tools())
+                .unwrap_or_default()
+                .iter()
+                .map(|td| database::schema::PluginToolInfo {
+                    name: td.name.clone(),
+                    description: td.description.clone(),
+                })
+                .collect();
+
+            (name, version, tools_json)
+        };
+
+        let wasm_path = if let Some(bytes) = &wasm_bytes {
+            let bucket_path = format!("/{}/{}.wasm", sanitize_id(&p.plugin_id), version);
+            database::schema::put_file("plugins", &bucket_path, bytes.clone())
+                .await
+                .map_err(to_internal)?;
+            Some(bucket_path)
+        } else {
+            None
+        };
+
+        let entry = database::schema::PluginRegistryEntry {
+            plugin_id: p.plugin_id.clone(),
+            name,
+            description: p.description.clone(),
+            version: version.clone(),
+            tools: tools_json,
+            tags: p.tags.clone().unwrap_or_default(),
+            wasm_bucket_path: wasm_path.clone(),
+            source_code,
+            ..Default::default()
+        };
+
+        database::schema::PluginRegistryEntry::upsert(&entry)
+            .await
+            .map_err(to_internal)?;
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "plugin_id": p.plugin_id,
+                "published": true,
+                "version": version,
+                "wasm_stored": wasm_path.is_some(),
+                "wasm_bucket_path": wasm_path,
+                "source_stored": entry.source_code.is_some(),
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "fetch_plugin",
+        description = "Download a plugin's WASM binary from the SurrealDB registry into the local artifact store, so it can be deployed via plugin_deploy or plugin_deploy_remote."
+    )]
+    async fn fetch_plugin(
+        &self,
+        Parameters(p): Parameters<FetchPluginParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let entry = database::schema::PluginRegistryEntry::get_by_plugin_id(&p.plugin_id)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| to_internal(format!("Plugin '{}' not found in registry", p.plugin_id)))?;
+
+        let wasm_path = entry
+            .wasm_bucket_path
+            .as_deref()
+            .ok_or_else(|| to_internal("Plugin has no WASM binary in the registry"))?;
+
+        let bytes = database::schema::get_file("plugins", wasm_path)
+            .await
+            .map_err(to_internal)?
+            .ok_or_else(|| to_internal(format!("WASM file not found at bucket path: {}", wasm_path)))?;
+
+        let sz = bytes.len();
+        self.try_lock_artifacts()?.store(&p.plugin_id, bytes);
+
+        if let Some(source) = &entry.source_code {
+            let dir = plugin_dir(&p.plugin_id);
+            let src_dir = dir.join("src");
+            let _ = tokio::fs::create_dir_all(&src_dir).await;
+            let _ = tokio::fs::write(src_dir.join("lib.rs"), source).await;
+            let cargo_toml_path = dir.join("Cargo.toml");
+            if !cargo_toml_path.exists() {
+                let _ = tokio::fs::write(&cargo_toml_path, plugin_cargo_toml(&p.plugin_id)).await;
+            }
+        }
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "plugin_id": p.plugin_id,
+                "fetched": true,
+                "version": entry.version,
+                "artifact_bytes": sz,
+                "source_restored": entry.source_code.is_some(),
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    // ── Diagnostic Knowledge Base tools ──────────────────────────────────
+
+    #[tool(
+        name = "create_diagnostic_session",
+        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
+    )]
+    async fn create_diagnostic_session(
+        &self,
+        Parameters(p): Parameters<CreateDiagnosticSessionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = database::schema::DiagnosticSession {
+            connection_string: p.connection_string,
+            hostname: p.hostname,
+            customer_name: p.customer_name,
+            tech: p.tech,
+            tags: p.tags.unwrap_or_default(),
+            ..Default::default()
+        };
+        let id = database::schema::DiagnosticSession::create(&session)
+            .await
+            .map_err(to_internal)?;
+        use database::schema::RecordIdExt;
+        let id_str = id.key_string();
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "session_id": id_str }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "log_diagnostic_entry",
+        description = "Log a finding, action, resolution, or note to an open diagnostic session. Use categories: 'finding' for discovered issues, 'action' for steps taken, 'resolution' for fixes applied, 'note' for general observations."
+    )]
+    async fn log_diagnostic_entry(
+        &self,
+        Parameters(p): Parameters<LogDiagnosticEntryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let entry = database::schema::DiagnosticEntry {
+            session: database::schema::RecordId::new(
+                database::schema::DIAGNOSTIC_SESSION_TABLE,
+                p.session_id.clone(),
+            ),
+            category: p.category,
+            title: p.title,
+            detail: p.detail,
+            data: p.data,
+            plugins_used: p.plugins_used.unwrap_or_default().into_iter().map(|pu| {
+                database::schema::PluginUsageRef {
+                    plugin_id: pu.plugin_id,
+                    tool_name: pu.tool_name,
+                }
+            }).collect(),
+            ..Default::default()
+        };
+        let id = database::schema::DiagnosticEntry::create(&entry)
+            .await
+            .map_err(to_internal)?;
+        use database::schema::RecordIdExt;
+        let id_str = id.key_string();
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "entry_id": id_str, "session_id": p.session_id }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "close_diagnostic_session",
+        description = "Close a diagnostic session with a final status and AI-written summary. Status should be 'resolved', 'escalated', or 'open'."
+    )]
+    async fn close_diagnostic_session(
+        &self,
+        Parameters(p): Parameters<CloseDiagnosticSessionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        database::schema::DiagnosticSession::close(
+            &p.session_id,
+            &p.status,
+            &p.summary,
+            p.tags.as_deref(),
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "session_id": p.session_id, "closed": true, "status": p.status }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "search_diagnostics",
+        description = "Search past diagnostic sessions by hostname, customer name, tags, or free text. Use to check if a machine/customer has been diagnosed before."
+    )]
+    async fn search_diagnostics(
+        &self,
+        Parameters(p): Parameters<SearchDiagnosticsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sessions = database::schema::DiagnosticSession::search(
+            &p.query,
+            p.hostname.as_deref(),
+            p.customer_name.as_deref(),
+            p.connection_string.as_deref(),
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "count": sessions.len(), "sessions": sessions }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "get_diagnostic_session",
+        description = "Retrieve a full diagnostic session with all its log entries."
+    )]
+    async fn get_diagnostic_session(
+        &self,
+        Parameters(p): Parameters<GetDiagnosticSessionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let full = database::schema::DiagnosticSession::get_full(&p.session_id)
+            .await
+            .map_err(to_internal)?;
+        match full {
+            Some(f) => Ok(CallToolResult::success(vec![
+                Content::json(serde_json::json!(f)).map_err(to_internal)?
+            ])),
+            None => Ok(CallToolResult::success(vec![
+                Content::text(format!("No diagnostic session found with ID '{}'", p.session_id))
+            ])),
+        }
+    }
+
+    // ── Customer / Service data tools ────────────────────────────────────
+
+    #[tool(
+        name = "search_customers",
+        description = "Search the SurrealDB customer table by name, email, or phone number."
+    )]
+    async fn search_customers(
+        &self,
+        Parameters(p): Parameters<SearchCustomersParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let q = format!("%{}%", p.query);
+        let customers: Vec<serde_json::Value> = database::DATABASE
+            .query(
+                "SELECT * FROM customer WHERE \
+                 name ~ $q OR email ~ $q OR phone_number ~ $q OR phone_number_2 ~ $q OR cust_code ~ $q \
+                 LIMIT 25"
+            )
+            .bind(("q", q))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "count": customers.len(), "customers": customers }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "get_customer_details",
+        description = "Get a full customer record including linked service orders and computers."
+    )]
+    async fn get_customer_details(
+        &self,
+        Parameters(p): Parameters<GetCustomerDetailsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let cid = if p.customer_id.contains(':') {
+            p.customer_id.clone()
+        } else {
+            format!("customer:{}", p.customer_id)
+        };
+        let result: Option<serde_json::Value> = database::DATABASE
+            .query(
+                "SELECT *, \
+                   (SELECT * FROM service_order WHERE customer == $cid FETCH computer) AS services \
+                 FROM type::thing($cid)"
+            )
+            .bind(("cid", cid))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        match result {
+            Some(v) => Ok(CallToolResult::success(vec![
+                Content::json(v).map_err(to_internal)?
+            ])),
+            None => Ok(CallToolResult::success(vec![
+                Content::text(format!("No customer found with ID '{}'", p.customer_id))
+            ])),
+        }
+    }
+
+    #[tool(
+        name = "get_service_order",
+        description = "Get a service order by service number, with customer and computer details fetched."
+    )]
+    async fn get_service_order(
+        &self,
+        Parameters(p): Parameters<GetServiceOrderParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result: Option<serde_json::Value> = database::DATABASE
+            .query(
+                "SELECT * FROM service_order WHERE service_number == $sn FETCH computer, customer LIMIT 1"
+            )
+            .bind(("sn", p.service_number.clone()))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        match result {
+            Some(v) => Ok(CallToolResult::success(vec![
+                Content::json(v).map_err(to_internal)?
+            ])),
+            None => Ok(CallToolResult::success(vec![
+                Content::text(format!("No service order found with number '{}'", p.service_number))
+            ])),
+        }
+    }
+
+    #[tool(
+        name = "search_service_orders",
+        description = "Search service orders by customer name, service number, tech, or checkin notes."
+    )]
+    async fn search_service_orders(
+        &self,
+        Parameters(p): Parameters<SearchServiceOrdersParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let q = format!("%{}%", p.query);
+        let mut conditions = vec![
+            "(service_number ~ $q OR checkin_notes ~ $q OR salesman ~ $q OR doc_alias ~ $q)".to_string()
+        ];
+        if p.tech.is_some() {
+            conditions.push("tech == $tech".to_string());
+        }
+        let where_clause = conditions.join(" AND ");
+        let sql = format!(
+            "SELECT * FROM service_order WHERE {where_clause} ORDER BY created_at DESC LIMIT 25 FETCH computer, customer"
+        );
+        let results: Vec<serde_json::Value> = database::DATABASE
+            .query(&sql)
+            .bind(("q", q))
+            .bind(("tech", p.tech.unwrap_or_default()))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "count": results.len(), "orders": results }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "get_computer_details",
+        description = "Get full computer details including hostname, CPU, GPU, RAM, drives, serials, and installed programs."
+    )]
+    async fn get_computer_details(
+        &self,
+        Parameters(p): Parameters<GetComputerDetailsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let cid = if p.computer_id.contains(':') {
+            p.computer_id.clone()
+        } else {
+            format!("computer:{}", p.computer_id)
+        };
+        let result: Option<serde_json::Value> = database::DATABASE
+            .query("SELECT * FROM type::thing($cid)")
+            .bind(("cid", cid))
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        match result {
+            Some(v) => Ok(CallToolResult::success(vec![
+                Content::json(v).map_err(to_internal)?
+            ])),
+            None => Ok(CallToolResult::success(vec![
+                Content::text(format!("No computer found with ID '{}'", p.computer_id))
+            ])),
+        }
+    }
+
+    #[tool(
+        name = "search_prestashop_orders",
+        description = "Search PrestaShop orders by customer email or order reference."
+    )]
+    async fn search_prestashop_orders(
+        &self,
+        Parameters(p): Parameters<SearchPrestashopOrdersParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let api = database::schema::prestashop::Prestashop::default();
+        let filter_val = format!("%[{}]%", p.query);
+        let mut query_params = std::collections::HashMap::new();
+        query_params.insert("filter[reference]", filter_val.as_str());
+        query_params.insert("output_format", "JSON");
+
+        let orders: Result<Vec<database::schema::prestashop::Order>, _> =
+            api.request_resources_wasm("orders", query_params).await;
+
+        match orders {
+            Ok(o) => Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({ "count": o.len(), "orders": o }),
+            )
+            .map_err(to_internal)?])),
+            Err(e) => Ok(CallToolResult::success(vec![
+                Content::text(format!("PrestaShop search error: {e}"))
+            ])),
+        }
+    }
+
+    #[tool(
+        name = "search_odoo_inventory",
+        description = "Search Odoo product catalog by part number or product name."
+    )]
+    async fn search_odoo_inventory(
+        &self,
+        Parameters(p): Parameters<SearchOdooInventoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match database::schema::odoo::search_odoo_products(&p.query).await {
+            Ok(resp) => Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({ "count": resp.result.len(), "products": resp.result }),
+            )
+            .map_err(to_internal)?])),
+            Err(e) => Ok(CallToolResult::success(vec![
+                Content::text(format!("Odoo search error: {e}"))
+            ])),
+        }
+    }
+
+    // ── SurrealDB query tool ─────────────────────────────────────────────
+
+    #[tool(
+        name = "query_surrealdb",
+        description = "Run a read-only SurrealQL query against the Mastertech database. Only SELECT and RETURN statements are allowed."
+    )]
+    async fn query_surrealdb(
+        &self,
+        Parameters(p): Parameters<QuerySurrealDbParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let trimmed = p.query.trim();
+        let upper = trimmed.to_uppercase();
+        if !upper.starts_with("SELECT") && !upper.starts_with("RETURN") {
+            return Err(to_internal(
+                "Only SELECT and RETURN queries are allowed. Mutations (CREATE, UPDATE, DELETE, etc.) are not permitted.",
+            ));
+        }
+        let result: Vec<serde_json::Value> = database::DATABASE
+            .query(trimmed)
+            .await
+            .map_err(to_internal)?
+            .take(0)
+            .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "results": result }),
+        )
+        .map_err(to_internal)?]))
+    }
 }
 
 // ─── Server handler ────────────────────────────────────────────────────────────
@@ -1320,9 +2024,45 @@ const INSTRUCTIONS: &str = r#"Mastertech Plugin System MCP (MasterTech desktop +
 === Session (HTTP :9004/mcp) ===
 After initialize, POST notifications/initialized with the same Mcp-Session-Id before tools/call.
 
+=== AI Workflow ===
+Before writing a new WASM plugin, ALWAYS call search_plugins first to check if a suitable plugin already exists in the registry. If one exists, use fetch_plugin to download it and plugin_deploy / plugin_deploy_remote to deploy it.
+After compiling a useful plugin, call publish_plugin to store it in the SurrealDB registry for future sessions.
+When performing diagnostics:
+  1. Call search_diagnostics to check if this machine/customer has been diagnosed before.
+  2. Call create_diagnostic_session at the start.
+  3. Call log_diagnostic_entry for each finding, action taken, or resolution.
+  4. Call close_diagnostic_session with a summary when done.
+Use search_customers / get_customer_details / search_service_orders to pull customer context and service history.
+Use get_computer_details to see full hardware info for a machine.
+Use search_prestashop_orders for purchase/invoice lookup and search_odoo_inventory for parts availability.
+Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
+
 === Plugins & WASM ===
 - list_plugins, enable_plugin, disable_plugin, call_plugin_tool — native + WASM plugin MCP tools.
 - plugin_source → plugin_compile (wasm32-wasip1) → plugin_deploy (local) or plugin_deploy_remote (to a connected client); or plugin_emit_clock_wasm / plugin_compile_wat → plugin_deploy / plugin_deploy_remote; plugin_rollback; plugin_watch.
+
+=== Plugin Registry (SurrealDB) ===
+- search_plugins — search by keyword/tags before writing new plugins.
+- get_plugin_info — full details including source code for a registered plugin.
+- publish_plugin — store compiled WASM + metadata after plugin_compile.
+- fetch_plugin — download WASM from registry into local artifact store for deploy.
+
+=== Diagnostic Knowledge Base ===
+- create_diagnostic_session — start logging a diagnostic engagement.
+- log_diagnostic_entry — append findings/actions/resolutions with optional structured data.
+- close_diagnostic_session — finalize with status and summary.
+- search_diagnostics — find past sessions by hostname, customer, tags, or free text.
+- get_diagnostic_session — retrieve a full session with all entries.
+
+=== Customer & Service Data ===
+- search_customers — search SurrealDB customer table by name/email/phone.
+- get_customer_details — full customer record with linked service orders.
+- get_service_order — look up by service number (with computer + customer fetched).
+- search_service_orders — search by customer name, tech, service number.
+- get_computer_details — full hardware record (CPU, GPU, RAM, drives, serials, programs).
+- search_prestashop_orders — search PrestaShop orders by reference/email.
+- search_odoo_inventory — search Odoo product catalog by part number or name.
+- query_surrealdb — run arbitrary read-only SurrealQL (SELECT/RETURN only).
 
 === Remote egui (operator must connect Web Console to a client first) ===
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
@@ -1422,6 +2162,12 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
         session::local::LocalSessionManager,
         StreamableHttpServerConfig, StreamableHttpService,
     };
+
+    if let Err(e) = database::schema::define_bucket("plugins", "memory").await {
+        log::warn!("Failed to define 'plugins' bucket (non-fatal): {e}");
+    } else {
+        log::info!("SurrealDB 'plugins' bucket initialized");
+    }
 
     let addr = "127.0.0.1:9004";
     let listener = tokio::net::TcpListener::bind(addr).await?;
