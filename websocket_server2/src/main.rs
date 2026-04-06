@@ -37,6 +37,7 @@ enum ChatMessage {
 }
 
 use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Debug)]
 struct Room {
@@ -65,8 +66,40 @@ impl Default for Room {
     }
 }
 
-/// Minimum interval between database updates for last_update (prevents excessive writes)
-const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
+/// Minimum interval between database updates per-room (prevents excessive writes)
+const MIN_ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Global rate limiter: max DB writes across ALL rooms within a rolling window.
+/// Each connected_client UPDATE triggers live query notifications to every client
+/// listening on that table, so capping total writes prevents SurrealDB overload.
+const GLOBAL_MAX_WRITES_PER_WINDOW: u64 = 10;
+const GLOBAL_WINDOW_SECS: u64 = 60;
+
+static GLOBAL_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_WINDOW_START: AtomicU64 = AtomicU64::new(0);
+
+fn global_write_allowed() -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let window_start = GLOBAL_WINDOW_START.load(Ordering::Relaxed);
+
+    if now.saturating_sub(window_start) >= GLOBAL_WINDOW_SECS {
+        GLOBAL_WINDOW_START.store(now, Ordering::Relaxed);
+        GLOBAL_WRITE_COUNT.store(1, Ordering::Relaxed);
+        return true;
+    }
+
+    let count = GLOBAL_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+    if count < GLOBAL_MAX_WRITES_PER_WINDOW {
+        true
+    } else {
+        GLOBAL_WRITE_COUNT.fetch_sub(1, Ordering::Relaxed);
+        false
+    }
+}
 
 #[derive(Clone)]
 struct ChatServer {
@@ -276,13 +309,11 @@ impl ChatServer {
                 }
                 drop(sender);
                 
-                // Update last_update in DB (rate-limited) after successful ping
-                // This ensures activity is tracked even when no messages are being relayed
-                let should_update = match last_db_update {
+                let per_room_ok = match last_db_update {
                     Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
                     _ => true,
                 };
-                if should_update {
+                if per_room_ok && global_write_allowed() {
                     let room_id_for_db = room_id_for_ping.clone();
                     tokio::spawn(async move {
                         let result: Result<Option<ConnectedClient>, _> = DATABASE
@@ -321,35 +352,30 @@ impl ChatServer {
                     let is_from_master = self.is_session_match(room.master.as_ref(), &from).await;
                     let is_from_client = self.is_session_match(room.client.as_ref(), &from).await;
                     
-                    // Update last activity timestamp for the sender
-                    // Also check if we should update the database (rate-limited to prevent excessive writes)
                     let mut should_update_db = false;
                     if is_from_master {
                         room.master_last_activity = Some(Instant::now());
-                        // Check if we should update DB (rate limited)
-                        let should_update = match room.master_db_update {
+                        let per_room_ok = match room.master_db_update {
                             Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
                             _ => true,
                         };
-                        if should_update {
+                        if per_room_ok {
                             room.master_db_update = Some(Instant::now());
                             should_update_db = true;
                         }
                     } else if is_from_client {
                         room.client_last_activity = Some(Instant::now());
-                        // Check if we should update DB (rate limited)
-                        let should_update = match room.client_db_update {
+                        let per_room_ok = match room.client_db_update {
                             Some(t) if t.elapsed() < MIN_ACTIVITY_UPDATE_INTERVAL => false,
                             _ => true,
                         };
-                        if should_update {
+                        if per_room_ok {
                             room.client_db_update = Some(Instant::now());
                             should_update_db = true;
                         }
                     }
                     
-                    // Spawn DB update in background if needed (don't block message relay)
-                    if should_update_db {
+                    if should_update_db && global_write_allowed() {
                         let room_id_for_db = room_id.clone();
                         tokio::spawn(async move {
                             let result: Result<Option<ConnectedClient>, _> = DATABASE
