@@ -1,4 +1,4 @@
-use database::schema::{ComputerData, CustomerData, LiveTaskPayload, TicketPayload, User};
+use database::schema::{ComputerData, CustomerData, DiagnosticEntry, DiagnosticSession, LiveTaskPayload, PluginRegistryEntry, TicketPayload, User};
 use crate::{get_database_users, PlatformSpawner, Spawner};
 use itertools::Itertools;
 use super::DatabaseEditor;
@@ -43,6 +43,24 @@ impl DatabaseEditor {
                         let computers = ComputerData::get_computers(start_idx).await.unwrap_or_default();
                         for computer in computers.iter() {
                             let _ = tx.try_send(super::row_viewer::DatabaseTable::Computer(computer.clone()));
+                        }
+                    },
+                    super::row_viewer::DatabaseTableSelection::DiagSession => {
+                        let sessions = DiagnosticSession::list_all(start_idx).await.unwrap_or_default();
+                        for s in sessions.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::DiagSession(s.clone()));
+                        }
+                    },
+                    super::row_viewer::DatabaseTableSelection::DiagEntry => {
+                        let entries = DiagnosticEntry::list_all(start_idx).await.unwrap_or_default();
+                        for e in entries.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::DiagEntry(e.clone()));
+                        }
+                    },
+                    super::row_viewer::DatabaseTableSelection::PluginReg => {
+                        let plugins = PluginRegistryEntry::list_all().await.unwrap_or_default();
+                        for p in plugins.iter() {
+                            let _ = tx.try_send(super::row_viewer::DatabaseTable::PluginReg(p.clone()));
                         }
                     },
                 }

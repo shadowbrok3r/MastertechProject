@@ -79,34 +79,27 @@ pub struct DiagnosticSessionFull {
 
 impl DiagnosticSession {
     pub async fn create(session: &Self) -> anyhow::Result<RecordId> {
+        let mut s = session.clone();
+        s.id = super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE);
+        s.started_at = chrono::Utc::now().into();
+        s.status = "open".to_string();
+
         let created: Option<Self> = DATABASE
-            .query(
-                "CREATE diagnostic_session SET \
-                 connection_string = $conn, hostname = $host, \
-                 customer_name = $cust_name, customer_id = $cust_id, \
-                 computer_id = $comp_id, tech = $tech, \
-                 started_at = time::now(), status = 'open', tags = $tags"
-            )
-            .bind(("conn", session.connection_string.clone()))
-            .bind(("host", session.hostname.clone()))
-            .bind(("cust_name", session.customer_name.clone()))
-            .bind(("cust_id", session.customer_id.clone()))
-            .bind(("comp_id", session.computer_id.clone()))
-            .bind(("tech", session.tech.clone()))
-            .bind(("tags", session.tags.clone()))
-            .await?
-            .take(0)?;
-        Ok(created.map(|s| s.id).unwrap_or_else(|| super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE)))
+            .create(s.id.clone())
+            .content(s.clone())
+            .await?;
+
+        Ok(created.map(|c| c.id).unwrap_or(s.id))
     }
 
     pub async fn close(session_id: &str, status: &str, summary: &str, tags: Option<&[String]>) -> anyhow::Result<()> {
+        let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
         let mut query_str = String::from(
             "UPDATE $sid SET status = $status, summary = $summary, ended_at = time::now()"
         );
         if tags.is_some() {
             query_str.push_str(", tags = $tags");
         }
-        let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
         let mut q = DATABASE.query(&query_str)
             .bind(("sid", sid))
             .bind(("status", status.to_string()))
@@ -120,12 +113,7 @@ impl DiagnosticSession {
 
     pub async fn get_full(session_id: &str) -> anyhow::Result<Option<DiagnosticSessionFull>> {
         let sid = RecordId::new(super::DIAGNOSTIC_SESSION_TABLE, session_id);
-        let session: Option<DiagnosticSession> = DATABASE
-            .query("SELECT * FROM $sid")
-            .bind(("sid", sid.clone()))
-            .await?
-            .take(0)?;
-
+        let session: Option<DiagnosticSession> = DATABASE.select(sid.clone()).await?;
         let Some(session) = session else { return Ok(None) };
 
         let entries: Vec<DiagnosticEntry> = DATABASE
@@ -137,21 +125,33 @@ impl DiagnosticSession {
         Ok(Some(DiagnosticSessionFull { session, entries }))
     }
 
+    pub async fn list_all(start: i32) -> anyhow::Result<Vec<Self>> {
+        let sessions: Vec<Self> = DATABASE
+            .query("SELECT * FROM diagnostic_session ORDER BY started_at DESC LIMIT 200 START $start")
+            .bind(("start", start))
+            .await?
+            .take(0)?;
+        Ok(sessions)
+    }
+
     pub async fn search(
         query: &str,
         hostname: Option<&str>,
         customer_name: Option<&str>,
         connection_string: Option<&str>,
     ) -> anyhow::Result<Vec<Self>> {
-        let q = format!("%{query}%");
+        let q = query.to_lowercase();
         let mut conditions = vec![
-            "(summary ~ $q OR hostname ~ $q OR customer_name ~ $q OR connection_string ~ $q OR tags ~ $q)".to_string()
+            "(string::lowercase(summary ?? '') CONTAINS $q \
+             OR string::lowercase(hostname) CONTAINS $q \
+             OR string::lowercase(customer_name ?? '') CONTAINS $q \
+             OR string::lowercase(connection_string) CONTAINS $q)".to_string()
         ];
         if hostname.is_some() {
             conditions.push("hostname == $host".to_string());
         }
         if customer_name.is_some() {
-            conditions.push("customer_name ~ $cust".to_string());
+            conditions.push("string::lowercase(customer_name ?? '') CONTAINS $cust".to_string());
         }
         if connection_string.is_some() {
             conditions.push("connection_string == $conn".to_string());
@@ -165,7 +165,7 @@ impl DiagnosticSession {
             .query(&sql)
             .bind(("q", q))
             .bind(("host", hostname.unwrap_or("").to_string()))
-            .bind(("cust", customer_name.map(|c| format!("%{c}%")).unwrap_or_default()))
+            .bind(("cust", customer_name.unwrap_or("").to_lowercase()))
             .bind(("conn", connection_string.unwrap_or("").to_string()))
             .await?
             .take(0)?;
@@ -175,22 +175,25 @@ impl DiagnosticSession {
 }
 
 impl DiagnosticEntry {
-    pub async fn create(entry: &Self) -> anyhow::Result<RecordId> {
-        let created: Option<Self> = DATABASE
-            .query(
-                "CREATE diagnostic_entry SET
-                 session_ref = $sess_ref, timestamp = time::now(),
-                 category = $cat, title = $title, detail = $detail,
-                 data = $data, plugins_used = $plugins"
-            )
-            .bind(("sess_ref", entry.session_ref.clone()))
-            .bind(("cat", entry.category.clone()))
-            .bind(("title", entry.title.clone()))
-            .bind(("detail", entry.detail.clone()))
-            .bind(("data", entry.data.clone()))
-            .bind(("plugins", entry.plugins_used.clone()))
+    pub async fn list_all(start: i32) -> anyhow::Result<Vec<Self>> {
+        let entries: Vec<Self> = DATABASE
+            .query("SELECT * FROM diagnostic_entry ORDER BY timestamp DESC LIMIT 200 START $start")
+            .bind(("start", start))
             .await?
             .take(0)?;
-        Ok(created.map(|e| e.id).unwrap_or_else(|| super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE)))
+        Ok(entries)
+    }
+
+    pub async fn create(entry: &Self) -> anyhow::Result<RecordId> {
+        let mut e = entry.clone();
+        e.id = super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE);
+        e.timestamp = chrono::Utc::now().into();
+
+        let created: Option<Self> = DATABASE
+            .create(e.id.clone())
+            .content(e.clone())
+            .await?;
+
+        Ok(created.map(|c| c.id).unwrap_or(e.id))
     }
 }

@@ -45,14 +45,17 @@ impl Default for PluginRegistryEntry {
 }
 
 impl PluginRegistryEntry {
+    /// Search the plugin registry by keyword (case-insensitive substring match on name, description, plugin_id).
     pub async fn search(query: &str, tags: Option<&[String]>) -> anyhow::Result<Vec<Self>> {
-        let q = format!("%{query}%");
+        let q = query.to_lowercase();
         let entries: Vec<Self> = if let Some(tag_list) = tags {
             DATABASE
                 .query(
-                    "SELECT * FROM plugin_registry WHERE \
-                     (name ~ $q OR description ~ $q OR plugin_id ~ $q OR tools[*].name ~ $q) \
-                     AND tags CONTAINSANY $tags \
+                    "SELECT * FROM plugin_registry
+                     WHERE (string::lowercase(name) CONTAINS $q
+                         OR string::lowercase(description) CONTAINS $q
+                         OR string::lowercase(plugin_id) CONTAINS $q)
+                       AND tags CONTAINSANY $tags
                      ORDER BY updated_at DESC LIMIT 25"
                 )
                 .bind(("q", q))
@@ -62,8 +65,10 @@ impl PluginRegistryEntry {
         } else {
             DATABASE
                 .query(
-                    "SELECT * FROM plugin_registry WHERE \
-                     name ~ $q OR description ~ $q OR plugin_id ~ $q OR tools[*].name ~ $q \
+                    "SELECT * FROM plugin_registry
+                     WHERE string::lowercase(name) CONTAINS $q
+                        OR string::lowercase(description) CONTAINS $q
+                        OR string::lowercase(plugin_id) CONTAINS $q
                      ORDER BY updated_at DESC LIMIT 25"
                 )
                 .bind(("q", q))
@@ -73,45 +78,25 @@ impl PluginRegistryEntry {
         Ok(entries)
     }
 
+    /// Get a plugin registry entry by plugin_id (uses plugin_id as record key).
     pub async fn get_by_plugin_id(plugin_id: &str) -> anyhow::Result<Option<Self>> {
-        let entry: Option<Self> = DATABASE
-            .query("SELECT * FROM plugin_registry WHERE plugin_id == $pid LIMIT 1")
-            .bind(("pid", plugin_id.to_string()))
-            .await?
-            .take(0)?;
+        let rid = RecordId::new(super::PLUGIN_REGISTRY_TABLE, plugin_id);
+        let entry: Option<Self> = DATABASE.select(rid).await?;
         Ok(entry)
     }
 
+    /// Upsert a plugin registry entry — uses plugin_id as the record key so duplicates
+    /// are impossible and lookups are O(1).
     pub async fn upsert(entry: &Self) -> anyhow::Result<()> {
-        DATABASE
-            .query(
-                "IF (SELECT id FROM plugin_registry WHERE plugin_id == $pid) != NONE THEN \
-                   UPDATE plugin_registry SET \
-                     name = $name, description = $desc, version = $ver, author = $author, \
-                     tools = $tools, tags = $tags, wasm_bucket_path = $wasm_path, \
-                     source_code = $source, updated_at = time::now() \
-                   WHERE plugin_id == $pid \
-                 ELSE \
-                   CREATE plugin_registry SET \
-                     plugin_id = $pid, name = $name, description = $desc, version = $ver, \
-                     author = $author, tools = $tools, tags = $tags, \
-                     wasm_bucket_path = $wasm_path, source_code = $source, \
-                     created_at = time::now(), updated_at = time::now() \
-                 END"
-            )
-            .bind(("pid", entry.plugin_id.clone()))
-            .bind(("name", entry.name.clone()))
-            .bind(("desc", entry.description.clone()))
-            .bind(("ver", entry.version.clone()))
-            .bind(("author", entry.author.clone()))
-            .bind(("tools", entry.tools.clone()))
-            .bind(("tags", entry.tags.clone()))
-            .bind(("wasm_path", entry.wasm_bucket_path.clone()))
-            .bind(("source", entry.source_code.clone()))
-            .await?;
+        let rid = RecordId::new(super::PLUGIN_REGISTRY_TABLE, entry.plugin_id.clone());
+        let mut e = entry.clone();
+        e.id = rid.clone();
+        e.updated_at = chrono::Utc::now().into();
+        let _: Option<Self> = DATABASE.upsert(rid).content(e).await?;
         Ok(())
     }
 
+    /// List all plugins in the registry.
     pub async fn list_all() -> anyhow::Result<Vec<Self>> {
         let entries: Vec<Self> = DATABASE
             .query("SELECT * FROM plugin_registry ORDER BY updated_at DESC LIMIT 50")

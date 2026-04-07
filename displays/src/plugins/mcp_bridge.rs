@@ -1797,11 +1797,15 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<SearchCustomersParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let q = format!("%{}%", p.query);
+        let q = p.query.to_lowercase();
         let customers: Vec<serde_json::Value> = database::DATABASE
             .query(
                 "SELECT * FROM customer WHERE \
-                 name ~ $q OR email ~ $q OR phone_number ~ $q OR phone_number_2 ~ $q OR cust_code ~ $q \
+                 string::lowercase(name) CONTAINS $q \
+                 OR string::lowercase(email) CONTAINS $q \
+                 OR phone_number CONTAINS $q \
+                 OR phone_number_2 CONTAINS $q \
+                 OR cust_code CONTAINS $q \
                  LIMIT 25"
             )
             .bind(("q", q))
@@ -1823,18 +1827,19 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<GetCustomerDetailsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let cid = if p.customer_id.contains(':') {
-            p.customer_id.clone()
+        let key = if p.customer_id.contains(':') {
+            p.customer_id.split(':').last().unwrap_or(&p.customer_id).to_string()
         } else {
-            format!("customer:{}", p.customer_id)
+            p.customer_id.clone()
         };
+        let rid = database::schema::RecordId::new("customer", key);
         let result: Option<serde_json::Value> = database::DATABASE
             .query(
                 "SELECT *, \
-                   (SELECT * FROM service_order WHERE customer == $cid FETCH computer) AS services \
-                 FROM type::thing($cid)"
+                   (SELECT * FROM service_order WHERE customer == $rid FETCH computer) AS services \
+                 FROM $rid"
             )
-            .bind(("cid", cid))
+            .bind(("rid", rid))
             .await
             .map_err(to_internal)?
             .take(0)
@@ -1884,9 +1889,12 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<SearchServiceOrdersParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let q = format!("%{}%", p.query);
+        let q = p.query.to_lowercase();
         let mut conditions = vec![
-            "(service_number ~ $q OR checkin_notes ~ $q OR salesman ~ $q OR doc_alias ~ $q)".to_string()
+            "(string::lowercase(service_number) CONTAINS $q \
+             OR string::lowercase(checkin_notes ?? '') CONTAINS $q \
+             OR string::lowercase(salesman ?? '') CONTAINS $q \
+             OR string::lowercase(doc_alias ?? '') CONTAINS $q)".to_string()
         ];
         if p.tech.is_some() {
             conditions.push("tech == $tech".to_string());
@@ -1917,14 +1925,15 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<GetComputerDetailsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let cid = if p.computer_id.contains(':') {
-            p.computer_id.clone()
+        let key = if p.computer_id.contains(':') {
+            p.computer_id.split(':').last().unwrap_or(&p.computer_id).to_string()
         } else {
-            format!("computer:{}", p.computer_id)
+            p.computer_id.clone()
         };
+        let rid = database::schema::RecordId::new("computer", key);
         let result: Option<serde_json::Value> = database::DATABASE
-            .query("SELECT * FROM type::thing($cid)")
-            .bind(("cid", cid))
+            .query("SELECT * FROM $rid")
+            .bind(("rid", rid))
             .await
             .map_err(to_internal)?
             .take(0)
