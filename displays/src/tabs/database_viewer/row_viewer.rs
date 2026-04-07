@@ -1,6 +1,6 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
-use database::schema::{random_record_id, ComputerData, CustomerData, LiveTaskPayload, RecordIdExt, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
+use database::schema::{random_record_id, ComputerData, CustomerData, DiagnosticEntry, DiagnosticSession, LiveTaskPayload, PluginRegistryEntry, RecordIdExt, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
 use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};
@@ -25,8 +25,10 @@ pub enum DatabaseTable {
     Service(TicketPayload),
     Customer(CustomerData),
     Computer(ComputerData),
-    // TaskNote(TaskNotePayload),
-    User(User)
+    User(User),
+    DiagSession(DiagnosticSession),
+    DiagEntry(DiagnosticEntry),
+    PluginReg(PluginRegistryEntry),
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Clone, Default)]
@@ -37,6 +39,9 @@ pub enum DatabaseTableSelection {
     Customer,
     Computer,
     User,
+    DiagSession,
+    DiagEntry,
+    PluginReg,
 }
 
 impl DatabaseTableSelection {
@@ -47,7 +52,9 @@ impl DatabaseTableSelection {
             Self::Computer => "Computer",
             Self::Service => "Service",
             Self::Customer => "Customer",
-            // Self::TaskNote => "Note",
+            Self::DiagSession => "Diag Session",
+            Self::DiagEntry => "Diag Entry",
+            Self::PluginReg => "Plugin Registry",
         }
     }
 }
@@ -65,8 +72,10 @@ impl DatabaseTable {
             Self::Customer(_) => "Customer",
             Self::Service(_) => "Service",
             Self::Computer(_) => "Computer",
-            // Self::TaskNote(_) => "Task Note",
-            Self::User(_) => "User"
+            Self::User(_) => "User",
+            Self::DiagSession(_) => "Diag Session",
+            Self::DiagEntry(_) => "Diag Entry",
+            Self::PluginReg(_) => "Plugin Registry",
         }
     }
 }
@@ -100,6 +109,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::Service(_) => 8,
             DatabaseTable::Customer(_) => 4,
             DatabaseTable::Computer(_) => 11,
+            DatabaseTable::DiagSession(_) => 10,
+            DatabaseTable::DiagEntry(_) => 8,
+            DatabaseTable::PluginReg(_) => 9,
         }
     }
 
@@ -110,7 +122,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::Customer(_) => ["ID", "Name", "Phone #", "Email"][column].into(),
             DatabaseTable::Service(_) => ["ID", "SO#", "Tech", "Salesman", "Check-In Rep", "Customer", "Computer", "Check-In Note"][column].into(),
             DatabaseTable::Computer(_) => ["ID", "Hostname", "MFG", "Model", "Name", "S/N", "CPU", "GPU", "RAM", "OS", "Customer"][column].into(),
-            // DatabaseTable::TaskNote(_) => ["ID", "name", "username", "email", "store", "id_prestashop", "id_store", "authorization"][column].into(),
+            DatabaseTable::DiagSession(_) => ["ID", "Hostname", "Connection", "Customer", "Tech", "Status", "Started", "Ended", "Summary", "Tags"][column].into(),
+            DatabaseTable::DiagEntry(_) => ["ID", "Session", "Timestamp", "Category", "Title", "Detail", "Data", "Plugins Used"][column].into(),
+            DatabaseTable::PluginReg(_) => ["ID", "Plugin ID", "Name", "Version", "Author", "Tools", "Tags", "Description", "Updated"][column].into(),
         }
     }
 
@@ -121,6 +135,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::Customer(_) => [false, true, true, true][column],
             DatabaseTable::Service(_) => [false, true, true, true, true, true, true, true][column],
             DatabaseTable::Computer(_) => [false, true, true, true, true, true, true, true, true, true, true][column],
+            DatabaseTable::DiagSession(_) => [false, true, true, true, true, true, true, true, true, false][column],
+            DatabaseTable::DiagEntry(_) => [false, true, true, true, true, false, false, false][column],
+            DatabaseTable::PluginReg(_) => [false, true, true, true, true, false, false, false, true][column],
         }
     }
 
@@ -156,6 +173,23 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                 || computer_data.device_name.clone().unwrap_or_default().contains(&self.filter)
                 || computer_data.device_model.clone().unwrap_or_default().contains(&self.filter)
                 || computer_data.hostname.contains(&self.filter),
+            DatabaseTable::DiagSession(s) =>
+                s.hostname.contains(&self.filter)
+                || s.connection_string.contains(&self.filter)
+                || s.customer_name.clone().unwrap_or_default().contains(&self.filter)
+                || s.status.contains(&self.filter)
+                || s.summary.clone().unwrap_or_default().contains(&self.filter)
+                || s.tech.clone().unwrap_or_default().contains(&self.filter),
+            DatabaseTable::DiagEntry(e) =>
+                e.category.contains(&self.filter)
+                || e.title.contains(&self.filter)
+                || e.detail.contains(&self.filter),
+            DatabaseTable::PluginReg(p) =>
+                p.plugin_id.contains(&self.filter)
+                || p.name.contains(&self.filter)
+                || p.description.contains(&self.filter)
+                || p.version.contains(&self.filter)
+                || p.author.clone().unwrap_or_default().contains(&self.filter),
         }
     }
 
@@ -298,8 +332,87 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     _ => ui.label(""),
                 };
             },
+            DatabaseTable::DiagSession(s) => {
+                let _ = match column {
+                    0 => ui.label(format!(" {}", s.id.key_string())),
+                    1 => ui.label(RichText::new(&s.hostname).underline()),
+                    2 => ui.label(&s.connection_string),
+                    3 => ui.label(s.customer_name.as_deref().unwrap_or("")),
+                    4 => ui.label(s.tech.as_deref().unwrap_or("")),
+                    5 => {
+                        let color = match s.status.as_str() {
+                            "open" => Color32::from_rgb(42, 195, 222),
+                            "closed" => Color32::from_rgb(100, 200, 100),
+                            _ => Color32::GRAY,
+                        };
+                        ui.colored_label(color, &s.status)
+                    },
+                    6 => ui.label(s.started_at.to_string()),
+                    7 => ui.label(s.ended_at.as_ref().map(|d| d.to_string()).unwrap_or_default()),
+                    8 => {
+                        let summary = s.summary.as_deref().unwrap_or("");
+                        let display = if summary.len() > 120 { &summary[..120] } else { summary };
+                        ui.label(display)
+                    },
+                    9 => ui.label(s.tags.join(", ")),
+                    _ => ui.label(""),
+                };
+            },
+            DatabaseTable::DiagEntry(e) => {
+                let _ = match column {
+                    0 => ui.label(format!(" {}", e.id.key_string())),
+                    1 => ui.label(e.session_ref.key_string()),
+                    2 => ui.label(e.timestamp.to_string()),
+                    3 => {
+                        let color = match e.category.as_str() {
+                            "finding" => Color32::from_rgb(255, 200, 50),
+                            "action" => Color32::from_rgb(42, 195, 222),
+                            "resolution" => Color32::from_rgb(100, 200, 100),
+                            "error" => Color32::from_rgb(255, 80, 80),
+                            _ => Color32::GRAY,
+                        };
+                        ui.colored_label(color, &e.category)
+                    },
+                    4 => ui.label(&e.title),
+                    5 => {
+                        let display = if e.detail.len() > 120 { &e.detail[..120] } else { &e.detail };
+                        ui.label(display)
+                    },
+                    6 => {
+                        let data_str = e.data.as_ref().map(|d| d.to_string()).unwrap_or_default();
+                        let display = if data_str.len() > 80 { format!("{}...", &data_str[..80]) } else { data_str };
+                        ui.label(display)
+                    },
+                    7 => {
+                        let plugins: Vec<String> = e.plugins_used.iter()
+                            .map(|p| format!("{}:{}", p.plugin_id, p.tool_name))
+                            .collect();
+                        ui.label(plugins.join(", "))
+                    },
+                    _ => ui.label(""),
+                };
+            },
+            DatabaseTable::PluginReg(p) => {
+                let _ = match column {
+                    0 => ui.label(format!(" {}", p.id.key_string())),
+                    1 => ui.label(RichText::new(&p.plugin_id).underline()),
+                    2 => ui.label(&p.name),
+                    3 => ui.label(&p.version),
+                    4 => ui.label(p.author.as_deref().unwrap_or("")),
+                    5 => {
+                        let tools: Vec<&str> = p.tools.iter().map(|t| t.name.as_str()).collect();
+                        ui.label(tools.join(", "))
+                    },
+                    6 => ui.label(p.tags.join(", ")),
+                    7 => {
+                        let display = if p.description.len() > 120 { &p.description[..120] } else { &p.description };
+                        ui.label(display)
+                    },
+                    8 => ui.label(p.updated_at.to_string()),
+                    _ => ui.label(""),
+                };
+            },
         };
-        // ui.add_space(5.);
     }
 
     fn column_render_config(&mut self, column: usize, _is_last_visible_column: bool) -> Column {
@@ -370,6 +483,48 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     _ => col_config,
                 }
             },
+            DatabaseTable::DiagSession(_) => {
+                match column {
+                    0 => col_config.resizable(true).at_least(180.).at_most(200.),
+                    1 => col_config.resizable(true).at_least(130.).at_most(180.),
+                    2 => col_config.resizable(true).at_least(150.).at_most(220.),
+                    3 => col_config.resizable(true).at_least(120.).at_most(160.),
+                    4 => col_config.resizable(true).at_least(80.).at_most(100.),
+                    5 => col_config.resizable(true).at_least(60.).at_most(80.),
+                    6 => col_config.resizable(true).at_least(160.).at_most(180.),
+                    7 => col_config.resizable(true).at_least(160.).at_most(180.),
+                    8 => col_config.resizable(true).at_least(250.),
+                    9 => col_config.resizable(true).at_least(120.).at_most(200.),
+                    _ => col_config,
+                }
+            },
+            DatabaseTable::DiagEntry(_) => {
+                match column {
+                    0 => col_config.resizable(true).at_least(180.).at_most(200.),
+                    1 => col_config.resizable(true).at_least(180.).at_most(200.),
+                    2 => col_config.resizable(true).at_least(160.).at_most(180.),
+                    3 => col_config.resizable(true).at_least(80.).at_most(100.),
+                    4 => col_config.resizable(true).at_least(160.).at_most(220.),
+                    5 => col_config.resizable(true).at_least(250.),
+                    6 => col_config.resizable(true).at_least(150.).at_most(200.),
+                    7 => col_config.resizable(true).at_least(150.).at_most(200.),
+                    _ => col_config,
+                }
+            },
+            DatabaseTable::PluginReg(_) => {
+                match column {
+                    0 => col_config.resizable(true).at_least(200.).at_most(220.),
+                    1 => col_config.resizable(true).at_least(180.).at_most(220.),
+                    2 => col_config.resizable(true).at_least(140.).at_most(180.),
+                    3 => col_config.resizable(true).at_least(60.).at_most(80.),
+                    4 => col_config.resizable(true).at_least(80.).at_most(120.),
+                    5 => col_config.resizable(true).at_least(200.).at_most(300.),
+                    6 => col_config.resizable(true).at_least(120.).at_most(200.),
+                    7 => col_config.resizable(true).at_least(250.),
+                    8 => col_config.resizable(true).at_least(160.).at_most(180.),
+                    _ => col_config,
+                }
+            },
         }
     }
     
@@ -411,6 +566,9 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
             DatabaseTable::Customer(_customer) => None,
             DatabaseTable::Computer(_computer) => None,
             DatabaseTable::Service(_ticket) => None,
+            DatabaseTable::DiagSession(_) => None,
+            DatabaseTable::DiagEntry(_) => None,
+            DatabaseTable::PluginReg(_) => None,
         };
         // ui.shrink_height_to_current();
         // ui.shrink_width_to_current();
@@ -522,6 +680,38 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     9 => computer_l.operating_system.cmp(&computer_r.operating_system),
                     10 => computer_l.customer.key_string().cmp(&computer_r.customer.key_string()),
                     _ => Ordering::Equal, // Default for invalid columns
+                }
+            },
+            (DatabaseTable::DiagSession(l), DatabaseTable::DiagSession(r)) => {
+                match column {
+                    1 => l.hostname.cmp(&r.hostname),
+                    2 => l.connection_string.cmp(&r.connection_string),
+                    3 => l.customer_name.cmp(&r.customer_name),
+                    4 => l.tech.cmp(&r.tech),
+                    5 => l.status.cmp(&r.status),
+                    6 => l.started_at.to_string().cmp(&r.started_at.to_string()),
+                    7 => l.ended_at.as_ref().map(|d| d.to_string()).cmp(&r.ended_at.as_ref().map(|d| d.to_string())),
+                    8 => l.summary.cmp(&r.summary),
+                    _ => Ordering::Equal,
+                }
+            },
+            (DatabaseTable::DiagEntry(l), DatabaseTable::DiagEntry(r)) => {
+                match column {
+                    1 => l.session_ref.key_string().cmp(&r.session_ref.key_string()),
+                    2 => l.timestamp.to_string().cmp(&r.timestamp.to_string()),
+                    3 => l.category.cmp(&r.category),
+                    4 => l.title.cmp(&r.title),
+                    _ => Ordering::Equal,
+                }
+            },
+            (DatabaseTable::PluginReg(l), DatabaseTable::PluginReg(r)) => {
+                match column {
+                    1 => l.plugin_id.cmp(&r.plugin_id),
+                    2 => l.name.cmp(&r.name),
+                    3 => l.version.cmp(&r.version),
+                    4 => l.author.cmp(&r.author),
+                    8 => l.updated_at.to_string().cmp(&r.updated_at.to_string()),
+                    _ => Ordering::Equal,
                 }
             },
             (_, _) => Ordering::Equal

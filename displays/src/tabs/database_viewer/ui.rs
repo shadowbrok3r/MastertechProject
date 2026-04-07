@@ -49,16 +49,22 @@ impl DatabaseEditor {
                             DatabaseTableSelection::User, 
                             "Users"
                         );
-                        // ui.selectable_value(
-                        //     &mut selected,
-                        //     DatabaseTable::TaskNote,
-                        //     "Task Notes",
-                        // );
-                        // ui.selectable_value(
-                        //     &mut selected,
-                        //     DatabaseTable::ConnectedClient,
-                        //     "Connected Clients",
-                        // );
+                        ui.separator();
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::DiagSession,
+                            "Diagnostic Sessions",
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::DiagEntry,
+                            "Diagnostic Entries",
+                        );
+                        ui.selectable_value(
+                            selected,
+                            DatabaseTableSelection::PluginReg,
+                            "Plugin Registry",
+                        );
                     });
 
                 if current_selection != *selected {

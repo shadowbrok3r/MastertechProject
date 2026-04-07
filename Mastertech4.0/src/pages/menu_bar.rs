@@ -53,6 +53,7 @@ impl MasterTechApp {
                             &"File Browser 📂".to_string(),
                             &"SysInfo".to_string(),
                             &"Minidump Analysis".to_string(),
+                            &"Database".to_string(),
                             &"Ai".to_string(),
                             &"Resource Monitor".to_string(),
                             &"My Tasks".to_string(),
