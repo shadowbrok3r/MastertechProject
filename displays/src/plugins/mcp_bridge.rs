@@ -1695,7 +1695,7 @@ impl PluginToolProvider {
         Parameters(p): Parameters<LogDiagnosticEntryParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let entry = database::schema::DiagnosticEntry {
-            session: database::schema::RecordId::new(
+            session_ref: database::schema::RecordId::new(
                 database::schema::DIAGNOSTIC_SESSION_TABLE,
                 p.session_id.clone(),
             ),
