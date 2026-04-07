@@ -46,7 +46,7 @@ impl Default for DiagnosticSession {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct DiagnosticEntry {
     pub id: RecordId,
-    pub session: RecordId,
+    pub session_ref: RecordId,
     pub timestamp: Datetime,
     pub category: String,
     pub title: String,
@@ -59,7 +59,7 @@ impl Default for DiagnosticEntry {
     fn default() -> Self {
         Self {
             id: super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE),
-            session: super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE),
+            session_ref: super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE),
             timestamp: chrono::Utc::now().into(),
             category: "note".to_string(),
             title: String::new(),
@@ -129,7 +129,7 @@ impl DiagnosticSession {
         let Some(session) = session else { return Ok(None) };
 
         let entries: Vec<DiagnosticEntry> = DATABASE
-            .query("SELECT * FROM diagnostic_entry WHERE session == $sid ORDER BY timestamp ASC")
+            .query("SELECT * FROM diagnostic_entry WHERE session_ref == $sid ORDER BY timestamp ASC")
             .bind(("sid", sid))
             .await?
             .take(0)?;
@@ -178,12 +178,12 @@ impl DiagnosticEntry {
     pub async fn create(entry: &Self) -> anyhow::Result<RecordId> {
         let created: Option<Self> = DATABASE
             .query(
-                "CREATE diagnostic_entry SET \
-                 session = $session, timestamp = time::now(), \
-                 category = $cat, title = $title, detail = $detail, \
+                "CREATE diagnostic_entry SET
+                 session_ref = $sess_ref, timestamp = time::now(),
+                 category = $cat, title = $title, detail = $detail,
                  data = $data, plugins_used = $plugins"
             )
-            .bind(("session", entry.session.clone()))
+            .bind(("sess_ref", entry.session_ref.clone()))
             .bind(("cat", entry.category.clone()))
             .bind(("title", entry.title.clone()))
             .bind(("detail", entry.detail.clone()))
