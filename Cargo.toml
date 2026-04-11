@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0" ]
+members = [ "database" , "displays", "MtechServer2.0" ]
 
 [workspace.dependencies]
 database = { path = "database" }
