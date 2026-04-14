@@ -1,4 +1,4 @@
-use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
+use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
 use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
 use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
 use std::{path::Path, time::{Duration, Instant}};
@@ -134,7 +134,15 @@ impl TerminalWebsocketClient {
     ) 
         -> anyhow::Result<()> 
     {
-        let connection_url = format!("{}&room_id={}", if cfg!(debug_assertions) {WS_CLIENT_URL_LOCAL} else {WS_CLIENT_URL}, self.client.connection_string);
+        let connection_url = websocket_url_with_room(
+            if cfg!(debug_assertions) {
+                WS_CLIENT_URL_LOCAL
+            } else {
+                WS_CLIENT_URL
+            },
+            &self.client.connection_string,
+            "client",
+        );
 
         // After a drop (e.g. network driver during Windows Update), reconnect instead of spinning on a dead sender.
         const RECONNECT_DELAY: Duration = Duration::from_secs(2);

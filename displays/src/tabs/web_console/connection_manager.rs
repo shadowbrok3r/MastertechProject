@@ -7,7 +7,7 @@
 
 use crate::{virtual_filesystem::FileSystem, Cmd};
 use crossbeam::channel::{Receiver, Sender};
-use database::{schema::ConnectedClient, WS_MASTER_URL, WS_MASTER_URL_LOCAL};
+use database::{schema::ConnectedClient, websocket_url_with_room, WS_MASTER_URL, WS_MASTER_URL_LOCAL};
 use eframe::egui::Color32;
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
@@ -123,14 +123,14 @@ impl ConnectionManager {
         self.state = ConnectionState::Connecting;
         self.error = None;
 
-        let url = format!(
-            "{}&room_id={}",
+        let url = websocket_url_with_room(
             if cfg!(debug_assertions) {
                 WS_MASTER_URL_LOCAL
             } else {
                 WS_MASTER_URL
             },
-            self.client.connection_string
+            &self.client.connection_string,
+            "master",
         );
 
         log::info!("ConnectionManager: Connecting to {}", url);

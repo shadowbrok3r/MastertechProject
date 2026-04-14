@@ -1,6 +1,6 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
 use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
-use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
+use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, Database, WS_CLIENT_URL};
 use database::schema::GetKeysResponse;
 use eframe::egui::{Context, Style};
 use database::schema::RecordId;
@@ -212,12 +212,11 @@ impl MasterTechApp {
 
             self.context.client_title = url_string.clone();
 
-            self.context.url = Some(
-                format!(
-                    "{WS_CLIENT_URL}&room_id={}",
-                    url_string.clone()
-                )
-            );
+            self.context.url = Some(websocket_url_with_room(
+                WS_CLIENT_URL,
+                &url_string,
+                "client",
+            ));
             
             self.context.client_uuid = RecordId::new(
                 CONNECTED_CLIENT_TABLE.to_string(), 
