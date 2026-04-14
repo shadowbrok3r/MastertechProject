@@ -2036,11 +2036,45 @@ After initialize, POST notifications/initialized with the same Mcp-Session-Id be
 === AI Workflow ===
 Before writing a new WASM plugin, ALWAYS call search_plugins first to check if a suitable plugin already exists in the registry. If one exists, use fetch_plugin to download it and plugin_deploy / plugin_deploy_remote to deploy it.
 After compiling a useful plugin, call publish_plugin to store it in the SurrealDB registry for future sessions.
+
+=== Diagnostic Prior-History Lookup (MUST do before diagnosing) ===
+When performing diagnostics on a machine, ALWAYS gather prior history first.
+This reveals repeat-visit patterns, previous fixes that failed, and known issues.
+
+Step 1 — Identify the customer from the computer:
+  SELECT VALUE customer FROM computer WHERE hostname = '<HOSTNAME>'
+  Then: get_customer_details with the returned customer ID.
+
+Step 2 — Pull tasks (tech notes) for this customer's machines:
+  First try by customer link:
+    SELECT * FROM task WHERE service_ticket.customer = customer:`<ID>`
+  If that returns nothing, look up service orders for the customer:
+    search_service_orders with the customer name.
+  Then query tasks by each service number found:
+    SELECT * FROM task WHERE service_number = '<SERVICE_NUMBER>'
+
+Step 3 — Search PrestaShop for purchase/invoice history:
+  search_prestashop_orders with the customer name or email.
+  If PrestaShop returns order references tied to service numbers, pull tasks:
+    SELECT * FROM task WHERE service_number = '<SERVICE_NUMBER>'
+
+Step 4 — Search previous diagnostic sessions:
+  search_diagnostics with the hostname and/or customer name.
+  If results found, get_diagnostic_session for full details + entries.
+
+Step 5 — Read prior findings before starting new diagnosis:
+  Review all returned tasks, diagnostic entries, and order notes.
+  Identify: repeat visits, previously attempted fixes, escalation notes
+  (e.g. "if he comes back we need to replace GPU"), and unresolved items.
+  Factor these into the current diagnosis — do not re-attempt known-failed fixes.
+
+=== Diagnostic Session Workflow ===
 When performing diagnostics:
-  1. Call search_diagnostics to check if this machine/customer has been diagnosed before.
+  1. Complete the Prior-History Lookup above.
   2. Call create_diagnostic_session at the start.
   3. Call log_diagnostic_entry for each finding, action taken, or resolution.
   4. Call close_diagnostic_session with a summary when done.
+
 Use search_customers / get_customer_details / search_service_orders to pull customer context and service history.
 Use get_computer_details to see full hardware info for a machine.
 Use search_prestashop_orders for purchase/invoice lookup and search_odoo_inventory for parts availability.
