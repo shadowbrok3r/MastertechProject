@@ -12,7 +12,7 @@ use futures::{stream::SplitSink, SinkExt, StreamExt};
 use std::{collections::HashMap, sync::Arc};
 use std::net::SocketAddr;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 type SessionID = String;
@@ -691,7 +691,17 @@ async fn websocket_handler(
 ) -> impl IntoResponse {
     let session_id = Uuid::new_v4().to_string();
     let room_id = params.get("room_id").cloned().unwrap_or_default();
-    let role = params.get("role").cloned().unwrap_or_else(|| "client".to_string());
+    let role = if let Some(r) = params.get("role").cloned() {
+        r
+    } else {
+        warn!(
+            room_id = %room_id,
+            session_id = %session_id,
+            "WebSocket connected without role= query param; defaulting to client. \
+             Admin consoles must use role=master or they replace the real remote client in the room."
+        );
+        "client".to_string()
+    };
 
     info!("Client connected. Role: {:?}, Room: {:?}, Session: {:?}", role, room_id, session_id);
     let res = connect_client(room_id.clone()).await;

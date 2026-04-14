@@ -112,6 +112,7 @@ pub struct MastertechContext {
     pub ws_auto_connected: bool,
     pub egui_frame_rx: Option<Receiver<displays::plugins::EguiFrameMessage>>,
     pub egui_input_tx: Option<Sender<displays::plugins::EguiInputEvent>>,
+    pub last_reconnect_attempt: Option<std::time::Instant>,
 }
 
 /// State machine for TUR submission workflow
@@ -166,10 +167,14 @@ impl MasterTechApp {
         let url_string = format!("{}:{}", hostname, client_hash.split_at(9).0);
         let client_uuid = RecordId::new(CONNECTED_CLIENT_TABLE.to_string(), url_string.clone());
         let client_title = url_string.clone();
-        let ws_url = format!(
-            "{}&room_id={}",
-            if cfg!(debug_assertions) { database::WS_CLIENT_URL_LOCAL } else { database::WS_CLIENT_URL },
-            url_string,
+        let ws_url = database::websocket_url_with_room(
+            if cfg!(debug_assertions) {
+                database::WS_CLIENT_URL_LOCAL
+            } else {
+                database::WS_CLIENT_URL
+            },
+            &url_string,
+            "client",
         );
         log::info!("Client ID: {url_string} | WS URL: {ws_url}");
 
@@ -286,6 +291,7 @@ impl MasterTechApp {
             ws_auto_connected: false,
             egui_frame_rx: None,
             egui_input_tx: None,
+            last_reconnect_attempt: None,
         };
         
         let context = mastertech_context;

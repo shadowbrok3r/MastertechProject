@@ -37,6 +37,20 @@ pub const WS_CLIENT_URL_LOCAL: &str = env!("WS_CLIENT_URL_LOCAL");
 pub const WS_MASTER_URL_LOCAL: &str = env!("WS_MASTER_URL_LOCAL");
 pub const WS_CLIENT_URL: &str = env!("WS_CLIENT_URL");
 pub const WS_MASTER_URL: &str = env!("WS_MASTER_URL");
+
+/// Build a WebSocket URL with `room_id` and `role` query parameters.
+///
+/// The websocket server defaults missing `role` to **`client`**. If the admin console
+/// connects without `role=master`, it is treated as a second client and **replaces** the
+/// real remote client in the room — use `role` `"master"` for all admin URLs and `"client"`
+/// for remote Mastertech clients.
+#[must_use]
+pub fn websocket_url_with_room(base_url: &str, room_id: &str, role: &str) -> String {
+    let base = base_url.trim_end_matches(['&', '?']).trim_end();
+    let join = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{join}room_id={room_id}&role={role}")
+}
+
 pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
 pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");

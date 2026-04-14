@@ -63,11 +63,16 @@ impl MastertechContext{
             CentralPanel::default().show_inside(ui, |ui| {
                 if let Some(ref mut frontend) = self.frontend {
                     let connected = frontend.initialize_websocket(ui);
-                    if !connected{ 
-                        if let Some(url) = &self.url{
-                            // std::thread::sleep(Duration::from_secs(10));
-                            info!("websockets -> Trying to reconnect");
-                            self.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.client_uuid.clone());
+                    if !connected {
+                        let should_reconnect = self.last_reconnect_attempt
+                            .map(|t| t.elapsed() >= Duration::from_secs(5))
+                            .unwrap_or(true);
+                        if should_reconnect {
+                            if let Some(url) = &self.url {
+                                info!("websockets -> Trying to reconnect");
+                                self.last_reconnect_attempt = Some(Instant::now());
+                                self.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.client_uuid.clone());
+                            }
                         }
                     }
                 }
@@ -133,13 +138,11 @@ impl MastertechContext{
                 info!("websockets -> Connected to websocket server");
                 ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
                 
-                if self.frontend.is_none() {
-                    self.frontend = Some(WebConsoleFrontend::new(
-                        ws_sender,
-                        ws_receiver,
-                        self.egui_input_tx.clone(),
-                    ));
-                }
+                self.frontend = Some(WebConsoleFrontend::new(
+                    ws_sender,
+                    ws_receiver,
+                    self.egui_input_tx.clone(),
+                ));
 
                 spawn(async move {
                     let _update_client = DATABASE.query("UPDATE $client SET connected = true, last_update = time::now()")

@@ -1,7 +1,9 @@
 use super::{client_interface::tabs::command_shell::History, AdminConsole};
-use database::{schema::{Record, RecordIdExt, CONNECTED_CLIENT_TABLE}, DATABASE, WS_MASTER_URL_LOCAL};
+use database::{
+    schema::{ConnectedClient, Record, RecordIdExt, CONNECTED_CLIENT_TABLE},
+    websocket_url_with_room, DATABASE, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
+};
 use crate::tabs::admin_console::client_interface::WebSocketClient;
-use database::{WS_MASTER_URL, schema::ConnectedClient};
 use crate::{PlatformSpawner, Spawner};
 
 pub enum ClientUiAction {
@@ -60,10 +62,14 @@ impl AdminConsole {
                 // Now connect to the new client as docked
                 self.undock_client.insert(client.connection_string.clone(), false);
                 
-                let url = format!(
-                    "{}&room_id={}",
-                    if cfg!(debug_assertions) {WS_MASTER_URL_LOCAL} else {WS_MASTER_URL},
-                    client.connection_string.clone()
+                let url = websocket_url_with_room(
+                    if cfg!(debug_assertions) {
+                        WS_MASTER_URL_LOCAL
+                    } else {
+                        WS_MASTER_URL
+                    },
+                    &client.connection_string,
+                    "master",
                 );
                 match ewebsock::connect(&url, Default::default()) {
                     Ok((ws_sender, ws_receiver)) => {

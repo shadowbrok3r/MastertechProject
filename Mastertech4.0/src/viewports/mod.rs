@@ -43,13 +43,17 @@ impl MasterTechApp{
             {
                 CentralPanel::default().show(ctx, |ui| {
                     if let Some(ref mut frontend) = self.context.frontend {
-                        // Lock the Mutex and show the GUI
                         let connected = frontend.initialize_websocket(ui);
-                        if !connected{ 
-                            if let Some(url) = &self.context.url{
-                                std::thread::sleep(Duration::from_secs(10));
-                                info!("Trying to reconnect");
-                                self.context.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.context.client_uuid.clone());
+                        if !connected {
+                            let should_reconnect = self.context.last_reconnect_attempt
+                                .map(|t| t.elapsed() >= Duration::from_secs(5))
+                                .unwrap_or(true);
+                            if should_reconnect {
+                                if let Some(url) = &self.context.url {
+                                    info!("Trying to reconnect");
+                                    self.context.last_reconnect_attempt = Some(std::time::Instant::now());
+                                    self.context.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.context.client_uuid.clone());
+                                }
                             }
                         }
                     }
