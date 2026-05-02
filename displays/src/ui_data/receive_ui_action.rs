@@ -12,6 +12,8 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
+                    // Mark notes as read for this task when modal is opened
+                    self.last_read_notes.insert(task.id.clone(), chrono::Utc::now());
                     let task_modal = TaskModal::new(
                         ChatView::new(
                             // task.task_note.clone(),
@@ -34,6 +36,8 @@ impl SharedContext {
                 }
                 TaskUiActions::OpenChatModal((task_id, notes, service_number)) => {
                     info!("receive_ui_action -> Got Chat action: {:?}", task_id);
+                    // Mark notes as read for this task
+                    self.last_read_notes.insert(task_id.clone(), chrono::Utc::now());
                     // Construct chat view, seed with any provided notes, and kick off a refresh
                     let mut chat_modal = ChatView::new(
                         self.store_users.clone(),

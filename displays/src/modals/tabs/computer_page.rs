@@ -20,7 +20,7 @@ pub fn display_computer_page(
     computer: Option<&mut ComputerData>,
     avail_size: Vec2
 ) {
-    display_computer_page_with_search(ui, service_ticket, computer, avail_size, None);
+    display_computer_page_with_search(ui, service_ticket, computer, avail_size, None, None);
 }
 
 pub fn display_computer_page_with_search(
@@ -29,6 +29,7 @@ pub fn display_computer_page_with_search(
     computer: Option<&mut ComputerData>,
     avail_size: Vec2,
     search_data: Option<ComputerSearchData>,
+    service_history_open: Option<&mut bool>,
 ) {
     let ticket = if let Some(ticket) = service_ticket {
         ticket
@@ -126,7 +127,16 @@ pub fn display_computer_page_with_search(
                 .with_row_color(|num, style| return_colors(num, style))
                 .show(ui, |ui| {
                     ui.colored_label(Color32::LIGHT_RED, "ID");
-                    ui.label(computer.id.key_string());
+                    if let Some(sho) = service_history_open.as_deref_mut() {
+                        if ui.button(
+                            RichText::new(computer.id.key_string())
+                                .color(Color32::LIGHT_BLUE)
+                        ).on_hover_text("View all services for this computer").clicked() {
+                            *sho = true;
+                        }
+                    } else {
+                        ui.label(computer.id.key_string());
+                    }
                     ui.end_row();
                     
                     ui.colored_label(Color32::LIGHT_RED, "Linked Customer");

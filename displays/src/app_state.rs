@@ -253,6 +253,8 @@ pub struct SharedContext {
     /// Tab name to activate after DockArea draws to avoid mutating a stale DockState
     #[serde(skip)]
     pub pending_activate_tab: Option<String>,
+    /// Tracks when task notes were last read by the current user (task_id -> last_read_at)
+    pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
 }
 
 impl SharedContext {
@@ -383,6 +385,7 @@ impl SharedContext {
             pending_tab_adds: Vec::new(),
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,
+            last_read_notes: HashMap::new(),
         }
     }
 
