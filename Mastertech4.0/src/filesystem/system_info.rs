@@ -112,20 +112,57 @@ impl ComputerInfo for ComputerData {
             // Using Powershell instead using Get-CimInstance because wmic is deprecated in favor
             // of it
             let process = tokio::process::Command::new("powershell")
-                .args(["-C", "(Get-CimInstance Win32_VideoController).Name.Trim()"])
+                .args(["-NoProfile", "-NonInteractive", "-Command",
+                    "$gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name }; if ($gpus) { ($gpus | Select-Object -First 1).Name.Trim() }"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .await;
 
-            info!("Filesystem -> get_computer_data -> Process: {process:?}");
+            info!("Filesystem -> get_computer_data -> GPU process result: {process:?}");
 
+            let mut gpu_name = String::new();
             if let Ok(out) = process {
-                info!("Filesystem -> get_computer_data -> out: {out:?}");
-                let gpu = String::from_utf8(out.stdout).unwrap_or(String::new());
-                info!("Filesystem -> get_computer_data -> GPU: {gpu:?}");
-                self.gpu = gpu.clone().trim().to_string();
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                info!("Filesystem -> get_computer_data -> GPU raw output: {:?}", raw);
+                if !raw.is_empty() {
+                    gpu_name = raw;
+                } else {
+                    // Fallback: try Win32_DisplayConfiguration
+                    info!("Filesystem -> get_computer_data -> GPU empty, trying fallback");
+                    if let Ok(fallback_out) = tokio::process::Command::new("powershell")
+                        .args(["-NoProfile", "-NonInteractive", "-Command",
+                            "Get-CimInstance Win32_DisplayConfiguration -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty DeviceName"])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output()
+                        .await
+                    {
+                        let fallback = String::from_utf8_lossy(&fallback_out.stdout).trim().to_string();
+                        if !fallback.is_empty() {
+                            gpu_name = fallback;
+                        }
+                    }
+                }
+            } else {
+                info!("Filesystem -> get_computer_data -> GPU PowerShell command failed, trying wmic fallback");
+                if let Ok(fallback_out) = tokio::process::Command::new("wmic")
+                    .args(["path", "win32_videocontroller", "get", "name", "/value"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .await
+                {
+                    let raw = String::from_utf8_lossy(&fallback_out.stdout);
+                    if let Some(name_line) = raw.lines().find(|l| l.trim_start().starts_with("Name=")) {
+                        gpu_name = name_line.trim_start_matches("Name=").trim().to_string();
+                    }
+                }
             }
 
+            if !gpu_name.is_empty() {
+                info!("Filesystem -> get_computer_data -> GPU: {:?}", gpu_name);
+                self.gpu = gpu_name;
+            } else {
+                info!("Filesystem -> get_computer_data -> GPU: could not determine (all methods failed)");
+            }
         }
 
         #[cfg(target_os = "linux")]
