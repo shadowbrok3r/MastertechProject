@@ -38,6 +38,8 @@ impl <'a> ScriptsTab <'a> {
             "Align Taskbar to left" => self.align_taskbar_left(item_text, category),
             "Check Updates" => self.check_updates(item_text, category),
             "Install Windows Updates" => self.install_windows_updates(item_text, category),
+            "Change Timezone to Mountain" => self.change_timezone_to_mountain(item_text, category),
+            "Disable BitLocker" => self.disable_bitlocker(item_text, category),
             _ => {
                 self.log_message(&format!("Unknown Tuneup script: {}", item_text));
             }
@@ -495,4 +497,64 @@ impl <'a> ScriptsTab <'a> {
         log::warn!("SAS processes still detected after {max_attempts}s of waiting");
     }
 
+    pub fn change_timezone_to_mountain(&mut self, item_text: &str, category: &Category) {
+        use powershell_script::PsScriptBuilder;
+        self.log_message("Setting timezone to Mountain Standard Time...");
+        let ps = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        match ps.run("tzutil /s \"Mountain Standard Time\"") {
+            Ok(_) => {
+                self.log_message("Timezone set to Mountain Standard Time");
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(&format!("Failed to set timezone: {e:?}")),
+        }
+    }
+
+    pub fn disable_bitlocker(&mut self, item_text: &str, category: &Category) {
+        use powershell_script::PsScriptBuilder;
+        self.log_message("Checking BitLocker status...");
+        let ps = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        let check = r#"
+            $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue
+            if ($volumes) {
+                $volumes | ForEach-Object { "$($_.MountPoint): $($_.VolumeStatus) / $($_.ProtectionStatus)" }
+            } else { "No BitLocker volumes found" }
+        "#;
+        if let Ok(out) = ps.run(check) {
+            self.log_message(&format!("BitLocker status:\n{}", out.stdout().unwrap_or_default()));
+        }
+        let disable = r#"
+            $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProtectionStatus -eq 'On' -or $_.VolumeStatus -ne 'FullyDecrypted' }
+            if ($volumes) {
+                foreach ($vol in $volumes) {
+                    Disable-BitLocker -MountPoint $vol.MountPoint -ErrorAction SilentlyContinue | Out-Null
+                    "Disabling BitLocker on $($vol.MountPoint)"
+                }
+            } else { "No BitLocker-protected volumes to disable" }
+        "#;
+        let ps2 = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        match ps2.run(disable) {
+            Ok(out) => {
+                self.log_message(&out.stdout().unwrap_or_default());
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(&format!("Failed to disable BitLocker: {e:?}")),
+        }
+    }
 }

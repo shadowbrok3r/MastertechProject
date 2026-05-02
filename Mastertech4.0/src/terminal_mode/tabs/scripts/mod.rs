@@ -163,6 +163,8 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("Disable Startup Apps", Category::Tuneup),
                     TodoItem::new("Unpin Copilot", Category::Tuneup),
                     TodoItem::new("Align Taskbar to left", Category::Tuneup), // Works
+                    TodoItem::new("Change Timezone to Mountain", Category::Tuneup),
+                    TodoItem::new("Disable BitLocker", Category::Tuneup),
                 ],
             },
         );
@@ -185,6 +187,10 @@ impl<'a> ScriptsTab<'a> {
                     TodoItem::new("Mcaffee Safe", Category::JunkwareRemoval),
                     TodoItem::new("Driver Support", Category::JunkwareRemoval),
                     TodoItem::new("Winzip", Category::JunkwareRemoval),
+                    TodoItem::new("Uninstall Microsoft 365", Category::JunkwareRemoval),
+                    TodoItem::new("Uninstall OneDrive", Category::JunkwareRemoval),
+                    TodoItem::new("Disable OneDrive Startup", Category::JunkwareRemoval),
+                    TodoItem::new("Disable Edge Startup Boost", Category::JunkwareRemoval),
                 ],
             },
         );

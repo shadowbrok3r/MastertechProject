@@ -38,6 +38,10 @@ pub fn tuneup_scripts() -> Vec<ScriptItem> {
             .with_description("Remove Copilot from taskbar"),
         ScriptItem::new("Align Taskbar to left", ScriptCategory::Tuneup)
             .with_description("Align Windows 11 taskbar to the left"),
+        ScriptItem::new("Change Timezone to Mountain", ScriptCategory::Tuneup)
+            .with_description("Set system timezone to Mountain Standard Time"),
+        ScriptItem::new("Disable BitLocker", ScriptCategory::Tuneup)
+            .with_description("Detect and disable BitLocker encryption on all drives"),
     ]
 }
 
@@ -98,6 +102,14 @@ pub fn junkware_scripts() -> Vec<ScriptItem> {
             .with_description("Remove Driver Support utility"),
         ScriptItem::new("Winzip", ScriptCategory::JunkwareRemoval)
             .with_description("Remove Winzip"),
+        ScriptItem::new("Uninstall Microsoft 365", ScriptCategory::JunkwareRemoval)
+            .with_description("Uninstall Microsoft 365 / Office apps"),
+        ScriptItem::new("Uninstall OneDrive", ScriptCategory::JunkwareRemoval)
+            .with_description("Uninstall Microsoft OneDrive"),
+        ScriptItem::new("Disable OneDrive Startup", ScriptCategory::JunkwareRemoval)
+            .with_description("Prevent OneDrive from launching at startup"),
+        ScriptItem::new("Disable Edge Startup Boost", ScriptCategory::JunkwareRemoval)
+            .with_description("Disable Microsoft Edge startup boost and background running"),
     ]
 }
 
