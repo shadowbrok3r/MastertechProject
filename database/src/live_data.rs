@@ -262,6 +262,11 @@ pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std
                         error!("Live query was killed");
                         return Err(anyhow::anyhow!("Live query was killed"));
                     },
+                    surrealdb_types::Action::Error => {
+                        error!("Live query received an error action");
+                        return Err(anyhow::anyhow!("Live query received an error action"));
+                    },
+                    _ => continue,
                 };
                 debug!("Data: {:?}", action);
                 if let Err(e) = tx.try_send((action, data)) {
