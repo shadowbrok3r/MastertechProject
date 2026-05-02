@@ -288,6 +288,26 @@ impl LiveTaskPayload {
         Ok(tasks)
     }
 
+    /// Fetch all tasks linked to a specific customer (via service_ticket.customer)
+    pub async fn get_tasks_by_customer_id(customer_id: &RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let tasks: Vec<Self> = DATABASE
+            .query("SELECT * FROM task WHERE service_ticket.customer = $cust_id ORDER BY due_date DESC LIMIT 50")
+            .bind(("cust_id", customer_id.clone()))
+            .await?
+            .take(0)?;
+        Ok(tasks)
+    }
+
+    /// Fetch all tasks linked to a specific computer (via service_ticket.computer)
+    pub async fn get_tasks_by_computer_id(computer_id: &RecordId) -> anyhow::Result<Vec<Self>, anyhow::Error> {
+        let tasks: Vec<Self> = DATABASE
+            .query("SELECT * FROM task WHERE service_ticket.computer = $comp_id ORDER BY due_date DESC LIMIT 50")
+            .bind(("comp_id", computer_id.clone()))
+            .await?
+            .take(0)?;
+        Ok(tasks)
+    }
+
     pub async fn create_task_payload(
         mut task_data: Self,
         ticket_data: TicketData,

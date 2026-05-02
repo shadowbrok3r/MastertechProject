@@ -13,7 +13,8 @@ impl Displayable for LiveTaskPayload {
         user: &User, 
         store_users: &Vec<User>, 
         notes: Vec<TaskNotePayload>, 
-        tx: Sender<TaskUiActions>
+        tx: Sender<TaskUiActions>,
+        last_read: Option<chrono::DateTime<chrono::Utc>>,
     ) {
         let style = ui.style().clone();
         
@@ -45,8 +46,29 @@ impl Displayable for LiveTaskPayload {
                     count = notes.len();
                 }
 
+                // Determine if there are unread notes (notes newer than last_read, not from current user)
+                let has_unread = {
+                    let current_user_id = user.get_id();
+                    notes.iter().any(|note| {
+                        let not_self = note.user != current_user_id;
+                        let created: chrono::DateTime<chrono::Utc> = note.created_at.clone().into();
+                        let unread = match last_read {
+                            Some(lr) => created > lr,
+                            None => true,
+                        };
+                        not_self && unread
+                    })
+                };
+
                 let txt = if count > 0 {
-                    RichText::new(format!("{} 💬", count)).color(style.visuals.warn_fg_color)
+                    let base = RichText::new(format!("{} 💬", count)).color(style.visuals.warn_fg_color);
+                    if has_unread {
+                        RichText::new(format!("{} 💬 ●", count))
+                            .color(Color32::from_rgb(250, 100, 80))
+                            .strong()
+                    } else {
+                        base
+                    }
                 } else {
                     RichText::new("  💬").color(Color32::WHITE)
                 };
