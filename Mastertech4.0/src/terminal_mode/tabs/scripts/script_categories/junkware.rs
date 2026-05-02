@@ -14,6 +14,10 @@ impl <'a> ScriptsTab <'a> {
             "Mcaffee Safe" => self.remove_mcaffeesafe(),
             "Driver Support" => self.remove_driversupport(),
             "Winzip" => self.remove_winzip(),
+            "Uninstall Microsoft 365" => self.uninstall_microsoft365(item_text, category),
+            "Uninstall OneDrive" => self.uninstall_onedrive(item_text, category),
+            "Disable OneDrive Startup" => self.disable_onedrive_startup(item_text, category),
+            "Disable Edge Startup Boost" => self.disable_edge_startup_boost(item_text, category),
             "Run Junkware Category" => {
             //     self.remove_junkware(Some("Webroot TEST"));
             //     self.remove_junkware(Some("SuperAnti TEST"));
@@ -185,4 +189,143 @@ impl <'a> ScriptsTab <'a> {
     pub fn remove_mcaffeesafe(&mut self) { self.remove_junkware(Some("Mcaffee Safe")); }
     pub fn remove_driversupport(&mut self) { self.remove_junkware(Some("Driver Support")); }
     pub fn remove_winzip(&mut self) { self.remove_junkware(Some("Winzip")); }
+
+    pub fn uninstall_microsoft365(&mut self, item_text: &str, category: &Category) {
+        use powershell_script::PsScriptBuilder;
+        self.log_message("Searching for Microsoft 365 / Office installations...");
+        let ps = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        let script = r#"
+            $paths = @(
+                "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+            )
+            $office = $paths | ForEach-Object {
+                if (Test-Path $_) {
+                    Get-ItemProperty $_ -ErrorAction SilentlyContinue |
+                        Where-Object { $_.DisplayName -match "Microsoft 365|Microsoft Office" }
+                }
+            }
+            if ($office) {
+                foreach ($app in $office) {
+                    if ($app.UninstallString) {
+                        "Found: $($app.DisplayName) — uninstalling..."
+                        $cmd = $app.UninstallString
+                        if ($cmd -match "OfficeClickToRun") {
+                            & "$env:CommonProgramFiles\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" /uninstall displaylevel=false
+                        } elseif ($cmd -match "MsiExec") {
+                            $productCode = ([regex]'\{[A-F0-9-]+\}').Match($cmd).Value
+                            if ($productCode) { msiexec /x $productCode /quiet /norestart }
+                        } else {
+                            Invoke-Expression "& $cmd /silent /norestart" 2>$null
+                        }
+                    }
+                }
+                "Microsoft 365/Office uninstall initiated"
+            } else { "Microsoft 365/Office not found" }
+        "#;
+        match ps.run(script) {
+            Ok(out) => {
+                self.log_message(&out.stdout().unwrap_or_default());
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(&format!("Microsoft 365 uninstall failed: {e:?}")),
+        }
+    }
+
+    pub fn uninstall_onedrive(&mut self, item_text: &str, category: &Category) {
+        use powershell_script::PsScriptBuilder;
+        self.log_message("Uninstalling OneDrive...");
+        let ps = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        let script = r#"
+            taskkill /F /IM OneDrive.exe 2>$null
+            Start-Sleep -Seconds 1
+            $setup64 = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
+            $setup32 = "$env:SystemRoot\System32\OneDriveSetup.exe"
+            if (Test-Path $setup64) {
+                & $setup64 /uninstall
+                "OneDrive (64-bit) uninstall initiated"
+            } elseif (Test-Path $setup32) {
+                & $setup32 /uninstall
+                "OneDrive (32-bit) uninstall initiated"
+            } else {
+                winget uninstall "Microsoft.OneDrive" --silent --accept-source-agreements 2>$null
+                "Attempted winget uninstall"
+            }
+        "#;
+        match ps.run(script) {
+            Ok(out) => {
+                self.log_message(&out.stdout().unwrap_or_default());
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(&format!("OneDrive uninstall failed: {e:?}")),
+        }
+    }
+
+    pub fn disable_onedrive_startup(&mut self, item_text: &str, category: &Category) {
+        use powershell_script::PsScriptBuilder;
+        self.log_message("Disabling OneDrive startup...");
+        let ps = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        let script = r#"
+            $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+            if (Get-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue) {
+                Remove-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue
+                "Removed OneDrive from Run key"
+            } else { "OneDrive not in Run key" }
+            $odPolicies = "HKLM:\SOFTWARE\Policies\Microsoft\OneDrive"
+            if (-not (Test-Path $odPolicies)) { New-Item -Path $odPolicies -Force | Out-Null }
+            Set-ItemProperty -Path $odPolicies -Name "KFMBlockOptIn" -Value 1 -Type DWord
+            "OneDrive Known Folder Move blocked"
+            taskkill /F /IM OneDrive.exe 2>$null
+        "#;
+        match ps.run(script) {
+            Ok(out) => {
+                self.log_message(&out.stdout().unwrap_or_default());
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(&format!("Disable OneDrive startup failed: {e:?}")),
+        }
+    }
+
+    pub fn disable_edge_startup_boost(&mut self, item_text: &str, category: &Category) {
+        use powershell_script::PsScriptBuilder;
+        self.log_message("Disabling Edge startup boost...");
+        let ps = PsScriptBuilder::new()
+            .no_profile(true)
+            .non_interactive(true)
+            .hidden(true)
+            .print_commands(false)
+            .build();
+        let script = r#"
+            $edgePolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+            if (-not (Test-Path $edgePolicy)) { New-Item -Path $edgePolicy -Force | Out-Null }
+            Set-ItemProperty -Path $edgePolicy -Name "StartupBoostEnabled" -Value 0 -Type DWord
+            "Edge StartupBoost disabled"
+            Set-ItemProperty -Path $edgePolicy -Name "BackgroundModeEnabled" -Value 0 -Type DWord
+            "Edge BackgroundMode disabled"
+            taskkill /F /IM msedge.exe 2>$null
+        "#;
+        match ps.run(script) {
+            Ok(out) => {
+                self.log_message(&out.stdout().unwrap_or_default());
+                self.update_checklist(category.clone(), item_text, true);
+            },
+            Err(e) => self.log_message(&format!("Disable Edge startup boost failed: {e:?}")),
+        }
+    }
 }
