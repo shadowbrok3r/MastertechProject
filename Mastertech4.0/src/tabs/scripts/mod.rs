@@ -375,6 +375,12 @@ impl EguiScriptsTab {
             "Align Taskbar to left" => {
                 self.execute_align_taskbar(log_tx, category, script_name);
             },
+            "Change Timezone to Mountain" => {
+                self.execute_change_timezone(log_tx, category, script_name);
+            },
+            "Disable BitLocker" => {
+                self.execute_disable_bitlocker(log_tx, category, script_name);
+            },
             _ => {
                 let _ = log_tx.try_send(ScriptLogEntry::warning(
                     category, &script_name, format!("Script '{}' not yet implemented", script_name)
@@ -1264,7 +1270,23 @@ impl EguiScriptsTab {
         let script_name = script.name.clone();
         let category = script.category.clone();
 
-        self.execute_remove_junkware(log_tx, category, script_name.clone(), &script_name);
+        match script_name.as_str() {
+            "Uninstall Microsoft 365" => {
+                self.execute_uninstall_microsoft365(log_tx, category, script_name);
+            },
+            "Uninstall OneDrive" => {
+                self.execute_uninstall_onedrive(log_tx, category, script_name);
+            },
+            "Disable OneDrive Startup" => {
+                self.execute_disable_onedrive_startup(log_tx, category, script_name);
+            },
+            "Disable Edge Startup Boost" => {
+                self.execute_disable_edge_startup_boost(log_tx, category, script_name);
+            },
+            _ => {
+                self.execute_remove_junkware(log_tx, category, script_name.clone(), &script_name);
+            }
+        }
     }
 
     /// Execute all junkware removal
@@ -1356,9 +1378,409 @@ impl EguiScriptsTab {
         ));
     }
 
+    /// Execute Change Timezone to Mountain script
+    fn execute_change_timezone(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use powershell_script::PsScriptBuilder;
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(), &script_name, "Setting timezone to Mountain Standard Time..."
+                ));
+                let ps = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                match ps.run("tzutil /s \"Mountain Standard Time\"") {
+                    Ok(_) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "Timezone set to Mountain Standard Time"
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Failed to set timezone: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "Timezone change only available on Windows"
+        ));
+    }
+
+    /// Execute Disable BitLocker script
+    fn execute_disable_bitlocker(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use powershell_script::PsScriptBuilder;
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(), &script_name, "Checking BitLocker status on all drives..."
+                ));
+                let ps = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                let check_script = r#"
+                    $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue
+                    if ($volumes) {
+                        $volumes | ForEach-Object {
+                            "$($_.MountPoint): $($_.VolumeStatus) / $($_.ProtectionStatus)"
+                        }
+                    } else {
+                        "BitLocker not available or no encrypted volumes found"
+                    }
+                "#;
+                match ps.run(check_script) {
+                    Ok(output) => {
+                        let stdout = output.stdout().unwrap_or_default();
+                        for line in stdout.lines() {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line.to_string()
+                            ));
+                        }
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::warning(
+                            category.clone(), &script_name,
+                            format!("Could not query BitLocker volumes: {}", e)
+                        ));
+                    }
+                }
+
+                let disable_script = r#"
+                    $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue |
+                        Where-Object { $_.ProtectionStatus -eq 'On' -or $_.VolumeStatus -ne 'FullyDecrypted' }
+                    if ($volumes) {
+                        foreach ($vol in $volumes) {
+                            Disable-BitLocker -MountPoint $vol.MountPoint -ErrorAction SilentlyContinue | Out-Null
+                            "Disabling BitLocker on $($vol.MountPoint)"
+                        }
+                    } else {
+                        "No BitLocker-protected volumes found"
+                    }
+                "#;
+                let ps2 = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                match ps2.run(disable_script) {
+                    Ok(output) => {
+                        let stdout = output.stdout().unwrap_or_default();
+                        for line in stdout.lines() {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line.to_string()
+                            ));
+                        }
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "BitLocker disable command completed"
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Failed to disable BitLocker: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "BitLocker control only available on Windows"
+        ));
+    }
+
+    /// Execute Uninstall Microsoft 365 script
+    fn execute_uninstall_microsoft365(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use powershell_script::PsScriptBuilder;
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(), &script_name, "Searching for Microsoft 365 / Office installations..."
+                ));
+                let ps = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                let script = r#"
+                    $paths = @(
+                        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                    )
+                    $office = $paths | ForEach-Object {
+                        if (Test-Path $_) {
+                            Get-ItemProperty $_ -ErrorAction SilentlyContinue |
+                                Where-Object { $_.DisplayName -match "Microsoft 365|Microsoft Office" }
+                        }
+                    }
+                    if ($office) {
+                        foreach ($app in $office) {
+                            if ($app.UninstallString) {
+                                "Found: $($app.DisplayName) — uninstalling..."
+                                $cmd = $app.UninstallString
+                                if ($cmd -match "OfficeClickToRun") {
+                                    & "$env:CommonProgramFiles\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" /update user displaylevel=false forceappshutdown=true updatepromptuser=false
+                                    Start-Sleep -Seconds 2
+                                    & "$env:CommonProgramFiles\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" /uninstall displaylevel=false
+                                } elseif ($cmd -match "MsiExec") {
+                                    $productCode = ([regex]'\{[A-F0-9-]+\}').Match($cmd).Value
+                                    if ($productCode) { msiexec /x $productCode /quiet /norestart }
+                                } else {
+                                    Invoke-Expression "& $cmd /silent /norestart" 2>$null
+                                }
+                            }
+                        }
+                        "Microsoft 365/Office uninstall initiated"
+                    } else {
+                        "Microsoft 365/Office not found"
+                    }
+                "#;
+                match ps.run(script) {
+                    Ok(output) => {
+                        let stdout = output.stdout().unwrap_or_default();
+                        for line in stdout.lines() {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line.to_string()
+                            ));
+                        }
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "Microsoft 365 uninstall script completed"
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Failed: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "Microsoft 365 uninstall only available on Windows"
+        ));
+    }
+
+    /// Execute Uninstall OneDrive script
+    fn execute_uninstall_onedrive(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use powershell_script::PsScriptBuilder;
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(), &script_name, "Uninstalling OneDrive..."
+                ));
+                let ps = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                let script = r#"
+                    taskkill /F /IM OneDrive.exe 2>$null
+                    Start-Sleep -Seconds 1
+                    $setup64 = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
+                    $setup32 = "$env:SystemRoot\System32\OneDriveSetup.exe"
+                    if (Test-Path $setup64) {
+                        & $setup64 /uninstall
+                        "OneDrive (64-bit) uninstall initiated"
+                    } elseif (Test-Path $setup32) {
+                        & $setup32 /uninstall
+                        "OneDrive (32-bit) uninstall initiated"
+                    } else {
+                        "OneDriveSetup.exe not found, trying winget..."
+                        winget uninstall "Microsoft.OneDrive" --silent --accept-source-agreements 2>$null
+                    }
+                "#;
+                match ps.run(script) {
+                    Ok(output) => {
+                        let stdout = output.stdout().unwrap_or_default();
+                        for line in stdout.lines() {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line.to_string()
+                            ));
+                        }
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "OneDrive uninstall completed"
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Failed: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "OneDrive uninstall only available on Windows"
+        ));
+    }
+
+    /// Execute Disable OneDrive Startup script
+    fn execute_disable_onedrive_startup(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use powershell_script::PsScriptBuilder;
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(), &script_name, "Disabling OneDrive startup..."
+                ));
+                let ps = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                let script = r#"
+                    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+                    if (Get-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue) {
+                        Remove-ItemProperty -Path $runKey -Name "OneDrive" -ErrorAction SilentlyContinue
+                        "Removed OneDrive from HKCU Run key"
+                    } else {
+                        "OneDrive not found in Run key"
+                    }
+                    $odPolicies = "HKLM:\SOFTWARE\Policies\Microsoft\OneDrive"
+                    if (-not (Test-Path $odPolicies)) { New-Item -Path $odPolicies -Force | Out-Null }
+                    Set-ItemProperty -Path $odPolicies -Name "KFMBlockOptIn" -Value 1 -Type DWord
+                    "OneDrive Known Folder Move blocked via policy"
+                    taskkill /F /IM OneDrive.exe 2>$null
+                    "OneDrive process terminated"
+                "#;
+                match ps.run(script) {
+                    Ok(output) => {
+                        let stdout = output.stdout().unwrap_or_default();
+                        for line in stdout.lines() {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line.to_string()
+                            ));
+                        }
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "OneDrive startup disabled"
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Failed: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "OneDrive startup control only available on Windows"
+        ));
+    }
+
+    /// Execute Disable Edge Startup Boost script
+    fn execute_disable_edge_startup_boost(
+        &self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        #[cfg(target_os = "windows")]
+        {
+            std::thread::spawn(move || {
+                use powershell_script::PsScriptBuilder;
+                let _ = log_tx.try_send(ScriptLogEntry::info(
+                    category.clone(), &script_name, "Disabling Edge startup boost and background running..."
+                ));
+                let ps = PsScriptBuilder::new()
+                    .no_profile(true)
+                    .non_interactive(true)
+                    .hidden(true)
+                    .print_commands(false)
+                    .build();
+                let script = r#"
+                    $edgePolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+                    if (-not (Test-Path $edgePolicy)) { New-Item -Path $edgePolicy -Force | Out-Null }
+                    Set-ItemProperty -Path $edgePolicy -Name "StartupBoostEnabled" -Value 0 -Type DWord
+                    "Edge StartupBoost disabled via policy"
+                    Set-ItemProperty -Path $edgePolicy -Name "BackgroundModeEnabled" -Value 0 -Type DWord
+                    "Edge BackgroundMode disabled via policy"
+                    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+                    if (Get-ItemProperty -Path $runKey -Name "MicrosoftEdge*" -ErrorAction SilentlyContinue) {
+                        Remove-ItemProperty -Path $runKey -Name "MicrosoftEdge*" -ErrorAction SilentlyContinue
+                        "Removed Edge from HKCU Run key"
+                    }
+                    taskkill /F /IM msedge.exe 2>$null
+                    "Edge process terminated"
+                "#;
+                match ps.run(script) {
+                    Ok(output) => {
+                        let stdout = output.stdout().unwrap_or_default();
+                        for line in stdout.lines() {
+                            let _ = log_tx.try_send(ScriptLogEntry::info(
+                                category.clone(), &script_name, line.to_string()
+                            ));
+                        }
+                        let _ = log_tx.try_send(ScriptLogEntry::success(
+                            category, &script_name, "Edge startup boost disabled"
+                        ));
+                    },
+                    Err(e) => {
+                        let _ = log_tx.try_send(ScriptLogEntry::error(
+                            category, &script_name, format!("Failed: {}", e)
+                        ));
+                    }
+                }
+            });
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = log_tx.try_send(ScriptLogEntry::warning(
+            category, &script_name, "Edge startup boost control only available on Windows"
+        ));
+    }
+
     /// Log helper methods
-    fn log_info(&mut self, script: &str, message: impl Into<String>) {
-        self.state.log(ScriptLogEntry::info(
+    fn log_info(&mut self, script: &str, message: impl Into<String>) {        self.state.log(ScriptLogEntry::info(
             ScriptCategory::Custom("System".to_string()),
             script,
             message,
