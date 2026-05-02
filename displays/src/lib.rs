@@ -177,7 +177,8 @@ pub trait Displayable {
         user: &User, 
         store_users: &Vec<User>, 
         notes: Vec<TaskNotePayload>,
-        tx: Sender<TaskUiActions>
+        tx: Sender<TaskUiActions>,
+        last_read: Option<chrono::DateTime<chrono::Utc>>,
     );
 }
 

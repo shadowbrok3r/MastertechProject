@@ -47,6 +47,7 @@ pub fn display_ticket_page(
     seb_tx: Option<Sender<Vec<CarboniteResponse>>>,
     seb_checking: &mut bool,
     customer_modal_open: Option<&mut bool>,
+    service_history_open: Option<&mut bool>,
 ) {
     // Check if this is a QC task
     let is_qc = task.status == Status::Qc;
@@ -152,6 +153,11 @@ pub fn display_ticket_page(
                             let cust_data = CustomerData::find_customer_by_id(&id_customer).await;
                             log::info!("Cust Data {cust_data:?}");
                         });
+                    }
+                    if let Some(sho) = service_history_open.as_deref_mut() {
+                        if ui.button("🔍 History").on_hover_text("View all services for this customer").clicked() {
+                            *sho = true;
+                        }
                     }
                 });
 

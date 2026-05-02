@@ -224,6 +224,8 @@ impl SharedContext {
         layout.task_map = map;
         // Preserve current layout order; just merge in any new/removed columns
         layout.update_col_names(ordered_keys);
+        // Propagate last_read_notes from SharedContext
+        layout.last_read_notes = self.last_read_notes.clone();
 
         // Render the layout
         layout.layout_cols(ui, self.ui_actions_tx.clone());

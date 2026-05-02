@@ -37,6 +37,8 @@ pub struct TaskLayout{
     #[serde(skip)]
     notes_rx: Receiver<Vec<TaskNotePayload>>,
     notes: Vec<TaskNotePayload>,
+    /// Tracks when notes were last read per task (propagated from SharedContext)
+    pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
 }
 
 pub struct LayoutConfig {
@@ -111,6 +113,7 @@ impl TaskLayout {
             user: current_user,
             search_results,
             has_run: false,
+            last_read_notes: HashMap::new(),
         }
     }
 
@@ -566,7 +569,8 @@ impl TaskLayout {
                                                     &self.user, 
                                                     &self.assignees, 
                                                     notes,
-                                                    ui_actions_tx.clone()
+                                                    ui_actions_tx.clone(),
+                                                    self.last_read_notes.get(&task.id).copied(),
                                                 );
                                             }
                                         }

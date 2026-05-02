@@ -223,6 +223,7 @@ impl DisplayModal for CreateTaskModal {
                             None, // No SEB channel for create task
                             &mut seb_checking,
                             None, // No customer modal for create task
+                            None, // No service history for create task
                         );
                     },
                     ModalAction::ComputerInfoPage => {

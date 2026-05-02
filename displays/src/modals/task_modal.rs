@@ -102,6 +102,37 @@ pub struct TaskModal {
     pub computers_tx: Sender<Vec<ComputerData>>,
     #[serde(skip)]
     pub computers_rx: Receiver<Vec<ComputerData>>,
+
+    // Import computer from PrestaShop/Everest modal state
+    pub import_computer_open: bool,
+    pub import_computer_step: ImportComputerStep,
+    pub import_computer_source: ImportComputerSource,
+    pub import_search_query: String,
+    pub import_customer_results: Vec<(Customer, Address)>,
+    pub import_computer_results: Vec<ComputerData>,
+    pub import_loading: bool,
+    pub import_error: Option<String>,
+    #[serde(skip)]
+    pub import_customer_tx: Sender<Vec<(Customer, Address)>>,
+    #[serde(skip)]
+    pub import_customer_rx: Receiver<Vec<(Customer, Address)>>,
+    #[serde(skip)]
+    pub import_computers_tx: Sender<Vec<ComputerData>>,
+    #[serde(skip)]
+    pub import_computers_rx: Receiver<Vec<ComputerData>>,
+
+    // Service history popup (#217)
+    pub service_history_open: bool,
+    pub service_history_mode: ServiceHistoryMode,
+    pub service_history_tasks: Vec<LiveTaskPayload>,
+    pub service_history_loading: bool,
+    pub service_history_error: Option<String>,
+    pub open_customer_service_history: bool,
+    pub open_computer_service_history: bool,
+    #[serde(skip)]
+    pub service_history_tx: Sender<Vec<LiveTaskPayload>>,
+    #[serde(skip)]
+    pub service_history_rx: Receiver<Vec<LiveTaskPayload>>,
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Serialize)]
@@ -109,6 +140,27 @@ pub enum CustomerSearchType {
     #[default]
     Email,
     Phone,
+}
+
+#[derive(Debug, Default, PartialEq, Clone, Serialize)]
+pub enum ImportComputerSource {
+    #[default]
+    Prestashop,
+    Everest,
+}
+
+#[derive(Debug, Default, PartialEq, Clone, Serialize)]
+pub enum ImportComputerStep {
+    #[default]
+    SearchCustomer,
+    SelectComputer,
+}
+
+#[derive(Debug, Default, PartialEq, Clone, Serialize)]
+pub enum ServiceHistoryMode {
+    #[default]
+    Customer,
+    Computer,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -138,6 +190,9 @@ impl TaskModal {
         let (resync_tx, resync_rx) = crossbeam::channel::unbounded();
         let (customer_search_tx, customer_search_rx) = crossbeam::channel::unbounded();
         let (computers_tx, computers_rx) = crossbeam::channel::unbounded();
+        let (import_customer_tx, import_customer_rx) = crossbeam::channel::unbounded();
+        let (import_computers_tx, import_computers_rx) = crossbeam::channel::unbounded();
+        let (service_history_tx, service_history_rx) = crossbeam::channel::unbounded();
         let comp_tx = computer_tx.clone();
         let cust_tx = customer_tx.clone();
         let svc_tx = service_ticket_tx.clone();
@@ -220,6 +275,26 @@ impl TaskModal {
             computer_search_query: String::new(),
             computer_search_inputs: BTreeSet::new(),
             computers_tx, computers_rx,
+            // Import computer modal
+            import_computer_open: false,
+            import_computer_step: ImportComputerStep::default(),
+            import_computer_source: ImportComputerSource::default(),
+            import_search_query: String::new(),
+            import_customer_results: Vec::new(),
+            import_computer_results: Vec::new(),
+            import_loading: false,
+            import_error: None,
+            import_customer_tx, import_customer_rx,
+            import_computers_tx, import_computers_rx,
+            // Service history
+            service_history_open: false,
+            service_history_mode: ServiceHistoryMode::default(),
+            service_history_tasks: Vec::new(),
+            service_history_loading: false,
+            service_history_error: None,
+            open_customer_service_history: false,
+            open_computer_service_history: false,
+            service_history_tx, service_history_rx,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -376,8 +451,336 @@ impl TaskModal {
                 self.computer_search_inputs.insert(search_str);
             }
         }
+
+        // Import computer modal channels
+        if let Ok(results) = self.import_customer_rx.try_recv() {
+            self.import_loading = false;
+            self.import_customer_results = results;
+            if self.import_customer_results.is_empty() {
+                self.import_error = Some("No customers found".to_string());
+            } else {
+                self.import_error = None;
+                self.import_computer_step = ImportComputerStep::SelectComputer;
+            }
+        }
+        if let Ok(computers) = self.import_computers_rx.try_recv() {
+            self.import_loading = false;
+            self.import_computer_results = computers;
+            if self.import_computer_results.is_empty() {
+                self.import_error = Some("No computers found for this customer".to_string());
+            } else {
+                self.import_error = None;
+            }
+        }
+
+        if let Ok(tasks) = self.service_history_rx.try_recv() {
+            self.service_history_loading = false;
+            self.service_history_tasks = tasks;
+            if self.service_history_tasks.is_empty() {
+                self.service_history_error = Some("No services found".to_string());
+            } else {
+                self.service_history_error = None;
+            }
+        }
+
+        // Handle service history open triggers
+        if self.open_customer_service_history {
+            self.open_customer_service_history = false;
+            self.service_history_open = true;
+            self.service_history_mode = ServiceHistoryMode::Customer;
+            self.service_history_tasks.clear();
+            self.service_history_error = None;
+            self.service_history_loading = true;
+            let cust_id = self.customer.as_ref().map(|c| c.id.clone());
+            let tx = self.service_history_tx.clone();
+            PlatformSpawner::spawn(async move {
+                if let Some(customer_id) = cust_id {
+                    match LiveTaskPayload::get_tasks_by_customer_id(&customer_id).await {
+                        Ok(tasks) => { let _ = tx.try_send(tasks); },
+                        Err(e) => {
+                            log::error!("Service history customer fetch error: {e:?}");
+                            let _ = tx.try_send(vec![]);
+                        }
+                    }
+                } else {
+                    let _ = tx.try_send(vec![]);
+                }
+            });
+        }
+
+        if self.open_computer_service_history {
+            self.open_computer_service_history = false;
+            self.service_history_open = true;
+            self.service_history_mode = ServiceHistoryMode::Computer;
+            self.service_history_tasks.clear();
+            self.service_history_error = None;
+            self.service_history_loading = true;
+            let computer_id = self.computer.as_ref().map(|c| c.id.clone());
+            let tx = self.service_history_tx.clone();
+            PlatformSpawner::spawn(async move {
+                if let Some(comp_id) = computer_id {
+                    match LiveTaskPayload::get_tasks_by_computer_id(&comp_id).await {
+                        Ok(tasks) => { let _ = tx.try_send(tasks); },
+                        Err(e) => {
+                            log::error!("Service history computer fetch error: {e:?}");
+                            let _ = tx.try_send(vec![]);
+                        }
+                    }
+                } else {
+                    let _ = tx.try_send(vec![]);
+                }
+            });
+        }
     }
     
+    /// Show the import computer from PrestaShop/Everest modal
+    pub fn show_import_computer_modal(&mut self, ui: &mut Ui) {
+        if !self.import_computer_open {
+            return;
+        }
+
+        let screen_rect = ui.ctx().screen_rect();
+        ui.painter().rect_filled(
+            screen_rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        );
+
+        Area::new(Id::new("import_computer_modal"))
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style())
+                    .fill(Color32::from_rgb(30, 30, 35))
+                    .inner_margin(20.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(420.0);
+                        ui.set_min_height(280.0);
+
+                        ui.vertical(|ui| {
+                            // Header
+                            ui.horizontal(|ui| {
+                                let title = match self.import_computer_source {
+                                    ImportComputerSource::Prestashop => "Import Computer from PrestaShop",
+                                    ImportComputerSource::Everest => "Import Computer from Everest",
+                                };
+                                ui.heading(RichText::new(title).color(Color32::LIGHT_BLUE));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button("✕").clicked() {
+                                        self.import_computer_open = false;
+                                        self.import_computer_step = ImportComputerStep::SearchCustomer;
+                                        self.import_search_query.clear();
+                                        self.import_customer_results.clear();
+                                        self.import_computer_results.clear();
+                                        self.import_error = None;
+                                    }
+                                });
+                            });
+                            ui.separator();
+
+                            match self.import_computer_step {
+                                ImportComputerStep::SearchCustomer => {
+                                    ui.label("Search by customer email or phone:");
+                                    ui.add_space(6.0);
+                                    ui.horizontal(|ui| {
+                                        let response = TextEdit::singleline(&mut self.import_search_query)
+                                            .hint_text("Email or phone number...")
+                                            .desired_width(260.0)
+                                            .ui(ui);
+                                        let can_search = !self.import_search_query.is_empty() && !self.import_loading;
+                                        if ui.add_enabled(can_search, Button::new("Search")).clicked()
+                                            || (response.lost_focus()
+                                                && ui.input(|i| i.key_pressed(eframe::egui::Key::Enter))
+                                                && can_search)
+                                        {
+                                            self.import_loading = true;
+                                            self.import_error = None;
+                                            self.import_customer_results.clear();
+                                            let query = self.import_search_query.trim().to_string();
+                                            let tx = self.import_customer_tx.clone();
+                                            PlatformSpawner::spawn(async move {
+                                                let results = if query.contains('@') {
+                                                    Customer::find_customer_by_email(&query).await
+                                                } else {
+                                                    Customer::find_customer_by_phone(&query).await
+                                                };                                                match results {
+                                                    Ok(r) => { let _ = tx.try_send(r); },
+                                                    Err(e) => {
+                                                        log::error!("Import customer search error: {e:?}");
+                                                        let _ = tx.try_send(vec![]);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    });
+
+                                    if self.import_loading {
+                                        ui.add_space(8.0);
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label("Searching...");
+                                        });
+                                    }
+
+                                    if let Some(err) = &self.import_error {
+                                        ui.add_space(6.0);
+                                        ui.colored_label(Color32::LIGHT_RED, err.clone());
+                                    }
+
+                                    if !self.import_customer_results.is_empty() {
+                                        ui.add_space(8.0);
+                                        ui.label(RichText::new("Select customer:").strong());
+                                        ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                            let results = self.import_customer_results.clone();
+                                            for (customer, address) in &results {
+                                                let label = format!(
+                                                    "[{}] {} {} — {}",
+                                                    customer.id,
+                                                    customer.firstname,
+                                                    customer.lastname,
+                                                    address.city
+                                                );
+                                                if ui.button(&label).clicked() {
+                                                    self.import_loading = true;
+                                                    self.import_error = None;
+                                                    let cust_id = customer.id.clone();
+                                                    let tx = self.import_computers_tx.clone();
+                                                    PlatformSpawner::spawn(async move {
+                                                        match ComputerData::get_computers_by_customer_id(cust_id).await {
+                                                            Ok(computers) => { let _ = tx.try_send(computers); },
+                                                            Err(e) => {
+                                                                log::error!("Import computers error: {e:?}");
+                                                                let _ = tx.try_send(vec![]);
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        });
+                                    }
+                                },
+                                ImportComputerStep::SelectComputer => {
+                                    if self.import_loading {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label("Loading computers...");
+                                        });
+                                    }
+
+                                    if let Some(err) = &self.import_error {
+                                        ui.colored_label(Color32::LIGHT_RED, err.clone());
+                                    }
+
+                                    if !self.import_computer_results.is_empty() {
+                                        ui.label(RichText::new("Select computer:").strong());
+                                        ui.add_space(6.0);
+                                        ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                                            let computers = self.import_computer_results.clone();
+                                            for comp in &computers {
+                                                let label = format!(
+                                                    "{} | {} | {} | {}",
+                                                    comp.hostname,
+                                                    comp.cpu,
+                                                    comp.ram,
+                                                    comp.id.key_string()
+                                                );
+                                                if ui.button(&label).clicked() {
+                                                    self.computer = Some(comp.clone());
+                                                    if let Some(ticket) = self.service_ticket.as_mut() {
+                                                        ticket.computer = Some(comp.id.clone());
+                                                    }
+                                                    self.import_computer_open = false;
+                                                    self.import_computer_step = ImportComputerStep::SearchCustomer;
+                                                    self.import_search_query.clear();
+                                                    self.import_customer_results.clear();
+                                                    self.import_computer_results.clear();
+                                                }
+                                            }
+                                        });
+                                    }
+
+                                    ui.add_space(8.0);
+                                    if ui.button("← Back to customer search").clicked() {
+                                        self.import_computer_step = ImportComputerStep::SearchCustomer;
+                                        self.import_computer_results.clear();
+                                        self.import_error = None;
+                                    }
+                                }
+                            }
+                        });
+                    });
+            });
+    }
+
+    /// Show service history popup for customer or computer (#217)
+    pub fn show_service_history_modal(&mut self, ui: &mut Ui) {
+        if !self.service_history_open {
+            return;
+        }
+
+        let screen_rect = ui.ctx().screen_rect();
+        ui.painter().rect_filled(
+            screen_rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        );
+
+        Area::new(Id::new("service_history_modal"))
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style())
+                    .fill(Color32::from_rgb(30, 30, 35))
+                    .inner_margin(20.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(500.0);
+                        ui.set_min_height(300.0);
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                let title = match self.service_history_mode {
+                                    ServiceHistoryMode::Customer => "All Services for Customer",
+                                    ServiceHistoryMode::Computer => "All Services for Computer",
+                                };
+                                ui.heading(RichText::new(title).color(Color32::LIGHT_BLUE));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button("✕").clicked() {
+                                        self.service_history_open = false;
+                                        self.service_history_tasks.clear();
+                                        self.service_history_error = None;
+                                    }
+                                });
+                            });
+                            ui.separator();
+
+                            if self.service_history_loading {
+                                ui.horizontal(|ui| { ui.spinner(); ui.label("Loading..."); });
+                            }
+
+                            if let Some(err) = &self.service_history_error {
+                                ui.colored_label(Color32::LIGHT_RED, err.clone());
+                            }
+
+                            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                                if self.service_history_tasks.is_empty() && !self.service_history_loading {
+                                    ui.label("No services found.");
+                                }
+                                for task in &self.service_history_tasks {
+                                    ui.group(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.strong(&task.task_name);
+                                            if let Some(sn) = &task.service_number {
+                                                ui.label(format!("Order: {sn}"));
+                                            }
+                                            ui.label(format!("Status: {}", task.status.as_str()));
+                                        });
+                                    });
+                                }
+                            });
+                        });
+                    });
+            });
+    }
+
     /// Resync order data from Prestashop
     fn resync_from_prestashop(&mut self) {
         if let Some(service_number) = self.task.service_number.clone() {
@@ -744,8 +1147,29 @@ impl DisplayModal for TaskModal {
                     Some(self.seb_tx.clone()),
                     &mut self.seb_checking,
                     Some(&mut self.customer_modal_open),
-                ),
-                ModalAction::ComputerInfoPage => {
+                    Some(&mut self.open_customer_service_history),
+                ),                ModalAction::ComputerInfoPage => {
+                    ui.horizontal(|ui| {
+                        if ui.button("Import from PrestaShop").clicked() {
+                            self.import_computer_open = true;
+                            self.import_computer_source = ImportComputerSource::Prestashop;
+                            self.import_computer_step = ImportComputerStep::SearchCustomer;
+                            self.import_search_query.clear();
+                            self.import_customer_results.clear();
+                            self.import_computer_results.clear();
+                            self.import_error = None;
+                        }
+                        if ui.button("Import from Everest").clicked() {
+                            self.import_computer_open = true;
+                            self.import_computer_source = ImportComputerSource::Everest;
+                            self.import_computer_step = ImportComputerStep::SearchCustomer;
+                            self.import_search_query.clear();
+                            self.import_customer_results.clear();
+                            self.import_computer_results.clear();
+                            self.import_error = None;
+                        }
+                    });
+                    ui.add_space(4.0);
                     let search_data = ComputerSearchData {
                         search_query: &mut self.computer_search_query,
                         search_inputs: &self.computer_search_inputs,
@@ -758,6 +1182,7 @@ impl DisplayModal for TaskModal {
                         self.computer.as_mut(), 
                         avail_size,
                         Some(search_data),
+                        Some(&mut self.open_computer_service_history),
                     );
                 },
                 ModalAction::SoftwareInfoPage => display_software_page(ui, self.computer.as_mut().unwrap_or(&mut ComputerData::default()), avail_size),
@@ -786,6 +1211,12 @@ impl DisplayModal for TaskModal {
 
         // Show customer change modal if open
         self.show_customer_modal(ui);
+
+        // Show import computer modal if open
+        self.show_import_computer_modal(ui);
+
+        // Show service history modal if open
+        self.show_service_history_modal(ui);
         
         if self.current_page_state == ModalAction::Close {
             action_handler(ModalAction::Close);
