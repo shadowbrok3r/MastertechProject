@@ -1,0 +1,184 @@
+//! Card UI for connected clients shown in the My Tasks board.
+//!
+//! Each card represents a `ConnectedClient` row from SurrealDB enriched with
+//! the latest `SystemInformation` snapshot from the admin-console websocket
+//! (when present) and a flag indicating whether an AI agent is currently
+//! running a `DiagnosticSession` against this connection. Cards expose
+//! buttons to open the Admin Console, open a per-client diagnostics popup,
+//! and (when linked) jump to the related service task.
+
+use crate::TaskUiActions;
+use crossbeam::channel::Sender;
+use database::schema::{
+    ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt, SystemInformation,
+};
+use eframe::egui::{
+    Button, Color32, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2, Widget,
+};
+
+/// Snapshot of a connected client for rendering as a card on the My Tasks
+/// board. Built each frame by `SharedContext::render_layout` from
+/// `SharedContext::clients`, the admin-console `ws_clients` map, and the
+/// `active_diagnostic_sessions` registry.
+#[derive(Clone)]
+pub struct ClientCardData {
+    pub client: ConnectedClient,
+    pub system_info: Option<SystemInformation>,
+    pub ai_active: bool,
+    pub active_session_id: Option<String>,
+    /// The full computer record (if loaded). Used to surface a "Service #N"
+    /// chip when this computer is checked in for a current task.
+    pub computer_data: Option<ComputerData>,
+    /// The task currently associated with this client's computer (if any).
+    pub linked_task: Option<LiveTaskPayload>,
+}
+
+impl ClientCardData {
+    pub fn new(client: ConnectedClient) -> Self {
+        Self {
+            client,
+            system_info: None,
+            ai_active: false,
+            active_session_id: None,
+            computer_data: None,
+            linked_task: None,
+        }
+    }
+
+    pub fn display_client_card(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
+        let card_frame = Frame::default()
+            .fill(ui.style().visuals.faint_bg_color)
+            .stroke(Stroke::new(0.7, ui.style().visuals.weak_text_color()))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(6));
+
+        card_frame.show(ui, |ui| {
+            ui.set_min_width(420.0);
+            ui.vertical(|ui| {
+                self.header_row(ui);
+                ui.add_space(4.0);
+                self.stats_row(ui);
+                ui.add_space(6.0);
+                self.button_row(ui, tx);
+                if let Some(task) = self.linked_task.as_ref() {
+                    ui.add_space(4.0);
+                    self.linked_task_chip(ui, task, tx);
+                }
+            });
+        });
+    }
+
+    fn header_row(&self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let dot_color = if self.client.connected {
+                Color32::from_rgb(80, 220, 100)
+            } else {
+                Color32::from_rgb(120, 120, 120)
+            };
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), eframe::egui::Sense::hover());
+            ui.painter().circle_filled(rect.center(), 5.0, dot_color);
+
+            let title = self
+                .client
+                .friendly_name
+                .clone()
+                .unwrap_or_else(|| self.client.connection_string.clone());
+            ui.label(RichText::new(title).strong());
+
+            if self.ai_active {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("• AI ACTIVE")
+                        .color(Color32::from_rgb(250, 180, 60))
+                        .strong()
+                        .small(),
+                );
+            }
+        });
+
+        if let Some(sysinfo) = self.system_info.as_ref() {
+            ui.label(
+                RichText::new(format!("{} • {}", sysinfo.hostname, sysinfo.os_version))
+                    .weak()
+                    .small(),
+            );
+        } else if !self.client.connection_string.is_empty() {
+            ui.label(
+                RichText::new(&self.client.connection_string)
+                    .weak()
+                    .small(),
+            );
+        }
+    }
+
+    fn stats_row(&self, ui: &mut Ui) {
+        let Some(info) = self.system_info.as_ref() else {
+            ui.label(RichText::new("No live stats").weak().small());
+            return;
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("CPU").small());
+            let cpu_pct = (info.cpu_percentage / 100.0).clamp(0.0, 1.0);
+            ProgressBar::new(cpu_pct)
+                .desired_width(120.0)
+                .text(format!("{:.0}%", info.cpu_percentage))
+                .ui(ui);
+
+            ui.add_space(8.0);
+            ui.label(RichText::new("RAM").small());
+            let ram_pct = if info.total_memory > 0.0 {
+                (info.used_memory / info.total_memory).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            ProgressBar::new(ram_pct)
+                .desired_width(120.0)
+                .text(format!(
+                    "{:.1}/{:.1} GB",
+                    info.used_memory / 1024.0,
+                    info.total_memory / 1024.0
+                ))
+                .ui(ui);
+        });
+
+        if let Some(gpu) = info.gpu_info.usage.first() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("GPU").small());
+                let gpu_pct = (gpu.gpu as f32 / 100.0).clamp(0.0, 1.0);
+                ProgressBar::new(gpu_pct)
+                    .desired_width(120.0)
+                    .text(format!("{}% • {}°C", gpu.gpu, gpu.temperature))
+                    .ui(ui);
+            });
+        }
+    }
+
+    fn button_row(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
+        ui.horizontal(|ui| {
+            if Button::new("🔬 Diagnostics").small().ui(ui).clicked() {
+                let _ = tx.try_send(TaskUiActions::OpenClientDiagnostics(
+                    self.client.connection_string.clone(),
+                ));
+            }
+            if Button::new("🖥 Open Console").small().ui(ui).clicked() {
+                let _ = tx.try_send(TaskUiActions::OpenAdminConsole(
+                    self.client.connection_string.clone(),
+                ));
+            }
+        });
+    }
+
+    fn linked_task_chip(&self, ui: &mut Ui, task: &LiveTaskPayload, tx: &Sender<TaskUiActions>) {
+        let label = match task.service_number.as_deref() {
+            Some(s) if !s.is_empty() => format!("Service #{s}"),
+            _ => format!("Task {}", task.id.key_string()),
+        };
+        let chip = Button::new(RichText::new(label).color(Color32::from_rgb(100, 200, 255)))
+            .small()
+            .ui(ui);
+        if chip.clicked() {
+            let _ = tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
+        }
+    }
+}

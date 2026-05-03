@@ -74,12 +74,18 @@ pub fn run_processor(
 ) {
     loop {
         let (lock, condvar) = &*task_receiver;
+        // Use `wait_while` so spurious condvar wakes are tolerated — without
+        // this, an OS-level spurious wake (or a `notify_all` that races with
+        // a previous consumer) returns from `wait` with `task` still None and
+        // the subsequent `take().unwrap()` panics, killing the processor
+        // thread and aborting the process.
         let task = {
-            let mut task = lock.lock().unwrap();
-            if task.is_none() {
-                task = condvar.wait(task).unwrap();
+            let task = lock.lock().unwrap();
+            let mut task = condvar.wait_while(task, |t| t.is_none()).unwrap();
+            match task.take() {
+                Some(t) => t,
+                None => continue,
             }
-            task.take().unwrap()
         };
 
         match task {

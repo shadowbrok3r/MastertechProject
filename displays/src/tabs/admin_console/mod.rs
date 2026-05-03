@@ -14,7 +14,10 @@ use super::script_editor::ScriptEditor;
 
 pub mod client_action;
 pub mod client_interface;
+pub mod relink_popup;
 pub mod ui;
+
+pub use relink_popup::RelinkClientPopup;
 
 #[derive(Serialize, Default)]
 pub enum WebConsolePageState {
@@ -48,9 +51,22 @@ pub struct AdminConsole {
     pub filesystem: FileSystem,
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>,
+    /// Map of `connection_string` -> open `diagnostic_session.id` for any
+    /// client that an AI agent is currently diagnosing through the MCP
+    /// bridge. Populated when `create_diagnostic_session` succeeds and
+    /// cleared when `close_diagnostic_session` runs. Read by the My Tasks
+    /// connected-client cards to show an "AI active" badge.
+    #[serde(skip)]
+    pub active_diagnostic_sessions: HashMap<String, String>,
     pub error: String,
     script_editor: ScriptEditor,
     pub ai_playground: EnhancedAiPlayground,
+    /// Open re-link popup. `Some(_)` while the admin is searching for the
+    /// correct customer to bind to a connected client (the used-machine
+    /// scenario where OA-key auto-detection resolves to the wrong owner).
+    /// See `relink_popup.rs`.
+    #[serde(skip)]
+    pub relink_popup: Option<RelinkClientPopup>,
 }
 
 impl AdminConsole {
@@ -68,11 +84,13 @@ impl AdminConsole {
             wants_to_undock: false,
             filesystem: FileSystem::new(),
             ws_clients: Default::default(),
+            active_diagnostic_sessions: Default::default(),
             ui_actions_channel,
             error: Default::default(),
             state: Default::default(),
             script_editor: ScriptEditor::new(),
-            ai_playground: EnhancedAiPlayground::default()
+            ai_playground: EnhancedAiPlayground::default(),
+            relink_popup: None,
         }
     }
 
@@ -87,6 +105,22 @@ impl AdminConsole {
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             self.handle_action(action);
             ctx.request_repaint();
+        }
+
+        // Drive the re-link popup, if open. Poll its background channel
+        // first (search/payload/apply events arrive here) and then render.
+        // When the admin closes the window or Apply succeeds the popup
+        // returns `false` and we drop it.
+        if let Some(popup) = self.relink_popup.as_mut() {
+            popup.poll();
+            let still_open = popup.ui(ctx);
+            if !still_open {
+                // Trigger a refresh so the freshly-updated friendly_name
+                // shows up in the side panel without waiting for the
+                // periodic poll.
+                self.relink_popup = None;
+                ctx.request_repaint();
+            }
         }
     }
 }

@@ -9,10 +9,12 @@ use crossbeam::channel::{Receiver, Sender};
 
 pub mod categories;
 pub mod executor;
+pub mod mcp_channel;
 pub mod queue;
 
 pub use categories::*;
 pub use executor::*;
+pub use mcp_channel::*;
 pub use queue::*;
 
 /// Script execution status

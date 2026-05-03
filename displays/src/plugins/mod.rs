@@ -615,6 +615,26 @@ impl EventDispatcher for DefaultEventDispatcher {
 /// during each hook; MCP uses `try_read` / `try_write` so read-only tools need not block on the frame.
 pub struct PluginManagerHandle(pub std::sync::Arc<std::sync::RwLock<PluginManager>>);
 
+impl PluginManagerHandle {
+    /// Render every enabled plugin's UI for the current frame.
+    ///
+    /// MUST be called from the user-frame callback (e.g. `eframe::App::ui`),
+    /// NOT from inside an `egui::Plugin` hook. Calling it from
+    /// `on_end_pass`/`on_begin_pass` will deadlock because egui holds an
+    /// internal `Mutex<PluginHandle>` across those hooks; any interactive
+    /// widget our plugins create then re-enters that same mutex.
+    pub fn render_plugin_uis(&self, ui: &mut egui::Ui) {
+        if let Ok(mut guard) = self.0.write() {
+            let mgr = &mut *guard;
+            for plugin in &mut mgr.plugins {
+                if plugin.enabled() {
+                    plugin.ui(ui, &mgr.host);
+                }
+            }
+        }
+    }
+}
+
 impl egui::Plugin for PluginManagerHandle {
     fn debug_name(&self) -> &'static str {
         "MastertechPluginManager"
@@ -647,15 +667,19 @@ impl egui::Plugin for PluginManagerHandle {
         }
     }
 
-    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
-        if let Ok(mut guard) = self.0.write() {
-            let mgr = &mut *guard;
-            for plugin in &mut mgr.plugins {
-                if plugin.enabled() {
-                    plugin.ui(ui, &mgr.host);
-                }
-            }
-        }
+    fn on_end_pass(&mut self, _ui: &mut egui::Ui) {
+        // Intentionally NOT calling `plugin.ui(...)` here. egui holds an
+        // internal `Mutex<PluginHandle>` for the duration of `on_end_pass`
+        // (so its plugin list cannot be mutated mid-iteration). Any widget
+        // we create from inside this hook eventually calls
+        // `Context::create_widget` → `on_widget_under_pointer`, which tries
+        // to re-acquire that same mutex and deadlocks (10s timeout panic in
+        // `epaint::mutex`). We hit this every time a Mastertech plugin's
+        // `ui()` opened a `Window` and the user hovered the resize edge.
+        //
+        // Plugin UIs are now driven from `MasterTechApp::ui` via
+        // `PluginManagerHandle::render_plugin_uis`, which runs inside the
+        // user-frame callback where the egui plugin mutex is NOT held.
     }
 
     fn input_hook(&mut self, input: &mut egui::RawInput) {

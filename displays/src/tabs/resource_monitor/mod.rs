@@ -40,6 +40,10 @@ pub struct ResourceMonitor {
     start_time: Instant,
     /// Process table viewer for displaying running processes
     pub process_table_viewer: ProcessTableViewer,
+    /// Most recent `SystemInformation` snapshot received from the client.
+    /// Read by the connected-client cards in the My Tasks column to show
+    /// live CPU/RAM/GPU stats without subscribing to the chart channels.
+    pub latest_sysinfo: Option<SystemInformation>,
 }
 
 impl Default for ResourceMonitor {
@@ -58,6 +62,7 @@ impl Default for ResourceMonitor {
             start_time: Instant::now(), // Initialize the timer
             state: ResourceMonitorState::default(),
             process_table_viewer: ProcessTableViewer::new(),
+            latest_sysinfo: None,
         }
     }
 }
@@ -88,6 +93,11 @@ impl ResourceMonitor {
     }
 
     pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) {
+        // Always cache the latest snapshot so external readers (e.g. the
+        // connected-client cards on My Tasks) see current stats even when
+        // the chart pipeline is paused.
+        self.latest_sysinfo = Some(sysinfo.clone());
+
         // When in RequestingData state, clear old data and switch to normal update mode
         if matches!(self.state, ResourceMonitorState::RequestingData) {
             self.cpu_usage_chart.data.clear();

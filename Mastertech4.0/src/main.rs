@@ -14,6 +14,8 @@ pub mod utilities;
 pub mod viewports;
 pub mod first_run;
 pub mod data;
+pub mod transport;
+pub mod tcp_listener;
 
 impl eframe::App for app_state::MasterTechApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -107,6 +109,18 @@ impl eframe::App for app_state::MasterTechApp {
                 }
             }
         }
+
+        // Render Mastertech plugin UIs from the user-frame callback (here),
+        // NOT from inside `egui::Plugin::on_end_pass`. egui holds an internal
+        // mutex on `PluginHandle` for the duration of `on_end_pass`; any
+        // interactive widget a plugin creates from there re-enters that
+        // mutex via `Context::create_widget` → `on_widget_under_pointer`
+        // and triggers the 10s `epaint::mutex` deadlock panic. Calling here
+        // means no egui plugin lock is held while plugins render.
+        let plugin_handle = displays::plugins::PluginManagerHandle(
+            self.context.plugin_manager.clone(),
+        );
+        plugin_handle.render_plugin_uis(ui);
     }
 
     fn persist_egui_memory(&self) -> bool { true }

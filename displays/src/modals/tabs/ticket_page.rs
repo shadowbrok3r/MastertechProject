@@ -47,7 +47,7 @@ pub fn display_ticket_page(
     seb_tx: Option<Sender<Vec<CarboniteResponse>>>,
     seb_checking: &mut bool,
     customer_modal_open: Option<&mut bool>,
-    service_history_open: Option<&mut bool>,
+    mut service_history_open: Option<&mut bool>,
 ) {
     // Check if this is a QC task
     let is_qc = task.status == Status::Qc;

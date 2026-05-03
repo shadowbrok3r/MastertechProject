@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::{self, DATABASE, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
-use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions};
+use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
@@ -39,7 +39,17 @@ pub struct TaskLayout{
     notes: Vec<TaskNotePayload>,
     /// Tracks when notes were last read per task (propagated from SharedContext)
     pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
+    /// Connected-client cards rendered in the special
+    /// `CONNECTED_CLIENTS_KEY` column. Refreshed each frame from
+    /// `SharedContext` so newly connected clients appear immediately.
+    #[serde(skip)]
+    pub client_cards: Vec<ClientCardData>,
 }
+
+/// Sentinel `column_order` key that means "render the connected-clients
+/// column here". Picked to never collide with a real status string or
+/// username and to serialize cleanly into the user's saved column order.
+pub const CONNECTED_CLIENTS_KEY: &str = "__connected_clients__";
 
 pub struct LayoutConfig {
     // Valid keys for task_map (statuses or username)
@@ -114,6 +124,7 @@ impl TaskLayout {
             search_results,
             has_run: false,
             last_read_notes: HashMap::new(),
+            client_cards: Vec::new(),
         }
     }
 
@@ -264,7 +275,54 @@ impl TaskLayout {
             .scroll_bar_visibility(eframe::egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (i, name) in self.column_order.iter().enumerate() {
+                for (i, name) in self.column_order.clone().iter().enumerate() {
+                    // Special connected-clients column: rendered even when
+                    // `client_cards` is empty so it holds its position in
+                    // the saved column order. Only ever shown on My Tasks.
+                    if name == CONNECTED_CLIENTS_KEY {
+                        if self.page != "My Tasks" { continue; }
+                        ui.vertical(|col_ui| {
+                            let content_w = Self::COL_W - 4.0;
+                            header_frame.show(col_ui, |hui| {
+                                hui.set_min_width(content_w);
+                                hui.set_max_width(content_w);
+                                hui.horizontal(|hui| {
+                                    hui.label(
+                                        RichText::new(format!(
+                                            "🖥 Connected Clients ({})",
+                                            self.client_cards.len()
+                                        ))
+                                        .color(style.visuals.warn_fg_color)
+                                        .strong(),
+                                    );
+                                });
+                            });
+                            column_frame.show(col_ui, |fui| {
+                                fui.set_min_width(content_w);
+                                fui.set_max_width(content_w);
+                                ScrollArea::vertical()
+                                    .id_salt(("connected_clients_scroll", i))
+                                    .max_height(viewport_h - Self::HEADER_H)
+                                    .auto_shrink([false; 2])
+                                    .show(fui, |sui| {
+                                        if self.client_cards.is_empty() {
+                                            sui.add_space(8.0);
+                                            sui.label(
+                                                RichText::new("No assigned connected clients")
+                                                    .weak(),
+                                            );
+                                        } else {
+                                            for card in &self.client_cards {
+                                                card.display_client_card(sui, &ui_actions_tx);
+                                                sui.add_space(6.0);
+                                            }
+                                        }
+                                    });
+                            });
+                        });
+                        ui.add_space(Self::SPACER_W);
+                        continue;
+                    }
                     if let Some(tasks) = self.task_map.get_mut(name) {
                         if tasks.is_empty() {
                             continue;

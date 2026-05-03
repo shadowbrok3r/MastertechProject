@@ -5,7 +5,20 @@ use database::schema::GetKeysResponse;
 use eframe::egui::{Context, Style};
 use database::schema::RecordId;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::spawn;
+
+/// Global once-guard so the heavy hardware-spec scan (PowerShell GPU
+/// queries, registry walks for installed programs, antivirus probes) runs
+/// at most one time per process. Without this, any code path that re-toggles
+/// `get_settings = true` (or future code that re-enters this branch) would
+/// fan out N concurrent spec-gathers, starve tokio workers, and risk
+/// blocking the UI long enough to trip epaint's 10s mutex panic.
+static SPECS_GATHER_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Once-guard for spawning the direct-TCP admin listener. Bound at most
+/// once per process; reentry would race on the port and leak listeners.
+static TCP_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 
 impl MasterTechApp {
     pub fn first_run(&mut self, ctx: &Context) {
@@ -91,7 +104,9 @@ impl MasterTechApp {
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
         self.receive_github(ctx);
+        self.context.scripts_tab.process_mcp_requests();
         self.context.scripts_tab.receive();
+        self.context.scripts_tab.process_mcp_completions();
 
         // Pump WebSocket receive even when the Web Console tab / viewport is closed.
         // Otherwise auto-connected clients never drain `ws_receiver` and admin→client
@@ -110,19 +125,24 @@ impl MasterTechApp {
                 #[cfg(target_os = "windows")]
                 {
                     use crate::filesystem::system_info::ComputerInfo;
-                    // Always re-gather specs on startup so GPU/RAM/other fields are never stale
-                    // from a prior partial run. Previously only ran if cpu.is_empty().
-                    let specs_tx = self.context.computer_data_tx.clone();
-                    let current_antivirus_tx = self.context.current_antivirus_tx.clone();
-                    tokio::spawn(async move {
-                        match database::schema::ComputerData::default().get_computer_data().await {
-                            Ok(data) => { let _ = specs_tx.try_send(data); }
-                            Err(e) => log::error!("Error getting specs: {e:?}"),
-                        }
-                        let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
-                        log::error!("installed_antivirus: {installed_antivirus:?}");
-                        let _ = current_antivirus_tx.try_send(installed_antivirus);
-                    });
+                    // Re-gather specs on startup so GPU/RAM/other fields are never stale
+                    // from a prior partial run. Guarded by a process-wide AtomicBool so
+                    // we can never spawn this expensive task more than once even if
+                    // `get_settings` is somehow re-asserted later in the session — the
+                    // earlier `cpu.is_empty()` guard implicitly provided this protection.
+                    if !SPECS_GATHER_STARTED.swap(true, Ordering::SeqCst) {
+                        let specs_tx = self.context.computer_data_tx.clone();
+                        let current_antivirus_tx = self.context.current_antivirus_tx.clone();
+                        tokio::spawn(async move {
+                            match database::schema::ComputerData::default().get_computer_data().await {
+                                Ok(data) => { let _ = specs_tx.try_send(data); }
+                                Err(e) => log::error!("Error getting specs: {e:?}"),
+                            }
+                            let installed_antivirus = database::schema::ComputerData::get_antivirus().await.unwrap_or_default();
+                            log::info!("installed_antivirus: {installed_antivirus:?}");
+                            let _ = current_antivirus_tx.try_send(installed_antivirus);
+                        });
+                    }
                 }
         
                 if let Some(storage) = frame.storage() {
@@ -222,6 +242,19 @@ impl MasterTechApp {
                 CONNECTED_CLIENT_TABLE.to_string(), 
                 url_string.clone()
             );
+
+            // Spawn the direct-TCP admin listener once per process. The
+            // WebSocket relay path remains active in parallel so admins
+            // older than this build (or remote, off-LAN admins) keep
+            // working. The admin console will prefer TCP when
+            // `local_ip` + `tcp_port` are both populated on the
+            // `connected_client` row.
+            if !TCP_LISTENER_STARTED.swap(true, Ordering::SeqCst) {
+                let client_uuid = self.context.client_uuid.clone();
+                spawn(async move {
+                    spawn_direct_tcp_listener(client_uuid).await;
+                });
+            }
 
             #[cfg(target_os = "windows")]
             if self.context.client_friendly_name.is_empty() {
@@ -344,4 +377,102 @@ impl MasterTechApp {
             }
         }
     }
+}
+
+/// Bind the direct-TCP admin listener and publish its address to this
+/// client's `connected_client` row. Logs and gives up on bind failure
+/// rather than retrying forever — clients without a usable IP/port still
+/// reach admins via the WebSocket relay.
+async fn spawn_direct_tcp_listener(client_uuid: RecordId) {
+    use crate::tcp_listener;
+    use crate::utilities::network::{detect_local_ipv4, try_add_firewall_rule};
+    use database::DATABASE;
+
+    let local_ip = match detect_local_ipv4() {
+        Some(ip) => ip,
+        None => {
+            log::warn!(
+                "spawn_direct_tcp_listener -> no routable IPv4 detected; \
+                 skipping direct-TCP listener (relay path still active)"
+            );
+            return;
+        }
+    };
+
+    let (listener, addr) = match tcp_listener::bind_listener().await {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::warn!(
+                "spawn_direct_tcp_listener -> bind failed: {e:?} \
+                 (relay path still active)"
+            );
+            return;
+        }
+    };
+
+    // Best-effort Windows firewall rule. If it fails, the OS firewall
+    // popup still appears on the first inbound connection and the user
+    // can click "Allow" once. We never block on this.
+    #[cfg(target_os = "windows")]
+    match try_add_firewall_rule(addr.port(), "Mastertech Direct TCP") {
+        Ok(true) => log::info!(
+            "spawn_direct_tcp_listener -> firewall rule added for port {}",
+            addr.port()
+        ),
+        Ok(false) => log::info!(
+            "spawn_direct_tcp_listener -> firewall rule not added (likely needs admin); \
+             relying on Windows allow-access popup on first bind"
+        ),
+        Err(e) => log::warn!("spawn_direct_tcp_listener -> netsh spawn failed: {e}"),
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = try_add_firewall_rule;
+
+    log::info!(
+        "spawn_direct_tcp_listener -> listening on {} (advertise as {}:{})",
+        addr,
+        local_ip,
+        addr.port()
+    );
+
+    // Publish IP+port to the client's row so admins can dial directly.
+    // Use a separate task; if the DB write races with row creation
+    // elsewhere we just retry a few times.
+    let publish_uuid = client_uuid.clone();
+    let port = addr.port();
+    spawn(async move {
+        let ip_string = local_ip.to_string();
+        for attempt in 0..5u32 {
+            let res = DATABASE
+                .query(
+                    "UPDATE $client SET local_ip = $ip, tcp_port = $port, last_update = time::now()",
+                )
+                .bind(("client", publish_uuid.clone()))
+                .bind(("ip", ip_string.clone()))
+                .bind(("port", port))
+                .await;
+            match res {
+                Ok(_) => {
+                    log::info!(
+                        "spawn_direct_tcp_listener -> published {ip_string}:{port} to {:?}",
+                        publish_uuid
+                    );
+                    return;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "spawn_direct_tcp_listener -> publish attempt {} failed: {e:?}",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2_u64.pow(attempt))).await;
+                }
+            }
+        }
+        log::error!(
+            "spawn_direct_tcp_listener -> failed to publish IP/port after 5 attempts; \
+             admins will fall back to relay"
+        );
+    });
+
+    tcp_listener::accept_loop(listener).await;
 }

@@ -8,14 +8,104 @@ pub struct PluginUsageRef {
     pub tool_name: String,
 }
 
+/// Structured category for a `DiagnosticEntry`. Replaces the old freeform
+/// category string so the AI is constrained to a known vocabulary.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+pub enum DiagnosticCategory {
+    /// A discovered issue (errors found, anomalies, root causes)
+    Finding,
+    /// A step taken (script run, change applied, fix attempted)
+    Action,
+    /// A free-form observation that isn't a finding or an action
+    Note,
+    /// A hard error encountered during diagnosis (tool failed, command crashed)
+    Error,
+    /// Snapshot of system specs / hardware state
+    SystemInfo,
+    /// Network configuration, connectivity test results
+    NetworkInfo,
+    /// Security-related alert (malware detected, suspicious process, etc.)
+    SecurityAlert,
+    /// Performance observation (slow disk, high CPU, etc.)
+    PerformanceNote,
+    /// Note captured from the customer (intake info, reported symptom)
+    CustomerNote,
+    /// Recommended next step / follow-up action for the tech or customer
+    Recommendation,
+}
+
+impl Default for DiagnosticCategory {
+    fn default() -> Self { Self::Note }
+}
+
+impl DiagnosticCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Finding => "finding",
+            Self::Action => "action",
+            Self::Note => "note",
+            Self::Error => "error",
+            Self::SystemInfo => "system_info",
+            Self::NetworkInfo => "network_info",
+            Self::SecurityAlert => "security_alert",
+            Self::PerformanceNote => "performance_note",
+            Self::CustomerNote => "customer_note",
+            Self::Recommendation => "recommendation",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "finding" => Self::Finding,
+            "action" => Self::Action,
+            "error" => Self::Error,
+            "system_info" | "systeminfo" | "system info" => Self::SystemInfo,
+            "network_info" | "networkinfo" | "network info" => Self::NetworkInfo,
+            "security_alert" | "securityalert" | "security alert" => Self::SecurityAlert,
+            "performance_note" | "performancenote" | "performance note" => Self::PerformanceNote,
+            "customer_note" | "customernote" | "customer note" => Self::CustomerNote,
+            "recommendation" => Self::Recommendation,
+            _ => Self::Note,
+        }
+    }
+
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Finding,
+            Self::Action,
+            Self::Note,
+            Self::Error,
+            Self::SystemInfo,
+            Self::NetworkInfo,
+            Self::SecurityAlert,
+            Self::PerformanceNote,
+            Self::CustomerNote,
+            Self::Recommendation,
+        ]
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct DiagnosticSession {
     pub id: RecordId,
     pub connection_string: String,
     pub hostname: String,
     pub customer_name: Option<String>,
-    pub customer_id: Option<RecordId>,
-    pub computer_id: Option<RecordId>,
+    /// Required: every diagnostic must belong to a known customer. The AI
+    /// must look this up via MCP tools (e.g. `find_customer_by_email`,
+    /// or via the `connected_client.computer.customer` graph) before
+    /// creating a session.
+    pub customer_id: RecordId,
+    /// Required: every diagnostic must reference the computer being
+    /// diagnosed. Resolve via `connected_client.computer` or
+    /// `get_computer_details`.
+    pub computer_id: RecordId,
+    /// Optional link to the in-house task record this diagnostic
+    /// corresponds to (set when the computer is checked in for service).
+    pub task_ref: Option<RecordId>,
+    /// Optional link to the PrestaShop / in-house service order this
+    /// diagnostic corresponds to.
+    pub service_order: Option<RecordId>,
     pub tech: Option<String>,
     pub started_at: Datetime,
     pub ended_at: Option<Datetime>,
@@ -31,8 +121,10 @@ impl Default for DiagnosticSession {
             connection_string: String::new(),
             hostname: String::new(),
             customer_name: None,
-            customer_id: None,
-            computer_id: None,
+            customer_id: super::random_record_id(super::CUSTOMER_TABLE),
+            computer_id: super::random_record_id(super::COMPUTER_TABLE),
+            task_ref: None,
+            service_order: None,
             tech: None,
             started_at: chrono::Utc::now().into(),
             ended_at: None,
@@ -48,7 +140,7 @@ pub struct DiagnosticEntry {
     pub id: RecordId,
     pub session_ref: RecordId,
     pub timestamp: Datetime,
-    pub category: String,
+    pub category: DiagnosticCategory,
     pub title: String,
     pub detail: String,
     pub data: Option<serde_json::Value>,
@@ -61,7 +153,7 @@ impl Default for DiagnosticEntry {
             id: super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE),
             session_ref: super::random_record_id(super::DIAGNOSTIC_SESSION_TABLE),
             timestamp: chrono::Utc::now().into(),
-            category: "note".to_string(),
+            category: DiagnosticCategory::Note,
             title: String::new(),
             detail: String::new(),
             data: None,
@@ -132,6 +224,60 @@ impl DiagnosticSession {
             .await?
             .take(0)?;
         Ok(sessions)
+    }
+
+    /// Fetch all diagnostic sessions linked to a task (via `task_ref`) or to
+    /// the same `computer_id` the task references. Used by the task modal's
+    /// Diagnostics tab to show every prior diagnosis for this machine.
+    pub async fn list_for_task_or_computer(
+        task_id: Option<&RecordId>,
+        computer_id: Option<&RecordId>,
+    ) -> anyhow::Result<Vec<Self>> {
+        let mut conditions: Vec<&str> = Vec::new();
+        if task_id.is_some() {
+            conditions.push("task_ref == $task");
+        }
+        if computer_id.is_some() {
+            conditions.push("computer_id == $computer");
+        }
+        if conditions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT * FROM diagnostic_session WHERE {} ORDER BY started_at DESC LIMIT 50",
+            conditions.join(" OR ")
+        );
+        let mut q = DATABASE.query(&sql);
+        if let Some(t) = task_id { q = q.bind(("task", t.clone())); }
+        if let Some(c) = computer_id { q = q.bind(("computer", c.clone())); }
+        let sessions: Vec<Self> = q.await?.take(0)?;
+        Ok(sessions)
+    }
+
+    /// Set the `task_ref` and optionally `service_order` on an existing
+    /// diagnostic session. Used to retroactively link a diagnostic to a
+    /// service ticket once the computer is checked in.
+    pub async fn link_to_task(
+        session_id: &RecordId,
+        task_ref: Option<&RecordId>,
+        service_order: Option<&RecordId>,
+    ) -> anyhow::Result<()> {
+        let mut sets: Vec<&str> = Vec::new();
+        if task_ref.is_some() {
+            sets.push("task_ref = $task");
+        }
+        if service_order.is_some() {
+            sets.push("service_order = $svc");
+        }
+        if sets.is_empty() {
+            return Ok(());
+        }
+        let sql = format!("UPDATE $sid SET {}", sets.join(", "));
+        let mut q = DATABASE.query(&sql).bind(("sid", session_id.clone()));
+        if let Some(t) = task_ref { q = q.bind(("task", t.clone())); }
+        if let Some(s) = service_order { q = q.bind(("svc", s.clone())); }
+        q.await?;
+        Ok(())
     }
 
     pub async fn search(

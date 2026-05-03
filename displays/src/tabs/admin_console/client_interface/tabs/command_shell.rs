@@ -326,7 +326,7 @@ impl WebSocketClient {
                     timestamp:  chrono::Local::now().to_rfc3339()
                 });
 
-                self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+                self.transport.send(WsMessage::Text(std::mem::take(&mut self.input)));
 
             } else if text_edit.lost_focus() && key_press && self.interactive { 
                 text_edit.request_focus();
@@ -344,7 +344,7 @@ impl WebSocketClient {
                 });
 
                 match encode_to_vec(&Cmd::InteractiveInput(std::mem::take(&mut self.input)), standard()){
-                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                    Ok(bytes) => self.transport.send(WsMessage::Binary(bytes)),
                     Err(e) => self.history.push(History { 
                         from: "Client".to_string(), 
                         message: e.to_string(), 

@@ -95,28 +95,46 @@ impl AdminConsole {
 
                     // Convert LayoutJob to WidgetText
                     let formatted_text = WidgetText::from(job);
-                    
-                    // Build hover text with date and assigned user info
+
+                    // Pre-compute the friendly fields the rich hover panel
+                    // needs (does the same date parse + user resolve as
+                    // before, just done once and surfaced through the
+                    // panel rather than a single-line tooltip).
                     let parsed_date = DateTime::parse_from_rfc3339(
                         &client.last_update.clone().unwrap_or(Utc::now().into()).to_string()
                     )
                     .unwrap_or_default()
                     .with_timezone(&Local);
                     let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                    
-                    // Look up assigned user name
                     let assigned_user_text = if let Some(ref user_id) = client.assigned_user {
                         let users = get_database_users();
                         users.iter()
                             .find(|u| u.get_id().key_string() == user_id.key_string())
-                            .map(|u| format!("Assigned to: {}", u.get_name()))
-                            .unwrap_or_else(|| format!("Assigned to: {}", user_id.key_string()))
+                            .map(|u| u.get_name().to_string())
+                            .unwrap_or_else(|| user_id.key_string().to_string())
                     } else {
-                        "Assigned to: (none)".to_string()
+                        "(none)".to_string()
                     };
-                    
-                    let hover_text = format!("{}\n{}", formatted_date, assigned_user_text);
-                    let _ = Button::new(formatted_text).ui(ui).on_hover_text(hover_text);
+
+                    // The hover panel exposes everything an admin needs
+                    // to identify the machine without opening it: raw
+                    // connection_string, friendly name, direct-TCP
+                    // address (when published), DB linkage, and a hint
+                    // pointing at the 🔗 button for the re-link flow.
+                    let client_for_hover = client.clone();
+                    let formatted_date_h = formatted_date.clone();
+                    let assigned_user_h = assigned_user_text.clone();
+                    let _ = Button::new(formatted_text)
+                        .ui(ui)
+                        .on_hover_ui(|ui| {
+                            client_hover_panel(
+                                ui,
+                                &client_for_hover,
+                                &formatted_date_h,
+                                &assigned_user_h,
+                                is_ws_connected,
+                            );
+                        });
                 });
 
 
@@ -129,6 +147,30 @@ impl AdminConsole {
                     if button.clicked() {
                         info!("Sent Connection Command");
                         let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
+                    }
+
+                    // Re-link customer button. Opens a popup where the
+                    // admin searches by phone / email / order # and
+                    // commits a manual customer binding (sets
+                    // `customer_locked` so the OA-key auto-detection
+                    // stops overwriting it on reconnect).
+                    let relink_color = if client.customer_locked {
+                        Color32::from_rgb(120, 200, 255) // distinct cue when already locked
+                    } else {
+                        Color32::from_rgb(199, 202, 245)
+                    };
+                    let relink_glyph = if client.customer_locked { "🔗" } else { "🔍" };
+                    let relink = Button::new(RichText::new(relink_glyph).strong().color(relink_color))
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(30., 30.))
+                        .ui(ui)
+                        .on_hover_text(if client.customer_locked {
+                            "Customer is locked (manually re-linked).\nClick to change linkage."
+                        } else {
+                            "Re-link to a different customer\n(used-machine-was-our-customer fix)"
+                        });
+                    if relink.clicked() {
+                        let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
                     }
 
                     let txt = if let Some(docked) = undock_client.get(client.connection_string.as_str()) {
@@ -202,4 +244,120 @@ impl AdminConsole {
         }
     
     }
+}
+
+/// Rich hover-panel for a client button. Shows everything an admin needs
+/// to identify a machine without having to open it: raw connection
+/// string (the auto-derived hostname:hash), friendly_name (and whether
+/// it's locked), direct-TCP advertise address (when published), and the
+/// usual last-update / assigned-user / customer / computer linkages.
+///
+/// The previous tooltip was a single string with date+user; this is the
+/// place to add anything else admins keep asking for.
+fn client_hover_panel(
+    ui: &mut Ui,
+    client: &ConnectedClient,
+    formatted_date: &str,
+    assigned_user: &str,
+    is_ws_connected: bool,
+) {
+    use eframe::egui::Grid;
+
+    ui.set_max_width(420.);
+
+    // Header line: friendly name (if any) + lock indicator
+    if let Some(fname) = client.friendly_name.as_deref() {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(fname)
+                    .strong()
+                    .color(Color32::from_rgb(51, 255, 189)),
+            );
+            if client.customer_locked {
+                ui.label(
+                    RichText::new("🔒 locked")
+                        .small()
+                        .color(Color32::from_rgb(120, 200, 255)),
+                )
+                .on_hover_text(
+                    "Customer was manually re-linked. \
+                     OA-key auto-detection won't overwrite it.",
+                );
+            }
+        });
+        ui.add_space(2.);
+    }
+
+    Grid::new(("client_hover_panel", &client.connection_string))
+        .num_columns(2)
+        .spacing(eframe::egui::Vec2::new(10., 2.))
+        .show(ui, |ui| {
+            row(ui, "Connection", &client.connection_string);
+            row(ui, "Last update", formatted_date);
+            row(
+                ui,
+                "Status",
+                if is_ws_connected {
+                    "● connected (active)"
+                } else if client.connected {
+                    "⚠ DB-connected, no live session"
+                } else {
+                    "⊗ disconnected"
+                },
+            );
+            row(ui, "Assigned to", assigned_user);
+
+            match (client.local_ip.as_deref(), client.tcp_port) {
+                (Some(ip), Some(port)) if !ip.is_empty() => {
+                    row(ui, "Direct TCP", &format!("{ip}:{port}"));
+                }
+                _ => {
+                    row(ui, "Direct TCP", "(not advertised — relay only)");
+                }
+            }
+
+            row(
+                ui,
+                "Customer",
+                client
+                    .customer
+                    .as_ref()
+                    .map(|c| c.key_string().to_string())
+                    .unwrap_or_else(|| "(none)".into())
+                    .as_str(),
+            );
+            row(
+                ui,
+                "Computer",
+                client
+                    .computer
+                    .as_ref()
+                    .map(|c| c.key_string().to_string())
+                    .unwrap_or_else(|| "(none)".into())
+                    .as_str(),
+            );
+
+            if let Some(created) = client.created_at.as_ref() {
+                row(ui, "Created", &created.to_string());
+            }
+        });
+
+    ui.add_space(6.);
+    ui.label(
+        RichText::new(
+            if client.customer_locked {
+                "Click 🔗 to change linkage."
+            } else {
+                "Click 🔍 to re-link to a different customer."
+            },
+        )
+        .small()
+        .color(Color32::GRAY),
+    );
+}
+
+fn row(ui: &mut Ui, key: &str, val: &str) {
+    ui.label(RichText::new(key).small().color(Color32::GRAY));
+    ui.label(RichText::new(val).small());
+    ui.end_row();
 }

@@ -573,7 +573,9 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         self.total_offset.replace(total_offset);
         self.scripts_area.replace(Some(area));
         
+        self.process_mcp_requests();
         self.receive();
+        self.process_mcp_completions();
         self.filesystem.receive();
         self.insert_user_scripts();
 

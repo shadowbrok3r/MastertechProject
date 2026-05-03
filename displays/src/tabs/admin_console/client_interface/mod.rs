@@ -1,6 +1,6 @@
 use crate::{channel_manager::ChannelManager, tabs::{admin_console::client_interface::tabs::command_shell::History, resource_monitor::ResourceMonitor}, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
 use database::schema::{ConnectedClient, SystemInformation};
-use ewebsock::{WsMessage, WsReceiver, WsSender};
+use ewebsock::WsMessage;
 use filesystem_helper::WebSocketHelperDelegate;
 use crossbeam::channel::{Receiver, Sender};
 use bincode::{config::standard, serde::*};
@@ -24,6 +24,7 @@ use {
 };
 
 
+pub mod admin_transport;
 pub mod receive;
 pub mod tabs;
 pub mod ui;
@@ -35,6 +36,8 @@ pub mod task_scheduler_viewer;
 pub mod registry_editor;
 pub mod startup_apps_viewer;
 pub mod remote_scripts_viewer;
+
+pub use admin_transport::{AdminTransport, TransportKind};
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -49,8 +52,11 @@ pub struct WebSocketClient {
     #[cfg(not(target_arch="wasm32"))]
     pub diagnostic_rx: Receiver<DiagnosticResponse>,
     pub client: ConnectedClient,
-    pub ws_sender: WsSender,
-    pub ws_receiver: WsReceiver,
+    /// Admin↔client message pipe. Wraps either an `ewebsock` WebSocket
+    /// (relay path) or a direct TCP socket. Exposes the same minimal
+    /// `send(WsMessage)` / `try_recv() -> Option<WsEvent>` / `close()`
+    /// surface so the existing receive/handler code is transport-agnostic.
+    pub transport: AdminTransport,
     /// Commands that we are SENDING to Mastertech
     send_cmd_tx: Sender<Cmd>, 
     /// Commands that we are SENDING to Mastertech
@@ -83,7 +89,7 @@ pub struct WebSocketClient {
     buffer: String,     
     my_command_history: Vec<History>,
     notifications: i32,
-    resource_monitor: ResourceMonitor,
+    pub resource_monitor: ResourceMonitor,
     #[cfg(not(target_arch="wasm32"))]
     remote_terminal: RemoteTerminal,
     #[cfg(not(target_arch="wasm32"))]
@@ -161,7 +167,7 @@ impl Drop for WebSocketClient {
 }
 
 impl WebSocketClient {
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, toolbox: FileSystem) -> Self {
+    pub fn new(transport: AdminTransport, client: ConnectedClient, toolbox: FileSystem) -> Self {
         let display_state_channel = <WsDisplayState>::create_unbounded_channel();
         let (send_cmd_tx, send_cmd_rx) = crossbeam::channel::unbounded();
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
@@ -218,8 +224,7 @@ Get-WmiObject")
             msg_to_client_rx,
             msg_from_client_tx,
             msg_from_client_rx,
-            ws_sender,
-            ws_receiver,
+            transport,
             #[cfg(not(target_arch="wasm32"))]
             size_rx,
             #[cfg(not(target_arch="wasm32"))]
@@ -359,7 +364,7 @@ Get-WmiObject")
         let tag = EGUI_INPUT_TAG;
         let Self {
             egui_viewer,
-            ws_sender,
+            transport,
             client,
             ..
         } = self;
@@ -393,7 +398,7 @@ Get-WmiObject")
                             v.len()
                         );
                     }
-                    ws_sender.send(WsMessage::Binary(v));
+                    transport.send(WsMessage::Binary(v));
                 }
                 Err(e) => {
                     log::error!(
