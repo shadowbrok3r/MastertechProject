@@ -1,6 +1,6 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
 use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
-use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder};
+use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder, transport::ClientTransport};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
 use bincode::{config::standard, serde::*};
@@ -79,22 +79,22 @@ fn expand_env_vars(path: &str) -> String {
 }
 
 pub struct TerminalWebsocketClient {
-    // explorer: FileSystem, 
-    bin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, 
-    bin_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
-    command_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    command_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    // explorer: FileSystem,
+    pub bin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    pub bin_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    pub command_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    pub command_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     // process: Arc<Mutex<Option<ChildStdin>>>,
-    interactive_input_tx: tokio::sync::mpsc::UnboundedSender<String>, 
-    interactive_input_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    client: ConnectedClient,
-    live_stats_stop_tx: Option<tokio::sync::watch::Sender<bool>>,
-    sysinfo_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    sysinfo_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
-    join_handle: Option<tokio::task::JoinHandle<()>>,
-    persistent_shell: Option<PersistentShell>,
+    pub interactive_input_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    pub interactive_input_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    pub client: ConnectedClient,
+    pub live_stats_stop_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub sysinfo_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    pub sysinfo_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    pub join_handle: Option<tokio::task::JoinHandle<()>>,
+    pub persistent_shell: Option<PersistentShell>,
     /// Accumulates chunks for direct file transfers: filename → (total_chunks, received_chunks_data)
-    file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
+    pub file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
 }
 
 impl TerminalWebsocketClient {
@@ -151,7 +151,13 @@ impl TerminalWebsocketClient {
             let connection = ewebsock::connect(connection_url.clone(), ewebsock::Options::default());
 
             match connection {
-                Ok((mut sender, receiver)) => {
+                Ok((ws_sender, receiver)) => {
+                    // Wrap the raw `WsSender` in our transport-agnostic
+                    // `ClientTransport`. Existing `sender.send(WsMessage::...)`
+                    // call sites inside `handle_command` work unchanged
+                    // because the wrapper preserves the same `send(WsMessage)`
+                    // method shape — see `Mastertech4.0/src/transport.rs`.
+                    let mut sender = ClientTransport::WebSocket(ws_sender);
                     let ready = &mut false;
                     log::info!("start_websocket_sender -> connecting");
                     loop {
@@ -335,7 +341,7 @@ impl TerminalWebsocketClient {
         Ok(())
     }
 
-    async fn handle_command(&mut self, cmd: Cmd, sender: &mut ewebsock::WsSender) {
+    pub async fn handle_command(&mut self, cmd: Cmd, sender: &mut ClientTransport) {
         #[cfg(target_os = "windows")]
         match cmd {
             Cmd::FileSystemAction(FileSystemAction::RequestNewContents(new_path)) => {
@@ -1778,14 +1784,14 @@ if (Test-Path $path) {{
             Cmd::RunRemoteScripts { scripts, service_number, customer_email } => {
                 log::info!("websockets -> RunRemoteScripts: {} scripts, SO={}", scripts.len(), service_number);
 
-                let send_log = |sender: &mut ewebsock::WsSender, msg: String| {
+                let send_log = |sender: &mut ClientTransport, msg: String| {
                     let cmd = Cmd::RemoteScriptLog(msg);
                     if let Ok(payload) = encode_to_vec(&cmd, standard()) {
                         sender.send(WsMessage::Binary(payload));
                     }
                 };
 
-                let send_result = |sender: &mut ewebsock::WsSender, name: &str, status: RemoteScriptStatus| {
+                let send_result = |sender: &mut ClientTransport, name: &str, status: RemoteScriptStatus| {
                     let cmd = Cmd::RemoteScriptResult { name: name.to_string(), status };
                     if let Ok(payload) = encode_to_vec(&cmd, standard()) {
                         sender.send(WsMessage::Binary(payload));
@@ -2212,7 +2218,7 @@ if (Test-Path $path) {{
                 log::info!("RunScriptContent: filename={filename}");
                 let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
-                let send_log = |sender: &mut ewebsock::WsSender, msg: String| {
+                let send_log = |sender: &mut ClientTransport, msg: String| {
                     if let Ok(payload) = encode_to_vec(&Cmd::RemoteScriptLog(msg), standard()) {
                         sender.send(WsMessage::Binary(payload));
                     }
@@ -2493,21 +2499,52 @@ impl<'a> TerminalApp<'a> {
 
 pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<ConnectedClient> {
     client.connected = true;
-    
-    // Attempt to lookup customer by OA3 serial number (Windows only)
+
+    // Fetch the existing row first so we can honor `customer_locked`. The
+    // OA3 product-key lookup below resolves to the *original* Windows
+    // license purchaser; for used machines that the shop has resold the
+    // friendly_name from this lookup is wrong and admins manually re-link
+    // via the admin console, which sets `customer_locked = true`. We must
+    // not clobber that here on every reconnect.
+    let existing_row = query_id::<ConnectedClient>(
+        CONNECTED_CLIENT_TABLE.to_string(),
+        client.id.clone(),
+    )
+    .await;
+    log::info!("websockets -> query_id: {existing_row:?}");
+
+    let existing: Option<ConnectedClient> = match &existing_row {
+        Ok(opt) => opt.clone(),
+        Err(_) => None,
+    };
+    let locked = existing.as_ref().map(|c| c.customer_locked).unwrap_or(false);
+
+    // Carry the lock + admin-set linkage forward across the upsert so we
+    // never accidentally reset them when the local client builds a
+    // fresh `ConnectedClient` from scratch on startup.
+    if let Some(prev) = existing.as_ref() {
+        client.customer_locked = prev.customer_locked;
+        if locked {
+            client.friendly_name = prev.friendly_name.clone();
+            client.customer = prev.customer.clone();
+        }
+    }
+
+    // Attempt to lookup customer by OA3 serial number (Windows only).
+    // Skipped entirely when `customer_locked` is true.
     #[cfg(target_os = "windows")]
-    {
+    if !locked {
         use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
         use crate::filesystem::customer_lookup::lookup_customer_by_serial;
-        
+
         match get_oa_style_serial() {
             Ok(raw_serial) => {
                 log::info!("websockets -> Raw OA serial: {}", raw_serial);
-                
+
                 match to_oa3_13digit(&raw_serial) {
                     Ok(serial13) => {
                         log::info!("websockets -> 13-digit serial: {}", serial13);
-                        
+
                         match lookup_customer_by_serial(&serial13).await {
                             Ok(customer_string) => {
                                 log::info!("websockets -> Customer found: {}", customer_string);
@@ -2527,23 +2564,22 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
                 log::warn!("websockets -> Failed to get OA serial: {:?}", e);
             }
         }
+    } else {
+        log::info!(
+            "websockets -> create_client: customer_locked is true; \
+             skipping OA-serial customer lookup"
+        );
     }
-    
-    let query_id = query_id::<ConnectedClient>(
-        CONNECTED_CLIENT_TABLE.to_string(), 
-        client.id.clone()
-    ).await;
-
-    log::info!("websockets -> query_id: {query_id:?}");
 
     let check_id_existence = check_id_existence(
-        CONNECTED_CLIENT_TABLE.to_string(), 
-        client.id.clone()
-    ).await;
-    
+        CONNECTED_CLIENT_TABLE.to_string(),
+        client.id.clone(),
+    )
+    .await;
+
     log::info!("websockets -> check_id_existence: {check_id_existence:?}");
-    
-    if let Ok(Some(_)) = query_id {
+
+    if let Ok(Some(_)) = existing_row {
         log::info!("WE HAVE A CLIENT");
         if client.friendly_name.is_some() {
             let res: Option<ConnectedClient> = DATABASE

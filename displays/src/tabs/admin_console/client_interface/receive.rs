@@ -10,7 +10,7 @@ impl WebSocketClient {
         #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
         if let Some(rx) = self.remote_egui_mcp_rx.as_ref() {
             while let Ok(bin) = rx.try_recv() {
-                self.ws_sender.send(WsMessage::Binary(bin));
+                self.transport.send(WsMessage::Binary(bin));
             }
         }
 
@@ -21,7 +21,7 @@ impl WebSocketClient {
         if let Ok((filename, content)) = self.toolbox.run_on_remote_rx.try_recv() {
             log::info!("Running script on remote: {filename}");
             let cmd = Cmd::RunScriptContent { filename, content };
-            self.ws_sender.send(WsMessage::Binary(serialize_command(&cmd)));
+            self.transport.send(WsMessage::Binary(serialize_command(&cmd)));
         }
 
         // Drain file-transfer chunks produced by background thread and send to remote
@@ -35,7 +35,7 @@ impl WebSocketClient {
                         done = true;
                     }
                 }
-                self.ws_sender.send(WsMessage::Binary(serialize_command(&cmd)));
+                self.transport.send(WsMessage::Binary(serialize_command(&cmd)));
             }
             if done {
                 self.file_transfer_rx = None;
@@ -127,13 +127,13 @@ impl WebSocketClient {
         }
 
         while let Ok(msg) = self.msg_to_client_rx.try_recv() {
-            self.ws_sender.send(msg);
+            self.transport.send(msg);
         }
 
         // Drain ALL pending websocket messages in one frame to avoid backlog.
         // For terminal binary buffers, keep only the latest to skip stale frames.
         let mut latest_terminal_bin: Option<Vec<u8>> = None;
-        while let Some(event) = self.ws_receiver.try_recv() {
+        while let Some(event) = self.transport.try_recv() {
             match event {
                 WsEvent::Message(msg) => {
                     match msg {
@@ -276,12 +276,12 @@ impl WebSocketClient {
                     FileSystemAction::RequestNewContents(directory) => {
                         log::info!("web_console/websockets.rs -> RequestNewContents -> {directory}");
                         log::info!("ACTION TO SEND: {command:?}");
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
+                        self.transport.send(WsMessage::Binary(serialize_command(&command)));
                     }
                     FileSystemAction::Execute(label) => { 
                         self.explorer.execute_file = label.clone(); 
                         if !label.is_empty() {
-                            self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
+                            self.transport.send(WsMessage::Binary(serialize_command(&command)));
                             self.interactive = true;
                             self.history.push(History { 
                                 from: "Client".to_string(), 
@@ -305,7 +305,7 @@ impl WebSocketClient {
                         }
                         
                         
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
+                        self.transport.send(WsMessage::Binary(serialize_command(&command)));
                     },
                     FileSystemAction::ExpandDirectory(directory) => self.explorer.expand_folder(&directory),
                     FileSystemAction::NavigateHome => {
@@ -320,24 +320,24 @@ impl WebSocketClient {
                         self.explorer.previewed_file = Some(file.to_string());
                     },
                     _ => {
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
+                        self.transport.send(WsMessage::Binary(serialize_command(&command)));
                     }
                 }
             }
             Cmd::Quit => {
                 self.interactive = false;
-                self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
+                self.transport.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
             },
             Cmd::ListDirectory(path) => {
                 log::info!("Requesting directory listing for: {}", path);
                 self.remote_explorer.loading = true;
-                self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ListDirectory(path))));
+                self.transport.send(WsMessage::Binary(serialize_command(&Cmd::ListDirectory(path))));
             },
             Cmd::DirectoryListing(entries, path) => {
                 log::info!("Received directory listing with {} entries at path: {:?}", entries.len(), path);
                 self.remote_explorer.set_entries(entries, path);
             },
-            _ => self.ws_sender.send(WsMessage::Binary(serialize_command(&command)))
+            _ => self.transport.send(WsMessage::Binary(serialize_command(&command)))
         }
     }
 
@@ -469,12 +469,18 @@ impl WebSocketClient {
                             self.remote_scripts_viewer.load_custom_scripts(&user.get_user_bucket_name());
                         }
                     } else if let Cmd::RemoteScriptLog(msg) = cmd {
+                        crate::plugins::mcp_bridge::notify_remote_script_log(msg.clone());
                         self.remote_scripts_viewer.append_log(msg);
                     } else if let Cmd::RemoteScriptResult { name, status } = cmd {
                         log::info!("Script result: {} - {:?}", name, status);
+                        crate::plugins::mcp_bridge::notify_remote_script_result(
+                            name.clone(),
+                            format!("{:?}", status),
+                        );
                         self.remote_scripts_viewer.set_script_result(name, status);
                     } else if let Cmd::RemoteScriptsComplete = cmd {
                         log::info!("All remote scripts completed");
+                        crate::plugins::mcp_bridge::notify_remote_scripts_complete();
                         self.remote_scripts_viewer.set_complete();
                     } else if let Cmd::LoadWasmPluginResult { plugin_id, success, message } = cmd {
                         log::info!("WASM plugin deploy result: {plugin_id} success={success} {message}");
@@ -547,7 +553,7 @@ impl WebSocketClient {
 
     fn handle_text_message(&mut self, text: String) {
         if text.eq("Closed") {
-            self.ws_sender.close();
+            self.transport.close();
             return;
         }
         

@@ -18,6 +18,26 @@ pub struct ConnectedClient {
     pub last_update: Option<Datetime>,
     pub created_at: Option<Datetime>,
     pub computer: Option<RecordId>,
+    /// Non-loopback IPv4 the client is bound to for direct admin↔client TCP
+    /// sessions. Populated by the client at startup; consumed by the admin
+    /// console which dials this IP:port before falling back to the
+    /// WebSocket relay. `None` means TCP transport is unavailable for this
+    /// client (older build, bind failure, etc.) and admins should use the
+    /// relay path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_ip: Option<String>,
+    /// Port the client's direct-TCP listener is bound to. See `local_ip`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_port: Option<u16>,
+    /// Set to `true` when an admin has manually re-linked this client to a
+    /// specific customer (typically because we sold the machine used and
+    /// the auto-derived friendly_name from the OA3 product key still
+    /// resolves to the original purchaser). When this flag is true, the
+    /// customer-side `create_client` flow MUST NOT overwrite
+    /// `friendly_name` or `customer` from any auto-lookup; admins may
+    /// clear the flag to opt back into auto-detection.
+    #[serde(default)]
+    pub customer_locked: bool,
 }
 
 impl Default for ConnectedClient {
@@ -34,6 +54,9 @@ impl Default for ConnectedClient {
             last_update: Default::default(),
             created_at: Default::default(),
             computer: Default::default(),
+            local_ip: None,
+            tcp_port: None,
+            customer_locked: false,
         }
     }
 }

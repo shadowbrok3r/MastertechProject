@@ -12,6 +12,8 @@ use displays::scripts::{
     ScriptCategory, ScriptChannels, ScriptContext, ScriptItem, ScriptLogEntry,
     ScriptStatus, ScriptsState, LogLevel,
     CATEGORY_ORDER, category_display_name, category_icon,
+    script_run_request_receiver, script_run_result_sender,
+    ScriptRunRequest, ScriptRunResult,
 };
 use crossbeam::channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -120,6 +122,28 @@ pub struct EguiScriptsTab {
     pub selected_sources: Vec<String>,
     /// Selected destination for data transfer
     pub selected_destination: Option<String>,
+    /// In-flight script runs requested by the MCP `scripts_run` tool. Each
+    /// entry tracks the request_id, the script the AI asked us to run, the
+    /// `state.logs` index at dispatch time, and the dispatch timestamp so we
+    /// can time it out. Resolved when a Success / Error / Warning log entry
+    /// for the matching script_name lands in `state.logs`.
+    pub pending_mcp_runs: Vec<McpPendingRun>,
+}
+
+/// Tracks one in-flight MCP-initiated script run inside `EguiScriptsTab`.
+#[derive(Debug, Clone)]
+pub struct McpPendingRun {
+    pub request_id: String,
+    pub script_name: String,
+    pub category: ScriptCategory,
+    /// Index into `state.logs` at the moment the script was dispatched.
+    /// All log entries with index >= this value are candidates for completion
+    /// detection and inclusion in the returned `ScriptRunResult.logs`.
+    pub log_start_index: usize,
+    pub dispatched_at: std::time::Instant,
+    /// Hard ceiling: if this elapses without a Success/Error/Warning log for
+    /// `script_name`, we send back a timeout result and drop the entry.
+    pub timeout: std::time::Duration,
 }
 
 impl Default for EguiScriptsTab {
@@ -159,7 +183,163 @@ impl EguiScriptsTab {
             show_data_transfer_ui: false,
             selected_sources: Vec::new(),
             selected_destination: None,
+            pending_mcp_runs: Vec::new(),
         }
+    }
+
+    /// Drain MCP `scripts_run` requests off the global crossbeam channel and
+    /// dispatch each through the existing `execute_*_script` paths. Tracks
+    /// each request in `pending_mcp_runs` so `process_mcp_completions` can
+    /// later report success/failure + collected logs back to the MCP caller.
+    ///
+    /// Call this once per frame, BEFORE `receive()`, so any logs the script
+    /// emits synchronously inside dispatch land in `state.logs` after the
+    /// `log_start_index` we capture here.
+    pub fn process_mcp_requests(&mut self) {
+        while let Ok(req) = script_run_request_receiver().try_recv() {
+            self.dispatch_mcp_request(req);
+        }
+    }
+
+    fn dispatch_mcp_request(&mut self, req: ScriptRunRequest) {
+        if let Some(sn) = req.service_number.as_deref() {
+            if !sn.is_empty() {
+                self.service_number_input = sn.to_string();
+            }
+        }
+        if let Some(em) = req.customer_email.as_deref() {
+            if !em.is_empty() {
+                self.customer_email = Some(em.to_string());
+            }
+        }
+
+        let log_start_index = self.state.logs.len();
+        self.log_info(
+            "MCP",
+            format!(
+                "MCP requested: run '{}' (category {:?}, request_id {})",
+                req.script_name, req.category, req.request_id
+            ),
+        );
+
+        let script = ScriptItem::new(req.script_name.clone(), req.category.clone());
+        let ctx = self.get_context();
+        let client = self.client.clone();
+        let log_tx = self.channels.log_tx.clone();
+        let progress_tx = self.channels.progress_tx.clone();
+
+        match req.category {
+            ScriptCategory::Tuneup => {
+                self.execute_tuneup_script(&script, ctx, client, log_tx, progress_tx);
+            }
+            ScriptCategory::Informational => {
+                self.execute_informational_script(&script, ctx, log_tx);
+            }
+            ScriptCategory::JunkwareRemoval => {
+                self.execute_junkware_script(&script, log_tx);
+            }
+            other => {
+                let _ = script_run_result_sender().send(ScriptRunResult {
+                    request_id: req.request_id,
+                    success: false,
+                    message: format!("Unsupported category: {:?}", other),
+                    logs: Vec::new(),
+                });
+                return;
+            }
+        }
+
+        self.pending_mcp_runs.push(McpPendingRun {
+            request_id: req.request_id,
+            script_name: req.script_name,
+            category: req.category,
+            log_start_index,
+            dispatched_at: std::time::Instant::now(),
+            timeout: std::time::Duration::from_secs(600),
+        });
+    }
+
+    /// Walks `pending_mcp_runs` and reports completion to MCP for any run
+    /// whose script has emitted a final-state (Success / Error / Warning) log
+    /// entry, or whose `timeout` has elapsed. Call once per frame, AFTER
+    /// `receive()` has drained the latest log entries into `state.logs`.
+    pub fn process_mcp_completions(&mut self) {
+        if self.pending_mcp_runs.is_empty() {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let logs_snapshot_len = self.state.logs.len();
+        let mut to_remove: Vec<usize> = Vec::new();
+
+        for (idx, pending) in self.pending_mcp_runs.iter().enumerate() {
+            let final_entry = self
+                .state
+                .logs
+                .get(pending.log_start_index..logs_snapshot_len)
+                .unwrap_or(&[])
+                .iter()
+                .rev()
+                .find(|e| {
+                    e.script_name == pending.script_name
+                        && matches!(e.level, LogLevel::Success | LogLevel::Error | LogLevel::Warning)
+                });
+
+            let timed_out = now.duration_since(pending.dispatched_at) > pending.timeout;
+
+            if let Some(final_e) = final_entry {
+                let success = matches!(final_e.level, LogLevel::Success);
+                let logs = self.collect_pending_logs(pending, logs_snapshot_len);
+                let _ = script_run_result_sender().send(ScriptRunResult {
+                    request_id: pending.request_id.clone(),
+                    success,
+                    message: final_e.message.clone(),
+                    logs,
+                });
+                to_remove.push(idx);
+            } else if timed_out {
+                let logs = self.collect_pending_logs(pending, logs_snapshot_len);
+                let _ = script_run_result_sender().send(ScriptRunResult {
+                    request_id: pending.request_id.clone(),
+                    success: false,
+                    message: format!(
+                        "Script '{}' did not emit a Success/Error log within {}s. It may still be running on the host.",
+                        pending.script_name,
+                        pending.timeout.as_secs()
+                    ),
+                    logs,
+                });
+                to_remove.push(idx);
+            }
+        }
+
+        for idx in to_remove.iter().rev() {
+            self.pending_mcp_runs.remove(*idx);
+        }
+    }
+
+    fn collect_pending_logs(&self, pending: &McpPendingRun, end_index: usize) -> Vec<String> {
+        self.state
+            .logs
+            .get(pending.log_start_index..end_index)
+            .unwrap_or(&[])
+            .iter()
+            .filter(|e| e.script_name == pending.script_name || e.script_name == "MCP")
+            .map(|e| {
+                let level = match e.level {
+                    LogLevel::Info => "INFO",
+                    LogLevel::Success => "OK",
+                    LogLevel::Warning => "WARN",
+                    LogLevel::Error => "ERR",
+                };
+                format!(
+                    "{} [{}] {}",
+                    e.timestamp.format("%H:%M:%S"),
+                    level,
+                    e.message
+                )
+            })
+            .collect()
     }
 
     /// Process incoming channel messages

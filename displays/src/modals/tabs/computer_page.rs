@@ -29,7 +29,7 @@ pub fn display_computer_page_with_search(
     computer: Option<&mut ComputerData>,
     avail_size: Vec2,
     search_data: Option<ComputerSearchData>,
-    service_history_open: Option<&mut bool>,
+    mut service_history_open: Option<&mut bool>,
 ) {
     let ticket = if let Some(ticket) = service_ticket {
         ticket

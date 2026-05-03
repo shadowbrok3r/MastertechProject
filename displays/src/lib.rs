@@ -166,6 +166,12 @@ pub enum TaskUiActions {
     OpenViewport(LiveTaskPayload),
     OpenCreateTaskModalFromOrder(database::schema::prestashop_schema::PrestashopPayload),
     OpenCreateTaskModalFromSystem(crate::tabs::stock::SystemInStoreData),
+    /// Open the Admin Console tab and focus on a specific connected client by
+    /// `connection_string`. Emitted by the connected-client cards on My Tasks.
+    OpenAdminConsole(String),
+    /// Open the diagnostics popup for a connected client by
+    /// `connection_string`. Shows past `DiagnosticSession`s for this client.
+    OpenClientDiagnostics(String),
     None,
 }
 

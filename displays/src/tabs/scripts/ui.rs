@@ -1,11 +1,41 @@
 //! UI rendering for the scripts tab
 
 use super::ScriptsTab;
+use crate::plugins::push_widget_anchor;
 use crate::scripts::{
     category_display_name, category_icon, LogLevel, ScriptCategory,
     ScriptLogEntry, ScriptStatus, CATEGORY_ORDER,
 };
 use eframe::egui::{self, Frame, RichText, ScrollArea, Stroke, Ui};
+
+/// Stable slug for a `ScriptCategory` used in `remote_egui` anchor keys.
+/// Matches the convention in `mcp_bridge.rs` INSTRUCTIONS: lowercase,
+/// non-alphanumeric → '_'. Free-text variants get a slugified body.
+fn category_anchor_slug(category: &ScriptCategory) -> String {
+    match category {
+        ScriptCategory::Tuneup => "tuneup".to_string(),
+        ScriptCategory::Informational => "informational".to_string(),
+        ScriptCategory::JunkwareRemoval => "junkware".to_string(),
+        ScriptCategory::UserScripts(name) => format!("user.{}", slugify(name)),
+        ScriptCategory::Custom(name) => format!("custom.{}", slugify(name)),
+    }
+}
+
+/// Lowercase + non-alphanumeric → '_', collapse repeats, trim '_'.
+fn slugify(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_underscore = false;
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_underscore = false;
+        } else if !last_underscore {
+            out.push('_');
+            last_underscore = true;
+        }
+    }
+    out.trim_matches('_').to_string()
+}
 
 /// Colors for the scripts UI
 mod colors {
@@ -76,42 +106,42 @@ impl ScriptsTab {
     fn render_top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label("Service #:");
-            ui.add(
+            let service_field = ui.add(
                 egui::TextEdit::singleline(&mut self.service_number_input)
                     .desired_width(120.0)
                     .hint_text("Enter SO#"),
             );
+            push_widget_anchor("scripts.service_number", service_field.rect);
 
             ui.add_space(16.0);
 
-            // Queue controls
-            if ui
-                .button(RichText::new("➕ Add Selected to Queue").color(colors::SELECTED))
-                .clicked()
-            {
+            let add_btn = ui
+                .button(RichText::new("➕ Add Selected to Queue").color(colors::SELECTED));
+            push_widget_anchor("scripts.queue_add_btn", add_btn.rect);
+            if add_btn.clicked() {
                 self.queue_selected_scripts();
             }
 
             if self.state.queue.is_running() {
-                if ui
-                    .button(RichText::new("⏹ Stop").color(colors::FAILED))
-                    .clicked()
-                {
+                let stop_btn = ui
+                    .button(RichText::new("⏹ Stop").color(colors::FAILED));
+                push_widget_anchor("scripts.stop_btn", stop_btn.rect);
+                if stop_btn.clicked() {
                     self.stop_queue();
                 }
             } else {
-                if ui
-                    .button(RichText::new("▶ Run Queue").color(colors::COMPLETED))
-                    .clicked()
-                {
+                let run_btn = ui
+                    .button(RichText::new("▶ Run Queue").color(colors::COMPLETED));
+                push_widget_anchor("scripts.run_btn", run_btn.rect);
+                if run_btn.clicked() {
                     self.run_queue();
                 }
             }
 
-            if ui
-                .button(RichText::new("🗑 Clear Queue").color(colors::PENDING))
-                .clicked()
-            {
+            let clear_btn = ui
+                .button(RichText::new("🗑 Clear Queue").color(colors::PENDING));
+            push_widget_anchor("scripts.queue_clear_btn", clear_btn.rect);
+            if clear_btn.clicked() {
                 self.clear_queue();
             }
 
@@ -168,11 +198,14 @@ impl ScriptsTab {
         let icon = category_icon(category);
         let name = category_display_name(category);
         let expanded = self.state.category_expanded.get(category).copied().unwrap_or(true);
+        let cat_slug = category_anchor_slug(category);
 
         // Category header with collapse toggle
         ui.horizontal(|ui| {
             let collapse_icon = if expanded { "▼" } else { "▶" };
-            if ui.small_button(collapse_icon).clicked() {
+            let collapse_btn = ui.small_button(collapse_icon);
+            push_widget_anchor(format!("scripts.{cat_slug}.collapse"), collapse_btn.rect);
+            if collapse_btn.clicked() {
                 self.state.category_expanded.insert(category.clone(), !expanded);
             }
 
@@ -184,7 +217,9 @@ impl ScriptsTab {
                     let any_selected = scripts.iter().any(|s| s.is_selected());
                     let btn_text = if any_selected { "✗" } else { "✓" };
                     let btn_color = if any_selected { colors::FAILED } else { colors::COMPLETED };
-                    if ui.small_button(RichText::new(btn_text).color(btn_color)).clicked() {
+                    let toggle_btn = ui.small_button(RichText::new(btn_text).color(btn_color));
+                    push_widget_anchor(format!("scripts.{cat_slug}.toggle_all"), toggle_btn.rect);
+                    if toggle_btn.clicked() {
                         if any_selected {
                             self.state.deselect_category(category);
                         } else {
@@ -201,8 +236,14 @@ impl ScriptsTab {
                     for script in scripts.iter_mut() {
                         let mut selected = script.is_selected();
                         let text_color = if selected { colors::SELECTED } else { colors::PENDING };
-                        
-                        if ui.checkbox(&mut selected, RichText::new(&script.name).color(text_color)).changed() {
+
+                        let item_slug = slugify(&script.name);
+                        let cb = ui.checkbox(&mut selected, RichText::new(&script.name).color(text_color));
+                        push_widget_anchor(
+                            format!("scripts.{cat_slug}.{item_slug}"),
+                            cb.rect,
+                        );
+                        if cb.changed() {
                             script.toggle_selection();
                         }
                     }

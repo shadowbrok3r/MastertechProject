@@ -275,7 +275,7 @@ impl WebSocketClient {
                             let Self {
                                 egui_remote_popout,
                                 egui_viewer,
-                                ws_sender,
+                                transport,
                                 ..
                             } = self;
                             ui.checkbox(
@@ -314,7 +314,7 @@ impl WebSocketClient {
                                                     v.len()
                                                 );
                                             }
-                                            ws_sender.send(WsMessage::Binary(v));
+                                            transport.send(WsMessage::Binary(v));
                                         }
                                         Err(e) => {
                                             log::error!(

@@ -121,6 +121,24 @@ pub struct ScriptsTab<'a> {
     effect_stage: RefCell<EffectStage<UniqueEffectId>>,
     /// Track if border effects have been initialized
     effects_init: RefCell<bool>,
+    /// In-flight MCP-initiated script runs. Each entry is registered when the
+    /// terminal tab receives a `ScriptRunRequest` over the global crossbeam
+    /// channel and is resolved either by a matching `checklist_completion_rx`
+    /// signal or by timeout. See `process_mcp_requests` / `process_mcp_completions`.
+    pending_mcp_runs: Vec<TerminalMcpPendingRun>,
+}
+
+/// Tracks one in-flight MCP-initiated script run inside the terminal `ScriptsTab`.
+/// Logs collected during execution (drained off `script_log_rx` each frame) are
+/// returned to the MCP caller in the `ScriptRunResult.logs` field.
+#[derive(Debug, Clone)]
+pub struct TerminalMcpPendingRun {
+    pub request_id: String,
+    pub script_name: String,
+    pub category: Category,
+    pub dispatched_at: std::time::Instant,
+    pub timeout: std::time::Duration,
+    pub log_lines: Vec<String>,
 }
 
 impl<'a> ScriptsTab<'a> {
@@ -310,6 +328,149 @@ impl<'a> ScriptsTab<'a> {
             loading: false,
             effect_stage: RefCell::new(EffectStage::default()),
             effects_init: RefCell::new(false),
+            pending_mcp_runs: Vec::new(),
+        }
+    }
+
+    /// Drain MCP `scripts_run` requests off the global crossbeam channel and
+    /// dispatch each through the terminal's existing `handle_*` methods.
+    /// Tracks each request in `pending_mcp_runs` so the next `receive()` call
+    /// can match completion signals (from `checklist_completion_rx`) and
+    /// report the result + collected logs back to the MCP caller.
+    pub fn process_mcp_requests(&mut self) {
+        while let Ok(req) = displays::scripts::script_run_request_receiver().try_recv() {
+            self.dispatch_mcp_request(req);
+        }
+    }
+
+    fn dispatch_mcp_request(&mut self, req: displays::scripts::ScriptRunRequest) {
+        let local_cat = match req.category {
+            displays::scripts::ScriptCategory::Tuneup => Category::Tuneup,
+            displays::scripts::ScriptCategory::Informational => Category::Informational,
+            displays::scripts::ScriptCategory::JunkwareRemoval => Category::JunkwareRemoval,
+            other => {
+                let _ = displays::scripts::script_run_result_sender().send(
+                    displays::scripts::ScriptRunResult {
+                        request_id: req.request_id,
+                        success: false,
+                        message: format!("Unsupported category: {:?}", other),
+                        logs: Vec::new(),
+                    },
+                );
+                return;
+            }
+        };
+
+        if let Some(sn) = req.service_number.as_deref() {
+            if !sn.is_empty() {
+                self.service_number = sn.to_string();
+            }
+        }
+        if let Some(em) = req.customer_email.as_deref() {
+            if !em.is_empty() {
+                self.customer_email = em.to_string();
+            }
+        }
+
+        let request_id = req.request_id.clone();
+        let script_name = req.script_name.clone();
+        let category = local_cat.clone();
+
+        self.pending_mcp_runs.push(TerminalMcpPendingRun {
+            request_id: request_id.clone(),
+            script_name: script_name.clone(),
+            category: category.clone(),
+            dispatched_at: std::time::Instant::now(),
+            timeout: std::time::Duration::from_secs(600),
+            log_lines: vec![format!(
+                "MCP requested: {} (category {:?}, request_id {})",
+                script_name, category, request_id
+            )],
+        });
+
+        #[cfg(target_os = "windows")]
+        {
+            match category {
+                Category::Tuneup => self.handle_tuneup(&script_name, &Category::Tuneup),
+                Category::Informational => {
+                    self.handle_informational(&script_name, &Category::Informational)
+                }
+                Category::JunkwareRemoval => {
+                    self.handle_junkware_removal(&script_name, &Category::JunkwareRemoval)
+                }
+                Category::UserScripts(_) => {
+                    let _ = displays::scripts::script_run_result_sender().send(
+                        displays::scripts::ScriptRunResult {
+                            request_id,
+                            success: false,
+                            message: "User scripts cannot be invoked via MCP".into(),
+                            logs: Vec::new(),
+                        },
+                    );
+                    if let Some(idx) = self
+                        .pending_mcp_runs
+                        .iter()
+                        .position(|p| p.script_name == script_name)
+                    {
+                        self.pending_mcp_runs.remove(idx);
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = displays::scripts::script_run_result_sender().send(
+                displays::scripts::ScriptRunResult {
+                    request_id,
+                    success: false,
+                    message: format!(
+                        "Script '{}' cannot run: terminal-mode script handlers are Windows-only",
+                        script_name
+                    ),
+                    logs: Vec::new(),
+                },
+            );
+            if let Some(idx) = self
+                .pending_mcp_runs
+                .iter()
+                .position(|p| p.script_name == script_name)
+            {
+                self.pending_mcp_runs.remove(idx);
+            }
+            let _ = category;
+        }
+    }
+
+    /// Time out any pending MCP runs whose `timeout` has elapsed without a
+    /// matching `checklist_completion_rx` signal. Successful / failed
+    /// completions are sent back inside `receive()` itself, where the
+    /// completion channel is drained.
+    pub fn process_mcp_completions(&mut self) {
+        if self.pending_mcp_runs.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let mut to_remove: Vec<usize> = Vec::new();
+        for (idx, pending) in self.pending_mcp_runs.iter().enumerate() {
+            if now.duration_since(pending.dispatched_at) > pending.timeout {
+                let _ = displays::scripts::script_run_result_sender().send(
+                    displays::scripts::ScriptRunResult {
+                        request_id: pending.request_id.clone(),
+                        success: false,
+                        message: format!(
+                            "Script '{}' did not complete within {}s",
+                            pending.script_name,
+                            pending.timeout.as_secs()
+                        ),
+                        logs: pending.log_lines.clone(),
+                    },
+                );
+                to_remove.push(idx);
+            }
+        }
+        for idx in to_remove.iter().rev() {
+            self.pending_mcp_runs.remove(*idx);
         }
     }
 
@@ -391,10 +552,30 @@ impl<'a> ScriptsTab<'a> {
         }
 
         while let Ok(msg) = self.script_log_rx.try_recv() {
+            for pending in self.pending_mcp_runs.iter_mut() {
+                pending.log_lines.push(msg.clone());
+            }
             self.log_message(&msg);
         }
 
         while let Ok((category, item_text, success)) = self.checklist_completion_rx.try_recv() {
+            if let Some(idx) = self.pending_mcp_runs.iter().position(|p| {
+                p.category == category && p.script_name == item_text
+            }) {
+                let pending = self.pending_mcp_runs.remove(idx);
+                let _ = displays::scripts::script_run_result_sender().send(
+                    displays::scripts::ScriptRunResult {
+                        request_id: pending.request_id,
+                        success,
+                        message: if success {
+                            format!("Script '{}' completed successfully", item_text)
+                        } else {
+                            format!("Script '{}' reported failure", item_text)
+                        },
+                        logs: pending.log_lines,
+                    },
+                );
+            }
             self.update_checklist(category, &item_text, success);
         }
 

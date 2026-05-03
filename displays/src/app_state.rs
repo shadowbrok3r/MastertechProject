@@ -255,6 +255,14 @@ pub struct SharedContext {
     pub pending_activate_tab: Option<String>,
     /// Tracks when task notes were last read by the current user (task_id -> last_read_at)
     pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
+    /// When set, the Admin Console renderer should scroll to / select this
+    /// `connection_string`. Cleared by the renderer after acting.
+    #[serde(skip)]
+    pub pending_admin_console_focus: Option<String>,
+    /// Connected-client diagnostics popup target (`connection_string`).
+    /// `Some` while the popup is open; `None` when closed.
+    #[serde(skip)]
+    pub client_diagnostics_popup: Option<String>,
 }
 
 impl SharedContext {
@@ -386,6 +394,8 @@ impl SharedContext {
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,
             last_read_notes: HashMap::new(),
+            pending_admin_console_focus: None,
+            client_diagnostics_popup: None,
         }
     }
 

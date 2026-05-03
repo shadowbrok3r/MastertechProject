@@ -3,14 +3,18 @@ use database::{
     schema::{ConnectedClient, Record, RecordIdExt, CONNECTED_CLIENT_TABLE},
     websocket_url_with_room, DATABASE, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
 };
-use crate::tabs::admin_console::client_interface::WebSocketClient;
+use crate::tabs::admin_console::client_interface::{AdminTransport, WebSocketClient};
 use crate::{PlatformSpawner, Spawner};
 
 pub enum ClientUiAction {
     UndockClient(String),
     DeleteClient(ConnectedClient),
     ConnectClient(ConnectedClient),
-    ExportHistory(ConnectedClient)
+    ExportHistory(ConnectedClient),
+    /// Open the re-link customer popup for this client (the
+    /// used-machine-with-wrong-owner workflow). See
+    /// `relink_popup.rs` for the popup itself.
+    RelinkCustomer(ConnectedClient),
 }
 
 impl AdminConsole {
@@ -28,7 +32,7 @@ impl AdminConsole {
             ClientUiAction::DeleteClient(mut client) => {
                 client.disconnect_client();
                 if let Some(mut ws_client) = self.ws_clients.remove(&client.connection_string) {
-                    ws_client.ws_sender.close();
+                    ws_client.transport.close();
                     drop(ws_client);
                 }
                 self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
@@ -50,58 +54,83 @@ impl AdminConsole {
                 
                 for conn_str in docked_clients {
                     log::info!("Closing previous docked client: {}", conn_str);
-                    // Close the WebSocket connection
                     if let Some(mut ws_client) = self.ws_clients.remove(&conn_str) {
-                        ws_client.ws_sender.close();
+                        ws_client.transport.close();
                         drop(ws_client);
                     }
-                    // Remove from undock tracking
                     self.undock_client.remove(&conn_str);
                 }
-                
-                // Now connect to the new client as docked
+
                 self.undock_client.insert(client.connection_string.clone(), false);
-                
-                let url = websocket_url_with_room(
-                    if cfg!(debug_assertions) {
-                        WS_MASTER_URL_LOCAL
-                    } else {
-                        WS_MASTER_URL
-                    },
-                    &client.connection_string,
-                    "master",
-                );
-                match ewebsock::connect(&url, Default::default()) {
-                    Ok((ws_sender, ws_receiver)) => {
-                        client.connected = true;
 
-                        let mut ws_client = WebSocketClient::new(
-                            ws_sender,
-                            ws_receiver,
-                            client.clone(),
-                            self.filesystem.clone(),
+                // Phase 1 transport selection: prefer direct TCP when the
+                // client has published `local_ip` + `tcp_port` (means the
+                // client is on a build that supports the listener and was
+                // able to bind a port). The dial happens in the background;
+                // if the TCP attempt fails the admin will see a transport
+                // `Closed` event in the receive loop and can retry — at
+                // which point the relay path is the natural fallback if
+                // `local_ip` was stale. Future work: time-bound auto-fallback.
+                let transport = match (client.local_ip.as_deref(), client.tcp_port) {
+                    (Some(ip), Some(port)) if !ip.is_empty() => {
+                        let target = format!("{ip}:{port}");
+                        log::info!(
+                            "ConnectClient -> attempting direct TCP to {target} for {}",
+                            client.connection_string
                         );
-
-                        #[cfg(not(target_arch="wasm32"))]
-                        ws_client.start_receiving_buffers();
-                        
-                        self.ws_clients
-                            .entry(client.connection_string.clone())
-                            .or_insert(ws_client);
-
-                        self.error = format!("WebConsole -> Connected to {}", client.connection_string);
+                        AdminTransport::from_tcp(target, client.connection_string.clone())
                     }
-                    Err(error) => {
-                        client.connected = false;
-                        log::error!("Failed to connect to {:?}: {}", &url, error.clone());
-                        self.error = format!("WebConsole Error -> {error}");
+                    _ => {
+                        let url = websocket_url_with_room(
+                            if cfg!(debug_assertions) {
+                                WS_MASTER_URL_LOCAL
+                            } else {
+                                WS_MASTER_URL
+                            },
+                            &client.connection_string,
+                            "master",
+                        );
+                        log::info!(
+                            "ConnectClient -> using WebSocket relay for {} (no TCP advertised)",
+                            client.connection_string
+                        );
+                        match ewebsock::connect(&url, Default::default()) {
+                            Ok((ws_sender, ws_receiver)) => {
+                                AdminTransport::from_ws(ws_sender, ws_receiver)
+                            }
+                            Err(error) => {
+                                client.connected = false;
+                                log::error!("Failed to connect to {:?}: {}", &url, error);
+                                self.error = format!("WebConsole Error -> {error}");
+                                return;
+                            }
+                        }
                     }
                 };
+
+                client.connected = true;
+                let mut ws_client = WebSocketClient::new(
+                    transport,
+                    client.clone(),
+                    self.filesystem.clone(),
+                );
+
+                #[cfg(not(target_arch="wasm32"))]
+                ws_client.start_receiving_buffers();
+
+                self.ws_clients
+                    .entry(client.connection_string.clone())
+                    .or_insert(ws_client);
+
+                self.error = format!("WebConsole -> Connected to {}", client.connection_string);
             },
             ClientUiAction::ExportHistory(mut client) => {
                 if let Some(ws_client) = self.ws_clients.get(&client.connection_string) {
                     client.export_logs(ws_client.history.clone());
                 }
+            },
+            ClientUiAction::RelinkCustomer(client) => {
+                self.relink_popup = Some(super::RelinkClientPopup::new(client));
             },
         }
     }

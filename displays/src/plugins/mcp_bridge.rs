@@ -82,6 +82,132 @@ pub fn resolve_pending_request(request_id: &str, success: bool, result_json: Str
     }
 }
 
+// ─── Local script run request routing ─────────────────────────────────────────
+//
+// Bridges the MCP `scripts_run` tool to the host Mastertech4.0 Scripts tab
+// (egui or terminal mode). The MCP tool sends a `ScriptRunRequest` over the
+// global crossbeam channel in `crate::scripts::mcp_channel`; the host's
+// Scripts tab drains it each frame, runs the script through its existing
+// handlers, and publishes a `ScriptRunResult` back. A single drainer task
+// (spawned at MCP server start) reads results off the global crossbeam
+// channel and dispatches them to per-request `oneshot` receivers so the MCP
+// tool call can `await` its specific completion.
+
+type ScriptRunPending = std::sync::Mutex<HashMap<String, oneshot::Sender<crate::scripts::ScriptRunResult>>>;
+static SCRIPT_RUN_PENDING: Lazy<ScriptRunPending> = Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn register_pending_script_run(request_id: String) -> oneshot::Receiver<crate::scripts::ScriptRunResult> {
+    let (tx, rx) = oneshot::channel();
+    if let Ok(mut map) = SCRIPT_RUN_PENDING.lock() {
+        map.insert(request_id, tx);
+    }
+    rx
+}
+
+/// Spawn the global drainer that forwards every incoming `ScriptRunResult`
+/// from the crossbeam channel into the matching per-request `oneshot` slot.
+/// Idempotent — uses a `std::sync::Once` so calling more than once is safe.
+fn ensure_script_run_drainer_spawned() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let rx = crate::scripts::script_run_result_receiver();
+        tokio::task::spawn_blocking(move || {
+            use crossbeam::channel::RecvTimeoutError;
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                    Ok(result) => {
+                        let pending_tx = SCRIPT_RUN_PENDING
+                            .lock()
+                            .ok()
+                            .and_then(|mut map| map.remove(&result.request_id));
+                        match pending_tx {
+                            Some(tx) => {
+                                let _ = tx.send(result);
+                            }
+                            None => log::warn!(
+                                "Received ScriptRunResult for unknown request_id {} (caller may have timed out)",
+                                result.request_id
+                            ),
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        log::error!("ScriptRunResult channel disconnected; drainer exiting");
+                        break;
+                    }
+                }
+            }
+        });
+    });
+}
+
+// ─── Remote script execution routing ──────────────────────────────────────────
+//
+// Bridges the MCP `scripts_run_remote` tool to a specific connected client via
+// the admin WebSocket / TCP transport.  Works by:
+//   1. Serialising `Cmd::RunRemoteScripts` and sending it with `send_raw_binary`.
+//   2. Collecting `Cmd::RemoteScriptLog` and `Cmd::RemoteScriptResult` messages
+//      that arrive in `receive.rs` via `notify_remote_script_log/result`.
+//   3. Resolving the pending `oneshot` when `Cmd::RemoteScriptsComplete` is received.
+//
+// Only one concurrent remote-script MCP call is supported at a time (the Mutex
+// guards the single active session id).  Concurrent callers will queue.
+
+#[derive(Debug, Default)]
+struct RemoteScriptSession {
+    session_id: String,
+    logs: Vec<String>,
+    results: Vec<(String, String)>, // (name, status)
+    complete: bool,
+}
+
+type RemoteScriptPending = std::sync::Mutex<
+    Option<(
+        String,
+        tokio::sync::oneshot::Sender<RemoteScriptSession>,
+    )>,
+>;
+static REMOTE_SCRIPT_PENDING: Lazy<RemoteScriptPending> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
+/// Accumulated in-flight log/result data for the active remote-script session.
+static REMOTE_SCRIPT_ACCUM: Lazy<std::sync::Mutex<RemoteScriptSession>> =
+    Lazy::new(|| std::sync::Mutex::new(RemoteScriptSession::default()));
+
+/// Called by `receive.rs` when a `RemoteScriptLog` message arrives from a client.
+pub fn notify_remote_script_log(msg: String) {
+    if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
+        accum.logs.push(msg);
+    }
+}
+
+/// Called by `receive.rs` when a `RemoteScriptResult` message arrives.
+pub fn notify_remote_script_result(name: String, status: String) {
+    if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
+        accum.results.push((name, status));
+    }
+}
+
+/// Called by `receive.rs` when a `RemoteScriptsComplete` message arrives.
+pub fn notify_remote_scripts_complete() {
+    let session = {
+        let mut accum = match REMOTE_SCRIPT_ACCUM.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let mut out = RemoteScriptSession::default();
+        std::mem::swap(&mut *accum, &mut out);
+        out.complete = true;
+        out
+    };
+    if let Ok(mut guard) = REMOTE_SCRIPT_PENDING.lock() {
+        if let Some((_, tx)) = guard.take() {
+            let _ = tx.send(session);
+        }
+    }
+}
+
 // ─── Artifact store ────────────────────────────────────────────────────────────
 
 /// Stores compiled WASM artifacts and their previous versions for rollback.
@@ -471,7 +597,15 @@ pub struct CreateDiagnosticSessionParams {
     pub connection_string: String,
     #[schemars(description = "Hostname of the machine being diagnosed")]
     pub hostname: String,
-    #[schemars(description = "Customer name (if known)")]
+    #[schemars(description = "REQUIRED. Customer record id (e.g. 'customer:abc123' or just 'abc123'). Look up first via find_customer_by_email/phone or via the connected_client.computer.customer graph. If you cannot resolve a customer, ask the user before retrying — do not fabricate.")]
+    pub customer_id: String,
+    #[schemars(description = "REQUIRED. Computer record id (e.g. 'computer:abc123' or just 'abc123'). Look up first via get_computer_details or via connected_client.computer. If you cannot resolve a computer, ask the user before retrying — do not fabricate.")]
+    pub computer_id: String,
+    #[schemars(description = "Optional task record id (e.g. 'task:abc123') if this diagnostic corresponds to an in-house service task. Can be linked later via link_diagnostic_to_task.")]
+    pub task_id: Option<String>,
+    #[schemars(description = "Optional service order record id (e.g. 'service_order:abc123') if a check-in service order exists for this device.")]
+    pub service_order_id: Option<String>,
+    #[schemars(description = "Customer display name (if known)")]
     pub customer_name: Option<String>,
     #[schemars(description = "Technician performing the diagnosis")]
     pub tech: Option<String>,
@@ -480,10 +614,20 @@ pub struct CreateDiagnosticSessionParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct LinkDiagnosticToTaskParams {
+    #[schemars(description = "Session ID to update (e.g. session_id returned by create_diagnostic_session)")]
+    pub session_id: String,
+    #[schemars(description = "Task record id to associate with this session (e.g. 'task:abc123' or just 'abc123')")]
+    pub task_id: Option<String>,
+    #[schemars(description = "Optional service order record id to associate with this session")]
+    pub service_order_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct LogDiagnosticEntryParams {
     #[schemars(description = "Session ID returned by create_diagnostic_session")]
     pub session_id: String,
-    #[schemars(description = "Category: finding, action, resolution, or note")]
+    #[schemars(description = "Category. Allowed values: finding, action, note, error, system_info, network_info, security_alert, performance_note, customer_note, recommendation. Anything else is treated as 'note'.")]
     pub category: String,
     #[schemars(description = "Short title for this entry")]
     pub title: String,
@@ -575,6 +719,49 @@ pub struct SearchOdooInventoryParams {
 pub struct QuerySurrealDbParams {
     #[schemars(description = "Read-only SurrealQL query. Must start with SELECT or RETURN.")]
     pub query: String,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ScriptsListParams {}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ScriptsRunParams {
+    #[schemars(
+        description = "Script category. One of: 'Tuneup', 'Informational', 'JunkwareRemoval'."
+    )]
+    pub category: String,
+    #[schemars(
+        description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Disable OneDrive Startup')."
+    )]
+    pub script_name: String,
+    #[schemars(
+        description = "Optional service number override. Required for activation scripts (Webroot, SuperAnti, SEB)."
+    )]
+    pub service_number: Option<String>,
+    #[schemars(
+        description = "Optional customer email override. Required for SuperEasyBackup activation."
+    )]
+    pub customer_email: Option<String>,
+    #[schemars(
+        description = "Timeout in seconds to wait for the script to finish. Default 600 (10 minutes). Increase for Windows Updates / scans."
+    )]
+    pub timeout_secs: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ScriptsRunRemoteParams {
+    #[schemars(description = "Web Console connection_string of the remote client (from remote_egui_list_targets).")]
+    pub connection_string: String,
+    #[schemars(description = "Script category. One of: 'Tuneup', 'Informational', 'JunkwareRemoval'.")]
+    pub category: String,
+    #[schemars(description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Activate SEB').")]
+    pub script_name: String,
+    #[schemars(description = "Service order number. Required for activation scripts (Webroot, SuperAnti, SEB).")]
+    pub service_number: Option<String>,
+    #[schemars(description = "Customer email. Required for SuperEasyBackup activation.")]
+    pub customer_email: Option<String>,
+    #[schemars(description = "Timeout in seconds to wait for the script to complete on the remote. Default 600.")]
+    pub timeout_secs: Option<u64>,
 }
 
 fn default_remote_egui_true() -> bool {
@@ -1661,16 +1848,35 @@ impl PluginToolProvider {
 
     #[tool(
         name = "create_diagnostic_session",
-        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
+        description = "Start a new diagnostic session. Call at the beginning of any diagnostic engagement. customer_id and computer_id are REQUIRED — every diagnostic must belong to a known customer and computer. Resolve them first via find_customer_by_email/phone, get_computer_details, or by following connected_client.computer.customer; if you cannot resolve, ASK THE USER instead of fabricating. Returns a session_id to use with log_diagnostic_entry and close_diagnostic_session."
     )]
     async fn create_diagnostic_session(
         &self,
         Parameters(p): Parameters<CreateDiagnosticSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let customer_id = parse_record_id(
+            &p.customer_id,
+            database::schema::CUSTOMER_TABLE,
+        );
+        let computer_id = parse_record_id(
+            &p.computer_id,
+            database::schema::COMPUTER_TABLE,
+        );
+        let task_ref = p.task_id.as_deref().map(|s| {
+            parse_record_id(s, database::schema::TASK_TABLE)
+        });
+        let service_order = p.service_order_id.as_deref().map(|s| {
+            parse_record_id(s, database::schema::TICKET_TABLE)
+        });
+
         let session = database::schema::DiagnosticSession {
             connection_string: p.connection_string,
             hostname: p.hostname,
             customer_name: p.customer_name,
+            customer_id,
+            computer_id,
+            task_ref,
+            service_order,
             tech: p.tech,
             tags: p.tags.unwrap_or_default(),
             ..Default::default()
@@ -1687,8 +1893,50 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "link_diagnostic_to_task",
+        description = "Retroactively link an existing diagnostic_session to an in-house task and/or service_order. Use after a customer checks in their device for service so the diagnostic appears in the task modal's Diagnostics tab."
+    )]
+    async fn link_diagnostic_to_task(
+        &self,
+        Parameters(p): Parameters<LinkDiagnosticToTaskParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = parse_record_id(
+            &p.session_id,
+            database::schema::DIAGNOSTIC_SESSION_TABLE,
+        );
+        let task_ref = p.task_id.as_deref().map(|s| {
+            parse_record_id(s, database::schema::TASK_TABLE)
+        });
+        let service_order = p.service_order_id.as_deref().map(|s| {
+            parse_record_id(s, database::schema::TICKET_TABLE)
+        });
+        if task_ref.is_none() && service_order.is_none() {
+            return Err(ErrorData::invalid_params(
+                "link_diagnostic_to_task: at least one of task_id or service_order_id must be provided".to_string(),
+                None,
+            ));
+        }
+        database::schema::DiagnosticSession::link_to_task(
+            &session_id,
+            task_ref.as_ref(),
+            service_order.as_ref(),
+        )
+        .await
+        .map_err(to_internal)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "session_id": p.session_id,
+                "task_id": p.task_id,
+                "service_order_id": p.service_order_id,
+                "linked": true
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "log_diagnostic_entry",
-        description = "Log a finding, action, resolution, or note to an open diagnostic session. Use categories: 'finding' for discovered issues, 'action' for steps taken, 'resolution' for fixes applied, 'note' for general observations."
+        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'."
     )]
     async fn log_diagnostic_entry(
         &self,
@@ -1699,7 +1947,7 @@ impl PluginToolProvider {
                 database::schema::DIAGNOSTIC_SESSION_TABLE,
                 p.session_id.clone(),
             ),
-            category: p.category,
+            category: database::schema::DiagnosticCategory::from_str(&p.category),
             title: p.title,
             detail: p.detail,
             data: p.data,
@@ -2023,6 +2271,190 @@ impl PluginToolProvider {
         )
         .map_err(to_internal)?]))
     }
+
+    #[tool(
+        name = "scripts_list",
+        description = "List every script available in the host Mastertech Scripts tab catalog (Tuneup / QC, Informational, Junkware Removal). Use the returned `category` + `script_name` values verbatim with scripts_run. Works whether or not the host is currently running — it's a static catalog."
+    )]
+    async fn scripts_list(
+        &self,
+        Parameters(_p): Parameters<ScriptsListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use crate::scripts::categories::get_all_categories;
+        use crate::scripts::ScriptCategory;
+
+        let cats = get_all_categories();
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for cat_key in [
+            ScriptCategory::Tuneup,
+            ScriptCategory::Informational,
+            ScriptCategory::JunkwareRemoval,
+        ] {
+            let cat_name = match cat_key {
+                ScriptCategory::Tuneup => "Tuneup",
+                ScriptCategory::Informational => "Informational",
+                ScriptCategory::JunkwareRemoval => "JunkwareRemoval",
+                _ => continue,
+            };
+            if let Some(scripts) = cats.get(&cat_key) {
+                let items: Vec<serde_json::Value> = scripts
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "name": s.name,
+                            "description": s.description,
+                            "pass_criteria": s.pass_criteria,
+                            "warning_criteria": s.warning_criteria,
+                            "error_criteria": s.error_criteria,
+                        })
+                    })
+                    .collect();
+                out.push(serde_json::json!({
+                    "category": cat_name,
+                    "display_name": format!("{}", cat_key),
+                    "scripts": items,
+                }));
+            }
+        }
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({ "categories": out }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "scripts_run",
+        description = "Run a single named script on the local host (Mastertech4.0 in egui or terminal mode). Sends the request over a crossbeam channel to the running Scripts tab, which dispatches to its existing handler and reports back when done. Returns success flag, summary message, and the log lines emitted during the run. Activation scripts (Webroot, SuperAnti, SEB) require a service_number; SEB additionally needs customer_email. Use scripts_list first to see exact script_name values."
+    )]
+    async fn scripts_run(
+        &self,
+        Parameters(p): Parameters<ScriptsRunParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use crate::scripts::{script_run_request_sender, ScriptCategory, ScriptRunRequest};
+
+        let category = match p.category.as_str() {
+            "Tuneup" | "tuneup" | "Tuneup / QC" => ScriptCategory::Tuneup,
+            "Informational" | "informational" => ScriptCategory::Informational,
+            "JunkwareRemoval" | "junkware" | "Junkware Removal" => ScriptCategory::JunkwareRemoval,
+            other => {
+                return Err(to_internal(format!(
+                    "Unknown category '{other}'. Expected one of: Tuneup, Informational, JunkwareRemoval."
+                )));
+            }
+        };
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let req = ScriptRunRequest {
+            request_id: request_id.clone(),
+            category,
+            script_name: p.script_name.clone(),
+            service_number: p.service_number.clone(),
+            customer_email: p.customer_email.clone(),
+        };
+
+        let rx = register_pending_script_run(request_id.clone());
+
+        script_run_request_sender()
+            .send(req)
+            .map_err(|e| to_internal(format!("Failed to enqueue script request: {e}")))?;
+
+        let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or(600));
+        let result = match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => {
+                return Err(to_internal(
+                    "Script result channel closed before a response arrived (host may have shut down)",
+                ));
+            }
+            Err(_) => {
+                if let Ok(mut map) = SCRIPT_RUN_PENDING.lock() {
+                    map.remove(&request_id);
+                }
+                return Err(to_internal(format!(
+                    "Timed out after {}s waiting for script '{}' to complete. The script may still be running on the host; check the Scripts tab log.",
+                    timeout.as_secs(),
+                    p.script_name
+                )));
+            }
+        };
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::to_value(&result).map_err(to_internal)?,
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "scripts_run_remote",
+        description = "Run a named script on a REMOTE Mastertech client that is connected via the admin Web Console. Unlike scripts_run (which drives the LOCAL host), this sends Cmd::RunRemoteScripts over the existing admin WebSocket/TCP session to the target client and waits for results. Use for any QC / Tuneup script that must execute on the customer's machine, not on the admin machine. Requires an active Web Console session (check remote_egui_list_targets). Activation scripts (Webroot, SuperAnti, SEB) require service_number; SEB additionally needs customer_email."
+    )]
+    async fn scripts_run_remote(
+        &self,
+        Parameters(p): Parameters<ScriptsRunRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use crate::Cmd;
+
+        let service_number = p.service_number.clone().unwrap_or_default();
+        let customer_email = p.customer_email.clone().unwrap_or_default();
+
+        // Build the RunRemoteScripts command with a single named script.
+        let cmd = Cmd::RunRemoteScripts {
+            scripts: vec![crate::RemoteScriptItem {
+                name: p.script_name.clone(),
+                category: p.category.clone(),
+                content: None,
+            }],
+            service_number: service_number.clone(),
+            customer_email: customer_email.clone(),
+        };
+        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+        // Register a pending oneshot for this script run.
+        let (tx, rx) = tokio::sync::oneshot::channel::<RemoteScriptSession>();
+        {
+            let mut guard = REMOTE_SCRIPT_PENDING
+                .lock()
+                .map_err(|_| to_internal("REMOTE_SCRIPT_PENDING poisoned"))?;
+            // Clear any stale accumulator from a previous run.
+            if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
+                *accum = RemoteScriptSession::default();
+            }
+            *guard = Some((p.script_name.clone(), tx));
+        }
+
+        super::remote_egui_control::hub()
+            .send_raw_binary(&p.connection_string, serialized)
+            .map_err(to_internal)?;
+
+        let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or(600));
+        let session = match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(_)) => {
+                let _ = REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+                return Err(to_internal("Remote script channel closed unexpectedly"));
+            }
+            Err(_) => {
+                let _ = REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+                return Err(to_internal(format!(
+                    "Timed out after {}s waiting for remote script '{}' to complete.",
+                    timeout.as_secs(),
+                    p.script_name
+                )));
+            }
+        };
+
+        let overall_success = session.results.iter().all(|(_, s)| s == "Success" || s == "success");
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "script": p.script_name,
+            "connection_string": p.connection_string,
+            "success": overall_success,
+            "results": session.results.iter().map(|(n, s)| serde_json::json!({"name": n, "status": s})).collect::<Vec<_>>(),
+            "logs": session.logs,
+        }))
+        .map_err(to_internal)?]))
+    }
 }
 
 // ─── Server handler ────────────────────────────────────────────────────────────
@@ -2068,12 +2500,252 @@ Step 5 — Read prior findings before starting new diagnosis:
   (e.g. "if he comes back we need to replace GPU"), and unresolved items.
   Factor these into the current diagnosis — do not re-attempt known-failed fixes.
 
+=== Service Context Identification (run BEFORE choosing a workflow) ===
+Every connected client is in the shop for one of three reasons: a New Computer / QC build,
+a Tuneup, or a Diagnostic. The order record + linked task tell you which one. Run these
+steps before doing any work, and use the result to route to the correct workflow below.
+
+Step 1 — Pull the order:
+  get_service_order with the service number (visible in the Mastertech Scripts tab field
+  scripts.service_number, or in TUR Sheet tur.service_number). The result includes:
+    - doc_alias       — order_type string from PrestaShop (the primary classifier)
+    - checkin_notes   — free-text notes from the check-in tech
+    - customer / computer — already linked records
+
+Step 2 — Pull the linked task(s) for tech-specific instructions:
+  SELECT * FROM task WHERE service_ticket = ticket:`<SERVICE_NUMBER>`
+  New computer builds almost always have a task assigned to the build tech with a
+  `description` field that names the exact work (e.g. "Customer wants OneDrive removed,
+  no LibreOffice, transfer data from old drive on the bench"). Read it carefully — it
+  overrides the standard checklist for that build.
+
+Step 2b — STALENESS + OWNERSHIP SANITY CHECK (MANDATORY — do this before any work):
+  Cross-reference the order/task against today's date and the connected machine's identity.
+  If ANY of the following mismatches exist, STOP and ask the user to confirm before
+  proceeding — do not silently assume the order is correct:
+
+  a) DATE GAP: order or task `created_at` is more than ~2 weeks before today's date.
+     A new-computer QC shouldn't happen months after purchase; a tuneup shouldn't be
+     linked to a ticket from a prior visit. Flag it: "This order is from <date> — is
+     this the right ticket for today's work?"
+
+  b) HOSTNAME MISMATCH: the `connected_client.computer` hostname does not match the
+     computer linked on the service order. The customer may have traded in or swapped
+     the machine since the order was created (e.g. traded a desktop for a laptop —
+     the desktop got recertified and resold, but we are now connected to it under the
+     original owner's name). Always verify: SELECT * FROM connected_client WHERE
+     connection_string = '<connection_string>' and compare its `.computer` field against
+     service_order.computer.
+
+  c) CUSTOMER MISMATCH: the friendly_name on the connected_client or the customer
+     linked to the computer record doesn't match the customer on the service order.
+     Cross-check: connected_client → computer → customer vs. service_order → customer.
+     If they differ, the machine may have been sold/transferred since the order was made.
+
+  d) RECERTIFIED / RESOLD INDICATOR: if a previous service order for this computer
+     shows "refurb", "recertified", "resold", "trade-in", or the machine's customer
+     has changed since the most-recent prior order, treat that as a strong signal that
+     the correct order belongs to the new customer/owner, not the previous one.
+
+  If a mismatch is detected, search for the most recent active (non-Complete) task or
+  service order whose computer matches the connected machine's hostname, then present
+  the discrepancy clearly to the user and ask which order to proceed with. Never guess.
+
+Step 3 — Classify by doc_alias (case-insensitive contains match):
+  - "new", "build", "setup", "qc"           → New Computer / QC      (use the workflow below)
+  - "tune", "tuneup", "clean", "maintenance" → Tuneup                 (use the workflow below)
+  - "diag", "diagnostic", "issue", "repair", "no boot", "won't start"
+                                            → Diagnostic             (use the workflow below)
+  - Anything else / ambiguous                → read checkin_notes + task description; if
+                                              still unclear, ASK THE USER. Never guess.
+
+Step 4 — Read checkin_notes + task description and extract conditional flags before
+running anything. Common signals to watch for:
+  - "data transfer" / "transfer files" / "old drive"  → run Data Transfer
+  - "install office" / "libreoffice" / "openoffice"   → Install LibreOffice
+  - "bitlocker"                                       → Disable BitLocker (if currently on)
+  - "bring your own key" / "customer key"             → use customer-supplied keys
+  - "ram", "ssd", "hdd", "gpu", "battery"             → hardware swap; do that first
+  - "no AV" / "they have <vendor>"                    → skip Webroot/SAS activation
+  - Specific junkware named (Avast, McAfee, Norton, OneLaunch, etc.) → run those
+    items from the Junkware Removal checklist explicitly
+
 === Diagnostic Session Workflow ===
-When performing diagnostics:
+When the Service Context Identification step routes to Diagnostic (or the operator
+explicitly asks for diagnosis):
   1. Complete the Prior-History Lookup above.
-  2. Call create_diagnostic_session at the start.
-  3. Call log_diagnostic_entry for each finding, action taken, or resolution.
-  4. Call close_diagnostic_session with a summary when done.
+  2. Resolve `customer_id` and `computer_id` BEFORE calling create_diagnostic_session — both are required.
+     - Try connected_client.computer (and computer.customer) first if you have a connection_string.
+     - Fall back to find_customer_by_email / find_customer_by_phone, then get_computer_details.
+     - If you still cannot resolve, ASK THE USER. Never fabricate ids.
+  3. Call create_diagnostic_session with the resolved ids (and optional task_id / service_order_id if a check-in exists).
+  4. Call log_diagnostic_entry for each finding, action taken, or resolution. Use the
+     allowed category vocabulary: finding, action, note, error, system_info,
+     network_info, security_alert, performance_note, customer_note, recommendation.
+  5. If the customer later checks in for service, call link_diagnostic_to_task to
+     associate the session with the new task / service_order so it shows up in the
+     task modal's Diagnostics tab.
+  6. Call close_diagnostic_session with a summary when done.
+
+=== New Computer / QC Workflow ===
+When Service Context Identification routes to New Computer / QC. The Mastertech Scripts
+tab on the connected client owns the actual execution — drive it via remote_egui (see the
+Scripts Tab Navigation section below). Activation scripts (Webroot, SAS, SEB) REQUIRE the
+service number to be entered in the Scripts tab field before clicking Run, otherwise they
+short-circuit with "requires SO number" in the log.
+
+Always run, in this order (Tuneup / QC checklist column unless noted):
+   1. Run Prechecks                  (Informational column — connects Wi-Fi, aligns taskbar, scans network)
+   2. Install Windows Updates        (may require multiple reboots; re-check after each cycle until clean)
+   3. Activate Webroot               (needs SO number → CPS keys)
+   4. Activate SuperAnti + Change SuperAntiSpyware settings
+                                     (CHECK BOTH in the same Run; the tab detects the combo and
+                                      runs them as one sequential install→configure flow)
+   5. Activate SEB                   (needs SO number AND customer email)
+   6. Disable Sleep / Hibernation
+   7. Disable Startup Apps
+   8. Disable Notifications
+   9. Unpin Copilot
+  10. Align Taskbar to left
+  11. Change Timezone to Mountain
+  12. Disable proxy settings
+  13. Disable OneDrive Startup       (Junkware Removal column)
+  14. Disable Edge Startup Boost     (Junkware Removal column)
+  15. Run Webroot Scan
+  16. Run SuperAntiSpyware Scan
+
+Conditional, gated on task description / checkin_notes (see Service Context Identification Step 4):
+  - Data Transfer                    — only when notes mention transfer / old drive / migration
+  - Install LibreOffice              — only when explicitly requested
+  - Disable BitLocker                — only if Informational shows BitLocker enabled
+  - Run Junkware Category            — when prechecks/Informational flag PUPs, or notes name them
+  - Uninstall Microsoft 365 / OneDrive / specific browsers — only when explicitly named
+
+After execution, run the full Informational checklist as a verification pass:
+  Is SuperEasyBackup installed? / Is Webroot installed? / Is SuperAntiSpyware installed? /
+  Are there scheduled tasks for it? / Is Windows Activated? / Is Hibernation/Sleep enabled? /
+  Any Recent Blue Screens? / When Was The Last Service Date? / Windows Version
+Then create_diagnostic_session (category 'note' / 'system_info') summarizing what passed,
+link_diagnostic_to_task to the build task, and close_diagnostic_session with status 'resolved'.
+
+=== Tuneup Workflow ===
+When Service Context Identification routes to Tuneup. Same execution surface (Scripts tab)
+as New Computer / QC, but the goal is cleanup + verification rather than a full build.
+
+Always run, in this order:
+   1. Run Prechecks                  (Look up customer via tasks table, if no tasks, look up customer via service orders, 
+                                     then lookup by prestashop order number if all else fails) So you have notes on what we are doing
+                                     to the computer. verify its a QC, Tuneup, or Diagnostic.
+   2. Check Updates                  (Tuneup / QC — check-only first; only escalate to
+                                      "Install Windows Updates" if the customer's task notes
+                                      ask for it OR the machine is significantly behind)
+   3. Run the full Informational checklist FIRST to establish baseline:
+        Is SuperEasyBackup installed?, Is Webroot installed?, Is SuperAntiSpyware installed?,
+        Are there scheduled tasks for it?, Is Windows Activated?, Is Hibernation/Sleep enabled?,
+        Any Recent Blue Screens?, When Was The Last Service Date?, Windows Version
+   4. Run Junkware Category          (broad PUP scan / removal)
+   5. Run SuperAntiSpyware Scan
+   6. Run Webroot Scan
+   7. Disable Sleep / Hibernation    (only if Informational showed it enabled)
+   8. Disable Startup Apps
+   9. Disable Notifications
+  10. Unpin Copilot
+  11. Align Taskbar to left
+  12. Disable proxy settings
+  13. Disable OneDrive Startup + Disable Edge Startup Boost   (Junkware Removal column)
+  14. Empty recycle bin + clean tmp folders via execute_script with this PowerShell:
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+Conditional, gated on Informational results + checkin_notes:
+  - Webroot not installed            → Activate Webroot
+  - SAS not installed                → Activate SuperAnti + Change SuperAntiSpyware settings
+  - SEB not installed                → Activate SEB
+  - Specific junkware named in notes → run the matching Junkware Removal items
+  - "data transfer" in notes         → Data Transfer
+  - "office" in notes + Office not installed → Install LibreOffice (or installed Office per notes)
+
+After execution, log a diagnostic_session entry per finding (category 'finding' for issues
+removed, 'action' for scripts that ran, 'recommendation' for anything the customer should
+follow up on), link_diagnostic_to_task to the tuneup task, then close_diagnostic_session.
+
+=== Local Scripts Execution (admin machine only — do NOT use for QC on a customer's computer) ===
+For the machine running this MCP server, prefer the dedicated script tools below
+over `remote_egui_*` clicking. They drive the local Scripts tab (egui mode) or
+terminal Scripts tab (ratatui mode) over a crossbeam channel and report results
+back synchronously.
+
+⚠️  CRITICAL — LOCAL vs. REMOTE DISTINCTION:
+  scripts_run  → executes on the ADMIN machine (the machine running Mastertech/MCP).
+                 NEVER use this to run QC steps on a customer's computer.
+  scripts_run_remote → executes on a REMOTE CLIENT connected via the admin Web Console.
+                 ALWAYS use this when running QC, Tuneup, or any activation script
+                 on a customer's machine. Requires connection_string from
+                 remote_egui_list_targets.
+
+Tools:
+- scripts_list — returns the catalog of every available script grouped by category
+  (Tuneup, Informational, JunkwareRemoval). No host required; the catalog is static.
+- scripts_run — runs ONE named script on the LOCAL admin machine. Args:
+    category       : "Tuneup" | "Informational" | "JunkwareRemoval"
+    script_name    : exact display name from scripts_list (e.g. "Activate Webroot")
+    service_number : required for Activate Webroot, Activate SuperAnti, Activate SEB
+    customer_email : required for Activate SEB
+    timeout_secs   : default 600. Bump for Windows Updates / full AV scans.
+  Returns: { request_id, success, message, logs[] }.
+  ⚠️  Only use for admin-machine operations (e.g. testing, admin-side installs).
+      For customer QC, use scripts_run_remote instead.
+- scripts_run_remote — runs ONE named script on a REMOTE client over the admin
+  WebSocket/TCP session. Same script catalog as scripts_run. Extra required arg:
+    connection_string : from remote_egui_list_targets (e.g. "DESKTOP-HKBCJ74:ac4ebfe00")
+  All other args (category, script_name, service_number, customer_email, timeout_secs)
+  work identically to scripts_run. Returns { script, success, results[], logs[] }.
+  Use this for ALL QC / Tuneup activation steps on customer machines.
+
+Workflow integration (customer QC / New Computer build on a REMOTE client):
+- Use scripts_run_remote for every QC step: Activate CPS, Activate SEB, Install Windows
+  Updates, Disable OneDrive Startup, etc.
+- For multi-script combos like Activate SuperAnti + Change SuperAntiSpyware settings,
+  run as two back-to-back scripts_run_remote calls.
+- Activation scripts require service_number; SEB also requires customer_email.
+- Always call remote_egui_list_targets first to confirm the client is connected.
+
+When to use remote_egui instead:
+- The target machine is running the Mastertech egui UI and has frame capture enabled.
+  For terminal-mode (ratatui) clients, use scripts_run_remote — not remote_egui.
+
+=== Scripts Tab Navigation (remote_egui) ===
+The Mastertech client's Scripts tab is the actual execution surface for both the
+New Computer / QC and Tuneup workflows. Driving it from MCP:
+
+  1. Open the tab:
+       remote_egui_perform_steps with steps:
+         click_anchor nav.menu.view → sleep_ms 450 → click_anchor nav.tab.scripts
+       (View-menu tab anchors only exist while the menu is open — see Remote egui section.)
+  2. Enter the service number into the Scripts tab field BEFORE selecting any activation
+     script. Webroot / SuperAnti / SEB short-circuit without it.
+  3. Each checklist column (Tuneup / QC, Informational, Junkware Removal) has clickable
+     items. Toggle the desired ones, then click the Run button.
+  4. Run is sequential: it walks selected items top-to-bottom. The "Activate SuperAnti" +
+     "Change SuperAntiSpyware settings" combo is auto-detected — if both are checked in
+     one run, the settings step waits for activation to finish; otherwise leave them
+     unchecked together.
+  5. Watch the script log area for completion messages and the checklist green-check
+     state to confirm each item finished successfully.
+
+Anchor keys for the Scripts tab (currently being added — see follow-up note below):
+  - scripts.service_number           — the SO input field
+  - scripts.run_btn                  — the Run button
+  - scripts.tuneup.<slug>            — Tuneup / QC items (slug = item text lowercased,
+                                       non-alphanumeric → '_', e.g. scripts.tuneup.activate_webroot)
+  - scripts.junkware.<slug>          — Junkware Removal items
+  - scripts.informational.<slug>     — Informational items
+
+Until the Scripts tab fully registers all anchors, after opening the tab call
+remote_egui_list_widget_anchors to see what is actually exposed, and fall back to
+remote_egui_click with coordinates from remote_egui_get_last_frame_meta for any item
+not yet anchored.
 
 Use search_customers / get_customer_details / search_service_orders to pull customer context and service history.
 Use get_computer_details to see full hardware info for a machine.
@@ -2091,9 +2763,10 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 - fetch_plugin — download WASM from registry into local artifact store for deploy.
 
 === Diagnostic Knowledge Base ===
-- create_diagnostic_session — start logging a diagnostic engagement.
-- log_diagnostic_entry — append findings/actions/resolutions with optional structured data.
+- create_diagnostic_session — start logging a diagnostic engagement (REQUIRES customer_id + computer_id).
+- log_diagnostic_entry — append entries with structured category vocabulary + optional data.
 - close_diagnostic_session — finalize with status and summary.
+- link_diagnostic_to_task — retroactively link a session to an in-house task / service_order.
 - search_diagnostics — find past sessions by hostname, customer, tags, or free text.
 - get_diagnostic_session — retrieve a full session with all entries.
 
@@ -2163,11 +2836,27 @@ fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
     ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
 }
 
+/// Parse a Surreal record id from an MCP-supplied string. Accepts either
+/// the full `table:key` form or just the bare `key`, returning a record
+/// id on the requested table in either case. Used by the diagnostic
+/// tools to convert AI-supplied identifiers into the typed `RecordId`
+/// the schema now requires.
+fn parse_record_id(s: &str, table: &'static str) -> database::schema::RecordId {
+    let key = if s.contains(':') {
+        s.split(':').last().unwrap_or(s).to_string()
+    } else {
+        s.to_string()
+    };
+    database::schema::RecordId::new(table, key)
+}
+
 // ─── TCP server ────────────────────────────────────────────────────────────────
 
 /// Start the plugin MCP server on TCP port 9003.
 pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyhow::Result<()> {
     use tokio::net::TcpListener;
+
+    ensure_script_run_drainer_spawned();
 
     let addr = "127.0.0.1:9003";
     let listener = TcpListener::bind(addr).await?;
@@ -2211,6 +2900,8 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
     } else {
         log::info!("SurrealDB 'plugins' bucket initialized");
     }
+
+    ensure_script_run_drainer_spawned();
 
     let addr = "127.0.0.1:9004";
     let listener = tokio::net::TcpListener::bind(addr).await?;

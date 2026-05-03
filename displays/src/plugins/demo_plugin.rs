@@ -20,9 +20,9 @@ pub struct HelloMastertechPlugin {
 impl Default for HelloMastertechPlugin {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             tick: 0,
-            window_open: true,
+            window_open: false,
         }
     }
 }

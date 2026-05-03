@@ -181,7 +181,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                 || s.summary.clone().unwrap_or_default().contains(&self.filter)
                 || s.tech.clone().unwrap_or_default().contains(&self.filter),
             DatabaseTable::DiagEntry(e) =>
-                e.category.contains(&self.filter)
+                e.category.as_str().contains(self.filter.as_str())
                 || e.title.contains(&self.filter)
                 || e.detail.contains(&self.filter),
             DatabaseTable::PluginReg(p) =>
@@ -364,14 +364,17 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     1 => ui.label(e.session_ref.key_string()),
                     2 => ui.label(e.timestamp.to_string()),
                     3 => {
-                        let color = match e.category.as_str() {
+                        let cat_str = e.category.as_str();
+                        let color = match cat_str {
                             "finding" => Color32::from_rgb(255, 200, 50),
                             "action" => Color32::from_rgb(42, 195, 222),
                             "resolution" => Color32::from_rgb(100, 200, 100),
                             "error" => Color32::from_rgb(255, 80, 80),
+                            "security_alert" => Color32::from_rgb(255, 80, 200),
+                            "performance_note" => Color32::from_rgb(200, 150, 255),
                             _ => Color32::GRAY,
                         };
-                        ui.colored_label(color, &e.category)
+                        ui.colored_label(color, cat_str)
                     },
                     4 => ui.label(&e.title),
                     5 => {
@@ -699,7 +702,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                 match column {
                     1 => l.session_ref.key_string().cmp(&r.session_ref.key_string()),
                     2 => l.timestamp.to_string().cmp(&r.timestamp.to_string()),
-                    3 => l.category.cmp(&r.category),
+                    3 => l.category.as_str().cmp(r.category.as_str()),
                     4 => l.title.cmp(&r.title),
                     _ => Ordering::Equal,
                 }

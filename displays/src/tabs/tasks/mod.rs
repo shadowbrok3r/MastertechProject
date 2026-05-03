@@ -1,12 +1,15 @@
 use database::schema::{FilterLiveTasks, LiveTaskPayload, Status, Store};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 use crate::app_state::SharedContext;
+use crate::tabs::tasks::client_cards::ClientCardData;
+use crate::tabs::tasks::task_layout::CONNECTED_CLIENTS_KEY;
 use std::collections::BTreeMap;
 use task_layout::TaskLayout;
 
 pub mod task_cards;
 pub mod task_layout;
 pub mod interactable;
+pub mod client_cards;
 
 impl SharedContext {
     pub fn render_layout(&mut self, ui: &mut Ui, page: &str) {
@@ -49,6 +52,14 @@ impl SharedContext {
         });
 
         if page == "My Tasks" {
+            // Lead My Tasks with the connected-clients column so it's the
+            // first thing techs see. Inserted as an empty bucket in the
+            // task map so column-order persistence treats it like any other
+            // column key — the renderer detects the key and substitutes the
+            // client-card UI in place of task rows.
+            map.insert(CONNECTED_CLIENTS_KEY.to_string(), Vec::new());
+            ordered_keys.push(CONNECTED_CLIENTS_KEY.to_string());
+
             // Collect tasks for each status and include empty columns so saved order persists
             for status_str in &config.valid_keys {
                 let status = Status::from_str(status_str);
@@ -226,6 +237,43 @@ impl SharedContext {
         layout.update_col_names(ordered_keys);
         // Propagate last_read_notes from SharedContext
         layout.last_read_notes = self.last_read_notes.clone();
+
+        // Build connected-client cards for the My Tasks board.
+        // Visibility: admins/managers see every connected client; regular
+        // users only see clients explicitly assigned to them.
+        if page == "My Tasks" {
+            let is_priviledged = current_user.is_admin() || current_user.is_manager();
+            let current_user_id = current_user.get_id();
+            let cards: Vec<ClientCardData> = self
+                .clients
+                .iter()
+                .filter(|c| {
+                    is_priviledged
+                        || c.assigned_user.as_ref().is_some_and(|u| *u == current_user_id)
+                })
+                .map(|c| {
+                    let ws = self
+                        .web_console_layout
+                        .ws_clients
+                        .get(&c.connection_string);
+                    let system_info = ws.and_then(|w| w.resource_monitor.latest_sysinfo.clone());
+                    let active_session_id = self
+                        .web_console_layout
+                        .active_diagnostic_sessions
+                        .get(&c.connection_string)
+                        .cloned();
+                    ClientCardData {
+                        client: c.clone(),
+                        system_info,
+                        ai_active: active_session_id.is_some(),
+                        active_session_id,
+                        computer_data: None,
+                        linked_task: None,
+                    }
+                })
+                .collect();
+            layout.client_cards = cards;
+        }
 
         // Render the layout
         layout.layout_cols(ui, self.ui_actions_tx.clone());

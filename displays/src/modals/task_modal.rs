@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, Ui, UiBuilder, Vec2, Widget};
 use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{COMPUTER_TABLE, CarboniteResponse, ComputerData, CustomerData, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
+use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{COMPUTER_TABLE, CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
 use database::schema::prestashop::{Prestashop, Customer, Address, OrderState};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::schema::prestashop_schema::PrestashopPayload;
@@ -17,7 +17,7 @@ use bytes::Bytes;
 use core::f32;
 use log::info;
 
-use super::tabs::{display_computer_page_with_search, display_history_page, display_job_builder_page, display_software_page, display_ticket_page, ComputerSearchData};
+use super::tabs::{display_computer_page_with_search, display_diagnostics_page, display_history_page, display_job_builder_page, display_software_page, display_ticket_page, ComputerSearchData, DiagnosticSessionView};
 
 #[cfg(target_arch="wasm32")]
 use std::sync::Mutex;
@@ -133,6 +133,22 @@ pub struct TaskModal {
     pub service_history_tx: Sender<Vec<LiveTaskPayload>>,
     #[serde(skip)]
     pub service_history_rx: Receiver<Vec<LiveTaskPayload>>,
+
+    // Diagnostics tab state (#new)
+    /// `DiagnosticSession`s linked to this task or the same computer,
+    /// each bundled with their own entries.
+    pub diagnostic_sessions: Vec<DiagnosticSessionView>,
+    pub diagnostics_loading: bool,
+    pub diagnostics_error: Option<String>,
+    /// Currently expanded session in the right pane.
+    pub selected_diagnostic_session: Option<RecordId>,
+    /// Set to true when the diagnostics tab fetch has been kicked off so
+    /// we don't re-fire on every frame.
+    pub diagnostics_fetched: bool,
+    #[serde(skip)]
+    pub diagnostics_tx: Sender<DiagnosticSessionView>,
+    #[serde(skip)]
+    pub diagnostics_rx: Receiver<DiagnosticSessionView>,
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Serialize)]
@@ -173,6 +189,10 @@ pub enum ModalAction {
     JobBuilderPage,
     TaskNotePage,
     TaskHistoryPage,
+    /// Diagnostics tab — lists all `DiagnosticSession`s linked to this
+    /// task or the same computer, alongside the customer's check-in notes
+    /// for side-by-side comparison.
+    DiagnosticsPage,
     ImportTask,
     Close,
     // TaskPage,
@@ -193,6 +213,7 @@ impl TaskModal {
         let (import_customer_tx, import_customer_rx) = crossbeam::channel::unbounded();
         let (import_computers_tx, import_computers_rx) = crossbeam::channel::unbounded();
         let (service_history_tx, service_history_rx) = crossbeam::channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = crossbeam::channel::unbounded();
         let comp_tx = computer_tx.clone();
         let cust_tx = customer_tx.clone();
         let svc_tx = service_ticket_tx.clone();
@@ -295,6 +316,13 @@ impl TaskModal {
             open_customer_service_history: false,
             open_computer_service_history: false,
             service_history_tx, service_history_rx,
+            // Diagnostics
+            diagnostic_sessions: Vec::new(),
+            diagnostics_loading: false,
+            diagnostics_error: None,
+            selected_diagnostic_session: None,
+            diagnostics_fetched: false,
+            diagnostics_tx, diagnostics_rx,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -483,6 +511,22 @@ impl TaskModal {
             }
         }
 
+        // Drain any diagnostic sessions delivered by the background fetch.
+        while let Ok(view) = self.diagnostics_rx.try_recv() {
+            // Replace if same id, else append; keeps order stable across
+            // partial fetches.
+            if let Some(slot) = self
+                .diagnostic_sessions
+                .iter_mut()
+                .find(|v| v.session.id == view.session.id)
+            {
+                *slot = view;
+            } else {
+                self.diagnostic_sessions.push(view);
+            }
+            self.diagnostics_loading = false;
+        }
+
         // Handle service history open triggers
         if self.open_customer_service_history {
             self.open_customer_service_history = false;
@@ -533,6 +577,43 @@ impl TaskModal {
         }
     }
     
+    /// First-time the Diagnostics tab is opened, fire a background fetch
+    /// for every `DiagnosticSession` linked to this task or to the same
+    /// computer. Subsequent opens reuse the cached results until the modal
+    /// is rebuilt.
+    pub fn kickoff_diagnostics_load(&mut self) {
+        if self.diagnostics_fetched {
+            return;
+        }
+        self.diagnostics_fetched = true;
+        self.diagnostics_loading = true;
+        self.diagnostics_error = None;
+        let task_id = self.task.id.clone();
+        let computer_id = self.computer.as_ref().map(|c| c.id.clone());
+        let tx = self.diagnostics_tx.clone();
+        PlatformSpawner::spawn(async move {
+            match DiagnosticSession::list_for_task_or_computer(
+                Some(&task_id),
+                computer_id.as_ref(),
+            )
+            .await
+            {
+                Ok(sessions) => {
+                    for s in sessions {
+                        let entries = match DiagnosticSession::get_full(&s.id.key_string()).await {
+                            Ok(Some(full)) => full.entries,
+                            _ => Vec::new(),
+                        };
+                        let _ = tx.try_send(DiagnosticSessionView { session: s, entries });
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to load diagnostics for task: {e:?}");
+                }
+            }
+        });
+    }
+
     /// Show the import computer from PrestaShop/Everest modal
     pub fn show_import_computer_modal(&mut self, ui: &mut Ui) {
         if !self.import_computer_open {
@@ -1096,6 +1177,14 @@ impl DisplayModal for TaskModal {
                         .clicked() {
                             self.current_page_state = ModalAction::TaskNotePage;
                         }
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
+                            self.current_page_state == ModalAction::DiagnosticsPage,
+                            RichText::new("🔬").heading()
+                        ))
+                        .on_hover_text("Diagnostics")
+                        .clicked() {
+                            self.current_page_state = ModalAction::DiagnosticsPage;
+                        }
                     });
                 });
 
@@ -1124,6 +1213,7 @@ impl DisplayModal for TaskModal {
                 ModalAction::JobBuilderPage => 670.,
                 ModalAction::TaskNotePage => 715.,
                 ModalAction::TaskHistoryPage => 670.,
+                ModalAction::DiagnosticsPage => 715.,
                 _ => 715.
             };
 
@@ -1189,6 +1279,23 @@ impl DisplayModal for TaskModal {
                 ModalAction::JobBuilderPage   => display_job_builder_page(ui),
                 ModalAction::TaskNotePage     => self.chat_view.ui(ui),
                 ModalAction::TaskHistoryPage  => display_history_page(ui, &self.task_history, avail_size),
+                ModalAction::DiagnosticsPage  => {
+                    self.kickoff_diagnostics_load();
+                    let checkin = self
+                        .service_ticket
+                        .as_ref()
+                        .map(|t| t.checkin_notes.clone())
+                        .unwrap_or_default();
+                    display_diagnostics_page(
+                        ui,
+                        avail_size,
+                        &self.diagnostic_sessions,
+                        self.diagnostics_loading,
+                        self.diagnostics_error.as_deref(),
+                        &mut self.selected_diagnostic_session,
+                        &checkin,
+                    );
+                },
                 // ModalAction::TaskPage         => display_task_page(ui, &mut self.task, avail_size),
                 _ => {}
             }

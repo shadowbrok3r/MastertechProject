@@ -194,6 +194,17 @@ impl SharedContext {
                         });
                         info!("receive_ui_action -> self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
                 },
+                TaskUiActions::OpenAdminConsole(connection_string) => {
+                    info!("receive_ui_action -> OpenAdminConsole: {connection_string}");
+                    self.open_tabs.insert("Admin Console".to_string());
+                    self.pending_activate_tab = Some("Admin Console".to_string());
+                    // Surface which client to focus once the tab is active.
+                    self.pending_admin_console_focus = Some(connection_string);
+                }
+                TaskUiActions::OpenClientDiagnostics(connection_string) => {
+                    info!("receive_ui_action -> OpenClientDiagnostics: {connection_string}");
+                    self.client_diagnostics_popup = Some(connection_string);
+                }
                 TaskUiActions::None => (),
             };
         }
