@@ -34,28 +34,18 @@ pub fn display_diagnostics_page(
     let right_w = (total_w - left_w - 12.0).max(380.0);
 
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(
-            Vec2::new(left_w, avail_size.y.max(560.0)),
-            eframe::egui::Layout::top_down(eframe::egui::Align::LEFT),
-            |ui| {
-                ui.label(RichText::new("Check-in Notes").strong().size(14.0));
-                ui.separator();
-                ScrollArea::vertical()
-                    .id_salt("diag_checkin_scroll")
-                    .auto_shrink([false; 2])
-                    .max_height(avail_size.y.max(560.0))
-                    .show(ui, |ui| {
-                        if checkin_notes.trim().is_empty() {
-                            ui.colored_label(
-                                Color32::from_rgb(150, 150, 150),
-                                "No check-in notes recorded.",
-                            );
-                        } else {
-                            ui.label(checkin_notes);
-                        }
-                    });
-            },
-        );
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("Check-in Notes").strong().size(14.0));
+            ui.separator();
+            if checkin_notes.trim().is_empty() {
+                ui.colored_label(
+                    Color32::from_rgb(150, 150, 150),
+                    "No check-in notes recorded.",
+                );
+            } else {
+                ui.label(checkin_notes);
+            }
+        });
 
         ui.add_space(8.0);
 

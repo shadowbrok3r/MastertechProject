@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, User, UserSettings}, Database};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -255,6 +255,11 @@ pub struct SharedContext {
     pub pending_activate_tab: Option<String>,
     /// Tracks when task notes were last read by the current user (task_id -> last_read_at)
     pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
+    /// {Read-state rows fetched from SurrealDB on initial load (task_note_read table)}
+    #[serde(skip)]
+    pub read_state_tx: Sender<Vec<TaskNoteRead>>,
+    #[serde(skip)]
+    pub read_state_rx: Receiver<Vec<TaskNoteRead>>,
     /// When set, the Admin Console renderer should scroll to / select this
     /// `connection_string`. Cleared by the renderer after acting.
     #[serde(skip)]
@@ -278,6 +283,7 @@ impl SharedContext {
         let (associated_notes_tx, associated_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
+        let (read_state_tx, read_state_rx) = channel::unbounded::<Vec<TaskNoteRead>>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
@@ -394,6 +400,7 @@ impl SharedContext {
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,
             last_read_notes: HashMap::new(),
+            read_state_tx, read_state_rx,
             pending_admin_console_focus: None,
             client_diagnostics_popup: None,
         }

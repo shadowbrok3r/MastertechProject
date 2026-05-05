@@ -45,36 +45,55 @@ impl Default for PluginRegistryEntry {
 }
 
 impl PluginRegistryEntry {
-    /// Search the plugin registry by keyword (case-insensitive substring match on name, description, plugin_id).
+    /// Search the plugin registry by keyword (case-insensitive, multi-token OR match on name, description, plugin_id, and tags).
     pub async fn search(query: &str, tags: Option<&[String]>) -> anyhow::Result<Vec<Self>> {
-        let q = query.to_lowercase();
-        let entries: Vec<Self> = if let Some(tag_list) = tags {
-            DATABASE
-                .query(
-                    "SELECT * FROM plugin_registry
-                     WHERE (string::lowercase(name) CONTAINS $q
-                         OR string::lowercase(description) CONTAINS $q
-                         OR string::lowercase(plugin_id) CONTAINS $q)
-                       AND tags CONTAINSANY $tags
-                     ORDER BY updated_at DESC LIMIT 25"
-                )
-                .bind(("q", q))
-                .bind(("tags", tag_list.to_vec()))
-                .await?
-                .take(0)?
+        // Split into individual tokens so "hw-diag display bsod" matches plugins
+        // that contain any of those words, rather than the exact phrase.
+        let tokens: Vec<String> = query
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+
+        if tokens.is_empty() {
+            return Self::list_all().await;
+        }
+
+        // Build a WHERE clause: each token must be found in at least one field,
+        // then all tokens are ANDed so the result is "contains all of these words".
+        // This gives useful intersection semantics: "gpu bsod" returns plugins
+        // that mention both, not one that only mentions "gpu bsod" as a phrase.
+        let token_clause: String = tokens
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!(
+                "(string::lowercase(name) CONTAINS $t{i} \
+                  OR string::lowercase(description) CONTAINS $t{i} \
+                  OR string::lowercase(plugin_id) CONTAINS $t{i} \
+                  OR tags CONTAINS $t{i})"
+            ))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+
+        let tag_clause = if tags.is_some() {
+            " AND tags CONTAINSANY $tags"
         } else {
-            DATABASE
-                .query(
-                    "SELECT * FROM plugin_registry
-                     WHERE string::lowercase(name) CONTAINS $q
-                        OR string::lowercase(description) CONTAINS $q
-                        OR string::lowercase(plugin_id) CONTAINS $q
-                     ORDER BY updated_at DESC LIMIT 25"
-                )
-                .bind(("q", q))
-                .await?
-                .take(0)?
+            ""
         };
+
+        let sql = format!(
+            "SELECT * FROM plugin_registry WHERE {token_clause}{tag_clause} LIMIT 25"
+        );
+
+        let mut q = DATABASE.query(sql);
+        for (i, token) in tokens.iter().enumerate() {
+            q = q.bind((format!("t{i}"), token.clone()));
+        }
+        if let Some(tag_list) = tags {
+            q = q.bind(("tags", tag_list.to_vec()));
+        }
+
+        let entries: Vec<Self> = q.await?.take(0)?;
         Ok(entries)
     }
 

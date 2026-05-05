@@ -24,12 +24,39 @@ use crate::transport::{
     ClientTransport, TcpFrame, FRAME_TAG_BINARY, FRAME_TAG_TEXT, HANDSHAKE_MAGIC, HANDSHAKE_VERSION,
 };
 use anyhow::{anyhow, Context, Result};
-use displays::deserialize_command;
+use displays::{deserialize_command, EGUI_INPUT_TAG};
 use std::net::SocketAddr;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+// ── Egui frame broadcast ──────────────────────────────────────────────────────
+//
+// The client captures egui frame snapshots on every UI pass and needs to
+// forward them to any admin that is connected via direct TCP (rather than
+// via the WebSocket relay).  We use a tokio broadcast channel so multiple
+// simultaneous admin TCP sessions all get the same frames, and old frames
+// are automatically discarded when the ring buffer is full.
+
+static EGUI_FRAME_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
+
+fn frame_broadcast() -> &'static broadcast::Sender<Vec<u8>> {
+    EGUI_FRAME_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(32);
+        tx
+    })
+}
+
+/// Called by `first_run.rs` whenever a fresh egui frame is ready.
+/// Bytes should already include the leading `EGUI_FRAME_TAG` byte so the
+/// admin side can decode it the same way it handles WS relay frames.
+pub fn broadcast_egui_frame(tagged_bytes: Vec<u8>) {
+    // Ignore errors: no subscribers = no active TCP admin sessions.
+    let _ = frame_broadcast().send(tagged_bytes);
+}
 
 /// Preferred port. We try this first; if it's taken (e.g. another
 /// Mastertech instance, or unrelated software), we fall back to an
@@ -189,14 +216,29 @@ async fn run_session_loop(
     transport: &mut ClientTransport,
     write_tx: &UnboundedSender<TcpFrame>,
 ) -> Result<()> {
+    // Subscribe to egui frames so this TCP session can forward them to the
+    // admin without any changes to the frame-capture path in first_run.rs.
+    let mut frame_rx = frame_broadcast().subscribe();
+
     loop {
         tokio::select! {
             // Inbound frame from admin
             res = read_frame(read_half) => {
                 match res {
                     Ok(InboundFrame::Binary(bytes)) => {
-                        let cmd = deserialize_command(&bytes);
-                        client.handle_command(cmd, transport).await;
+                        if bytes.first().copied() == Some(EGUI_INPUT_TAG) {
+                            // Egui input event from admin — route to the frame capture plugin.
+                            if let Ok((ev, _)) = bincode::serde::decode_from_slice::<
+                                displays::plugins::EguiInputEvent,
+                                _,
+                            >(&bytes[1..], bincode::config::standard())
+                            {
+                                let _ = displays::plugins::egui_input_sender().try_send(ev);
+                            }
+                        } else {
+                            let cmd = deserialize_command(&bytes);
+                            client.handle_command(cmd, transport).await;
+                        }
                     }
                     Ok(InboundFrame::Text(_text)) => {
                         // Phase 1: text frames are unused (control strings
@@ -220,6 +262,23 @@ async fn run_session_loop(
             }
             Some(bin) = client.bin_rx.recv() => {
                 let _ = write_tx.send(TcpFrame::Binary(bin));
+            }
+            // Outbound: forward egui frame snapshots to the admin.
+            // Lag errors (receiver fell behind) are fine — just grab the
+            // latest frame and keep going.
+            frame_result = frame_rx.recv() => {
+                match frame_result {
+                    Ok(tagged_bytes) => {
+                        let _ = write_tx.send(TcpFrame::Binary(tagged_bytes));
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Resubscribe to skip past missed frames.
+                        frame_rx = frame_broadcast().subscribe();
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // Sender dropped (shouldn't happen but handle cleanly).
+                    }
+                }
             }
         }
     }

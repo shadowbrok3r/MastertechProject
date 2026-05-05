@@ -1,4 +1,4 @@
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, User, CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, TaskNoteRead, User, CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::Style;
@@ -11,6 +11,7 @@ pub mod receive_task;
 pub mod receive_ui_action;
 pub mod receive_client;
 pub mod receive_users;
+pub mod receive_read_state;
 pub mod admin_notification;
 // pub mod receive_database;
 
@@ -64,6 +65,12 @@ impl crate::app_state::SharedContext {
             PlatformSpawner::spawn(async move {
                 let get_notifications = get_notifications(notifs_tx).await;
                 log::info!("get_notifications: {get_notifications:?}");
+            });
+
+            let read_state_tx = self.read_state_tx.clone();
+            PlatformSpawner::spawn(async move {
+                let res = TaskNoteRead::fetch_all_for_user(read_state_tx).await;
+                log::info!("fetch_all_for_user (task_note_read): {res:?}");
             });
             
             self.task_layouts
@@ -221,6 +228,7 @@ impl crate::app_state::SharedContext {
         self.koth.receive();
         self.query_editor.receive();
         self.receive_ui_action();
+        self.receive_read_state();
         self.receive_users();
         self.receive_task();
         self.receive_notes();

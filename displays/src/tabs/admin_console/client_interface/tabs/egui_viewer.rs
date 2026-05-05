@@ -186,7 +186,7 @@ impl InlineEguiViewer {
 
         let hovered = response.hovered();
         if self.remote_canvas_was_hovered && !hovered {
-            log::error!(
+            log::debug!(
                 target: EGUI_REMOTE_LOG,
                 "[admin_inline] PointerLeave (was hovered, now not)"
             );
@@ -287,7 +287,7 @@ impl InlineEguiViewer {
         if inp.pointer.primary_pressed() {
             let ip = inp.pointer.interact_pos();
             let inside = ip.is_some_and(|p| canvas_rect.contains(p));
-            log::error!(
+            log::debug!(
                 target: EGUI_REMOTE_LOG,
                 "[admin_inline] primary_pressed interact_pos={ip:?} canvas_contains={inside} canvas={canvas_rect:?}"
             );
@@ -306,7 +306,7 @@ impl InlineEguiViewer {
         }
         if inp.pointer.primary_released() {
             let ip = inp.pointer.interact_pos();
-            log::error!(
+            log::debug!(
                 target: EGUI_REMOTE_LOG,
                 "[admin_inline] primary_released interact_pos={ip:?}"
             );
@@ -323,7 +323,7 @@ impl InlineEguiViewer {
 
         let scroll = inp.smooth_scroll_delta;
         if scroll != egui::Vec2::ZERO && response.hovered() {
-            log::error!(
+            log::debug!(
                 target: EGUI_REMOTE_LOG,
                 "[admin_inline] Scroll delta=({:.2},{:.2}) (scaled to host points)",
                 scroll.x / scale,
@@ -344,7 +344,7 @@ impl InlineEguiViewer {
                         modifiers,
                         ..
                     } => {
-                        log::error!(
+                        log::debug!(
                             target: EGUI_REMOTE_LOG,
                             "[admin_inline] Key {:?} pressed={pressed} -> forwarding",
                             key.name()
@@ -356,7 +356,7 @@ impl InlineEguiViewer {
                         });
                     }
                     Event::Text(t) => {
-                        log::error!(
+                        log::debug!(
                             target: EGUI_REMOTE_LOG,
                             "[admin_inline] Text len={} -> forwarding",
                             t.len()

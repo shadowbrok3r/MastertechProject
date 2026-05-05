@@ -9,7 +9,6 @@ use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use crossbeam::channel::{Receiver, Sender};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
-use std::collections::BTreeSet;
 use serde_json::Value;
 use serde::Serialize;
 use std::sync::Arc;
@@ -96,8 +95,8 @@ pub struct TaskModal {
     
     // Computer selection state
     pub customer_computers: Vec<ComputerData>,
+    /// Holds the label of the currently selected computer in the combo box.
     pub computer_search_query: String,
-    pub computer_search_inputs: BTreeSet<String>,
     #[serde(skip)]
     pub computers_tx: Sender<Vec<ComputerData>>,
     #[serde(skip)]
@@ -294,7 +293,6 @@ impl TaskModal {
             // Computer selection
             customer_computers: Vec::new(),
             computer_search_query: String::new(),
-            computer_search_inputs: BTreeSet::new(),
             computers_tx, computers_rx,
             // Import computer modal
             import_computer_open: false,
@@ -461,23 +459,7 @@ impl TaskModal {
         // Handle customer computers list
         if let Ok(computers) = self.computers_rx.try_recv() {
             log::info!("Received {} computers for customer", computers.len());
-            self.customer_computers = computers.clone();
-            
-            // Build the search inputs from computer CPU/hostname
-            self.computer_search_inputs.clear();
-            for comp in computers {
-                // Add CPU + hostname as search option
-                let search_str = if !comp.hostname.is_empty() && !comp.cpu.is_empty() {
-                    format!("{} - {}", comp.hostname, comp.cpu)
-                } else if !comp.hostname.is_empty() {
-                    comp.hostname.clone()
-                } else if !comp.cpu.is_empty() {
-                    comp.cpu.clone()
-                } else {
-                    comp.id.key_string()
-                };
-                self.computer_search_inputs.insert(search_str);
-            }
+            self.customer_computers = computers;
         }
 
         // Import computer modal channels
@@ -1239,32 +1221,14 @@ impl DisplayModal for TaskModal {
                     Some(&mut self.customer_modal_open),
                     Some(&mut self.open_customer_service_history),
                 ),                ModalAction::ComputerInfoPage => {
-                    ui.horizontal(|ui| {
-                        if ui.button("Import from PrestaShop").clicked() {
-                            self.import_computer_open = true;
-                            self.import_computer_source = ImportComputerSource::Prestashop;
-                            self.import_computer_step = ImportComputerStep::SearchCustomer;
-                            self.import_search_query.clear();
-                            self.import_customer_results.clear();
-                            self.import_computer_results.clear();
-                            self.import_error = None;
-                        }
-                        if ui.button("Import from Everest").clicked() {
-                            self.import_computer_open = true;
-                            self.import_computer_source = ImportComputerSource::Everest;
-                            self.import_computer_step = ImportComputerStep::SearchCustomer;
-                            self.import_search_query.clear();
-                            self.import_customer_results.clear();
-                            self.import_computer_results.clear();
-                            self.import_error = None;
-                        }
-                    });
-                    ui.add_space(4.0);
+                    let mut import_presta_clicked = false;
+                    let mut import_everest_clicked = false;
                     let search_data = ComputerSearchData {
                         search_query: &mut self.computer_search_query,
-                        search_inputs: &self.computer_search_inputs,
                         customer_computers: &self.customer_computers,
                         selected_computer: &mut None,
+                        import_presta_clicked: &mut import_presta_clicked,
+                        import_everest_clicked: &mut import_everest_clicked,
                     };
                     display_computer_page_with_search(
                         ui, 
@@ -1274,6 +1238,24 @@ impl DisplayModal for TaskModal {
                         Some(search_data),
                         Some(&mut self.open_computer_service_history),
                     );
+                    if import_presta_clicked {
+                        self.import_computer_open = true;
+                        self.import_computer_source = ImportComputerSource::Prestashop;
+                        self.import_computer_step = ImportComputerStep::SearchCustomer;
+                        self.import_search_query.clear();
+                        self.import_customer_results.clear();
+                        self.import_computer_results.clear();
+                        self.import_error = None;
+                    }
+                    if import_everest_clicked {
+                        self.import_computer_open = true;
+                        self.import_computer_source = ImportComputerSource::Everest;
+                        self.import_computer_step = ImportComputerStep::SearchCustomer;
+                        self.import_search_query.clear();
+                        self.import_customer_results.clear();
+                        self.import_computer_results.clear();
+                        self.import_error = None;
+                    }
                 },
                 ModalAction::SoftwareInfoPage => display_software_page(ui, self.computer.as_mut().unwrap_or(&mut ComputerData::default()), avail_size),
                 ModalAction::JobBuilderPage   => display_job_builder_page(ui),

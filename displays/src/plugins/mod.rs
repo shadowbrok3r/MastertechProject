@@ -71,6 +71,31 @@ pub fn remote_tool_result_receiver() -> Receiver<RemoteToolResponse> {
     REMOTE_TOOL_RESULT_CHANNEL.1.clone()
 }
 
+// ─── Global egui input channel ────────────────────────────────────────────────
+//
+// Egui input events arrive from the admin via *any* transport (WebSocket relay
+// or direct TCP).  To avoid threading `egui_input_tx` through every code path,
+// we expose a process-wide channel here.  `EguiFrameCapture::input_hook` drains
+// it every frame; the TCP listener (and WS path) send into it when they see
+// `EGUI_INPUT_TAG` (0xEE) on an inbound binary frame.
+
+static EGUI_INPUT_CHANNEL: Lazy<(
+    Sender<EguiInputEvent>,
+    Receiver<EguiInputEvent>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+/// Returns a sender that routes `EguiInputEvent`s into the `EguiFrameCapture`
+/// plugin's `input_hook`.  Call this from any transport handler that receives
+/// a frame tagged with `EGUI_INPUT_TAG`.
+pub fn egui_input_sender() -> Sender<EguiInputEvent> {
+    EGUI_INPUT_CHANNEL.0.clone()
+}
+
+/// Drain all pending `EguiInputEvent`s. Called from `EguiFrameCapture::input_hook`.
+pub fn drain_egui_inputs() -> impl Iterator<Item = EguiInputEvent> {
+    std::iter::from_fn(|| EGUI_INPUT_CHANNEL.1.try_recv().ok())
+}
+
 // ─── Global WASM bytes cache + background engine ──────────────────────────────
 //
 // Stores the raw bytes of every loaded WASM plugin so that remote tool calls
@@ -145,6 +170,8 @@ pub fn frame_capture_sender() -> Sender<bool> {
 pub struct PluginToolDescriptor {
     pub name: String,
     pub description: String,
+    /// Accept both "parameters_schema" (new style) and "input_schema" (legacy style).
+    #[serde(alias = "input_schema", default)]
     pub parameters_schema: serde_json::Value,
 }
 
@@ -421,17 +448,28 @@ impl PluginManager {
                         log::info!("[remote-dispatch] Running {plugin_id}::{tool_name} on background thread");
                         let args: serde_json::Value =
                             serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
-                        // Throwaway event channel — background plugin just needs somewhere to send logs
-                        let (event_tx, _event_rx) = crossbeam::channel::bounded::<crate::plugins::PluginEvent>(16);
-                        let engine = &*WASM_BG_ENGINE;
-                        let (success, result_json) = match crate::plugins::wasm::WasmPlugin::from_bytes(wasm_bytes, engine, event_tx) {
-                            Ok(mut plugin) => {
-                                match plugin.handle_mcp_call(&tool_name, args) {
+                        // Inner channel: worker → watchdog (bounded(1) so we don't block)
+                        let (done_tx, done_rx) = crossbeam::channel::bounded::<(bool, String)>(1);
+                        let wasm_bytes2 = wasm_bytes.clone();
+                        let tool_name2 = tool_name.clone();
+                        let plugin_id2 = plugin_id.clone();
+                        std::thread::spawn(move || {
+                            let (event_tx, _event_rx) = crossbeam::channel::bounded::<crate::plugins::PluginEvent>(16);
+                            let engine = &*WASM_BG_ENGINE;
+                            let outcome = match crate::plugins::wasm::WasmPlugin::from_bytes(wasm_bytes2, engine, event_tx) {
+                                Ok(mut plugin) => match plugin.handle_mcp_call(&tool_name2, args) {
                                     Ok(val) => (true, serde_json::to_string(&val).unwrap_or_default()),
                                     Err(e) => (false, e),
-                                }
-                            }
-                            Err(e) => (false, format!("WASM reload failed for remote dispatch: {e}")),
+                                },
+                                Err(e) => (false, format!("WASM reload failed: {e}")),
+                            };
+                            let _ = done_tx.try_send(outcome);
+                        });
+                        // Wait up to 60 s; if the worker process hangs (e.g. WRSA.exe), report timeout.
+                        const PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+                        let (success, result_json) = match done_rx.recv_timeout(PLUGIN_TIMEOUT) {
+                            Ok(r) => r,
+                            Err(_) => (false, format!("Plugin {plugin_id}::{tool_name} timed out after 60s (host process may have hung)")),
                         };
                         log::info!("[remote-dispatch] {plugin_id}::{tool_name} done (success={success})");
                         let _ = result_tx.try_send((request_id, success, result_json));

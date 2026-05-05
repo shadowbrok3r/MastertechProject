@@ -567,8 +567,68 @@ impl MastertechPlugin for EguiFrameCapture {
         if !self.input_rx.is_empty() {
             backlog = true;
         }
+        // Also drain the process-wide channel (used by the TCP transport path
+        // which doesn't have direct access to this plugin's `input_tx`).
+        for event in super::drain_egui_inputs() {
+            drained += 1;
+            // Reuse the same match arm logic — just re-push through the same match.
+            match event {
+                EguiInputEvent::PointerMoved { x, y } => {
+                    let p = egui::pos2(x, y);
+                    self.remote_pointer_pos = Some(p);
+                    input.events.push(egui::Event::PointerMoved(p));
+                }
+                EguiInputEvent::PointerButton { x, y, button, pressed } => {
+                    let btn = match button {
+                        0 => egui::PointerButton::Primary,
+                        1 => egui::PointerButton::Secondary,
+                        2 => egui::PointerButton::Middle,
+                        3 => egui::PointerButton::Extra1,
+                        _ => egui::PointerButton::Extra2,
+                    };
+                    input.events.push(egui::Event::PointerButton {
+                        pos: egui::pos2(x, y),
+                        button: btn,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                EguiInputEvent::PointerLeave => {
+                    self.remote_pointer_pos = None;
+                    input.events.push(egui::Event::PointerGone);
+                }
+                EguiInputEvent::Key { key_name, pressed, modifiers } => {
+                    if let Some(key) = egui::Key::from_name(&key_name) {
+                        input.events.push(egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed,
+                            repeat: false,
+                            modifiers: egui::Modifiers {
+                                alt: modifiers.alt,
+                                ctrl: modifiers.ctrl,
+                                shift: modifiers.shift,
+                                mac_cmd: false,
+                                command: modifiers.ctrl,
+                            },
+                        });
+                    }
+                }
+                EguiInputEvent::Text(text) => {
+                    input.events.push(egui::Event::Text(text));
+                }
+                EguiInputEvent::Scroll { delta_x, delta_y } => {
+                    input.events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(delta_x, delta_y),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+        }
         if drained > 0 {
-            log::error!(
+            log::debug!(
                 target: "egui_remote",
                 "[host_capture] input_hook drained {drained} remote event(s) from channel (cap {} per frame; backlog={backlog})",
                 MAX_REMOTE_EGUI_EVENTS_PER_FRAME
