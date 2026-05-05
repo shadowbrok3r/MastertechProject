@@ -1731,6 +1731,26 @@ impl PluginToolProvider {
         };
 
         let (name, version, tools_json) = {
+            // First check if the plugin is already loaded.
+            let already_loaded = {
+                let mgr = self.try_read_manager()?;
+                mgr.list_plugins().iter().any(|pi| pi.id == p.plugin_id)
+            };
+
+            // If not loaded but we have a compiled artifact, hot-load it locally
+            // so we can call plugin_name() / mcp_tools() for the registry entry.
+            if !already_loaded {
+                if let Some(artifact) = self.try_lock_artifacts()?.get_current(&p.plugin_id).cloned() {
+                    #[cfg(feature = "wasm-plugins")]
+                    {
+                        let mut mgr = self.try_write_manager()?;
+                        mgr.unregister(&p.plugin_id);
+                        let _ = mgr.load_wasm(artifact); // ignore load error — metadata extraction is best-effort
+                    }
+                    let _ = artifact; // suppress unused warning in non-wasm build
+                }
+            }
+
             let mgr = self.try_read_manager()?;
             let plugin_info = mgr.list_plugins();
             let matching = plugin_info.iter().find(|pi| pi.id == p.plugin_id);
@@ -2468,6 +2488,15 @@ After initialize, POST notifications/initialized with the same Mcp-Session-Id be
 === AI Workflow ===
 Before writing a new WASM plugin, ALWAYS call search_plugins first to check if a suitable plugin already exists in the registry. If one exists, use fetch_plugin to download it and plugin_deploy / plugin_deploy_remote to deploy it.
 After compiling a useful plugin, call publish_plugin to store it in the SurrealDB registry for future sessions.
+
+=== Known Plugins in Registry ===
+Always check search_plugins before building new plugins. Current registry (as of last sync):
+- **com.mastertech.hw-diag** ("HW Diagnostics") — system_info, bsod_events, critical_events, whea_errors, disk_health, reliability_records, tdr_gpu_events, driver_errors, disk_errors, wer_hardware, list_software, uninstall_armoury_crate, uninstall_ryzen_master, download_ddu, check_ddu_status, find_ryzen_master, remove_ryzen_master_remnants, analyze_minidumps, night_light_status, display_connections. Use for GPU/display/BSOD/crash/Night Light diagnostics.
+- **com.mastertech.repair** ("System Repair") — dism_restore_health, sfc_scannow, uninstall_superantispyware, chkdsk_schedule, run_command (arbitrary PowerShell). Use for Windows system file repair.
+- **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, burn_cpu, burn_memory, burn_disk, burn_combined, stability_report, stress_and_monitor, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. General-purpose system health overview, stress testing, and crash analysis.
+- **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
+
+When in doubt, call search_plugins with relevant keywords — the registry is the source of truth.
 
 === Diagnostic Prior-History Lookup (MUST do before diagnosing) ===
 When performing diagnostics on a machine, ALWAYS gather prior history first.

@@ -11,6 +11,7 @@ pub struct PluginUsageRef {
 /// Structured category for a `DiagnosticEntry`. Replaces the old freeform
 /// category string so the AI is constrained to a known vocabulary.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[surreal(untagged)]
 pub enum DiagnosticCategory {
     /// A discovered issue (errors found, anomalies, root causes)
     Finding,

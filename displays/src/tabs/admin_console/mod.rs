@@ -1,6 +1,6 @@
 use crate::{PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
 use eframe::egui::{self, Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, ScrollArea, Stroke, Ui, Vec2, Widget};
-use database::schema::{utilities::get_connected_clients, ConnectedClient, Sortable};
+use database::schema::{utilities::get_connected_clients, ConnectedClient, RecordIdExt, Sortable};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
 use client_interface::WebSocketClient;
@@ -216,6 +216,18 @@ impl SharedContext {
                     SortField::Date => clients.sort_by_date(direction.clone()),
                     SortField::Name => clients.sort_by_name(direction.clone()),
                 };
+                // Stable secondary sort: clients assigned to the logged-in user float
+                // to the top regardless of the primary sort direction.
+                if let Some(me) = crate::get_current_user_from_auth() {
+                    let my_id = me.get_id();
+                    clients.sort_by(|a, b| {
+                        let a_mine = a.assigned_user.as_ref()
+                            .is_some_and(|u| u.key_string() == my_id.key_string());
+                        let b_mine = b.assigned_user.as_ref()
+                            .is_some_and(|u| u.key_string() == my_id.key_string());
+                        b_mine.cmp(&a_mine) // mine first; equal elements keep prior order (stable)
+                    });
+                }
                 let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
                 let total_rows = clients.len();
                 ScrollArea::vertical()

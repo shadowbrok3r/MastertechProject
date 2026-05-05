@@ -1,8 +1,7 @@
-use crate::{TaskUiActions, chats::ChatView, modals::{ModalType, create_task_modal::{CreateTaskModal, Tur}, task_modal::TaskModal}};
+use crate::{PlatformSpawner, Spawner, TaskUiActions, chats::ChatView, modals::{ModalType, create_task_modal::{CreateTaskModal, Tur}, task_modal::TaskModal}};
 use crate::tabs::stock::SystemInStoreData;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-// removed unused PlatformSpawner/Spawner imports after refactor
-use database::schema::{RecordIdExt, TaskNotePayload};
+use database::schema::{RecordIdExt, TaskNotePayload, TaskNoteRead};
 use crate::app_state::SharedContext;
 use crate::viewports::ViewportData;
 use log::info;
@@ -14,6 +13,12 @@ impl SharedContext {
                 TaskUiActions::OpenTaskModal(task) => {
                     // Mark notes as read for this task when modal is opened
                     self.last_read_notes.insert(task.id.clone(), chrono::Utc::now());
+                    let read_task_id = task.id.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = TaskNoteRead::mark_read(read_task_id).await {
+                            log::error!("receive_ui_action -> TaskNoteRead::mark_read failed: {e:?}");
+                        }
+                    });
                     let task_modal = TaskModal::new(
                         ChatView::new(
                             // task.task_note.clone(),
@@ -38,6 +43,12 @@ impl SharedContext {
                     info!("receive_ui_action -> Got Chat action: {:?}", task_id);
                     // Mark notes as read for this task
                     self.last_read_notes.insert(task_id.clone(), chrono::Utc::now());
+                    let read_task_id = task_id.clone();
+                    PlatformSpawner::spawn(async move {
+                        if let Err(e) = TaskNoteRead::mark_read(read_task_id).await {
+                            log::error!("receive_ui_action -> TaskNoteRead::mark_read failed: {e:?}");
+                        }
+                    });
                     // Construct chat view, seed with any provided notes, and kick off a refresh
                     let mut chat_modal = ChatView::new(
                         self.store_users.clone(),

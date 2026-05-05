@@ -9,6 +9,39 @@ use log::info;
 
 use super::{AdminConsole, WebConsolePageState};
 
+/// How stale a `last_update` timestamp can be before we treat the client as
+/// offline — even if the DB `connected` flag is still `true`. Five minutes
+/// is conservative; the client heartbeats every ~30 s so anything older than
+/// that is either crashed or unreachable.
+const STALE_THRESHOLD_SECS: i64 = 300;
+
+/// Returns `true` if the client's `last_update` was within [`STALE_THRESHOLD_SECS`].
+fn recently_active(client: &ConnectedClient) -> bool {
+    let Some(ref dt) = client.last_update else { return false };
+    let parsed = DateTime::parse_from_rfc3339(&dt.to_string())
+        .map(|d| d.with_timezone(&Utc));
+    match parsed {
+        Ok(t) => (Utc::now() - t).num_seconds() < STALE_THRESHOLD_SECS,
+        Err(_) => false,
+    }
+}
+
+/// Returns `(color, symbol)` for the connection status dot.
+///
+/// Priority:
+/// 1. Active admin session open → green `●`
+/// 2. DB-connected + recent heartbeat + no admin session → yellow `⚠`
+/// 3. Everything else (disconnected or stale) → gray `⊗`
+fn connection_indicator(is_ws_connected: bool, client: &ConnectedClient) -> (Color32, &'static str) {
+    if is_ws_connected {
+        (Color32::from_rgb(50, 205, 50), "●")
+    } else if client.connected && recently_active(client) {
+        (Color32::from_rgb(255, 200, 0), "⚠")
+    } else {
+        (Color32::from_rgb(110, 110, 118), "⊗")
+    }
+}
+
 impl AdminConsole {
     pub fn client_header(
         ui: &mut Ui, 
@@ -31,22 +64,7 @@ impl AdminConsole {
             ui.horizontal_top(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     // Green dot indicator for active connection
-                    let (indicator_color, indicator_text) = if is_ws_connected {
-                        (
-                            Color32::from_rgb(50, 205, 50), // Lime green for active
-                            "●"
-                        )
-                    } else if client.connected {
-                        (
-                            Color32::from_rgb(255, 200, 0), // Yellow for DB-connected but no active WS
-                            "⚠"
-                        )
-                    } else {
-                        (
-                            Color32::from_rgb(128, 128, 128), // Gray for disconnected
-                            "⊗"
-                        )
-                    };
+                    let (indicator_color, indicator_text) = connection_indicator(is_ws_connected, client);
                     
                     ui.colored_label(indicator_color, indicator_text);
                     ui.add_space(4.0);
@@ -298,9 +316,11 @@ fn client_hover_panel(
                 ui,
                 "Status",
                 if is_ws_connected {
-                    "● connected (active)"
+                    "● connected (active session)"
+                } else if client.connected && recently_active(client) {
+                    "⚠ online — no active admin session"
                 } else if client.connected {
-                    "⚠ DB-connected, no live session"
+                    "⊗ stale — DB still connected but no heartbeat for >5 min"
                 } else {
                     "⊗ disconnected"
                 },

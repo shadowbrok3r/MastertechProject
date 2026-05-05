@@ -2295,7 +2295,7 @@ if (Test-Path $path) {{
                 let _ = call_tx.try_send((request_id.clone(), plugin_id.clone(), tool_name.clone(), args_json));
                 let result_rx = displays::plugins::remote_tool_result_receiver();
                 let mut result: Option<(bool, String)> = None;
-                for _ in 0..200 {
+                for _ in 0..1200 {
                     if let Ok((rid, success, rjson)) = result_rx.try_recv() {
                         if rid == request_id {
                             result = Some((success, rjson));
@@ -2307,7 +2307,7 @@ if (Test-Path $path) {{
                 }
                 let (success, result_json) = result.unwrap_or((
                     false,
-                    "PluginManager did not process the call within 2 seconds".to_string(),
+                    "PluginManager did not process the call within 12 seconds".to_string(),
                 ));
                 let result_cmd = Cmd::RemotePluginToolResult {
                     request_id,

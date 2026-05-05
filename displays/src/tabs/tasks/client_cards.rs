@@ -16,6 +16,21 @@ use eframe::egui::{
     Button, Color32, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2, Widget,
 };
 
+/// Minimum seconds since `last_update` before a DB-connected client is
+/// considered stale (mirrors the threshold in the admin console panel).
+const STALE_THRESHOLD_SECS: i64 = 300;
+
+fn recently_active(client: &ConnectedClient) -> bool {
+    let Some(ref dt) = client.last_update else {
+        return false;
+    };
+    match chrono::DateTime::parse_from_rfc3339(&dt.to_string()) {
+        Ok(t) => (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds()
+            < STALE_THRESHOLD_SECS,
+        Err(_) => false,
+    }
+}
+
 /// Snapshot of a connected client for rendering as a card on the My Tasks
 /// board. Built each frame by `SharedContext::render_layout` from
 /// `SharedContext::clients`, the admin-console `ws_clients` map, and the
@@ -31,6 +46,9 @@ pub struct ClientCardData {
     pub computer_data: Option<ComputerData>,
     /// The task currently associated with this client's computer (if any).
     pub linked_task: Option<LiveTaskPayload>,
+    /// Whether there is an active admin TCP/WebSocket session open to this
+    /// client right now. Used to set the connection status dot.
+    pub is_ws_connected: bool,
 }
 
 impl ClientCardData {
@@ -42,6 +60,7 @@ impl ClientCardData {
             active_session_id: None,
             computer_data: None,
             linked_task: None,
+            is_ws_connected: false,
         }
     }
 
@@ -70,10 +89,14 @@ impl ClientCardData {
 
     fn header_row(&self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let dot_color = if self.client.connected {
-                Color32::from_rgb(80, 220, 100)
+            // Status dot: green = active admin session, yellow = recently online,
+            // gray = disconnected or stale (>5 min since last heartbeat).
+            let dot_color = if self.is_ws_connected {
+                Color32::from_rgb(50, 205, 50)
+            } else if self.client.connected && recently_active(&self.client) {
+                Color32::from_rgb(255, 200, 0)
             } else {
-                Color32::from_rgb(120, 120, 120)
+                Color32::from_rgb(110, 110, 118)
             };
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), eframe::egui::Sense::hover());
             ui.painter().circle_filled(rect.center(), 5.0, dot_color);
@@ -95,6 +118,33 @@ impl ClientCardData {
                 );
             }
         });
+
+        // Sub-line: assigned username + IP (when available)
+        let assigned_name: Option<String> = self.client.assigned_user.as_ref().and_then(|uid| {
+            let users = crate::get_database_users();
+            users
+                .iter()
+                .find(|u| u.get_id().key_string() == uid.key_string())
+                .map(|u| u.get_name().to_string())
+        });
+        let ip_str = self.client.local_ip.as_deref().filter(|s| !s.is_empty());
+
+        match (assigned_name.as_deref(), ip_str) {
+            (Some(name), Some(ip)) => {
+                ui.label(
+                    RichText::new(format!("{name}  •  {ip}"))
+                        .weak()
+                        .small(),
+                );
+            }
+            (Some(name), None) => {
+                ui.label(RichText::new(name).weak().small());
+            }
+            (None, Some(ip)) => {
+                ui.label(RichText::new(ip).weak().small());
+            }
+            _ => {}
+        }
 
         if let Some(sysinfo) = self.system_info.as_ref() {
             ui.label(

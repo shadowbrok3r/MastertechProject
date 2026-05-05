@@ -188,7 +188,20 @@ impl MasterTechApp {
                     let mut tagged = Vec::with_capacity(1 + serialized.len());
                     tagged.push(displays::EGUI_FRAME_TAG);
                     tagged.extend_from_slice(&serialized);
-                    frontend.ws_sender.send(ewebsock::WsMessage::Binary(tagged));
+                    frontend.ws_sender.send(ewebsock::WsMessage::Binary(tagged.clone()));
+                    // Also broadcast to any admin connected via direct TCP.
+                    crate::tcp_listener::broadcast_egui_frame(tagged);
+                }
+            } else {
+                // No WS relay connection — still broadcast for TCP admins.
+                if let Ok(serialized) = bincode::serde::encode_to_vec(
+                    &frame,
+                    bincode::config::standard(),
+                ) {
+                    let mut tagged = Vec::with_capacity(1 + serialized.len());
+                    tagged.push(displays::EGUI_FRAME_TAG);
+                    tagged.extend_from_slice(&serialized);
+                    crate::tcp_listener::broadcast_egui_frame(tagged);
                 }
             }
         }

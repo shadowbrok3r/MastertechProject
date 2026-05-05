@@ -1,4 +1,4 @@
-use database::schema::{FilterLiveTasks, LiveTaskPayload, Status, Store};
+use database::schema::{FilterLiveTasks, LiveTaskPayload, RecordIdExt, Status, Store};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::ClientCardData;
@@ -244,7 +244,7 @@ impl SharedContext {
         if page == "My Tasks" {
             let is_priviledged = current_user.is_admin() || current_user.is_manager();
             let current_user_id = current_user.get_id();
-            let cards: Vec<ClientCardData> = self
+            let mut cards: Vec<ClientCardData> = self
                 .clients
                 .iter()
                 .filter(|c| {
@@ -257,6 +257,9 @@ impl SharedContext {
                         .ws_clients
                         .get(&c.connection_string);
                     let system_info = ws.and_then(|w| w.resource_monitor.latest_sysinfo.clone());
+                    let is_ws_connected = ws
+                        .map(|w| w.is_connected && w.last_pong_time.is_some())
+                        .unwrap_or(false);
                     let active_session_id = self
                         .web_console_layout
                         .active_diagnostic_sessions
@@ -269,9 +272,26 @@ impl SharedContext {
                         active_session_id,
                         computer_data: None,
                         linked_task: None,
+                        is_ws_connected,
                     }
                 })
                 .collect();
+
+            // Sort: mine first, then by connection activity, then alphabetically.
+            cards.sort_by(|a, b| {
+                let a_mine = a.client.assigned_user.as_ref()
+                    .is_some_and(|u| u.key_string() == current_user_id.key_string());
+                let b_mine = b.client.assigned_user.as_ref()
+                    .is_some_and(|u| u.key_string() == current_user_id.key_string());
+                b_mine.cmp(&a_mine)
+                    .then_with(|| b.is_ws_connected.cmp(&a.is_ws_connected))
+                    .then_with(|| {
+                        let a_name = a.client.friendly_name.as_deref().unwrap_or(&a.client.connection_string);
+                        let b_name = b.client.friendly_name.as_deref().unwrap_or(&b.client.connection_string);
+                        a_name.cmp(b_name)
+                    })
+            });
+
             layout.client_cards = cards;
         }
 
