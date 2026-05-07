@@ -3,81 +3,97 @@ use uuid::Uuid;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Reference SETTINGS table from a known-good SAS configuration.
-/// Each entry: (id, name, type_code, data_hex)
-/// Captured from the master DB so every install gets identical behavior.
+const SAS_EXE: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
+
+/// SAS_CURRENTUSER.DB3 SETTINGS table — complete reference configuration.
+///
+/// Type codes: 256 = null-terminated UTF-8 text, 257 = null-terminated UTF-16LE wide text,
+/// 259 = 4-byte little-endian integer, 263 = raw binary blob.
+///
+/// Changes vs. original captured DB:
+///   • Added  NotifyHomePageChanged  = "no"   (was missing — caused notify to remain enabled)
+///   • Added  ProtectedHomePage      = ""      (was missing — SAS reads this alongside ProtectHomePage)
+///   • Added  ValidationRand         = 0       (was missing — present in actual DB schema)
+///   • Changed DoNotShowSOSToaster   = "yes"   (was "no" — suppress the SOS renewal toaster)
 const REFERENCE_SETTINGS: &[(i32, &str, i32, &str)] = &[
-    (1,  "PreConfigurationComplete",                  256, "79657300"),
-    (2,  "ShowSplashScreen",                          256, "6e6f00"),
-    (3,  "NotifySpywareBlocked",                      256, "6e6f00"),
-    (4,  "NotifyStartupItemChanged",                  256, "6e6f00"),
-    (5,  "EnableRealTimeProtection",                  256, "79657300"),
-    (6,  "ScanUpdateCheck",                           256, "6e6f00"),
-    (7,  "CheckForUpdates",                           256, "79657300"),
-    (8,  "CheckForUpdatesOnStartup",                  256, "79657300"),
-    (9,  "CheckForUpdatesInterval",                   259, "0c000000"),
-    (10, "ColorSet",                                  256, "5341532044656661756c7400"),
-    (11, "NotifyAdBlockSoundPath",                    256, "00"),
-    (12, "NotifyAdBlockSoundPathW",                   257, "43003a005c00500072006f006700720061006d002000460069006c00650073005c005300550050004500520041006e007400690053007000790077006100720065005c006400650074006500630074002e007700610076000000"),
-    (13, "NotifyPlaySound",                           256, "6e6f00"),
-    (14, "EventLoggingActive",                        256, "6e6f00"),
-    (15, "EventLoggingFlags",                         259, "00000000"),
-    (16, "OptionalDisplayItems",                      263, "0101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101"),
-    (17, "ProtectHomePage",                           256, "6e6f00"),
-    (18, "VersionProcessList",                        259, "504a0000"),
-    (19, "VersionProcessListRelated",                 259, "c4410000"),
-    (20, "UNCUpdateServerPath",                       256, "00"),
-    (21, "SilentUpdates",                             256, "79657300"),
-    (22, "TerminationProtection",                     256, "6e6f00"),
-    (23, "TerminationProtectionAllowedTrusted",       256, "6e6f00"),
-    (24, "IntegrateWithSecurityCenter",               256, "79657300"),
-    (25, "UpgradeToProfessionalCompleted",            256, "79657300"),
-    (26, "ScanAutoCleanLogs",                         256, "6e6f00"),
-    (27, "ScanAutoCleanLogsDays",                     259, "1e000000"),
-    (28, "ScanAutoCleanQuarantine",                   256, "79657300"),
-    (29, "ScanAutoCleanQuarantineDays",               259, "1e000000"),
-    (30, "ScanScheduleEnabled",                       256, "79657300"),
-    (31, "ScanSkipLargeFiles",                        256, "79657300"),
-    (32, "ScanCleanCookies",                          256, "79657300"),
-    (33, "ScanLastScanTime",                          263, "00000000000000000000000000000000"),
-    (34, "ScanLastDefinitionRemindTime",              263, "ea070300010009000f00120010006f00"),
-    (35, "ScanRemindCheckForDefinitionUpdates",       256, "6e6f00"),
-    (36, "ScanShowBalloonUpdateStatus ",              256, "6e6f00"),
-    (37, "ScanRemindCheckForDefinitionUpdatesDays",   259, "05000000"),
-    (38, "ScanMinFileSize",                           259, "00004000"),
-    (39, "ScanOnlyKnownFileTypes",                    256, "79657300"),
-    (40, "ScanIgnoreNonExecutableFiles",              256, "79657300"),
-    (41, "ScanIgnoreSystemRestore",                   256, "6e6f00"),
-    (42, "ScanShowIconInSystemTray",                  256, "79657300"),
-    (43, "ScanKeepLogs",                              256, "79657300"),
-    (44, "ScanKeepCleanLogs",                         256, "79657300"),
-    (45, "ScanCustomMemory",                          256, "79657300"),
-    (46, "ScanCustomRegistry",                        256, "79657300"),
-    (47, "ScanCustomStartup",                         256, "79657300"),
-    (48, "ScanCustomFolders",                         256, "79657300"),
-    (49, "ScanCustomCookies",                         256, "79657300"),
-    (50, "ScanAutoScanType",                          259, "03000000"),
-    (51, "ScanAutoScanCheckForUpdates",               256, "79657300"),
-    (52, "ScanAutoScanHideUserInterface",             256, "6e6f00"),
-    (53, "ScanScheduleCheckForUpdates",               256, "6e6f00"),
-    (54, "ScanCloseBrowsers",                         256, "6e6f00"),
-    (55, "ScanClearTemp",                             256, "6e6f00"),
-    (56, "ScanResolveLinks",                          256, "79657300"),
-    (57, "ScanTerminateMemoryThreats",                256, "6e6f00"),
-    (58, "ScanUseKernelFileDirect",                   256, "79657300"),
-    (59, "ScanUseKernelRegistryDirect",               256, "79657300"),
-    (60, "ScanUseDirectDiskAccess",                   256, "79657300"),
-    (61, "ScanADS",                                   256, "79657300"),
-    (62, "ScanDisplayContextMenu",                    256, "79657300"),
-    (63, "ScanBoostActive",                           256, "79657300"),
-    (64, "ScanBoostLevel",                            259, "feffffff"),
-    (65, "ScanUnwanted",                              256, "79657300"),
-    (66, "ScanModifiedFilesOnly",                     256, "6e6f00"),
-    (67, "ScanModifiedFilesDays",                     259, "1e000000"),
-    (68, "ScanArchiveFlags",                          259, "00000000"),
-    (69, "DoNotShowSOSToaster",                       256, "6e6f00"),
-    (70, "GameModeDuration",                          259, "ffffffff"),
+    (1,  "PreConfigurationComplete",                  256, "79657300"),          // "yes"
+    (2,  "ShowSplashScreen",                          256, "6e6f00"),            // "no"
+    (3,  "NotifyHomePageChanged",                     256, "6e6f00"),            // "no"  ← ADDED
+    (4,  "NotifySpywareBlocked",                      256, "6e6f00"),            // "no"
+    (5,  "NotifyStartupItemChanged",                  256, "6e6f00"),            // "no"
+    (6,  "EnableRealTimeProtection",                  256, "79657300"),          // "yes"
+    (7,  "ScanUpdateCheck",                           256, "6e6f00"),            // "no"
+    (8,  "CheckForUpdates",                           256, "79657300"),          // "yes"
+    (9,  "CheckForUpdatesOnStartup",                  256, "79657300"),          // "yes"
+    (10, "CheckForUpdatesInterval",                   259, "0c000000"),          // 12
+    (11, "ColorSet",                                  256, "5341532044656661756c7400"), // "SAS Default"
+    (12, "NotifyAdBlockSoundPath",                    256, "00"),                // ""
+    (13, "NotifyAdBlockSoundPathW",                   257, "43003a005c00500072006f006700720061006d002000460069006c00650073005c005300550050004500520041006e007400690053007000790077006100720065005c006400650074006500630074002e007700610076000000"),
+    (14, "NotifyPlaySound",                           256, "6e6f00"),            // "no"
+    (15, "EventLoggingActive",                        256, "6e6f00"),            // "no"
+    (16, "EventLoggingFlags",                         259, "00000000"),          // 0
+    (17, "OptionalDisplayItems",                      263, "0101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101"),
+    (18, "ProtectHomePage",                           256, "6e6f00"),            // "no"
+    (19, "ProtectedHomePage",                         256, "00"),                // ""  ← ADDED
+    (20, "VersionProcessList",                        259, "504a0000"),
+    (21, "VersionProcessListRelated",                 259, "c4410000"),
+    (22, "UNCUpdateServerPath",                       256, "00"),                // ""
+    (23, "SilentUpdates",                             256, "79657300"),          // "yes"
+    (24, "TerminationProtection",                     256, "6e6f00"),            // "no"
+    (25, "TerminationProtectionAllowedTrusted",       256, "6e6f00"),            // "no"
+    (26, "IntegrateWithSecurityCenter",               256, "79657300"),          // "yes"
+    (27, "UpgradeToProfessionalCompleted",            256, "79657300"),          // "yes"
+    (28, "ScanAutoCleanLogs",                         256, "6e6f00"),            // "no"
+    (29, "ScanAutoCleanLogsDays",                     259, "1e000000"),          // 30
+    (30, "ScanAutoCleanQuarantine",                   256, "79657300"),          // "yes"
+    (31, "ScanAutoCleanQuarantineDays",               259, "1e000000"),          // 30
+    (32, "ScanScheduleEnabled",                       256, "79657300"),          // "yes"
+    (33, "ScanSkipLargeFiles",                        256, "79657300"),          // "yes"
+    (34, "ScanCleanCookies",                          256, "79657300"),          // "yes"
+    (35, "ScanLastScanTime",                          263, "00000000000000000000000000000000"),
+    (36, "ScanLastDefinitionRemindTime",              263, "ea070300010009000f00120010006f00"),
+    (37, "ScanRemindCheckForDefinitionUpdates",       256, "6e6f00"),            // "no"
+    (38, "ScanShowBalloonUpdateStatus ",              256, "6e6f00"),            // "no"  (trailing space is intentional — matches SAS key name)
+    (39, "ScanRemindCheckForDefinitionUpdatesDays",   259, "05000000"),          // 5
+    (40, "ScanMinFileSize",                           259, "00004000"),
+    (41, "ScanOnlyKnownFileTypes",                    256, "79657300"),          // "yes"
+    (42, "ScanIgnoreNonExecutableFiles",              256, "79657300"),          // "yes"
+    (43, "ScanIgnoreSystemRestore",                   256, "6e6f00"),            // "no"
+    (44, "ScanShowIconInSystemTray",                  256, "79657300"),          // "yes"
+    (45, "ScanKeepLogs",                              256, "79657300"),          // "yes"
+    (46, "ScanKeepCleanLogs",                         256, "79657300"),          // "yes"
+    (47, "ScanCustomMemory",                          256, "79657300"),          // "yes"
+    (48, "ScanCustomRegistry",                        256, "79657300"),          // "yes"
+    (49, "ScanCustomStartup",                         256, "79657300"),          // "yes"
+    (50, "ScanCustomFolders",                         256, "79657300"),          // "yes"
+    (51, "ScanCustomCookies",                         256, "79657300"),          // "yes"
+    (52, "ScanAutoScanType",                          259, "03000000"),          // 3
+    (53, "ScanAutoScanCheckForUpdates",               256, "79657300"),          // "yes"
+    (54, "ScanAutoScanHideUserInterface",             256, "6e6f00"),            // "no"
+    (55, "ScanScheduleCheckForUpdates",               256, "6e6f00"),            // "no"
+    (56, "ScanCloseBrowsers",                         256, "6e6f00"),            // "no"
+    (57, "ScanClearTemp",                             256, "6e6f00"),            // "no"
+    (58, "ScanResolveLinks",                          256, "79657300"),          // "yes"
+    (59, "ScanTerminateMemoryThreats",                256, "6e6f00"),            // "no"
+    (60, "ScanUseKernelFileDirect",                   256, "79657300"),          // "yes"
+    (61, "ScanUseKernelRegistryDirect",               256, "79657300"),          // "yes"
+    (62, "ScanUseDirectDiskAccess",                   256, "79657300"),          // "yes"
+    (63, "ScanADS",                                   256, "79657300"),          // "yes"
+    (64, "ScanDisplayContextMenu",                    256, "79657300"),          // "yes"
+    (65, "ScanBoostActive",                           256, "79657300"),          // "yes"
+    (66, "ScanBoostLevel",                            259, "feffffff"),          // -2 (max boost)
+    (67, "ScanUnwanted",                              256, "79657300"),          // "yes"
+    (68, "ScanModifiedFilesOnly",                     256, "6e6f00"),            // "no"
+    (69, "ScanModifiedFilesDays",                     259, "1e000000"),          // 30
+    (70, "ScanArchiveFlags",                          259, "00000000"),          // 0
+    (71, "DoNotShowSOSToaster",                       256, "79657300"),          // "yes" ← CHANGED (was "no")
+    (72, "ValidationRand",                            259, "00000000"),          // 0  ← ADDED
+    // GameModeDuration: ffffffff = -1 = "indefinite" duration when DND is triggered.
+    // Note: the DND *enabled* state is a runtime flag, not stored in this table.
+    (73, "GameModeDuration",                          259, "ffffffff"),          // -1 (indefinite)
 ];
+
+// ─── helpers ────────────────────────────────────────────────────────────────
 
 fn hex_to_bytes(hex: &str) -> Vec<u8> {
     (0..hex.len())
@@ -86,9 +102,91 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
         .collect()
 }
 
+/// Encode a string as a null-terminated UTF-8 blob (SAS type 256).
+fn text_bytes(s: &str) -> Vec<u8> {
+    let mut v = s.as_bytes().to_vec();
+    v.push(0);
+    v
+}
+
+/// Encode a 32-bit integer as a 4-byte little-endian blob (SAS type 259).
+#[allow(dead_code)]
+fn int_le_bytes(n: i32) -> Vec<u8> {
+    n.to_le_bytes().to_vec()
+}
+
+/// Compute a future date as YYYYMMDD string, `days_ahead` days from today.
+/// Uses the civil_from_days algorithm (Howard Hinnant, public domain).
+fn subscription_expiry_yyyymmdd(days_ahead: u32) -> String {
+    let secs_per_day: u64 = 86400;
+    let epoch_days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / secs_per_day)
+        .unwrap_or(0)
+        + days_ahead as u64;
+
+    let z = epoch_days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}{:02}{:02}", y, m, d)
+}
+
+// ─── DB paths ────────────────────────────────────────────────────────────────
+
+/// SAS_CURRENTUSER.DB3 — per-user settings stored under %APPDATA%.
+pub fn get_sas_currentuser_db_path() -> anyhow::Result<PathBuf> {
+    let appdata = std::env::var("APPDATA")
+        .map_err(|_| anyhow::anyhow!("APPDATA not set"))?;
+    let p = PathBuf::from(appdata)
+        .join("SUPERAntiSpyware.com")
+        .join("SUPERAntiSpyware")
+        .join("SAS_CURRENTUSER.DB3");
+    if !p.exists() {
+        return Err(anyhow::anyhow!("SAS_CURRENTUSER.DB3 not found at {}", p.display()));
+    }
+    Ok(p)
+}
+
+/// SAS_ALLUSER.DB3 — shared activation data stored under %ProgramData%.
+/// Falls back to %APPDATA% path on older installs.
+pub fn get_sas_alluser_db_path() -> anyhow::Result<PathBuf> {
+    let programdata = std::env::var("PROGRAMDATA")
+        .or_else(|_| std::env::var("ALLUSERSPROFILE"))
+        .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+
+    let primary = PathBuf::from(&programdata)
+        .join("SUPERAntiSpyware.com")
+        .join("SUPERAntiSpyware")
+        .join("SAS_ALLUSER.DB3");
+    if primary.exists() {
+        return Ok(primary);
+    }
+
+    // Fallback: same directory as CURRENTUSER DB
+    if let Ok(cu) = get_sas_currentuser_db_path() {
+        let fallback = cu.with_file_name("SAS_ALLUSER.DB3");
+        if fallback.exists() {
+            return Ok(fallback);
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "SAS_ALLUSER.DB3 not found (checked ProgramData and APPDATA)"
+    ))
+}
+
+// ─── CURRENTUSER settings ────────────────────────────────────────────────────
+
+/// Wipe and repopulate the SETTINGS table in SAS_CURRENTUSER.DB3.
 fn apply_sas_settings(conn: &Connection) -> anyhow::Result<usize> {
     conn.execute("DELETE FROM SETTINGS", [])?;
-
     let mut count = 0;
     for &(id, name, type_code, data_hex) in REFERENCE_SETTINGS {
         let data = hex_to_bytes(data_hex);
@@ -98,12 +196,97 @@ fn apply_sas_settings(conn: &Connection) -> anyhow::Result<usize> {
         )?;
         count += 1;
     }
-
-    log::info!("Applied {count} SAS settings from reference configuration");
+    log::info!("Applied {count} SAS settings to CURRENTUSER DB");
     Ok(count)
 }
 
-/// XML template for the SAS definition-update task (daily, repeating every 8 hours).
+// ─── ALLUSER activation ───────────────────────────────────────────────────────
+
+/// UPDATE an existing row in SAS_ALLUSER.DB3 SETTINGS, or INSERT if absent.
+fn upsert_alluser_setting(
+    conn: &Connection,
+    name: &str,
+    type_code: i32,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    let updated = conn.execute(
+        "UPDATE SETTINGS SET data = ?1, type = ?2 WHERE name = ?3 COLLATE NOCASE",
+        rusqlite::params![data, type_code, name],
+    )?;
+    if updated == 0 {
+        conn.execute(
+            "INSERT INTO SETTINGS (name, type, data) VALUES (?1, ?2, ?3)",
+            rusqlite::params![name, type_code, data],
+        )?;
+    }
+    Ok(())
+}
+
+/// Write activation data to SAS_ALLUSER.DB3.
+///
+/// Sets Registration=yes, the supplied reg code, a 1-year expiry date,
+/// and turns off all email/diagnostic notifications.
+pub fn activate_sas_via_db(reg_code: &str) -> anyhow::Result<()> {
+    let db_path = get_sas_alluser_db_path()?;
+    let conn = Connection::open(&db_path)?;
+    let expiry = subscription_expiry_yyyymmdd(365);
+
+    let updates: Vec<(&str, i32, Vec<u8>)> = vec![
+        ("Registration",          256, text_bytes("yes")),
+        ("RegCodeEx",             256, text_bytes(reg_code)),
+        ("AVAllowed",             256, text_bytes("yes")),
+        ("ExpireToFree",          256, text_bytes("no")),
+        ("OverrideTrial",         256, text_bytes("yes")),
+        ("SetupWizardComplete",   256, text_bytes("yes")),
+        ("InstallType",           256, text_bytes("WSAV")),
+        ("SubscriptionExpiration",256, text_bytes(&expiry)),
+        ("SavedExpirationDate",   256, text_bytes(&expiry)),
+        ("ScanRequired",          256, text_bytes("no")),
+        ("ComponentsVerified",    256, text_bytes("yes")),
+        ("EmailAlerts",           256, text_bytes("no")),
+        ("EmailScanDetections",   256, text_bytes("no")),
+        ("EmailScanClean",        256, text_bytes("no")),
+        ("EmailInvestigator",     256, text_bytes("no")),
+        ("EmailRealTime",         256, text_bytes("no")),
+        ("SendDiagnostic",        256, text_bytes("no")),
+        ("DisableThreatMap",      256, text_bytes("yes")),
+        ("ShowTrialExpiredDays",  256, text_bytes("no")),
+        ("ShowRenewalDays",       256, text_bytes("no")),
+        ("RenewalDialogShown",    256, text_bytes("yes")),
+    ];
+
+    for (name, type_code, data) in &updates {
+        upsert_alluser_setting(&conn, name, *type_code, data)?;
+    }
+
+    log::info!("SAS activation written to ALLUSER DB (reg_code len={}, expiry={expiry})", reg_code.len());
+    Ok(())
+}
+
+// ─── Start-with-Windows ───────────────────────────────────────────────────────
+
+/// Add SAS to HKCU\...\Run so it launches automatically at Windows login.
+#[cfg(target_os = "windows")]
+pub fn add_sas_startup_run_key() -> anyhow::Result<()> {
+    use windows_registry::CURRENT_USER;
+    let key = CURRENT_USER
+        .options()
+        .read()
+        .write()
+        .create()
+        .open(r"Software\Microsoft\Windows\CurrentVersion\Run")?;
+    key.set_string("SUPERAntiSpyware", SAS_EXE)?;
+    log::info!("Added SAS startup Run key");
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn add_sas_startup_run_key() -> anyhow::Result<()> {
+    Ok(())
+}
+
+// ─── Task XML templates ───────────────────────────────────────────────────────
+
 const UPDATE_TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -161,7 +344,6 @@ const UPDATE_TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
   </Actions>
 </Task>"#;
 
-/// XML template for the SAS quick-scan task (Monday + Thursday at 14:00).
 const QUICK_SCAN_TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -234,55 +416,38 @@ struct SasTask {
 
 fn get_current_user_sid() -> anyhow::Result<String> {
     let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", "([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value"])
+        .args([
+            "-NoProfile",
+            "-Command",
+            "([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value",
+        ])
         .output()?;
-
     if !output.status.success() {
         return Err(anyhow::anyhow!("Failed to get current user SID"));
     }
-
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn get_sas_db_path() -> anyhow::Result<PathBuf> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| anyhow::anyhow!("APPDATA environment variable not set"))?;
-    let db_path = PathBuf::from(appdata)
-        .join("SUPERAntiSpyware.com")
-        .join("SUPERAntiSpyware")
-        .join("SAS_CURRENTUSER.DB3");
-
-    if !db_path.exists() {
-        return Err(anyhow::anyhow!("SAS database not found at {}", db_path.display()));
-    }
-
-    Ok(db_path)
-}
-
 fn now_iso8601() -> String {
-    let output = Command::new("powershell")
+    Command::new("powershell")
         .args(["-NoProfile", "-Command", "Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'"])
         .output()
-        .ok();
-
-    output
+        .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "2026-01-01T14:00:00".to_string())
 }
 
-/// Configures SAS scheduled tasks by inserting entries into the SAS database
-/// and registering Windows Task Scheduler tasks.
-///
-/// Returns (update_guid, scan_guid) on success.
-pub fn configure_sas_scheduled_tasks() -> anyhow::Result<(String, String)> {
-    let db_path = get_sas_db_path()?;
+// ─── Core settings + tasks writer ────────────────────────────────────────────
+
+/// Write SETTINGS + ScheduledTasks to SAS_CURRENTUSER.DB3 and add the
+/// startup Run registry key. Returns (update_task_guid, scan_task_guid).
+fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
+    let db_path = get_sas_currentuser_db_path()?;
     let user_sid = get_current_user_sid()?;
     let start_time = now_iso8601();
 
-    log::info!("SAS DB: {}", db_path.display());
-    log::info!("User SID: {user_sid}");
-    log::info!("Start time: {start_time}");
+    log::info!("SAS CURRENTUSER DB: {}", db_path.display());
 
     let tasks = [
         SasTask {
@@ -314,14 +479,10 @@ pub fn configure_sas_scheduled_tasks() -> anyhow::Result<(String, String)> {
     ];
 
     let conn = Connection::open(&db_path)?;
-
-    // Apply all reference settings (splash screen, notifications, scan config, etc.)
     let settings_count = apply_sas_settings(&conn)?;
-    log::info!("Wrote {settings_count} settings to SAS database");
+    log::info!("Wrote {settings_count} settings to SAS CURRENTUSER DB");
 
-    // Clear any existing scheduled tasks so we don't create duplicates
     conn.execute("DELETE FROM ScheduledTasks", [])?;
-
     for (i, task) in tasks.iter().enumerate() {
         conn.execute(
             "INSERT INTO ScheduledTasks (id, taskid, type, time, days, hours, wake, restart, shutdown, clean, hide, updatebefore, runifmissed, lastruntime, disabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
@@ -333,44 +494,41 @@ pub fn configure_sas_scheduled_tasks() -> anyhow::Result<(String, String)> {
                 task.days,
                 task.hours,
                 task.wake,
-                "no",   // restart
-                "no",   // shutdown
+                "no",
+                "no",
                 task.clean,
                 task.hide,
                 task.updatebefore,
                 task.runifmissed,
                 &start_time,
-                "no",   // disabled
+                "no",
             ],
         )?;
         log::info!("Inserted SAS task: type={} guid={}", task.task_type, task.guid);
     }
-
     drop(conn);
 
-    // Register each task with Windows Task Scheduler
+    // Register tasks with Windows Task Scheduler
     let temp_dir = std::env::temp_dir();
-
     for task in &tasks {
-        let xml_content = task.xml_template
+        let xml = task
+            .xml_template
             .replace("{TASK_GUID}", &task.guid)
             .replace("{USER_SID}", &user_sid)
             .replace("{START_TIME}", &start_time);
 
         let xml_path = temp_dir.join(format!("sas_task_{}.xml", task.guid));
-        // Write as UTF-16 LE with BOM (required by schtasks for UTF-16 encoded XML)
-        let mut utf16_bytes = vec![0xFF, 0xFE]; // BOM
-        for code_unit in xml_content.encode_utf16() {
-            utf16_bytes.extend_from_slice(&code_unit.to_le_bytes());
+        let mut utf16: Vec<u8> = vec![0xFF, 0xFE];
+        for code_unit in xml.encode_utf16() {
+            utf16.extend_from_slice(&code_unit.to_le_bytes());
         }
-        std::fs::write(&xml_path, &utf16_bytes)?;
+        std::fs::write(&xml_path, &utf16)?;
 
         let task_name = format!(
             "\\SUPERAntiSpyware\\SUPERAntiSpyware Scheduled Task {}",
             task.guid
         );
 
-        // Create the parent folder first (schtasks needs it)
         let _ = Command::new("schtasks")
             .args(["/Create", "/TN", "\\SUPERAntiSpyware\\placeholder", "/SC", "ONCE", "/ST", "00:00", "/TR", "cmd /c echo noop", "/F"])
             .output();
@@ -378,19 +536,42 @@ pub fn configure_sas_scheduled_tasks() -> anyhow::Result<(String, String)> {
             .args(["/Delete", "/TN", "\\SUPERAntiSpyware\\placeholder", "/F"])
             .output();
 
-        let output = Command::new("schtasks")
+        let out = Command::new("schtasks")
             .args(["/Create", "/XML", &xml_path.to_string_lossy(), "/TN", &task_name, "/F"])
             .output()?;
-
-        if output.status.success() {
+        if out.status.success() {
             log::info!("Registered task: {task_name}");
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log::error!("Failed to register task {task_name}: {stderr}");
+            log::error!("Failed to register {task_name}: {}", String::from_utf8_lossy(&out.stderr));
         }
-
         let _ = std::fs::remove_file(&xml_path);
     }
 
+    // Ensure SAS launches at Windows login
+    if let Err(e) = add_sas_startup_run_key() {
+        log::warn!("Could not add SAS startup Run key: {e}");
+    }
+
     Ok((tasks[0].guid.clone(), tasks[1].guid.clone()))
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/// Activate SAS via ALLUSER.DB3 **and** write settings + tasks to CURRENTUSER.DB3.
+///
+/// This replaces the old `/autoregister:KEY` approach. Call this after the
+/// installer finishes and all SAS processes have been killed.
+pub fn configure_sas_with_activation(reg_code: &str) -> anyhow::Result<(String, String)> {
+    match activate_sas_via_db(reg_code) {
+        Ok(()) => log::info!("SAS ALLUSER activation written successfully"),
+        Err(e) => log::warn!("SAS ALLUSER activation failed (settings will still apply): {e}"),
+    }
+    configure_sas_settings_and_tasks()
+}
+
+/// Write settings + scheduled tasks only (no activation key). Backward-compatible.
+///
+/// Use this when SAS is already activated and you only need to reconfigure settings.
+pub fn configure_sas_scheduled_tasks() -> anyhow::Result<(String, String)> {
+    configure_sas_settings_and_tasks()
 }

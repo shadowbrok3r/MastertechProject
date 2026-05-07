@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use log::info;
 
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
-const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
+pub const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 
 pub mod customer_messages;
 pub mod customer_threads;

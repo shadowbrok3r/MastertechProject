@@ -246,6 +246,33 @@ impl WebSocketClient {
                             });
                         }
                     }
+
+                    // Deploy a new MasterTech.exe to the connected remote client.
+                    // The remote will apply self_replace + relaunch automatically.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if Button::new(
+                        RichText::new("⬆ Deploy Update")
+                            .color(Color32::from_rgb(80, 200, 255))
+                            .small(),
+                    )
+                    .ui(ui)
+                    .on_hover_text("Push a new MasterTech.exe to this remote client.\nIt will replace itself and relaunch automatically.")
+                    .clicked()
+                    {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Executable", &["exe"])
+                            .set_title("Select new MasterTech.exe to deploy")
+                            .pick_file()
+                        {
+                            let path_str = path.display().to_string();
+                            let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
+                            self.self_update_rx = Some(rx);
+                            // Reuse file_transfer_progress with a fixed label
+                            std::thread::spawn(move || {
+                                Self::chunk_and_send_self_update(&path_str, tx);
+                            });
+                        }
+                    }
                 }
             });
             ui.add_space(2.);
@@ -421,5 +448,39 @@ impl WebSocketClient {
         }
 
         log::info!("File transfer queued: {filename} ({} bytes, {total_chunks} chunks)", data.len());
+    }
+
+    /// Read a file in 512 KiB chunks and send each as a
+    /// [`Cmd::MastertechSelfUpdateChunk`] for remote self-update.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn chunk_and_send_self_update(path: &str, tx: crossbeam::channel::Sender<Cmd>) {
+        const CHUNK_SIZE: usize = 512 * 1024;
+
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("Failed to read binary for self-update: {path}: {e}");
+                return;
+            }
+        };
+
+        let total_chunks = ((data.len() + CHUNK_SIZE - 1) / CHUNK_SIZE).max(1) as u32;
+
+        for (i, chunk) in data.chunks(CHUNK_SIZE).enumerate() {
+            let cmd = Cmd::MastertechSelfUpdateChunk {
+                chunk_index: i as u32,
+                total_chunks,
+                data: chunk.to_vec(),
+            };
+            if tx.send(cmd).is_err() {
+                log::error!("Self-update channel closed at chunk {i}/{total_chunks}");
+                return;
+            }
+        }
+
+        log::info!(
+            "Self-update queued: {} bytes, {total_chunks} chunks",
+            data.len()
+        );
     }
 }

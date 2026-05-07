@@ -1,5 +1,5 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Id, Key, KeyboardShortcut, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CarboniteResponse, CustomerData, LiveTaskPayload, TicketData};
 use displays::plugins::push_widget_anchor;
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
@@ -61,16 +61,18 @@ impl MastertechContext {
                     }
 
                     ui.add_space(305.);
-                    
-                    if ui.add_enabled(
-                        enabled, 
-                        Button::new( 
+
+                    let get_presta_btn = ui.add_enabled(
+                        enabled,
+                        Button::new(
                             RichText::new("Get PrestaShop Order")
-                            .color(style.visuals.warn_fg_color) 
+                                .color(style.visuals.warn_fg_color),
                         )
                         .stroke(style.visuals.window_stroke)
-                        .min_size(Vec2::new(150.0, 25.0))
-                    ).clicked() {
+                        .min_size(Vec2::new(150.0, 25.0)),
+                    );
+                    push_widget_anchor("tur.get_prestashop_order", get_presta_btn.rect);
+                    if get_presta_btn.clicked() {
                         let service_num = self.ticket_data.service_number.clone();
                         self.presta_api();
                         self.ticket_data = TicketData::default();
@@ -188,6 +190,7 @@ impl MastertechContext {
             let text_edit_size = vec2( 140., 15.0);
 
             let service_num = TextEdit::singleline(&mut self.ticket_data.service_number)
+                .id_source(Id::new("tur_sheet_service_number"))
                 .hint_text(" Service #  ")
                 .background_color(service_number_color)
                 .char_limit(11)

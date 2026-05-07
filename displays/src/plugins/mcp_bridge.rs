@@ -2130,9 +2130,11 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<GetServiceOrderParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        // SurrealDB: `LIMIT` cannot follow `FETCH` in the same statement; omit
+        // `LIMIT` here (service_number should be unique) and take the first row.
         let result: Option<serde_json::Value> = database::DATABASE
             .query(
-                "SELECT * FROM service_order WHERE service_number == $sn FETCH computer, customer LIMIT 1"
+                "SELECT * FROM service_order WHERE service_number == $sn FETCH computer, customer",
             )
             .bind(("sn", p.service_number.clone()))
             .await
@@ -2491,7 +2493,7 @@ After compiling a useful plugin, call publish_plugin to store it in the SurrealD
 
 === Known Plugins in Registry ===
 Always check search_plugins before building new plugins. Current registry (as of last sync):
-- **com.mastertech.hw-diag** ("HW Diagnostics") — system_info, bsod_events, critical_events, whea_errors, disk_health, reliability_records, tdr_gpu_events, driver_errors, disk_errors, wer_hardware, list_software, uninstall_armoury_crate, uninstall_ryzen_master, download_ddu, check_ddu_status, find_ryzen_master, remove_ryzen_master_remnants, analyze_minidumps, night_light_status, display_connections. Use for GPU/display/BSOD/crash/Night Light diagnostics.
+- **com.mastertech.hw-diag** ("HW Diagnostics") — system_info, bsod_events, critical_events, whea_errors, disk_health, reliability_records, tdr_gpu_events, driver_errors, disk_errors, wer_hardware, list_software, uninstall_armoury_crate, uninstall_ryzen_master, download_ddu, check_ddu_status, find_ryzen_master, remove_ryzen_master_remnants, analyze_minidumps, night_light_status, display_connections, **webroot_license**, **sas_license** (CPS / Webroot + SuperAntiSpyware activation and days-remaining when those tools are published on the remote build). Use for GPU/display/BSOD/crash/Night Light diagnostics and CPS license checks.
 - **com.mastertech.repair** ("System Repair") — dism_restore_health, sfc_scannow, uninstall_superantispyware, chkdsk_schedule, run_command (arbitrary PowerShell). Use for Windows system file repair.
 - **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, burn_cpu, burn_memory, burn_disk, burn_combined, stability_report, stress_and_monitor, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. General-purpose system health overview, stress testing, and crash analysis.
 - **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
@@ -2813,10 +2815,20 @@ Use query_surrealdb for any ad-hoc read-only data needs (SELECT/RETURN only).
 Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → remote_egui_list_widget_anchors (see keys) → remote_egui_click_anchor and/or remote_egui_type, or remote_egui_perform_steps (click_anchor, text, sleep_ms, key_tap, etc.). Same binary path as inline viewer: EGUI_INPUT_TAG + EguiInputEvent.
 - nav.menu.view — click to open the View menu (top bar).
 - nav.tab.<slug> — tab row inside View menu. Slug = tab label lowercased with non-alphanumeric → '_', trim '_' (e.g. KOTH → nav.tab.koth; TUR Sheet → nav.tab.tur_sheet; File Browser 📂 → nav.tab.file_browser). Tab anchors exist only while View menu is open: click nav.menu.view, sleep ~400–500ms, then click nav.tab.* .
-- TUR Sheet widgets (when that tab is visible): tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations.
+- TUR Sheet widgets (when that tab is visible): tur.service_number, tur.customer_name, tur.phone_number, tur.customer_email, tur.salesman, tur.tech, tur.checkin_notes, tur.recommendations, tur.get_prestashop_order (button — loads order from PrestaShop into the rest of the form).
+- **TUR remote typing — service # vs recommendations**: The service order number belongs **only** in `tur.service_number`. Before sending `Text` with digits that look like an SO#, you **must** focus that field: `ClickAnchor` on `tur.service_number` with **placement `top_left`** (clicks inside the text cell; `center` can miss the editable area in a tight grid), then `SleepMs` 200–400, then `Text`. Only after the SO# is correct should you click `tur.recommendations` and type sales copy. If digits appear in the wrong box, click `tur.service_number` again with `top_left`, sleep, re-type the SO#, then fix recommendations.
+
+=== TUR sheets (Trade-In / Upgrade / Repair) — purpose for the AI ===
+- **What TUR is**: After diagnostics or bench work, the tech fills the **TUR Sheet** tab so **sales** can read specs + **Recommendations** and pitch **upgrades**, **trade-ins**, **parts for repair**, or a **new PC**. The recommendations block is the main handoff to sales — write for a salesperson, not for the customer ticket prose.
+- **Workflow**: (1) Enter **Service #** in `tur.service_number`. (2) Click **Get PrestaShop Order** (`tur.get_prestashop_order`) — that pulls PrestaShop + linked data into the sheet (customer, products, etc.). (3) Fill **Recommendations** (`tur.recommendations`) with concrete, actionable upsell angles. (4) Only click **Submit TUR** when the human operator has approved — never submit autonomously unless explicitly asked.
+- **Odoo / stock**: Before recommending a specific part (e.g. larger NVMe, RAM kit), use **search_odoo_inventory** with part codes or product names. If no row is returned, say in the recommendation that live Odoo must be checked — do not invent SKU availability.
+- **Windows / lifecycle**: If the machine is still on **Windows 10**, recommend moving to **Windows 11** (when hardware qualifies). If already on Win11, do not push that angle.
+- **Storage angle**: If system drive is nearly full (e.g. high % used), recommend a larger SSD/NVMe **with** an Odoo-backed part code when possible.
+- **Gaming / GPU**: If Steam or games are present but GPU is integrated or weak, qualify discrete GPU or new-build upsell.
+- **CPS (Webroot + SuperAntiSpyware)**: On a **connected remote** (`remote_egui_list_targets`), prefer **`call_remote_plugin_tool`** with `plugin_id` **com.mastertech.hw-diag** and tool names **`webroot_license`** and **`sas_license`** (empty `{}` args unless the tool schema says otherwise). Use `get_plugin_info` / `search_plugins` if tool names differ on that registry build. Fold **active/inactive** and **days remaining** from the JSON into recommendations. If tools are missing or error, say CPS status is unknown and still mention renewal if the customer may be due. If either product is **inactive** or has **fewer than 30 days** left, recommend **CPS renewal**.
 
 === View tabs (names match menu; add/close tab toggles dock) ===
-- TUR Sheet — Service intake / walk-in form (customer, tech, notes, recommendations).
+- TUR Sheet — Service intake / walk-in form (customer, tech, notes, recommendations). Use for sales handoff after service/diag work.
 - KOTH — Store “king of the hill” / display board.
 - Sales Tracker — Sales totals and tracking.
 - Scene Editor — Scene/layout tools (dock tab).

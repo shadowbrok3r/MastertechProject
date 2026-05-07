@@ -43,20 +43,39 @@ pub fn detect_local_ip() -> Option<IpAddr> {
 }
 
 /// Best-effort Windows firewall rule for our direct-TCP listener port.
-/// Returns `Ok(true)` if `netsh` reported success, `Ok(false)` otherwise,
-/// `Err` only on spawn failure. Without an elevated process this will
-/// usually report `Ok(false)` — that's expected and the listener still
-/// works because Windows shows its standard "Allow access?" popup the
-/// first time the process binds.
+///
+/// Deletes any existing rule with `rule_name` first (stale exe-path rules
+/// from previous runs or self-update temp-exe launches) then adds a fresh
+/// **port-only** inbound allow rule. Port-based rules are immune to the
+/// exe-path changing on update; Mastertech is the only app using port 9101
+/// so restricting by program is unnecessary.
+///
+/// Returns `Ok(true)` if `netsh` reported success for the add step,
+/// `Ok(false)` otherwise (likely needs admin elevation — the first
+/// inbound connection will still trigger Windows' standard allow popup).
+/// `Err` only on spawn failure.
 #[cfg(target_os = "windows")]
 pub fn try_add_firewall_rule(port: u16, rule_name: &str) -> std::io::Result<bool> {
-    use std::process::Command;
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let exe_path = std::env::current_exe()?;
     let port_str = port.to_string();
 
+    // Remove any stale rule with this name (ignore error — it may not exist).
+    let _ = Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            &format!("name={rule_name}"),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    // Add fresh port-only inbound rule. No `program=` so it survives binary
+    // replacement without needing a rule refresh after every self-update.
     let output = Command::new("netsh")
         .args([
             "advfirewall",
@@ -66,7 +85,6 @@ pub fn try_add_firewall_rule(port: u16, rule_name: &str) -> std::io::Result<bool
             &format!("name={rule_name}"),
             "dir=in",
             "action=allow",
-            &format!("program={}", exe_path.display()),
             "protocol=TCP",
             &format!("localport={port_str}"),
             "profile=any",

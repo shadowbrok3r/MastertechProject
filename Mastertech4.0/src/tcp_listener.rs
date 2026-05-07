@@ -32,6 +32,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc as tokio_mpsc;
 
 // ── Egui frame broadcast ──────────────────────────────────────────────────────
 //
@@ -148,7 +149,7 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
     let mut client = TerminalWebsocketClient::new();
     let mut transport = ClientTransport::Tcp(write_tx.clone());
 
-    let result = run_session_loop(&mut read_half, &mut client, &mut transport, &write_tx).await;
+    let result = run_session_loop(read_half, &mut client, &mut transport, &write_tx).await;
 
     // 4) Tear down
     drop(transport); // close writer channel so writer_task exits
@@ -210,8 +211,17 @@ async fn perform_handshake(
 }
 
 /// Inbound-frame + outbound-channel multiplexer for a single session.
+///
+/// **Why a dedicated reader task:** `read_frame` performs multiple
+/// `read_exact` calls per logical frame. If `tokio::select!` cancels that
+/// future mid-read (because an egui frame or `command_rx` branch fired
+/// first), the next poll starts a **fresh** `read_u32_le` while the socket
+/// may still be mid-frame — the length prefix is then mis-decoded as
+/// hundreds of megabytes and the session dies with `frame too large`.
+/// A single task owns the read half and forwards **complete** frames on a
+/// channel so reads are never cancelled part-way.
 async fn run_session_loop(
-    read_half: &mut tokio::net::tcp::OwnedReadHalf,
+    read_half: tokio::net::tcp::OwnedReadHalf,
     client: &mut TerminalWebsocketClient,
     transport: &mut ClientTransport,
     write_tx: &UnboundedSender<TcpFrame>,
@@ -220,10 +230,19 @@ async fn run_session_loop(
     // admin without any changes to the frame-capture path in first_run.rs.
     let mut frame_rx = frame_broadcast().subscribe();
 
-    loop {
+    let (in_tx, mut in_rx) = tokio_mpsc::unbounded_channel::<Result<InboundFrame, anyhow::Error>>();
+    let mut reader_handle = tokio::spawn(reader_task(read_half, in_tx));
+
+    let result = loop {
         tokio::select! {
-            // Inbound frame from admin
-            res = read_frame(read_half) => {
+            biased;
+
+            // Inbound: complete frames only (never partial — see module comment).
+            msg = in_rx.recv() => {
+                let Some(res) = msg else {
+                    log::info!("tcp_listener -> inbound channel closed");
+                    break Ok(());
+                };
                 match res {
                     Ok(InboundFrame::Binary(bytes)) => {
                         if bytes.first().copied() == Some(EGUI_INPUT_TAG) {
@@ -246,9 +265,9 @@ async fn run_session_loop(
                     }
                     Ok(InboundFrame::Eof) => {
                         log::info!("tcp_listener -> peer closed connection cleanly");
-                        return Ok(());
+                        break Ok(());
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => break Err(e),
                 }
             }
             // Outbound: drain the side-channels the dispatcher uses for
@@ -280,6 +299,27 @@ async fn run_session_loop(
                     }
                 }
             }
+        }
+    };
+
+    reader_handle.abort();
+    result
+}
+
+/// Serializes all inbound length-prefixed frames onto `in_tx`. Never
+/// returns until EOF or a fatal read / protocol error.
+async fn reader_task(
+    mut read_half: tokio::net::tcp::OwnedReadHalf,
+    in_tx: tokio_mpsc::UnboundedSender<Result<InboundFrame, anyhow::Error>>,
+) {
+    loop {
+        let frame = read_frame(&mut read_half).await;
+        let stop = frame.is_err() || matches!(&frame, Ok(InboundFrame::Eof));
+        if in_tx.send(frame).is_err() {
+            break;
+        }
+        if stop {
+            break;
         }
     }
 }

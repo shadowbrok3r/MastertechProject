@@ -11,7 +11,7 @@ use log::info;
 
 use super::codec::Codec;
 
-pub const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
+pub const BASE_URL: &str = "https://www.xidax.com/admin-xpc/index.php?controller=AdminOrders&vieworder=&id_order=";
 
 #[derive(serde::Serialize)]
 pub struct TaskRowViewer {

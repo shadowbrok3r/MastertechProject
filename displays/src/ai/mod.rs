@@ -1,5 +1,5 @@
 pub(crate) const GEMINI_API_KEY: &str = env!("GEMINI_API_KEY");
-pub(crate) const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
+pub(crate) const GEMINI_API_BASE: &str = "https://openrouter.ai/api/v1";
 
 // region:    --- Modules
 

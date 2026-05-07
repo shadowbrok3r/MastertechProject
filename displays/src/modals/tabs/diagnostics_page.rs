@@ -33,10 +33,8 @@ pub fn display_diagnostics_page(
     let left_w = (total_w * 0.32).clamp(220.0, 320.0);
     let right_w = (total_w - left_w - 12.0).max(380.0);
 
-    ui.horizontal_top(|ui| {
-        ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Check-in Notes").strong().size(14.0));
-            ui.separator();
+    ui.vertical_centered_justified(|ui| {
+        ui.collapsing("Check-in Notes", |ui| {
             if checkin_notes.trim().is_empty() {
                 ui.colored_label(
                     Color32::from_rgb(150, 150, 150),

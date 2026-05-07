@@ -7,7 +7,7 @@ use crossbeam::channel::Sender;
 use database::SurrealValue;
 use regex::Regex;
 
-const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
+const BASE_URL: &str = "https://www.xidax.com/admin-xpc/index.php?controller=AdminOrders&vieworder=&id_order=";
 
 /// Extract only relevant RAM info: DDR type (DDR4/DDR5), speed (MHz), and capacity (GB)
 fn format_ram_display(ram: &str) -> String {
@@ -571,7 +571,7 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
                 } else {
                     Hyperlink::from_label_and_url(
                         RichText::new(format!(" {}", row.1)).color(Color32::from_rgb(255, 165, 0)),
-                        format!("https://pclaptops.mojo11.com/pcladmin/index.php/sell/catalog/products/{}", row.1)
+                        format!("https://www.xidax.com/admin-xpc/index.php/sell/catalog/products/{}", row.1)
                     )
                     .open_in_new_tab(true)
                     .ui(ui)
@@ -629,7 +629,7 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
                     } else {
                         Hyperlink::from_label_and_url(
                             format!(" {}", row.1), 
-                            format!("https://pclaptops.mojo11.com/pcladmin/index.php/sell/catalog/products/{}", row.1)
+                            format!("https://www.xidax.com/admin-xpc/index.php/sell/catalog/products/{}", row.1)
                         )
                         .open_in_new_tab(true)
                         .ui(ui)

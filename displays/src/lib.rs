@@ -368,6 +368,26 @@ pub enum Cmd {
         message: String,
     },
 
+    // ── Remote Mastertech self-update ────────────────────────────────────────
+    // Admin pushes the new MasterTech.exe in 512 KiB chunks; when the remote
+    // client has all chunks it calls self_replace, relaunches with the same CLI
+    // args, and responds with MastertechSelfUpdateResult before exiting.
+
+    /// One chunk of a binary self-update payload.  Admin → remote client only.
+    /// `chunk_index` is 0-based; `total_chunks` is the total number expected.
+    MastertechSelfUpdateChunk {
+        chunk_index: u32,
+        total_chunks: u32,
+        data: Vec<u8>,
+    },
+
+    /// Sent by the remote client back to the admin after the update either
+    /// completed (binary replaced + relaunch spawned) or failed.
+    MastertechSelfUpdateResult {
+        success: bool,
+        message: String,
+    },
+
     /// Call an MCP tool on a remote client's plugin, routed via the admin WebSocket.
     /// The admin console sends this → remote client handles it → replies with the result.
     CallRemotePluginTool {
