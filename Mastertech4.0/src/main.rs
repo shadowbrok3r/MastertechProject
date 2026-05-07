@@ -16,6 +16,7 @@ pub mod first_run;
 pub mod data;
 pub mod transport;
 pub mod tcp_listener;
+pub mod remote_self_update;
 
 impl eframe::App for app_state::MasterTechApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -31,7 +32,7 @@ impl eframe::App for app_state::MasterTechApp {
                 mgr.register(Box::new(capture));
                 mgr.set_plugin_enabled("com.mastertech.egui-frame-capture", true);
                 mgr.register(Box::new(displays::plugins::EguiRemoteViewer::new()));
-                mgr.register(Box::new(displays::plugins::HelloMastertechPlugin::default()));
+                // mgr.register(Box::new(displays::plugins::HelloMastertechPlugin::default()));
                 (rx, input_tx)
             };
             self.context.egui_frame_rx = Some(egui_frame_rx);

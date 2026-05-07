@@ -195,6 +195,8 @@ pub struct WebConsoleFrontend {
     file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
     /// Pending remote plugin tool calls awaiting PluginManager response: (request_id, plugin_id, tool_name)
     pending_plugin_calls: Vec<(String, String, String)>,
+    /// Accumulates incoming self-update binary chunks from the admin console.
+    self_update_buffer: crate::remote_self_update::SelfUpdateBuffer,
 }
 
 impl WebConsoleFrontend {
@@ -225,6 +227,7 @@ impl WebConsoleFrontend {
             live_stats: false,
             file_transfer_buffers: std::collections::HashMap::new(),
             pending_plugin_calls: Vec::new(),
+            self_update_buffer: Default::default(),
         }
     }
 
@@ -1454,6 +1457,32 @@ if (Test-Path $path) {{
                 });
             }
             Cmd::None => {}
+            // ── Remote self-update (GUI path) ────────────────────────────
+            // Admin pushes MasterTech.exe in chunks; on completion apply and
+            // relaunch.  Windows only; no-ops silently on other platforms.
+            Cmd::MastertechSelfUpdateChunk { chunk_index, total_chunks, data } => {
+                log::info!(
+                    "[self-update] chunk {}/{} ({} bytes) via GUI WS",
+                    chunk_index + 1,
+                    total_chunks,
+                    data.len(),
+                );
+                if let Some(bytes) = self.self_update_buffer.push(chunk_index, total_chunks, data) {
+                    log::info!("[self-update] all {} chunks received — applying…", total_chunks);
+                    let (success, message) = crate::remote_self_update::apply_and_relaunch(bytes);
+                    log::info!("[self-update] result: success={success} message={message}");
+                    let result_cmd = displays::Cmd::MastertechSelfUpdateResult { success, message };
+                    if let Ok(payload) = bincode::serde::encode_to_vec(&result_cmd, bincode::config::standard()) {
+                        self.ws_sender.send(ewebsock::WsMessage::Binary(payload));
+                    }
+                    if success {
+                        // Give the transport a moment to flush, then exit so the
+                        // new process (already spawned) takes over.
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        std::process::exit(0);
+                    }
+                }
+            }
             _ => {
                 log::debug!("websockets -> Unhandled command in egui mode: {:?}", std::mem::discriminant(&cmd));
             },

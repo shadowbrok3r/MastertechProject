@@ -43,6 +43,30 @@ impl WebSocketClient {
             }
         }
 
+        // Drain self-update chunks produced by background thread and send to remote.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(rx) = &self.self_update_rx {
+            let mut done = false;
+            while let Ok(cmd) = rx.try_recv() {
+                if let Cmd::MastertechSelfUpdateChunk { chunk_index, total_chunks, .. } = &cmd {
+                    self.file_transfer_progress = Some((
+                        "MasterTech.exe (self-update)".to_string(),
+                        chunk_index + 1,
+                        *total_chunks,
+                    ));
+                    if chunk_index + 1 == *total_chunks {
+                        done = true;
+                    }
+                }
+                self.transport.send(WsMessage::Binary(serialize_command(&cmd)));
+            }
+            if done {
+                self.self_update_rx = None;
+                // Keep file_transfer_progress visible briefly; it will be cleared
+                // when MastertechSelfUpdateResult arrives (handled below).
+            }
+        }
+
         #[cfg(not(target_arch="wasm32"))]
         if let Ok(diagnostic_msg) = self.diagnostic_rx.try_recv() {
             // log::warn!("Diagnostic info: {diagnostic_msg:?}");
@@ -495,6 +519,26 @@ impl WebSocketClient {
                         self.history.push(History {
                             from: "System".to_string(),
                             message: format!("File transfer '{filename}': {message}"),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
+                        self.notifications += 1;
+                    } else if let Cmd::MastertechSelfUpdateResult { success, message } = cmd {
+                        log::info!("Remote self-update result: success={success} {message}");
+                        self.file_transfer_progress = None;
+                        let toast_msg = if success {
+                            "Remote update applied — client is relaunching.".to_string()
+                        } else {
+                            format!("Remote update failed: {message}")
+                        };
+                        let toast = if success {
+                            crate::ToastMessage::Success(toast_msg.clone())
+                        } else {
+                            crate::ToastMessage::Error(toast_msg.clone())
+                        };
+                        let _ = crate::get_toast_sender().try_send(toast);
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message: toast_msg,
                             timestamp: chrono::Local::now().to_rfc3339(),
                         });
                         self.notifications += 1;

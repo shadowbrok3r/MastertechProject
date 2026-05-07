@@ -4,7 +4,8 @@ use reqwest::{Client, Method};
 use serde::Deserialize;
 
 // PrestaShop API endpoint
-const PRESTASHOP_BASE_URL: &str = "https://pclaptops.mojo11.com";
+// const PRESTASHOP_BASE_URL: &str = "https://pclaptops.mojo11.com";
+const PRESTASHOP_BASE_URL: &str = "https://pcl.master-tech.app";
 
 // ============================================
 // PrestaShop Models
@@ -100,7 +101,6 @@ pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
 
 async fn request_prestashop(serial13: &str) -> Result<String> {
     let client = Client::new();
-    let auth_token = database::ISSUE_TOKEN; // Using the existing env var from database crate
 
     // 1) /api/order_serial - lookup by serial number
     let url1 = format!(
@@ -108,15 +108,19 @@ async fn request_prestashop(serial13: &str) -> Result<String> {
         PRESTASHOP_BASE_URL, serial13
     );
 
+    log::info!("PrestaShop order_serial request URL: {}", url1);
+
     let resp1 = client
         .get(&url1)
-        .header("Authorization", auth_token)
         .send()
         .await?
         .error_for_status()
+        .inspect(|r| log::info!("PrestaShop order_serial response: {:?}", r))
+        .inspect_err(|e| log::error!("PrestaShop order_serial request failed: {:?}", e))
         .context("PrestaShop order_serial request failed")?
         .json::<OrderSerialsResponse>()
         .await
+        .inspect_err(|e| log::error!("Failed to parse order_serial response: {:?}", e))
         .context("Failed to parse order_serial response")?;
 
     let id_order = resp1
@@ -131,13 +135,15 @@ async fn request_prestashop(serial13: &str) -> Result<String> {
 
     let resp2 = client
         .get(&url2)
-        .header("Authorization", auth_token)
         .send()
         .await?
         .error_for_status()
+        .inspect(|r| log::info!("PrestaShop orders response: {:?}", r))
+        .inspect_err(|e| log::error!("PrestaShop orders request failed: {:?}", e))
         .context("PrestaShop orders request failed")?
         .json::<OrderResponse>()
         .await
+        .inspect_err(|e| log::error!("Failed to parse order response: {:?}", e))
         .context("Failed to parse order response")?;
 
     let id_customer = resp2.order.id_customer.trim().to_string();
@@ -153,7 +159,6 @@ async fn request_prestashop(serial13: &str) -> Result<String> {
 
     let resp3 = client
         .get(&url3)
-        .header("Authorization", auth_token)
         .send()
         .await?
         .error_for_status()

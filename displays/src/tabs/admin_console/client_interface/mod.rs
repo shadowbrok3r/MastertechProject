@@ -149,6 +149,9 @@ pub struct WebSocketClient {
     /// Channel receiving chunked Cmds from the background file-read thread
     #[cfg(not(target_arch = "wasm32"))]
     pub file_transfer_rx: Option<Receiver<Cmd>>,
+    /// Channel receiving `MastertechSelfUpdateChunk` Cmds for a remote self-update
+    #[cfg(not(target_arch = "wasm32"))]
+    pub self_update_rx: Option<Receiver<Cmd>>,
 }
 
 impl Drop for WebSocketClient {
@@ -296,6 +299,8 @@ Get-WmiObject")
             file_transfer_progress: None,
             #[cfg(not(target_arch = "wasm32"))]
             file_transfer_rx: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            self_update_rx: None,
         }
     }
 

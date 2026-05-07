@@ -95,6 +95,8 @@ pub struct TerminalWebsocketClient {
     pub persistent_shell: Option<PersistentShell>,
     /// Accumulates chunks for direct file transfers: filename → (total_chunks, received_chunks_data)
     pub file_transfer_buffers: std::collections::HashMap<String, (u32, Vec<(u32, Vec<u8>)>)>,
+    /// Accumulates incoming self-update binary chunks from the admin console.
+    pub self_update_buffer: crate::remote_self_update::SelfUpdateBuffer,
 }
 
 impl TerminalWebsocketClient {
@@ -120,6 +122,7 @@ impl TerminalWebsocketClient {
             join_handle: None,
             persistent_shell: None,
             file_transfer_buffers: std::collections::HashMap::new(),
+            self_update_buffer: Default::default(),
         }
     }
     
@@ -1862,12 +1865,35 @@ if (Test-Path $path) {{
                                 Ok(keys) => {
                                     let key = keys.get(0).cloned().unwrap_or_default();
                                     send_log(sender, format!("SuperAnti key: {}", key.superanti_key));
+                                    let key_str = key.superanti_key.clone();
                                     match crate::utilities::scripts::antivirus::install_sas(key.superanti_key, client, progress_tx).await {
                                         Ok(_) => {
                                             send_log(sender, "SAS installed successfully".into());
                                             let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
                                             send_log(sender, format!("Post-install killed {killed} SAS processes"));
-                                            send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                            std::thread::sleep(std::time::Duration::from_secs(2));
+                                            use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_with_activation;
+                                            match configure_sas_with_activation(&key_str) {
+                                                Ok((upd, scan)) => {
+                                                    send_log(sender, format!("SAS activated: update task {upd}, scan task {scan}"));
+                                                    // Launch SAS with /REGCODE to trigger online
+                                                    // registration — clears the "expired" banner
+                                                    // and enables Real-Time Protection.
+                                                    let regcode_arg = format!("/REGCODE:{}", key_str);
+                                                    let sas_exe = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
+                                                    if std::path::Path::new(sas_exe).exists() {
+                                                        match std::process::Command::new(sas_exe).arg(&regcode_arg).spawn() {
+                                                            Ok(_) => send_log(sender, "SAS launched with /REGCODE for online registration".into()),
+                                                            Err(e) => send_log(sender, format!("SAS /REGCODE launch error: {e}")),
+                                                        }
+                                                    }
+                                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                                }
+                                                Err(e) => {
+                                                    send_log(sender, format!("SAS activation/settings error: {e}"));
+                                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             send_log(sender, format!("SAS install error: {e}"));
@@ -2364,6 +2390,28 @@ if (Test-Path $path) {{
             }
 
             Cmd::None => {},
+            // ── Remote self-update (terminal-mode path) ──────────────────
+            Cmd::MastertechSelfUpdateChunk { chunk_index, total_chunks, data } => {
+                log::info!(
+                    "[self-update] chunk {}/{} ({} bytes) via terminal WS",
+                    chunk_index + 1,
+                    total_chunks,
+                    data.len(),
+                );
+                if let Some(bytes) = self.self_update_buffer.push(chunk_index, total_chunks, data) {
+                    log::info!("[self-update] all {} chunks received — applying…", total_chunks);
+                    let (success, message) = crate::remote_self_update::apply_and_relaunch(bytes);
+                    log::info!("[self-update] result: success={success} message={message}");
+                    let result_cmd = displays::Cmd::MastertechSelfUpdateResult { success, message };
+                    if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                    if success {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        std::process::exit(0);
+                    }
+                }
+            }
             _ => {}
         }
     }
