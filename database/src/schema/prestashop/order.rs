@@ -1,6 +1,6 @@
 use crate::schema::deserializer::deserialize_to_string;
 use crate::SurrealValue;
-use crate::schema::prestashop::{PRESTASHOP_API_URL_WASM, OrderType, Prestashop};
+use crate::schema::prestashop::{PRESTASHOP_API_URL, PRESTASHOP_API_URL_WASM, OrderType, Prestashop};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use log::info;
@@ -334,7 +334,7 @@ impl Order {
                             <order_row>
                                 <id></id>
                                 <id_order_config read_only="true" readOnly="true"></id_order_config>
-                                <product_id xlink:href="https://pclaptops.mojo11.com/api/products/" required="true"></product_id>
+                                <product_id xlink:href="{PRESTASHOP_API_URL}/products/" required="true"></product_id>
                                 <product_attribute_id required="true"></product_attribute_id>
                                 <product_quantity required="true"></product_quantity>
                             </order_row>

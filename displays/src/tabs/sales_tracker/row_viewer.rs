@@ -4,7 +4,7 @@ use crossbeam::channel::Sender;
 
 use super::data::SalesTableData;
 use super::codec::Codec;
-use crate::tabs::task_audit::row_viewer::BASE_URL;
+use database::xidax_order_url;
 
 #[derive(Default, serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SalesRowViewer {
@@ -61,7 +61,7 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
                     .underline()
                     .strong()
                     .color(ui.style().visuals.error_fg_color),
-                format!("{BASE_URL}{}", row.order_id),
+                xidax_order_url(&row.order_id),
             )
             .open_in_new_tab(true)
             .ui(ui),
@@ -85,7 +85,7 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
                     .underline()
                     .strong()
                     .color(ui.style().visuals.error_fg_color),
-                format!("{BASE_URL}{}", row.order_id),
+                xidax_order_url(&row.order_id),
             )
             .open_in_new_tab(true)
             .ui(ui)),
@@ -107,7 +107,7 @@ impl RowViewer<SalesTableData> for SalesRowViewer {
 
     fn on_cell_view_response(&mut self, row: &SalesTableData, column: usize, resp: &eframe::egui::Response) -> Option<Box<SalesTableData>> {
         match column {
-            0 => { if resp.clicked() { OpenUrl::new_tab(format!("{BASE_URL}{}", row.order_id)); None } else { None } }
+            0 => { if resp.clicked() { OpenUrl::new_tab(xidax_order_url(&row.order_id)); None } else { None } }
             _ => None
         }
     }

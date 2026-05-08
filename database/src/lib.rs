@@ -69,6 +69,23 @@ pub const ODOO_UID: &str = env!("ODOO_UID");
 pub const PRESTASHOP_API_URL: &str = env!("PRESTASHOP_API_URL");
 pub const PRESTASHOP_API_URL_WASM: &str = env!("PRESTASHOP_API_URL_WASM");
 
+/// Base URL for the Xidax admin (PrestaShop) backoffice. Use the helpers
+/// (`xidax_order_url`, `xidax_product_url`) instead of concatenating ad-hoc
+/// suffixes so URL paths stay defined in one place.
+pub const XIDAX_ADMIN_URL: &str = env!("XIDAX_ADMIN_URL");
+
+/// Build a Xidax admin URL that opens an order detail page.
+#[must_use]
+pub fn xidax_order_url(order_id: impl std::fmt::Display) -> String {
+    format!("{XIDAX_ADMIN_URL}/index.php?controller=AdminOrders&vieworder=&id_order={order_id}")
+}
+
+/// Build a Xidax admin URL that opens a product detail page.
+#[must_use]
+pub fn xidax_product_url(product_id: impl std::fmt::Display) -> String {
+    format!("{XIDAX_ADMIN_URL}/index.php/sell/catalog/products/{product_id}")
+}
+
 // JWT token type - in v3.0 this is just a String
 pub type Jwt = String;
 

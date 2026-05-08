@@ -2,6 +2,7 @@ use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
 use eframe::egui::{Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Label, Widget};
 use database::schema::{Store, TaskNotePayload, User, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{MissedCallOrder, PrestashopPayload}};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
+use database::xidax_order_url;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use egui_data_table::{viewer::{RowCodec, UiActionContext}, RowViewer, UiAction};
 use crate::PlatformSpawner;
@@ -10,8 +11,6 @@ use egui_extras::Column;
 use log::info;
 
 use super::codec::Codec;
-
-pub const BASE_URL: &str = "https://www.xidax.com/admin-xpc/index.php?controller=AdminOrders&vieworder=&id_order=";
 
 #[derive(serde::Serialize)]
 pub struct TaskRowViewer {
@@ -84,7 +83,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let url = row.order.id.clone();
                 let res = Hyperlink::from_label_and_url(
                     format!(" {}", url), 
-                    format!("{BASE_URL}{}", url)
+                    xidax_order_url(&url)
                 )
                 .open_in_new_tab(true)
                 .ui(ui);
@@ -290,7 +289,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let resp = Some(
                     Hyperlink::from_label_and_url(
                         format!(" {}", row.order.id.clone()), 
-                        format!("{BASE_URL}{}", row.order.id.clone())
+                        xidax_order_url(&row.order.id)
                     )
                     .open_in_new_tab(true)
                     .ui(ui)

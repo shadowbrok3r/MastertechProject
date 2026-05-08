@@ -228,47 +228,49 @@ pub async fn install_sas(
         return Err(anyhow::anyhow!("Activation key is empty"));
     }
 
-    use crate::utilities::scripts::antivirus::sas_tasks::activate_sas_via_db;
-
-    // If already installed, activate directly via DB (no kill needed here — caller
-    // is responsible for killing SAS before calling install_sas).
-    let sas_standard = PathBuf::from(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
-    if sas_standard.exists() {
-        info!("SAS already installed at standard path; activating via DB");
-        if let Err(e) = activate_sas_via_db(&activation_key) {
-            info!("DB activation warning (non-fatal): {e}");
-        }
-        return Ok(());
-    }
-
-    // Check installed programs list for non-standard install paths.
-    if let Ok(programs) = InstalledProgram::get_installed_programs() {
-        for program in &programs {
+    // If SAS is already installed, just kill any running processes and run
+    // the in-place /autoregister against the existing executable. This is the
+    // proven path that has worked for years — direct DB writes corrupted the
+    // SQLite store and broke the uninstaller.
+    if let Ok(programs) = InstalledProgram::get_installed_programs().as_mut() {
+        for program in &mut *programs {
             if let (Some(publisher), Some(install_location)) = (&program.publisher, &program.install_location) {
                 if program.display_name.clone().unwrap_or_default().contains("SUPERAntiSpyware")
-                    || publisher.contains("SUPERAntiSpyware")
+                    || publisher.clone().contains("SUPERAntiSpyware")
                 {
                     let sas_exe = PathBuf::from(install_location).join("SUPERAntiSpyware.exe");
                     if sas_exe.exists() {
-                        info!("SAS found at {sas_exe:?}; activating via DB");
-                        if let Err(e) = activate_sas_via_db(&activation_key) {
-                            info!("DB activation warning: {e}");
-                        }
+                        info!("SAS already installed, killing processes before autoregister");
+                        kill_sas_processes();
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+
+                        info!("SAS EXE: cmd /c {sas_exe:?} /autoregister:{activation_key}");
+                        let output = Command::new("cmd")
+                            .arg("/C")
+                            .arg(sas_exe.as_os_str())
+                            .arg(format!("/autoregister:{activation_key}"))
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output()
+                            .await?;
+
+                        info!("autoregister exit status: {:?}", output.status);
                         return Ok(());
+                    } else {
+                        info!("Install location not found: {sas_exe:?}");
                     }
                 }
             }
         }
     }
 
-    info!("SAS not found — downloading and installing...");
+    info!("SAS not found, downloading and installing...");
 
     let temp_directory = std::env::temp_dir();
     let sas_path = format!("{}\\sas.exe", temp_directory.display());
 
     let need_download = match tokio::fs::metadata(&sas_path).await {
         Ok(meta) if meta.len() > 1_000_000 => {
-            info!("Cached SAS installer found ({} bytes)", meta.len());
+            info!("Cached SAS installer found ({} bytes), trying it first", meta.len());
             false
         }
         _ => true,
@@ -294,19 +296,20 @@ pub async fn install_sas(
 
     #[cfg(target_os = "windows")]
     {
-        info!("Running SAS installer /silent (no /REGCODE — DB activation follows)...");
-        let out = Command::new("cmd")
+        info!("Running SAS installer (waiting for completion)...");
+        let installer_output = Command::new("cmd")
             .arg("/C")
             .arg(&sas_path)
+            .arg(format!("/REGCODE={activation_key}"))
             .arg("/silent")
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .await?;
 
-        info!("SAS installer exit status: {:?}", out.status);
+        info!("SAS installer exit status: {:?}", installer_output.status);
 
-        if !out.status.success() {
-            info!("Installer failed, re-downloading...");
+        if !installer_output.status.success() {
+            info!("Cached installer failed, re-downloading...");
             let _ = tokio::fs::remove_file(&sas_path).await;
             download_file(
                 &client,
@@ -314,9 +317,11 @@ pub async fn install_sas(
                 &sas_path,
                 &progress_tx,
             ).await?;
+
             let retry = Command::new("cmd")
                 .arg("/C")
                 .arg(&sas_path)
+                .arg(format!("/REGCODE={activation_key}"))
                 .arg("/silent")
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
@@ -324,15 +329,23 @@ pub async fn install_sas(
             info!("SAS installer retry exit status: {:?}", retry.status);
         }
 
-        // Installer may launch SAS; kill it so we can write the DB cleanly.
         tokio::time::sleep(Duration::from_secs(10)).await;
+
         let killed = kill_sas_processes();
         info!("Killed {killed} SAS processes post-install");
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Activate via DB now that the installer has created the database files.
-        if let Err(e) = activate_sas_via_db(&activation_key) {
-            info!("DB activation warning after fresh install: {e}");
+        let sas_exe = PathBuf::from(r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe");
+        if sas_exe.exists() {
+            info!("Running autoregister after fresh install");
+            let reg_output = Command::new("cmd")
+                .arg("/C")
+                .arg(sas_exe.as_os_str())
+                .arg(format!("/autoregister:{activation_key}"))
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .await?;
+            info!("autoregister exit status: {:?}", reg_output.status);
         }
     }
     Ok(())

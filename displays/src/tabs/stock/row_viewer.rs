@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 use database::schema::ComputerData;
 use crossbeam::channel::Sender;
 use database::SurrealValue;
+use database::{xidax_order_url, xidax_product_url};
 use regex::Regex;
-
-const BASE_URL: &str = "https://www.xidax.com/admin-xpc/index.php?controller=AdminOrders&vieworder=&id_order=";
 
 /// Extract only relevant RAM info: DDR type (DDR4/DDR5), speed (MHz), and capacity (GB)
 fn format_ram_display(ram: &str) -> String {
@@ -193,7 +192,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     };
                     let res = Button::new(RichText::new(&row.2).color(color)).ui(ui);
                     if &row.2 != "Not Attached" || &row.2 != "S/N Info ⮫" && res.clicked() {
-                        OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
+                        OpenUrl::new_tab(xidax_order_url(&row.2));
                     }
                     res
                 })
@@ -220,13 +219,10 @@ impl RowViewer<SerialsData> for SerialsViewer {
                     let url = row.2.clone();
                     let res = Hyperlink::from_label_and_url(
                         format!(" {}", row.2.clone()), 
-                        format!("{BASE_URL}{}", last_n(&url, 7))
+                        xidax_order_url(last_n(&url, 7))
                     )
                     .open_in_new_tab(true)
                     .ui(ui);
-                    // .clicked() {
-                    //     OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
-                    // }
                     Some(res)
                 }
             },
@@ -244,7 +240,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
             2 => {
                 if resp.clicked() {
                     log::info!("Clicked on order: {}", row.2);
-                    OpenUrl::new_tab(format!("{BASE_URL}{}", row.2));
+                    OpenUrl::new_tab(xidax_order_url(&row.2));
                     None
                 } else { None }
             },
@@ -571,7 +567,7 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
                 } else {
                     Hyperlink::from_label_and_url(
                         RichText::new(format!(" {}", row.1)).color(Color32::from_rgb(255, 165, 0)),
-                        format!("https://www.xidax.com/admin-xpc/index.php/sell/catalog/products/{}", row.1)
+                        xidax_product_url(&row.1)
                     )
                     .open_in_new_tab(true)
                     .ui(ui)
@@ -629,7 +625,7 @@ impl RowViewer<CostBreakdownData> for CostBreakdownViewer {
                     } else {
                         Hyperlink::from_label_and_url(
                             format!(" {}", row.1), 
-                            format!("https://www.xidax.com/admin-xpc/index.php/sell/catalog/products/{}", row.1)
+                            xidax_product_url(&row.1)
                         )
                         .open_in_new_tab(true)
                         .ui(ui)
@@ -870,7 +866,7 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
             0 => {
                 Hyperlink::from_label_and_url(
                     RichText::new(&row.order_id).color(Color32::from_rgb(42, 195, 222)),
-                    format!("{}{}", BASE_URL, row.order_id)
+                    xidax_order_url(&row.order_id)
                 )
                 .open_in_new_tab(true)
                 .ui(ui);
@@ -956,7 +952,7 @@ impl RowViewer<SystemInStoreData> for SystemInStoreViewer {
     ) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
             match column {
-                0 => Hyperlink::from_label_and_url(&row.order_id, format!("{}{}", BASE_URL, row.order_id))
+                0 => Hyperlink::from_label_and_url(&row.order_id, xidax_order_url(&row.order_id))
                     .open_in_new_tab(true).ui(ui),
                 1 => ui.label(&row.customer_name),
                 2 => ui.label(&row.model),

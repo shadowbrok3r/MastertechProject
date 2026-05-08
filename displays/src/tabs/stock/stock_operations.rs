@@ -1,6 +1,6 @@
 use super::store_inventory_viewer::ExtraInventoryData;
 use super::row_viewer::{RawStockData, SerialData, StockData, CostBreakdownData, SystemInStoreData, SystemType};
-use database::{DATABASE, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}}};
+use database::{DATABASE, ODOO_JSONRPC_URL, schema::{Store, ComputerData, prestashop::{Customer, Order, OrderDetail, OrderState, Prestashop}}};
 use crossbeam::channel::Sender;
 use anyhow::{Error, Result};
 use serde::Deserialize;
@@ -182,7 +182,7 @@ pub struct OdooProductResult {
 /// Returns the Odoo product ID and cost from the product with the highest qty_available
 pub async fn get_product_cost_from_odoo(search_term: &str) -> Result<Option<OdooProductResult>, Error> {
     let client = Client::new();
-    let url = "https://odoo.master-tech.app/jsonrpc";
+    let url = ODOO_JSONRPC_URL;
     log::warn!("Searching for product: {search_term}");
     let request_body = json!({
         "jsonrpc": "2.0",

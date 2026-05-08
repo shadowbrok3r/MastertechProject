@@ -1865,35 +1865,12 @@ if (Test-Path $path) {{
                                 Ok(keys) => {
                                     let key = keys.get(0).cloned().unwrap_or_default();
                                     send_log(sender, format!("SuperAnti key: {}", key.superanti_key));
-                                    let key_str = key.superanti_key.clone();
+                                    // install_sas activates via /REGCODE during silent install
+                                    // (fresh) or /autoregister:KEY against the existing exe.
                                     match crate::utilities::scripts::antivirus::install_sas(key.superanti_key, client, progress_tx).await {
                                         Ok(_) => {
-                                            send_log(sender, "SAS installed successfully".into());
-                                            let killed = crate::utilities::scripts::antivirus::kill_sas_processes();
-                                            send_log(sender, format!("Post-install killed {killed} SAS processes"));
-                                            std::thread::sleep(std::time::Duration::from_secs(2));
-                                            use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_with_activation;
-                                            match configure_sas_with_activation(&key_str) {
-                                                Ok((upd, scan)) => {
-                                                    send_log(sender, format!("SAS activated: update task {upd}, scan task {scan}"));
-                                                    // Launch SAS with /REGCODE to trigger online
-                                                    // registration — clears the "expired" banner
-                                                    // and enables Real-Time Protection.
-                                                    let regcode_arg = format!("/REGCODE:{}", key_str);
-                                                    let sas_exe = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
-                                                    if std::path::Path::new(sas_exe).exists() {
-                                                        match std::process::Command::new(sas_exe).arg(&regcode_arg).spawn() {
-                                                            Ok(_) => send_log(sender, "SAS launched with /REGCODE for online registration".into()),
-                                                            Err(e) => send_log(sender, format!("SAS /REGCODE launch error: {e}")),
-                                                        }
-                                                    }
-                                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
-                                                }
-                                                Err(e) => {
-                                                    send_log(sender, format!("SAS activation/settings error: {e}"));
-                                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
-                                                }
-                                            }
+                                            send_log(sender, "SAS installed and activated".into());
+                                            send_result(sender, &script.name, RemoteScriptStatus::Success);
                                         }
                                         Err(e) => {
                                             send_log(sender, format!("SAS install error: {e}"));
