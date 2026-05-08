@@ -54,9 +54,20 @@ pub fn websocket_url_with_room(base_url: &str, room_id: &str, role: &str) -> Str
 pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
 pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");
-pub const BUCKET_DEV_WINDOWS_URL: &str = "C:/SurrealBuckets/";
-pub const BUCKET_DEV_LINUX_URL: &str = "/home/shadowbroker/Documents/SurrealKV/";
-pub const BUCKET_URL: &str = "/SurrealBuckets";
+
+/// SurrealDB `guest` record access password (rotate server-side when exposed).
+pub const SURREAL_GUEST_PASSWORD: &str = env!("SURREAL_GUEST_PASSWORD");
+
+pub const BUCKET_DEV_WINDOWS_URL: &str = env!("BUCKET_DEV_WINDOWS_URL");
+pub const BUCKET_DEV_LINUX_URL: &str = env!("BUCKET_DEV_LINUX_URL");
+pub const BUCKET_URL: &str = env!("BUCKET_URL");
+
+pub const ODOO_JSONRPC_URL: &str = env!("ODOO_JSONRPC_URL");
+pub const ODOO_DB: &str = env!("ODOO_DB");
+pub const ODOO_UID: &str = env!("ODOO_UID");
+
+pub const PRESTASHOP_API_URL: &str = env!("PRESTASHOP_API_URL");
+pub const PRESTASHOP_API_URL_WASM: &str = env!("PRESTASHOP_API_URL_WASM");
 
 // JWT token type - in v3.0 this is just a String
 pub type Jwt = String;
@@ -352,7 +363,7 @@ pub async fn init_database() -> anyhow::Result<(), anyhow::Error> {
         access: "guest".to_string(),
         params: Credentials {
             username: "guest".to_string(),
-            password: "toor10!9".to_string()
+            password: SURREAL_GUEST_PASSWORD.to_string()
         }
     }).await?;
 
@@ -419,7 +430,7 @@ pub async fn ensure_db_connected() -> anyhow::Result<(), anyhow::Error> {
             access: "guest".to_string(),
             params: Credentials {
                 username: "guest".to_string(),
-                password: "toor10!9".to_string()
+                password: SURREAL_GUEST_PASSWORD.to_string()
             }
         }).await?;
     }
@@ -499,7 +510,7 @@ pub async fn test_database_wasm() -> anyhow::Result<String, anyhow::Error> {
         access: "guest".to_string(),
         params: Credentials {
             username: "guest".to_string(),
-            password: "toor10!9".to_string()
+            password: SURREAL_GUEST_PASSWORD.to_string()
         }
     }).await {
         Ok(_) => {

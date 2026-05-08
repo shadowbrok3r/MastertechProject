@@ -47,6 +47,7 @@ jobs:
     env:
       SCAFFOLD_USER: ${{ secrets.SCAFFOLD_USER }}
       SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
+      SCAFFOLD_URL: ${{ secrets.SCAFFOLD_URL }}
       DB_URL: ${{ secrets.DB_URL }}
       DOWNLOAD_TOKEN: ${{ secrets.DOWNLOAD_TOKEN }}
       ISSUE_TOKEN: ${{ secrets.ISSUE_TOKEN }}
@@ -54,6 +55,7 @@ jobs:
       REGION: ${{ secrets.REGION }}
       DB_URL_DEV: ${{ secrets.DB_URL_DEV }}
       DB_URL_LOCAL: ${{ secrets.DB_URL_LOCAL }}
+      DB_URL_BETA: ${{ secrets.DB_URL_BETA }}
       WS_CLIENT_URL_LOCAL: ${{ secrets.WS_CLIENT_URL_LOCAL }}
       WS_MASTER_URL_LOCAL: ${{ secrets.WS_MASTER_URL_LOCAL }}
       WS_CLIENT_URL: ${{ secrets.WS_CLIENT_URL }}
@@ -61,6 +63,8 @@ jobs:
       USER_SCOPE: ${{ secrets.USER_SCOPE }}
       DB: ${{ secrets.DB }}
       NS: ${{ secrets.NS }}
+      ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
+      SURREAL_GUEST_PASSWORD: ${{ secrets.SURREAL_GUEST_PASSWORD }}
     runs-on: ${{ matrix.runs_on }}
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +104,7 @@ jobs:
     env:
       SCAFFOLD_USER: ${{ secrets.SCAFFOLD_USER }}
       SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
+      SCAFFOLD_URL: ${{ secrets.SCAFFOLD_URL }}
       DB_URL: ${{ secrets.DB_URL }}
       DOWNLOAD_TOKEN: ${{ secrets.DOWNLOAD_TOKEN }}
       ISSUE_TOKEN: ${{ secrets.ISSUE_TOKEN }}
@@ -107,6 +112,7 @@ jobs:
       REGION: ${{ secrets.REGION }}
       DB_URL_DEV: ${{ secrets.DB_URL_DEV }}
       DB_URL_LOCAL: ${{ secrets.DB_URL_LOCAL }}
+      DB_URL_BETA: ${{ secrets.DB_URL_BETA }}
       WS_CLIENT_URL_LOCAL: ${{ secrets.WS_CLIENT_URL_LOCAL }}
       WS_MASTER_URL_LOCAL: ${{ secrets.WS_MASTER_URL_LOCAL }}
       WS_CLIENT_URL: ${{ secrets.WS_CLIENT_URL }}
@@ -114,6 +120,8 @@ jobs:
       USER_SCOPE: ${{ secrets.USER_SCOPE }}
       DB: ${{ secrets.DB }}
       NS: ${{ secrets.NS }}
+      ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
+      SURREAL_GUEST_PASSWORD: ${{ secrets.SURREAL_GUEST_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain

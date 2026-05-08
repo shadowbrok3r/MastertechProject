@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use log::info;
 
-const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
-pub const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
+pub use crate::{PRESTASHOP_API_URL, PRESTASHOP_API_URL_WASM};
 
 pub mod customer_messages;
 pub mod customer_threads;
