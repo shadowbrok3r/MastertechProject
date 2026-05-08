@@ -96,22 +96,34 @@ pub async fn bind_listener() -> Result<(TcpListener, SocketAddr)> {
 
 /// Accept loop. Spawns a per-connection task that handles handshake,
 /// frame I/O, and Cmd dispatch.
+///
+/// Exits cleanly when [`displays::wait_for_shutdown`] resolves so the
+/// `#[tokio::main]` runtime drop after `eframe::run_native` returns doesn't
+/// hang on a perpetually-pending `accept().await` (which on Windows can keep
+/// the launching terminal alive past egui window close).
 pub async fn accept_loop(listener: TcpListener) {
     loop {
-        match listener.accept().await {
-            Ok((stream, peer)) => {
-                log::info!("tcp_listener -> admin connected from {peer}");
-                tokio::spawn(async move {
-                    if let Err(e) = handle_session(stream, peer).await {
-                        log::warn!("tcp_listener -> session {peer} ended: {e}");
-                    } else {
-                        log::info!("tcp_listener -> session {peer} closed cleanly");
-                    }
-                });
+        tokio::select! {
+            biased;
+            _ = displays::wait_for_shutdown() => {
+                log::info!("tcp_listener -> shutdown signaled; stopping accept loop");
+                return;
             }
-            Err(e) => {
-                log::error!("tcp_listener -> accept error: {e}; sleeping 1s");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+            res = listener.accept() => match res {
+                Ok((stream, peer)) => {
+                    log::info!("tcp_listener -> admin connected from {peer}");
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_session(stream, peer).await {
+                            log::warn!("tcp_listener -> session {peer} ended: {e}");
+                        } else {
+                            log::info!("tcp_listener -> session {peer} closed cleanly");
+                        }
+                    });
+                }
+                Err(e) => {
+                    log::error!("tcp_listener -> accept error: {e}; sleeping 1s");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             }
         }
     }
@@ -231,11 +243,20 @@ async fn run_session_loop(
     let mut frame_rx = frame_broadcast().subscribe();
 
     let (in_tx, mut in_rx) = tokio_mpsc::unbounded_channel::<Result<InboundFrame, anyhow::Error>>();
-    let mut reader_handle = tokio::spawn(reader_task(read_half, in_tx));
+    let reader_handle = tokio::spawn(reader_task(read_half, in_tx));
 
     let result = loop {
         tokio::select! {
             biased;
+
+            // Process-wide shutdown: stop draining channels and let the writer
+            // task close the socket.  Without this, a connected admin session
+            // can keep the runtime busy long enough that runtime drop hangs on
+            // exit.
+            _ = displays::wait_for_shutdown() => {
+                log::info!("tcp_listener -> shutdown signaled; ending session loop");
+                break Ok(());
+            }
 
             // Inbound: complete frames only (never partial — see module comment).
             msg = in_rx.recv() => {
