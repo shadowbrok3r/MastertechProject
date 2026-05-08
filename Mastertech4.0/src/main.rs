@@ -126,6 +126,16 @@ impl eframe::App for app_state::MasterTechApp {
 
     fn persist_egui_memory(&self) -> bool { true }
 
+    /// Called by eframe right before the window is destroyed. Fire the global
+    /// shutdown signal so every long-running tokio loop (TCP admin listener on
+    /// :9101, MCP servers on :9001/:9003/:9004) breaks out of its `accept`
+    /// before the runtime starts dropping. Without this the runtime drop can
+    /// hang on Windows IOCP waits and keep the launching terminal alive.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        log::info!("MasterTechApp::on_exit -> signaling global shutdown to background tasks");
+        displays::signal_shutdown();
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let ticket_data = serde_json::to_string(&self.context.ticket_data).unwrap_or_default();
         // let computer_data = serde_json::to_string(&self.context.computer_data).unwrap_or_default();
@@ -268,8 +278,17 @@ async fn main() -> eframe::Result<()> {
                 error!("Error running terminal app: {e:?}");
             }
         } else {
-            // let _x = egui_logger::builder().init();
-            // println!("Logger setup: {_x:?}");
+            // The egui window has closed.  `MasterTechApp::on_exit` already
+            // fired `signal_shutdown`; give cooperating accept loops up to ~750ms
+            // to actually unwind, then force-terminate so the launching console
+            // window can close.  Without this, dropping the implicit
+            // `#[tokio::main]` runtime can stall indefinitely on Windows IOCP
+            // waits / `axum::serve` / `rmcp::serve_server` background work, and
+            // the user has to manually close the parent terminal.
+            displays::signal_shutdown();
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+            log::info!("main -> egui closed; forcing process exit to release the launching terminal");
+            std::process::exit(0);
         }
     }
     

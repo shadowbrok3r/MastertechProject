@@ -86,6 +86,54 @@ pub fn get_toast_receiver() -> Receiver<ToastMessage> {
     GLOBAL_TOAST_CHANNEL.1.clone()
 }
 
+// ── Global graceful-shutdown signal ──────────────────────────────────────────
+//
+// All long-running tokio loops in the desktop client (the direct-TCP admin
+// `accept_loop`, the MCP servers on :9001/:9003/:9004, etc.) should
+// `tokio::select!` on [`wait_for_shutdown`] alongside their normal work.
+// `MasterTechApp::on_exit` fires [`signal_shutdown`] so those loops can break
+// cleanly before the process actually exits — without this, dropping the
+// implicit `#[tokio::main]` runtime can hang on Windows IOCP waits and keep
+// the launching terminal window alive after the egui window closes.
+#[cfg(feature = "tokio")]
+mod shutdown_signal {
+    use once_cell::sync::Lazy;
+    use tokio::sync::watch;
+
+    static SHUTDOWN_TX: Lazy<watch::Sender<bool>> = Lazy::new(|| {
+        let (tx, _rx) = watch::channel(false);
+        tx
+    });
+
+    /// Fire the global shutdown signal. Idempotent; safe to call from any thread.
+    pub fn signal_shutdown() {
+        let _ = SHUTDOWN_TX.send_replace(true);
+    }
+
+    /// Non-async check: has the process started shutting down?
+    pub fn is_shutting_down() -> bool {
+        *SHUTDOWN_TX.borrow()
+    }
+
+    /// Resolves once shutdown has been signaled. If already signaled when
+    /// awaited, returns immediately. Pair with `tokio::select!` in any
+    /// long-running accept loop so it can break cleanly on app exit.
+    pub async fn wait_for_shutdown() {
+        let mut rx = SHUTDOWN_TX.subscribe();
+        if *rx.borrow() {
+            return;
+        }
+        while !*rx.borrow() {
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+#[cfg(feature = "tokio")]
+pub use shutdown_signal::{is_shutting_down, signal_shutdown, wait_for_shutdown};
+
 
 pub trait Spawner {
     #[cfg(not(target_arch = "wasm32"))]

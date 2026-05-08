@@ -15,32 +15,40 @@ pub async fn run_mcp_server_tcp() -> anyhow::Result<()> {
     let tool_provider = DesktopToolProvider::new(); // Create the tool provider instance
 
     loop {
-        let (stream, client_addr) = listener.accept().await?;
-        info!("Accepted TCP connection from: {}", client_addr);
-        let provider_clone = tool_provider.clone();
+        tokio::select! {
+            biased;
+            _ = displays::wait_for_shutdown() => {
+                info!("MCP TCP server (:9001) -> shutdown signaled; stopping accept loop");
+                return Ok(());
+            }
+            res = listener.accept() => {
+                let (stream, client_addr) = res?;
+                info!("Accepted TCP connection from: {}", client_addr);
+                let provider_clone = tool_provider.clone();
 
-        tokio::spawn(async move {
-            info!("Serving client {}...", client_addr);
-            match serve_server(provider_clone, stream).await {
-                Ok(server_handle) => {
-                    if let Err(e) = server_handle.waiting().await {
-                        if !e.to_string().contains("connection closed")
-                            && !e.to_string().contains("Connection reset by peer")
-                            && !e.to_string().contains("broken pipe")
-                           {
-                            tracing::error!("Client {} error: {:?}", client_addr, e);
-                        } else {
-                            info!("Client {} disconnected.", client_addr);
+                tokio::spawn(async move {
+                    info!("Serving client {}...", client_addr);
+                    match serve_server(provider_clone, stream).await {
+                        Ok(server_handle) => {
+                            if let Err(e) = server_handle.waiting().await {
+                                if !e.to_string().contains("connection closed")
+                                    && !e.to_string().contains("Connection reset by peer")
+                                    && !e.to_string().contains("broken pipe")
+                                   {
+                                    tracing::error!("Client {} error: {:?}", client_addr, e);
+                                } else {
+                                    info!("Client {} disconnected.", client_addr);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to start serving client {}: {:?}", client_addr, e);
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to start serving client {}: {:?}", client_addr, e);
-                }
+                });
             }
-        });
+        }
     }
-    // Ok(()) // Unreachable
 }
 
 // --- Stdio Server Function ---

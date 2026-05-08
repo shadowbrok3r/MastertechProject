@@ -322,7 +322,11 @@ impl StockTable {
                                 self.systems_first_load = false;
                                 self.systems_loading = true;
                                 let systems_tx = self.systems_channel.0.clone();
-                                let store_id = self.store_selection;
+                                // store_selection is shared with the Store-Inventory view, which
+                                // writes Odoo ids; normalize to a PrestaShop id so first-load and
+                                // subsequent refreshes always hit the right backend identifier.
+                                let store_id = Store::from_any_store_id(&self.store_selection.to_string())
+                                    .into_store_id() as u64;
                                 PlatformSpawner::spawn(async move {
                                     let _ = get_systems_in_store(store_id, systems_tx).await;
                                 });

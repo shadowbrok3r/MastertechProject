@@ -612,6 +612,29 @@ impl Store {
         }
     }
 
+    /// Resolve a store id that may be in either the PrestaShop (7, 8, 10, 12, 14)
+    /// or Odoo (73-77) numbering scheme. Useful when a UI control reuses one
+    /// `store_selection` field across views that bind to different schemes —
+    /// callers can normalize via `Store::from_any_store_id(...).into_store_id()`
+    /// or `.into_odoo_store_id()` before issuing a backend request.
+    pub fn from_any_store_id(store_id: &str) -> Self {
+        match store_id {
+            // PrestaShop
+            "7" => Self::RIV,
+            "8" => Self::LTN,
+            "10" => Self::MUR,
+            "12" => Self::SAN,
+            "14" => Self::ORE,
+            // Odoo
+            "73" => Self::LTN,
+            "74" => Self::MUR,
+            "75" => Self::ORE,
+            "76" => Self::RIV,
+            "77" => Self::SAN,
+            _ => Self::RIV,
+        }
+    }
+
     pub const VALUES: [Self; 5] = [
         Self::RIV,
         Self::LTN,

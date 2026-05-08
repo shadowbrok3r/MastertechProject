@@ -2906,23 +2906,32 @@ pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyho
     let provider = PluginToolProvider::new(manager);
 
     loop {
-        let (stream, client_addr) = listener.accept().await?;
-        log::info!("Plugin MCP: accepted connection from {client_addr}");
-        match rmcp::serve_server(provider.clone(), stream).await {
-            Ok(handle) => {
-                if let Err(e) = handle.waiting().await {
-                    let msg = e.to_string();
-                    if !msg.contains("connection closed")
-                        && !msg.contains("Connection reset")
-                        && !msg.contains("broken pipe")
-                    {
-                        log::error!("Plugin MCP client {client_addr} error: {e:?}");
-                    } else {
-                        log::info!("Plugin MCP client {client_addr} disconnected.");
+        tokio::select! {
+            biased;
+            _ = crate::wait_for_shutdown() => {
+                log::info!("Plugin MCP TCP (:9003) -> shutdown signaled; stopping accept loop");
+                return Ok(());
+            }
+            res = listener.accept() => {
+                let (stream, client_addr) = res?;
+                log::info!("Plugin MCP: accepted connection from {client_addr}");
+                match rmcp::serve_server(provider.clone(), stream).await {
+                    Ok(handle) => {
+                        if let Err(e) = handle.waiting().await {
+                            let msg = e.to_string();
+                            if !msg.contains("connection closed")
+                                && !msg.contains("Connection reset")
+                                && !msg.contains("broken pipe")
+                            {
+                                log::error!("Plugin MCP client {client_addr} error: {e:?}");
+                            } else {
+                                log::info!("Plugin MCP client {client_addr} disconnected.");
+                            }
+                        }
                     }
+                    Err(e) => log::error!("Plugin MCP: failed to serve {client_addr}: {e:?}"),
                 }
             }
-            Err(e) => log::error!("Plugin MCP: failed to serve {client_addr}: {e:?}"),
         }
     }
 }
@@ -2958,6 +2967,15 @@ pub async fn run_plugin_mcp_server_http(manager: Arc<RwLock<PluginManager>>) -> 
         "Plugin MCP (Streamable HTTP) listening at http://{addr}/mcp — set Cursor MCP URL to this (not :9003 TCP)"
     );
 
-    axum::serve(listener, router).await?;
+    // `with_graceful_shutdown` lets us tear down the axum server when the
+    // global shutdown signal fires, so the `#[tokio::main]` runtime drop after
+    // `eframe::run_native` returns doesn't have to abort an in-flight HTTP
+    // accept loop (which on Windows can stall process exit).
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            crate::wait_for_shutdown().await;
+            log::info!("Plugin MCP HTTP (:9004) -> shutdown signaled; stopping axum server");
+        })
+        .await?;
     Ok(())
 }
