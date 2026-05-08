@@ -4,8 +4,9 @@ use database::schema::prestashop::Prestashop;
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 // use database::schema::helper_traits::parse_email_user;
 use database::DATABASE;
+use database::xidax_order_url;
 use reqwest::Client;
-use crate::{tabs::task_audit::row_viewer::BASE_URL, Interaction, PlatformSpawner, Spawner};
+use crate::{Interaction, PlatformSpawner, Spawner};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
 
@@ -81,7 +82,7 @@ pub fn display_ticket_page(
                     ui.colored_label(Color32::LIGHT_RED, "Prestashop Order");
                     Hyperlink::from_label_and_url(
                         service_number.clone(), 
-                        format!("{BASE_URL}{}", service_number)
+                        xidax_order_url(service_number)
                     )
                     .open_in_new_tab(true)
                     .ui(ui);

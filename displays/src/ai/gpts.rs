@@ -1,6 +1,6 @@
 pub const MODEL: &str = GEMINI_PRO;
 
-pub const GEMINI_PRO: &str = "gemini-3.1-pro-preview";
+pub const GEMINI_PRO: &str = "deepseek/deepseek-v4-pro";
 
 #[allow(dead_code)]
-pub const GEMINI_FLASH: &str = "gemini-3.1-flash-lite-preview";
+pub const GEMINI_FLASH: &str = "deepseek/deepseek-v4-flash";

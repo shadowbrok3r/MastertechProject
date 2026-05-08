@@ -327,7 +327,7 @@ impl RowViewer<Process> for ProcessRowViewer {
             // 0 => Some(
             //     Hyperlink::from_label_and_url(
             //         format!(" {}", row.0.clone()), 
-            //         format!("{BASE_URL}{}", row.0.clone())
+            //         database::xidax_order_url(&row.0)
             //     )
             //     .open_in_new_tab(true)
             //     .ui(ui)

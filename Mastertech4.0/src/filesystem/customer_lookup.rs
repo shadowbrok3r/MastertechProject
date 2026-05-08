@@ -1,11 +1,7 @@
 use anyhow::{anyhow, Context, Result};
-use database::SCAFFOLD_URL;
+use database::{PRESTASHOP_API_URL_WASM, SCAFFOLD_URL};
 use reqwest::{Client, Method};
 use serde::Deserialize;
-
-// PrestaShop API endpoint
-// const PRESTASHOP_BASE_URL: &str = "https://pclaptops.mojo11.com";
-const PRESTASHOP_BASE_URL: &str = "https://pcl.master-tech.app";
 
 // ============================================
 // PrestaShop Models
@@ -102,10 +98,9 @@ pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
 async fn request_prestashop(serial13: &str) -> Result<String> {
     let client = Client::new();
 
-    // 1) /api/order_serial - lookup by serial number
+    // 1) /order_serial - lookup by serial number
     let url1 = format!(
-        "{}/api/order_serial?output_format=JSON&display=full&filter[serial_number]=[{}]",
-        PRESTASHOP_BASE_URL, serial13
+        "{PRESTASHOP_API_URL_WASM}/order_serial?output_format=JSON&display=full&filter[serial_number]=[{serial13}]"
     );
 
     log::info!("PrestaShop order_serial request URL: {}", url1);
@@ -130,8 +125,8 @@ async fn request_prestashop(serial13: &str) -> Result<String> {
         .id_order
         .clone();
 
-    // 2) /api/orders/{id} - get customer ID
-    let url2 = format!("{}/api/orders/{}?output_format=JSON", PRESTASHOP_BASE_URL, id_order);
+    // 2) /orders/{id} - get customer ID
+    let url2 = format!("{PRESTASHOP_API_URL_WASM}/orders/{id_order}?output_format=JSON");
 
     let resp2 = client
         .get(&url2)
@@ -151,10 +146,9 @@ async fn request_prestashop(serial13: &str) -> Result<String> {
         return Err(anyhow!("Order {} had no id_customer", id_order));
     }
 
-    // 3) /api/customers/{id_customer} - get customer name
+    // 3) /customers/{id_customer} - get customer name
     let url3 = format!(
-        "{}/api/customers/{}?output_format=JSON",
-        PRESTASHOP_BASE_URL, id_customer
+        "{PRESTASHOP_API_URL_WASM}/customers/{id_customer}?output_format=JSON"
     );
 
     let resp3 = client

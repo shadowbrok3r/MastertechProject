@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{TableColumnConfig, RowCodec}, RowViewer};
-use crate::tabs::task_audit::row_viewer::BASE_URL;
+use database::xidax_order_url;
 use eframe::egui::{Color32, Hyperlink, OpenUrl, RichText, Widget};
 use crate::tabs::koth::data::KothTableData;
 use super::codec::Codec;
@@ -66,7 +66,7 @@ impl RowViewer<KothTableData> for KothRowViewer {
                         .underline()
                         .strong()
                         .color(ui.style().visuals.error_fg_color),
-                    format!("{BASE_URL}{}", row.order_id),
+                    xidax_order_url(&row.order_id),
                 )
                 .open_in_new_tab(true)
                 .ui(ui);
@@ -96,7 +96,7 @@ impl RowViewer<KothTableData> for KothRowViewer {
                         .underline()
                         .strong()
                         .color(Color32::LIGHT_RED),
-                    format!("{BASE_URL}{}", row.order_id),
+                    xidax_order_url(&row.order_id),
                 )
                 .open_in_new_tab(true)
                 .ui(ui),
@@ -108,7 +108,7 @@ impl RowViewer<KothTableData> for KothRowViewer {
     fn on_cell_view_response(&mut self, row: &KothTableData, column: usize, resp: &eframe::egui::Response) -> Option<Box<KothTableData>> {
         if column == 0 {
             if resp.clicked() && !row.order_id.is_empty() { 
-                OpenUrl::new_tab(format!("{BASE_URL}{}", row.order_id)); 
+                OpenUrl::new_tab(xidax_order_url(&row.order_id)); 
             }
         }
         None

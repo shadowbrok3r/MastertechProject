@@ -1,10 +1,10 @@
 use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Order, RichText, Spinner, TextEdit, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::channel_manager::ChannelManager;
-use crate::tabs::task_audit::row_viewer::BASE_URL;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
 use database::schema::{Store, UserAuthorization, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
+use database::xidax_order_url;
 use egui_data_table::Renderer;
 use log::info;
 
@@ -394,7 +394,7 @@ impl StockTable {
                                     .underline()
                                     .strong()
                                     .color(ui.style().visuals.error_fg_color),
-                                format!("{}{}", BASE_URL, self.cost_order_id),
+                                xidax_order_url(&self.cost_order_id),
                             )
                             .open_in_new_tab(true)
                             .ui(ui);

@@ -39,7 +39,7 @@ wasm_opt = "version_129"
 # [hooks] 
 # post-build = "build.ps1"
 # [[proxy]]
-# backend = "https://pclaptops.mojo11.com/api/"
+# backend = "$PRESTASHOP_API_URL/"  # see repo .env (PRESTASHOP_API_URL)
 # rewrite = "/api/"
 # insecure = true  # Set true if the backend uses self-signed certificates
 

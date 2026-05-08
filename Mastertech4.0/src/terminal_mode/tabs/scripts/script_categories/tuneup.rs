@@ -135,54 +135,47 @@ impl <'a> ScriptsTab <'a> {
             let cps_keys = SendRequest::get_cps(so, client.clone()).await.unwrap_or_default();
             let key = cps_keys.get(0).cloned().unwrap_or_default();
             let _ = log_tx.try_send(format!("SuperAnti key: {}", key.superanti_key));
-            let superanti_key = key.superanti_key.clone();
 
+            // install_sas handles activation itself: /REGCODE during silent install
+            // for fresh installs, /autoregister:KEY against the existing exe when
+            // SAS is already present.
             let success = match install_sas(key.superanti_key, client, tx).await {
                 Ok(_) => { let _ = log_tx.try_send("SAS installed successfully".into()); true }
                 Err(e) => { let _ = log_tx.try_send(format!("SAS install error: {e}")); false }
             };
 
-            // Kill post-install SAS processes and verify they are gone
             let killed = kill_sas_processes();
             let _ = log_tx.try_send(format!("Post-install killed {killed} SAS processes"));
             Self::wait_until_sas_not_running(10);
 
             if also_change_settings && success {
-                let _ = log_tx.try_send("Combined flow: activating SAS and applying settings via DB...".into());
+                let _ = log_tx.try_send("Combined flow: writing settings + scheduled tasks...".into());
                 std::thread::sleep(std::time::Duration::from_secs(2));
 
-                use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_with_activation;
-                match configure_sas_with_activation(&superanti_key) {
+                use crate::utilities::scripts::antivirus::sas_tasks::configure_sas_scheduled_tasks;
+                match configure_sas_scheduled_tasks() {
                     Ok((update_guid, scan_guid)) => {
                         let _ = log_tx.try_send(format!("Created SAS update task: {update_guid}"));
                         let _ = log_tx.try_send(format!("Created SAS quick-scan task: {scan_guid}"));
-                        let _ = log_tx.try_send("SAS activated and configured.".into());
+                        let _ = log_tx.try_send("SAS settings + tasks applied.".into());
                         let _ = checklist_tx.try_send((category_clone.clone(), "Change SuperAntiSpyware settings".into(), true));
                     }
                     Err(e) => {
-                        let _ = log_tx.try_send(format!("Failed to activate/configure SAS: {e}"));
+                        let _ = log_tx.try_send(format!("Failed to configure SAS: {e}"));
                         let _ = checklist_tx.try_send((category_clone.clone(), "Change SuperAntiSpyware settings".into(), false));
                     }
                 }
             }
 
-            // Relaunch SAS with /REGCODE to trigger online registration, then
-            // verify the process comes up. On a first-run or re-activation, the
-            // /REGCODE flag causes SAS to contact the activation server and store
-            // a verified licence state — this is what clears the "expired" banner
-            // and enables Real-Time Protection on the same launch.
             const SAS_EXE: &str = r"C:\Program Files\SUPERAntiSpyware\SUPERAntiSpyware.exe";
             if std::path::Path::new(SAS_EXE).exists() {
-                let regcode_arg = format!("/REGCODE:{}", superanti_key);
-                let _ = log_tx.try_send(format!("Launching SUPERAntiSpyware /REGCODE for online registration..."));
-                if let Err(e) = std::process::Command::new(SAS_EXE).arg(&regcode_arg).spawn() {
-                    let _ = log_tx.try_send(format!("Failed to launch SAS /REGCODE: {e}"));
-                    // Fallback: plain launch so the tech can see SAS open
-                    let _ = std::process::Command::new(SAS_EXE).spawn();
+                let _ = log_tx.try_send("Relaunching SUPERAntiSpyware...".into());
+                if let Err(e) = std::process::Command::new(SAS_EXE).spawn() {
+                    let _ = log_tx.try_send(format!("Failed to relaunch SAS: {e}"));
                 } else {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     if Self::is_sas_running() {
-                        let _ = log_tx.try_send("SUPERAntiSpyware is running (online registration in progress).".into());
+                        let _ = log_tx.try_send("SUPERAntiSpyware is running.".into());
                     } else {
                         let _ = log_tx.try_send("Warning: SAS was launched but process not detected.".into());
                     }

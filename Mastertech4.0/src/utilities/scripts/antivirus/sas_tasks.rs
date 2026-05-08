@@ -102,42 +102,6 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Encode a string as a null-terminated UTF-8 blob (SAS type 256).
-fn text_bytes(s: &str) -> Vec<u8> {
-    let mut v = s.as_bytes().to_vec();
-    v.push(0);
-    v
-}
-
-/// Encode a 32-bit integer as a 4-byte little-endian blob (SAS type 259).
-#[allow(dead_code)]
-fn int_le_bytes(n: i32) -> Vec<u8> {
-    n.to_le_bytes().to_vec()
-}
-
-/// Compute a future date as YYYYMMDD string, `days_ahead` days from today.
-/// Uses the civil_from_days algorithm (Howard Hinnant, public domain).
-fn subscription_expiry_yyyymmdd(days_ahead: u32) -> String {
-    let secs_per_day: u64 = 86400;
-    let epoch_days = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() / secs_per_day)
-        .unwrap_or(0)
-        + days_ahead as u64;
-
-    let z = epoch_days as i64 + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}{:02}{:02}", y, m, d)
-}
-
 // ─── DB paths ────────────────────────────────────────────────────────────────
 
 /// SAS_CURRENTUSER.DB3 — per-user settings stored under %APPDATA%.
@@ -154,33 +118,12 @@ pub fn get_sas_currentuser_db_path() -> anyhow::Result<PathBuf> {
     Ok(p)
 }
 
-/// SAS_ALLUSER.DB3 — shared activation data stored under %ProgramData%.
-/// Falls back to %APPDATA% path on older installs.
-pub fn get_sas_alluser_db_path() -> anyhow::Result<PathBuf> {
-    let programdata = std::env::var("PROGRAMDATA")
-        .or_else(|_| std::env::var("ALLUSERSPROFILE"))
-        .unwrap_or_else(|_| r"C:\ProgramData".to_string());
-
-    let primary = PathBuf::from(&programdata)
-        .join("SUPERAntiSpyware.com")
-        .join("SUPERAntiSpyware")
-        .join("SAS_ALLUSER.DB3");
-    if primary.exists() {
-        return Ok(primary);
-    }
-
-    // Fallback: same directory as CURRENTUSER DB
-    if let Ok(cu) = get_sas_currentuser_db_path() {
-        let fallback = cu.with_file_name("SAS_ALLUSER.DB3");
-        if fallback.exists() {
-            return Ok(fallback);
-        }
-    }
-
-    Err(anyhow::anyhow!(
-        "SAS_ALLUSER.DB3 not found (checked ProgramData and APPDATA)"
-    ))
-}
+// NOTE: We deliberately do NOT touch SAS_ALLUSER.DB3 here. Direct writes to
+// the shared activation database corrupted the SQLite store, broke the SAS
+// uninstaller, and caused the UI to misreport licence state. Activation is
+// performed only through the official `/REGCODE` installer flag and the
+// `/autoregister:KEY` CLI on the installed executable. See `install_sas` in
+// `Mastertech4.0/src/utilities/scripts/antivirus/mod.rs`.
 
 // ─── CURRENTUSER settings ────────────────────────────────────────────────────
 
@@ -198,69 +141,6 @@ fn apply_sas_settings(conn: &Connection) -> anyhow::Result<usize> {
     }
     log::info!("Applied {count} SAS settings to CURRENTUSER DB");
     Ok(count)
-}
-
-// ─── ALLUSER activation ───────────────────────────────────────────────────────
-
-/// UPDATE an existing row in SAS_ALLUSER.DB3 SETTINGS, or INSERT if absent.
-fn upsert_alluser_setting(
-    conn: &Connection,
-    name: &str,
-    type_code: i32,
-    data: &[u8],
-) -> anyhow::Result<()> {
-    let updated = conn.execute(
-        "UPDATE SETTINGS SET data = ?1, type = ?2 WHERE name = ?3 COLLATE NOCASE",
-        rusqlite::params![data, type_code, name],
-    )?;
-    if updated == 0 {
-        conn.execute(
-            "INSERT INTO SETTINGS (name, type, data) VALUES (?1, ?2, ?3)",
-            rusqlite::params![name, type_code, data],
-        )?;
-    }
-    Ok(())
-}
-
-/// Write activation data to SAS_ALLUSER.DB3.
-///
-/// Sets Registration=yes, the supplied reg code, a 1-year expiry date,
-/// and turns off all email/diagnostic notifications.
-pub fn activate_sas_via_db(reg_code: &str) -> anyhow::Result<()> {
-    let db_path = get_sas_alluser_db_path()?;
-    let conn = Connection::open(&db_path)?;
-    let expiry = subscription_expiry_yyyymmdd(365);
-
-    let updates: Vec<(&str, i32, Vec<u8>)> = vec![
-        ("Registration",          256, text_bytes("yes")),
-        ("RegCodeEx",             256, text_bytes(reg_code)),
-        ("AVAllowed",             256, text_bytes("yes")),
-        ("ExpireToFree",          256, text_bytes("no")),
-        ("OverrideTrial",         256, text_bytes("yes")),
-        ("SetupWizardComplete",   256, text_bytes("yes")),
-        ("InstallType",           256, text_bytes("WSAV")),
-        ("SubscriptionExpiration",256, text_bytes(&expiry)),
-        ("SavedExpirationDate",   256, text_bytes(&expiry)),
-        ("ScanRequired",          256, text_bytes("no")),
-        ("ComponentsVerified",    256, text_bytes("yes")),
-        ("EmailAlerts",           256, text_bytes("no")),
-        ("EmailScanDetections",   256, text_bytes("no")),
-        ("EmailScanClean",        256, text_bytes("no")),
-        ("EmailInvestigator",     256, text_bytes("no")),
-        ("EmailRealTime",         256, text_bytes("no")),
-        ("SendDiagnostic",        256, text_bytes("no")),
-        ("DisableThreatMap",      256, text_bytes("yes")),
-        ("ShowTrialExpiredDays",  256, text_bytes("no")),
-        ("ShowRenewalDays",       256, text_bytes("no")),
-        ("RenewalDialogShown",    256, text_bytes("yes")),
-    ];
-
-    for (name, type_code, data) in &updates {
-        upsert_alluser_setting(&conn, name, *type_code, data)?;
-    }
-
-    log::info!("SAS activation written to ALLUSER DB (reg_code len={}, expiry={expiry})", reg_code.len());
-    Ok(())
 }
 
 // ─── Start-with-Windows ───────────────────────────────────────────────────────
@@ -557,21 +437,14 @@ fn configure_sas_settings_and_tasks() -> anyhow::Result<(String, String)> {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/// Activate SAS via ALLUSER.DB3 **and** write settings + tasks to CURRENTUSER.DB3.
+/// Apply the SAS settings reference table to SAS_CURRENTUSER.DB3 and register
+/// the two SAS scheduled tasks (Update + Quick Scan) with Windows. Returns the
+/// `(update_task_guid, quick_scan_task_guid)` pair for logging.
 ///
-/// This replaces the old `/autoregister:KEY` approach. Call this after the
-/// installer finishes and all SAS processes have been killed.
-pub fn configure_sas_with_activation(reg_code: &str) -> anyhow::Result<(String, String)> {
-    match activate_sas_via_db(reg_code) {
-        Ok(()) => log::info!("SAS ALLUSER activation written successfully"),
-        Err(e) => log::warn!("SAS ALLUSER activation failed (settings will still apply): {e}"),
-    }
-    configure_sas_settings_and_tasks()
-}
-
-/// Write settings + scheduled tasks only (no activation key). Backward-compatible.
-///
-/// Use this when SAS is already activated and you only need to reconfigure settings.
+/// **Activation is intentionally not handled here** — use SAS's own
+/// `/REGCODE` (installer) or `/autoregister:KEY` (existing exe) flow instead.
+/// Direct writes to SAS_ALLUSER.DB3 corrupted the SQLite store and broke the
+/// uninstaller, so we keep DB writes scoped to the per-user settings file.
 pub fn configure_sas_scheduled_tasks() -> anyhow::Result<(String, String)> {
     configure_sas_settings_and_tasks()
 }

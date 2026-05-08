@@ -28,6 +28,7 @@ const REQUIRED_NO_DEFAULT: &[&str] = &[
     "DOWNLOAD_TOKEN",
     "ODOO_API_KEY",
     "SURREAL_GUEST_PASSWORD",
+    "XIDAX_ADMIN_URL",
 ];
 
 /// Every key this crate's `env!()` macros may read (used when no `.env` to pull from `std::env`).
@@ -60,6 +61,7 @@ const ALL_INJECT_KEYS: &[&str] = &[
     "ODOO_UID",
     "PRESTASHOP_API_URL",
     "PRESTASHOP_API_URL_WASM",
+    "XIDAX_ADMIN_URL",
 ];
 
 fn apply_defaults(map: &mut HashMap<String, String>) {
@@ -78,30 +80,6 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
     }
     if map.get("BUCKET_URL").map_or(true, |s| s.is_empty()) {
         map.insert("BUCKET_URL".into(), "/SurrealBuckets".into());
-    }
-    if map.get("ODOO_JSONRPC_URL").map_or(true, |s| s.is_empty()) {
-        map.insert(
-            "ODOO_JSONRPC_URL".into(),
-            "https://odoo.master-tech.app/jsonrpc".into(),
-        );
-    }
-    if map.get("ODOO_DB").map_or(true, |s| s.is_empty()) {
-        map.insert("ODOO_DB".into(), "pcl_live".into());
-    }
-    if map.get("ODOO_UID").map_or(true, |s| s.is_empty()) {
-        map.insert("ODOO_UID".into(), "374".into());
-    }
-    if map.get("PRESTASHOP_API_URL").map_or(true, |s| s.is_empty()) {
-        map.insert(
-            "PRESTASHOP_API_URL".into(),
-            "https://pclaptops.mojo11.com/api".into(),
-        );
-    }
-    if map.get("PRESTASHOP_API_URL_WASM").map_or(true, |s| s.is_empty()) {
-        map.insert(
-            "PRESTASHOP_API_URL_WASM".into(),
-            "https://pcl.master-tech.app/api".into(),
-        );
     }
 }
 
