@@ -2,13 +2,15 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::{ODOO_API_KEY, ODOO_DB, ODOO_JSONRPC_URL, ODOO_UID};
+
 pub mod inventory;
 
 pub async fn search_odoo_products(search_term: &str) -> anyhow::Result<JsonRpcResponse, anyhow::Error> {
     let client = Client::new();
-    let url = "https://odoo.master-tech.app/jsonrpc";
-    let db = "pcl_live";
-    let uid = 374;
+    let url = ODOO_JSONRPC_URL;
+    let db = ODOO_DB;
+    let uid: u32 = ODOO_UID.parse().map_err(|_| anyhow::anyhow!("ODOO_UID must be a decimal u32"))?;
     let api_key = ODOO_API_KEY;
     let model = "product.template";
     let method = "search_read";
@@ -171,8 +173,6 @@ pub struct ExtraInventoryData {
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::ser::Serializer;
 use std::fmt;
-
-use crate::ODOO_API_KEY;
 
 #[derive(Debug, Clone)]
 pub enum BoolOrString {

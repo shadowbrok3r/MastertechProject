@@ -1,0 +1,17 @@
+# Copy to `.cargo/config.toml` in this directory and set `--ld-path` to your
+# SwiftPM iOS linker (ld64.lld), e.g. under ~/.swiftpm/swift-sdks/.../ld64.lld
+# Never commit machine-specific paths.
+
+[target.x86_64-apple-ios]
+linker = "/usr/lib/swift/bin/clang"
+rustflags = [
+  "-C", "link-arg=-fuse-ld=lld",
+  "-C", "link-arg=--ld-path=/ABSOLUTE/PATH/TO/ld64.lld",
+]
+
+[target.aarch64-apple-ios]
+linker = "/usr/lib/swift/bin/clang"
+rustflags = [
+  "-C", "link-arg=-fuse-ld=lld",
+  "-C", "link-arg=--ld-path=/ABSOLUTE/PATH/TO/ld64.lld",
+]
