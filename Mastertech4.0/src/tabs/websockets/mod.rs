@@ -99,7 +99,10 @@ impl MastertechContext{
         let connected_client = ConnectedClient {
             id: self.client_uuid.clone(),
             client_hash,
-            connected: false,
+            // Set connected=true immediately so the admin console shows the
+            // client even if the UPDATE in make_ws_connection races ahead of
+            // this CREATE and is a no-op (SurrealDB UPDATE won't create).
+            connected: true,
             assigned_user: Some(self.shared_ctx.current_user.as_ref().cloned().unwrap_or_default().get_id()),
             connection_string: self.client_title.clone(),
             customer: cust_id,

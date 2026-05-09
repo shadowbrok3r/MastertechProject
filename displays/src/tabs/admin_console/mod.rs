@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use client_action::ClientUiAction;
+use client_interface::TransportKind;
 use serde::Serialize;
 use log::info;
 use core::f32;
@@ -240,10 +241,18 @@ impl SharedContext {
                         if let Some(client) = clients.get(index) {
                             // Check if we have an active WebSocket connection with confirmed remote client activity
                             // Green requires both: master connected AND client actively responding
-                            let is_ws_connected = ws_client.ws_clients
-                                .get(&client.connection_string)
-                                .map(|wsc| wsc.is_connected && wsc.last_pong_time.is_some())
-                                .unwrap_or(false);
+                    let is_ws_connected = ws_client.ws_clients
+                        .get(&client.connection_string)
+                        .map(|wsc| {
+                            // TCP connections don't use WebSocket pings/pongs;
+                            // liveness is proven by the TCP session itself.
+                            if wsc.transport.kind() == TransportKind::Tcp {
+                                wsc.is_connected
+                            } else {
+                                wsc.is_connected && wsc.last_pong_time.is_some()
+                            }
+                        })
+                        .unwrap_or(false);
                             
                             AdminConsole::client_header(
                                 ui, 

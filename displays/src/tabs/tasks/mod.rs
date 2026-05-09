@@ -258,7 +258,16 @@ impl SharedContext {
                         .get(&c.connection_string);
                     let system_info = ws.and_then(|w| w.resource_monitor.latest_sysinfo.clone());
                     let is_ws_connected = ws
-                        .map(|w| w.is_connected && w.last_pong_time.is_some())
+                        .map(|w| {
+                            // TCP connections don't use WebSocket pings/pongs;
+                            // liveness is proven by the TCP session itself.
+                            use crate::tabs::admin_console::client_interface::TransportKind;
+                            if w.transport.kind() == TransportKind::Tcp {
+                                w.is_connected
+                            } else {
+                                w.is_connected && w.last_pong_time.is_some()
+                            }
+                        })
                         .unwrap_or(false);
                     let active_session_id = self
                         .web_console_layout

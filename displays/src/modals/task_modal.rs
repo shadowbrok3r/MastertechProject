@@ -1152,20 +1152,20 @@ impl DisplayModal for TaskModal {
                             self.current_page_state = ModalAction::TaskHistoryPage;
                         }
                         if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
-                            self.current_page_state == ModalAction::TaskNotePage,
-                            RichText::new("💬").heading()
-                        ))
-                        .on_hover_text("Task Notes")
-                        .clicked() {
-                            self.current_page_state = ModalAction::TaskNotePage;
-                        }
-                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
                             self.current_page_state == ModalAction::DiagnosticsPage,
                             RichText::new("🔬").heading()
                         ))
                         .on_hover_text("Diagnostics")
                         .clicked() {
                             self.current_page_state = ModalAction::DiagnosticsPage;
+                        }
+                        if ui.add_sized([22., 22.], eframe::egui::Button::selectable(
+                            self.current_page_state == ModalAction::TaskNotePage,
+                            RichText::new("💬").heading()
+                        ))
+                        .on_hover_text("Task Notes")
+                        .clicked() {
+                            self.current_page_state = ModalAction::TaskNotePage;
                         }
                     });
                 });
@@ -1220,7 +1220,8 @@ impl DisplayModal for TaskModal {
                     &mut self.seb_checking,
                     Some(&mut self.customer_modal_open),
                     Some(&mut self.open_customer_service_history),
-                ),                ModalAction::ComputerInfoPage => {
+                ),                
+                ModalAction::ComputerInfoPage => {
                     let mut import_presta_clicked = false;
                     let mut import_everest_clicked = false;
                     let search_data = ComputerSearchData {

@@ -4,7 +4,7 @@ use database::{
     websocket_url_with_room, DATABASE, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
 };
 use crate::tabs::admin_console::client_interface::{AdminTransport, WebSocketClient};
-use crate::{PlatformSpawner, Spawner};
+use crate::{Cmd, PlatformSpawner, Spawner};
 
 pub enum ClientUiAction {
     UndockClient(String),
@@ -117,6 +117,13 @@ impl AdminConsole {
 
                 #[cfg(not(target_arch="wasm32"))]
                 ws_client.start_receiving_buffers();
+
+                // Automatically start the resource monitor stream so live
+                // CPU/RAM/GPU stats appear in both the admin console and the
+                // My Tasks connected-client cards without the admin needing to
+                // manually click the "Charts" button.
+                let _ = ws_client.send_cmd_tx.try_send(Cmd::LiveData);
+                ws_client.live_stats_active = true;
 
                 self.ws_clients
                     .entry(client.connection_string.clone())

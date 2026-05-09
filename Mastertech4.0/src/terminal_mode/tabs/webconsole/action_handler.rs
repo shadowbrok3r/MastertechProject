@@ -43,10 +43,12 @@ impl <'a> ActionHandler for WebconsoleTab <'a> {
                             .iter()
                             .find(|(_, btn)| btn.get_widget_id().0 == widget_id.0) 
                         {
-                            // Switch page state and start WebSocket for the selected client
+                            // Switch page state and start the best available connection
+                            // (direct TCP when the client has published local_ip/tcp_port,
+                            // WS relay otherwise).
                             self.show_side_panel = false;
                             self.page_state = PageState::RemoteTerminal(connection_string.clone());
-                            self.start_remote_websocket(connection_string.clone());
+                            self.start_remote_connection(connection_string.clone());
                         }
                     }
                 }

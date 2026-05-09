@@ -59,6 +59,34 @@ pub fn broadcast_egui_frame(tagged_bytes: Vec<u8>) {
     let _ = frame_broadcast().send(tagged_bytes);
 }
 
+// ── Terminal-mode frame broadcast ────────────────────────────────────────────
+//
+// When Mastertech runs in terminal mode (ratatui) the render loop encodes the
+// ratatui buffer with `encode_buffer_with_timestamp` and broadcasts the bytes
+// here so any admin connected via direct TCP receives the same live terminal
+// rendering that the WS-relay path delivers.
+//
+// The bytes are the raw zstd-compressed payload produced by
+// `encode_buffer_with_timestamp` — no extra tag byte is needed because the
+// admin side (WebconsoleTab / receive.rs) identifies terminal frames by their
+// zstd magic prefix (0x28).
+
+static TERM_FRAME_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
+
+fn term_frame_broadcast() -> &'static broadcast::Sender<Vec<u8>> {
+    TERM_FRAME_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(32);
+        tx
+    })
+}
+
+/// Called by `terminal_mode::websockets::TerminalApp::send_buffer` on every
+/// rendered ratatui frame so TCP admin sessions receive the same bytes as the
+/// WS relay path.
+pub fn broadcast_term_frame(bytes: Vec<u8>) {
+    let _ = term_frame_broadcast().send(bytes);
+}
+
 /// Preferred port. We try this first; if it's taken (e.g. another
 /// Mastertech instance, or unrelated software), we fall back to an
 /// OS-assigned ephemeral port and publish whatever we got to the DB.
@@ -241,6 +269,8 @@ async fn run_session_loop(
     // Subscribe to egui frames so this TCP session can forward them to the
     // admin without any changes to the frame-capture path in first_run.rs.
     let mut frame_rx = frame_broadcast().subscribe();
+    // Subscribe to terminal-mode (ratatui) buffer frames for the same reason.
+    let mut term_frame_rx = term_frame_broadcast().subscribe();
 
     let (in_tx, mut in_rx) = tokio_mpsc::unbounded_channel::<Result<InboundFrame, anyhow::Error>>();
     let reader_handle = tokio::spawn(reader_task(read_half, in_tx));
@@ -280,9 +310,12 @@ async fn run_session_loop(
                             client.handle_command(cmd, transport).await;
                         }
                     }
-                    Ok(InboundFrame::Text(_text)) => {
-                        // Phase 1: text frames are unused (control strings
-                        // like MASTER_CONNECTED were a relay-server thing).
+                    Ok(InboundFrame::Text(text)) => {
+                        // Route plain-text commands to the persistent PowerShell
+                        // session.  The admin shell panel sends commands as
+                        // text frames (non-interactive mode); we handle them
+                        // the same way the WebSocket relay path does.
+                        client.handle_text_command(text).await;
                     }
                     Ok(InboundFrame::Eof) => {
                         log::info!("tcp_listener -> peer closed connection cleanly");
@@ -318,6 +351,19 @@ async fn run_session_loop(
                     Err(broadcast::error::RecvError::Closed) => {
                         // Sender dropped (shouldn't happen but handle cleanly).
                     }
+                }
+            }
+            // Outbound: forward ratatui terminal buffer frames to the admin
+            // when Mastertech is running in terminal mode on the client.
+            term_result = term_frame_rx.recv() => {
+                match term_result {
+                    Ok(bytes) => {
+                        let _ = write_tx.send(TcpFrame::Binary(bytes));
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        term_frame_rx = term_frame_broadcast().subscribe();
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {}
                 }
             }
         }
@@ -417,4 +463,104 @@ async fn writer_task(
         }
     }
     let _ = write_half.shutdown().await;
+}
+
+/// Bind the direct-TCP admin listener, add a firewall rule, and publish the
+/// address to this client's `connected_client` row so admins can dial
+/// directly without going through the WS relay.
+///
+/// Called from both the Egui run mode (`first_run.rs`) and the terminal run
+/// mode (`terminal_mode/mod.rs`) so either entry point benefits from
+/// direct-TCP admin connections.
+pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) {
+    use crate::utilities::network::{detect_local_ipv4, try_add_firewall_rule};
+    use database::DATABASE;
+
+    let local_ip = match detect_local_ipv4() {
+        Some(ip) => ip,
+        None => {
+            log::warn!(
+                "spawn_direct_tcp_listener -> no routable IPv4 detected; \
+                 skipping direct-TCP listener (relay path still active)"
+            );
+            return;
+        }
+    };
+
+    let (listener, addr) = match bind_listener().await {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::warn!(
+                "spawn_direct_tcp_listener -> bind failed: {e:?} \
+                 (relay path still active)"
+            );
+            return;
+        }
+    };
+
+    // Best-effort Windows firewall rule. If it fails, the OS firewall
+    // popup still appears on the first inbound connection and the user
+    // can click "Allow" once. We never block on this.
+    #[cfg(target_os = "windows")]
+    match try_add_firewall_rule(addr.port(), "Mastertech Direct TCP") {
+        Ok(true) => log::info!(
+            "spawn_direct_tcp_listener -> firewall rule added for port {}",
+            addr.port()
+        ),
+        Ok(false) => log::info!(
+            "spawn_direct_tcp_listener -> firewall rule not added (likely needs admin); \
+             relying on Windows allow-access popup on first bind"
+        ),
+        Err(e) => log::warn!("spawn_direct_tcp_listener -> netsh spawn failed: {e}"),
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = try_add_firewall_rule;
+
+    log::info!(
+        "spawn_direct_tcp_listener -> listening on {} (advertise as {}:{})",
+        addr,
+        local_ip,
+        addr.port()
+    );
+
+    // Publish IP+port to the client's row so admins can dial directly.
+    // Retries with exponential back-off in case the DB row hasn't been
+    // created yet (first-run race between the WS sender and this task).
+    let publish_uuid = client_uuid.clone();
+    let port = addr.port();
+    tokio::spawn(async move {
+        let ip_string = local_ip.to_string();
+        for attempt in 0..5u32 {
+            let res = DATABASE
+                .query(
+                    "UPDATE $client SET local_ip = $ip, tcp_port = $port, last_update = time::now()",
+                )
+                .bind(("client", publish_uuid.clone()))
+                .bind(("ip", ip_string.clone()))
+                .bind(("port", port))
+                .await;
+            match res {
+                Ok(_) => {
+                    log::info!(
+                        "spawn_direct_tcp_listener -> published {ip_string}:{port} to {:?}",
+                        publish_uuid
+                    );
+                    return;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "spawn_direct_tcp_listener -> publish attempt {} failed: {e:?}",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2_u64.pow(attempt))).await;
+                }
+            }
+        }
+        log::error!(
+            "spawn_direct_tcp_listener -> failed to publish IP/port after 5 attempts; \
+             admins will fall back to relay"
+        );
+    });
+
+    accept_loop(listener).await;
 }

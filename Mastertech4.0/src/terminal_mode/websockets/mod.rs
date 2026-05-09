@@ -126,6 +126,38 @@ impl TerminalWebsocketClient {
         }
     }
     
+    /// Route a plain-text shell command from the admin over the TCP path.
+    ///
+    /// Mirrors the `WsMessage::Text` branch in `start_websocket_sender`:
+    /// lazily creates a `PersistentShell` on the first call and sends
+    /// subsequent commands to the running instance.  Output is piped through
+    /// `command_tx` which the TCP session loop (`run_session_loop`) drains via
+    /// `client.command_rx` and forwards back to the admin as binary frames
+    /// (which the admin side displays as text in the shell history panel).
+    pub async fn handle_text_command(&mut self, command: String) {
+        if command.is_empty() {
+            return;
+        }
+        if self.persistent_shell.is_none() {
+            let mut shell = PersistentShell::new(self.command_tx.clone());
+            match shell.start().await {
+                Ok(()) => {
+                    self.persistent_shell = Some(shell);
+                }
+                Err(e) => {
+                    log::error!("tcp: failed to start persistent shell: {e}");
+                    return;
+                }
+            }
+        }
+        if let Some(shell) = &mut self.persistent_shell {
+            if let Err(e) = shell.send_command(command).await {
+                log::error!("tcp: persistent shell send failed: {e}");
+                self.persistent_shell = None;
+            }
+        }
+    }
+
     // Migrated start_websocket_sender function
     pub async fn start_websocket_sender(
         &mut self,
@@ -2509,6 +2541,11 @@ impl<'a> TerminalApp<'a> {
             if *can_start {
                 let buffer_to_send = f.buffer_mut().clone();
                 let count = f.count();
+                // Broadcast to any TCP admin sessions so they receive the
+                // same live ratatui rendering that the WS relay path carries.
+                if let Ok(serialized) = encode_buffer_with_timestamp(count as u64, &buffer_to_send) {
+                    crate::tcp_listener::broadcast_term_frame(serialized);
+                }
                 std::thread::scope(|s| {
                     s.spawn(|| {
                         if let Err(e) = buffer_tx.send((count, buffer_to_send)) {

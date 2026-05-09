@@ -117,6 +117,29 @@ impl ClientCardData {
                         .small(),
                 );
             }
+
+            // Show time since last DB heartbeat at the right edge.
+            if let Some(ref dt) = self.client.last_update {
+                if let Ok(t) = chrono::DateTime::parse_from_rfc3339(&dt.to_string()) {
+                    let secs = (chrono::Utc::now()
+                        - t.with_timezone(&chrono::Utc))
+                    .num_seconds()
+                    .max(0);
+                    let ago = if secs < 60 {
+                        format!("{secs}s ago")
+                    } else if secs < 3600 {
+                        format!("{}m ago", secs / 60)
+                    } else {
+                        format!("{}h ago", secs / 3600)
+                    };
+                    ui.with_layout(
+                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                        |ui| {
+                            ui.label(RichText::new(ago).weak().small());
+                        },
+                    );
+                }
+            }
         });
 
         // Sub-line: assigned username + IP (when available)
