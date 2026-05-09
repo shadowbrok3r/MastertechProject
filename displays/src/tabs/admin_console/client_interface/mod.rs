@@ -58,7 +58,7 @@ pub struct WebSocketClient {
     /// surface so the existing receive/handler code is transport-agnostic.
     pub transport: AdminTransport,
     /// Commands that we are SENDING to Mastertech
-    send_cmd_tx: Sender<Cmd>, 
+    pub send_cmd_tx: Sender<Cmd>, 
     /// Commands that we are SENDING to Mastertech
     send_cmd_rx: Receiver<Cmd>,
     /// Commands that we are RECEIVING from Mastertech

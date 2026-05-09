@@ -234,8 +234,23 @@ impl <'a>TerminalApp<'a> {
                 log::info!("websocket_server: {websocket_server:?}");
             })
         );
+
+        // Start the direct-TCP admin listener so admins on the same LAN can
+        // connect directly without going through the WS relay.  Terminal mode
+        // uses the same tcp_listener infrastructure as Egui mode; the only
+        // difference is we initiate it here instead of first_run.rs.
+        let tcp_client_id = crate::filesystem::get_client_hash().id;
+        join_handles.push(tokio::spawn(async move {
+            // Give the WS sender a head start on creating / updating the DB
+            // row before we try to publish local_ip + tcp_port to that row.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            crate::tcp_listener::spawn_direct_tcp_listener(tcp_client_id).await;
+        }));
         loop {
             if self.handle_events(None, None) { 
+                // Signal process-wide shutdown so the TCP accept loop also
+                // exits cleanly (it waits on displays::wait_for_shutdown).
+                displays::signal_shutdown();
                 // Signal shutdown
                 shutdown_tx.send(())?;
                 log::info!("Sent shutdown signal");

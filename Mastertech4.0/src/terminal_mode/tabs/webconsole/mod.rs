@@ -13,6 +13,9 @@ pub mod render;
 pub struct WebconsoleTab <'a> {
     pub get_clients_btn: Button<'a>,
     pub ws_clients: HashMap<String, Button<'a>>,
+    /// Full client metadata keyed by connection_string — used to get
+    /// `local_ip` / `tcp_port` when opening a direct-TCP admin session.
+    pub client_map: HashMap<String, ConnectedClient>,
     // pub _current_client: Option<ConnectedClient>,
     pub _client: Client,
     pub page_state: PageState,
@@ -41,6 +44,7 @@ impl <'a> WebconsoleTab <'a> {
         Self {
             get_clients_btn: Button::new("Get Clients",WidgetId("GetClients".to_owned())).theme(CATPPUCCINTHEME),
             ws_clients: HashMap::new(),
+            client_map: HashMap::new(),
             // current_client: None,
             _client,
             _ctx,
@@ -65,6 +69,9 @@ impl <'a> WebconsoleTab <'a> {
                         client.connection_string.clone(),
                         Button::new(&client.connection_string, WidgetId(client.connection_string.clone())).theme(CATPPUCCINTHEME),
                     );
+                    // Store full client info so we can look up local_ip/tcp_port
+                    // when opening a connection.
+                    self.client_map.insert(client.connection_string.clone(), client.clone());
                 // }
             }
             let _ = get_update_sender().try_send(self.widget_id());
@@ -78,9 +85,109 @@ impl <'a> WebconsoleTab <'a> {
         }
     }
 
-    // Start WebSocket connection for a specific client
-    fn start_remote_websocket(&mut self, connection_string: String) {
+    /// Open a live remote terminal session for the given client.
+    /// Prefers a direct TCP connection when `local_ip` and `tcp_port` are
+    /// published; falls back to the WebSocket relay otherwise.
+    pub fn start_remote_connection(&mut self, connection_string: String) {
+        if let Some(client) = self.client_map.get(&connection_string).cloned() {
+            if let (Some(ip), Some(port)) = (client.local_ip.clone(), client.tcp_port) {
+                log::info!(
+                    "WebconsoleTab -> using direct TCP {}:{} for {}",
+                    ip, port, connection_string
+                );
+                self.start_remote_tcp(connection_string, ip, port);
+                return;
+            }
+        }
+        log::info!(
+            "WebconsoleTab -> no TCP address for {}; using WS relay",
+            connection_string
+        );
+        self.start_remote_websocket(connection_string);
+    }
+
+    /// Open a direct TCP session to a remote client for terminal viewing.
+    fn start_remote_tcp(&mut self, connection_string: String, local_ip: String, tcp_port: u16) {
+        use crate::transport::{FRAME_TAG_BINARY, HANDSHAKE_MAGIC, HANDSHAKE_VERSION};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
         let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.buffer_rx = Some(buffer_rx);
+
+        let rx = self.event_rx.clone();
+        tokio::spawn(async move {
+            let addr = format!("{local_ip}:{tcp_port}");
+            log::info!("WebconsoleTab -> dialing TCP {addr} for {connection_string}");
+
+            let stream = match tokio::net::TcpStream::connect(&addr).await {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("WebconsoleTab -> TCP connect {addr} failed: {e}");
+                    return;
+                }
+            };
+            stream.set_nodelay(true).ok();
+
+            let (mut read_half, mut write_half) = stream.into_split();
+
+            // Send handshake: MTRX magic + version + u32 LE len + connection_string
+            let id_bytes = connection_string.as_bytes();
+            let mut handshake = Vec::with_capacity(4 + 1 + 4 + id_bytes.len());
+            handshake.extend_from_slice(HANDSHAKE_MAGIC);
+            handshake.push(HANDSHAKE_VERSION);
+            handshake.extend_from_slice(&(id_bytes.len() as u32).to_le_bytes());
+            handshake.extend_from_slice(id_bytes);
+            if let Err(e) = write_half.write_all(&handshake).await {
+                log::error!("WebconsoleTab -> handshake write failed: {e}");
+                return;
+            }
+            log::info!("WebconsoleTab -> TCP handshake sent for {connection_string}");
+
+            // Spawn a task that forwards terminal events (keyboard/mouse) to the client.
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    if let Ok(evt) = rx.try_recv() {
+                        if let Ok(event_bytes) = serde_json::to_vec(&evt) {
+                            let total_len = (event_bytes.len() as u32).saturating_add(1);
+                            if write_half.write_all(&total_len.to_le_bytes()).await.is_err() { break; }
+                            if write_half.write_all(&[FRAME_TAG_BINARY]).await.is_err() { break; }
+                            if write_half.write_all(&event_bytes).await.is_err() { break; }
+                        }
+                    }
+                }
+            });
+
+            // Read incoming frames: ratatui buffer (or egui) frames from the client.
+            loop {
+                let total_len = match read_half.read_u32_le().await {
+                    Ok(n) if n > 0 => n,
+                    _ => break,
+                };
+                let _tag = match read_half.read_u8().await {
+                    Ok(t) => t,
+                    Err(_) => break,
+                };
+                let payload_len = (total_len - 1) as usize;
+                let mut payload = vec![0u8; payload_len];
+                if read_half.read_exact(&mut payload).await.is_err() { break; }
+
+                if let Ok(buf_msg) = decode_buffer(&payload) {
+                    log::debug!(
+                        "WebconsoleTab TCP -> frame {} ({} bytes)",
+                        buf_msg.frame_count, payload_len
+                    );
+                    if buffer_tx.send((buf_msg.frame_count, buf_msg.buffer.into())).is_err() {
+                        break;
+                    }
+                }
+            }
+            log::info!("WebconsoleTab -> TCP session closed for {connection_string}");
+        });
+    }
+
+    // Start WebSocket connection for a specific client
+    fn start_remote_websocket(&mut self, connection_string: String) {        let (buffer_tx, buffer_rx) = tokio::sync::mpsc::unbounded_channel();
         
         self.buffer_rx = Some(buffer_rx);
         // self.event_tx = Some(event_tx);

@@ -59,10 +59,17 @@ pub fn apply_and_relaunch(bytes: Vec<u8>) -> (bool, String) {
     };
 
     // Write the new binary next to the current one as a temp file.
-    let temp_path = current_exe
+    let parent_dir = current_exe
         .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("MasterTech_update_pending.exe");
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    // Ensure the directory exists — `current_exe` may live inside a directory
+    // that was deleted or never created (e.g. first-time install path).
+    if let Err(e) = std::fs::create_dir_all(parent_dir) {
+        return (false, format!("Failed to create binary directory {:?}: {e}", parent_dir));
+    }
+
+    let temp_path = parent_dir.join("MasterTech_update_pending.exe");
 
     if let Err(e) = std::fs::write(&temp_path, &bytes) {
         return (false, format!("Failed to write temp binary ({} bytes): {e}", bytes.len()));
