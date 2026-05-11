@@ -1,8 +1,5 @@
 [target.wasm32-unknown-unknown]
-# Single-threaded WASM: +atomics + shared/import memory makes rustc emit a module wasm-bindgen
-# treats as "threaded" and expects __heap_base — recent toolchains often omit it →
-# "failed to prepare module for threading". Web workers use gloo-worker (postMessage),
-# not rustc wasm pthreads; omit atomics unless you deliberately revive that stack.
+
 rustflags = [
     "-C", "target-feature=+bulk-memory,+mutable-globals",
     '--cfg', 'getrandom_backend="wasm_js"'
