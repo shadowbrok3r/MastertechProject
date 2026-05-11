@@ -83,6 +83,26 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
     }
 }
 
+/// `database` embeds `env!(...)` for every key in `REQUIRED_NO_DEFAULT`. WASM bins (MtechServer2.0
+/// / trunk) still compile `database` but often omit Prestashop / guest-only secrets. Fill obvious
+/// placeholders only for `wasm32` targets so `trunk serve` works; set real values in `.env` for
+/// production WASM or use native targets for full enforcement.
+fn apply_wasm_compile_placeholders(map: &mut HashMap<String, String>) {
+    let target = env::var("TARGET").unwrap_or_default();
+    if !target.contains("wasm32") {
+        return;
+    }
+    if map
+        .get("SURREAL_GUEST_PASSWORD")
+        .map_or(true, |s| s.is_empty())
+    {
+        map.insert(
+            "SURREAL_GUEST_PASSWORD".into(),
+            "wasm_build_placeholder_guest_password".into(),
+        );
+    }
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let env_path = PathBuf::from(&manifest_dir).join("..").join(".env");
@@ -119,6 +139,7 @@ fn main() {
     }
 
     apply_defaults(&mut map);
+    apply_wasm_compile_placeholders(&mut map);
 
     let mut missing: Vec<&'static str> = Vec::new();
     for key in REQUIRED_NO_DEFAULT {

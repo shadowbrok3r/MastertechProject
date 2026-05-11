@@ -694,10 +694,7 @@ impl MastertechPlugin for EguiFrameCapture {
             .unwrap_or_default()
             .as_millis();
 
-        // Offload bincode serialization + zstd compression to a background blocking thread.
-        // This releases the PluginManager write lock immediately, so MCP tools can acquire
-        // read/write access between frames without being starved by compression.
-        std::thread::spawn(move || {
+        let build_and_send = move || {
             let meshes_bytes =
                 bincode::serde::encode_to_vec(&wire_meshes, bincode::config::standard())
                     .unwrap_or_default();
@@ -717,7 +714,14 @@ impl MastertechPlugin for EguiFrameCapture {
                 widget_anchors,
             };
             let _ = frame_tx.try_send(msg);
-        });
+        };
+
+        // Offload bincode serialization + zstd compression to a background blocking thread (native).
+        // WASM has no `std::thread::spawn`; run inline (briefly blocks `output_hook`).
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(build_and_send);
+        #[cfg(target_arch = "wasm32")]
+        build_and_send();
     }
 }
 

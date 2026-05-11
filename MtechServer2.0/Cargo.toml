@@ -20,7 +20,8 @@ path = "src/workers/deser_worker.rs"
 
 [dependencies]
 displays = { path="../displays", features = ["wasm"]}
-gloo-worker = "0.6.0"
+# 0.6 requires js-sys ^0.3.91; surrealdb 3.1.0-beta.2 pins wasm-bindgen-futures 0.4.58 → js-sys 0.3.85.
+gloo-worker = "0.5"
 js-sys = "0.3"
 zstd = "0.13"
 web-sys = { version = "0.3", features = [

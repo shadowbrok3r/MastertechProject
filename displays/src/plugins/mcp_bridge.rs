@@ -54,6 +54,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
+use super::remote_script_notify::{
+    RemoteScriptSession, REMOTE_SCRIPT_ACCUM, REMOTE_SCRIPT_PENDING,
+};
 use super::PluginManager;
 
 // ─── Remote plugin tool call response routing ───────────────────────────────────
@@ -142,71 +145,7 @@ fn ensure_script_run_drainer_spawned() {
     });
 }
 
-// ─── Remote script execution routing ──────────────────────────────────────────
-//
-// Bridges the MCP `scripts_run_remote` tool to a specific connected client via
-// the admin WebSocket / TCP transport.  Works by:
-//   1. Serialising `Cmd::RunRemoteScripts` and sending it with `send_raw_binary`.
-//   2. Collecting `Cmd::RemoteScriptLog` and `Cmd::RemoteScriptResult` messages
-//      that arrive in `receive.rs` via `notify_remote_script_log/result`.
-//   3. Resolving the pending `oneshot` when `Cmd::RemoteScriptsComplete` is received.
-//
-// Only one concurrent remote-script MCP call is supported at a time (the Mutex
-// guards the single active session id).  Concurrent callers will queue.
-
-#[derive(Debug, Default)]
-struct RemoteScriptSession {
-    session_id: String,
-    logs: Vec<String>,
-    results: Vec<(String, String)>, // (name, status)
-    complete: bool,
-}
-
-type RemoteScriptPending = std::sync::Mutex<
-    Option<(
-        String,
-        tokio::sync::oneshot::Sender<RemoteScriptSession>,
-    )>,
->;
-static REMOTE_SCRIPT_PENDING: Lazy<RemoteScriptPending> =
-    Lazy::new(|| std::sync::Mutex::new(None));
-
-/// Accumulated in-flight log/result data for the active remote-script session.
-static REMOTE_SCRIPT_ACCUM: Lazy<std::sync::Mutex<RemoteScriptSession>> =
-    Lazy::new(|| std::sync::Mutex::new(RemoteScriptSession::default()));
-
-/// Called by `receive.rs` when a `RemoteScriptLog` message arrives from a client.
-pub fn notify_remote_script_log(msg: String) {
-    if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-        accum.logs.push(msg);
-    }
-}
-
-/// Called by `receive.rs` when a `RemoteScriptResult` message arrives.
-pub fn notify_remote_script_result(name: String, status: String) {
-    if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-        accum.results.push((name, status));
-    }
-}
-
-/// Called by `receive.rs` when a `RemoteScriptsComplete` message arrives.
-pub fn notify_remote_scripts_complete() {
-    let session = {
-        let mut accum = match REMOTE_SCRIPT_ACCUM.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        let mut out = RemoteScriptSession::default();
-        std::mem::swap(&mut *accum, &mut out);
-        out.complete = true;
-        out
-    };
-    if let Ok(mut guard) = REMOTE_SCRIPT_PENDING.lock() {
-        if let Some((_, tx)) = guard.take() {
-            let _ = tx.send(session);
-        }
-    }
-}
+// Remote script accumulation + MCP waiter live in `remote_script_notify` (WASM-safe).
 
 // ─── Artifact store ────────────────────────────────────────────────────────────
 
