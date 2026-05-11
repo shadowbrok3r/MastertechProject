@@ -22,19 +22,13 @@ RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk
 # Copy source files
 COPY .cargo .cargo
 COPY Cargo.toml Cargo.toml
+COPY vendor vendor
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
 
-# Set build flags for WASM with threads support (must match .cargo/config.toml)
-ENV RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
-    -C link-arg=--shared-memory \
-    -C link-arg=--max-memory=1073741824 \
-    -C link-arg=--import-memory \
-    -C link-arg=--export=__wasm_init_tls \
-    -C link-arg=--export=__tls_size \
-    -C link-arg=--export=__tls_align \
-    -C link-arg=--export=__tls_base \
+# Must match MtechServer2.0/.cargo/config.toml (single-threaded wasm for wasm-bindgen)
+ENV RUSTFLAGS="-C target-feature=+bulk-memory,+mutable-globals \
     --cfg getrandom_backend=\"wasm_js\""
 
 WORKDIR /MtechServer2.0

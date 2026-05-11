@@ -21,7 +21,7 @@
       data-type="main"
       data-target-name="mtechserver"
       data-integrity="none"
-      data-wasm-opt-params="--enable-bulk-memory" 
+      data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int" 
       data-weak-refs
       data-reference-types
     /><!-- data-no-demangle --> <!-- --enable-gc -->
@@ -39,7 +39,7 @@
       data-wasm-opt="z"
       data-bin="webworker"
       data-type="worker"
-      data-wasm-opt-params="--enable-bulk-memory" 
+      data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int" 
       data-weak-refs
       data-reference-types
       
@@ -54,7 +54,7 @@
       data-wasm-opt="z"
       data-bin="deser_worker"
       data-type="worker"
-      data-wasm-opt-params="--enable-bulk-memory" 
+      data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int" 
       data-weak-refs
       data-reference-types
     />

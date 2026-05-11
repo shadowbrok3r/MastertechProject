@@ -79,6 +79,11 @@ strip = false          # keep symbols for legible stack traces during testing
 debug = false          # no debug info (keeps binary small)
 incremental = true     # cache unchanged crates between rebuilds
 
+
+[patch.crates-io]
+reqwest-eventsource = { path = "vendor/patches/reqwest-eventsource" }
+async-openai-wasm = { path = "vendor/patches/async-openai-wasm" }
+
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"
 # strip = false  # Disable strip just for this profile
