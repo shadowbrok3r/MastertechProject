@@ -1,7 +1,9 @@
-use database::schema::{FilterLiveTasks, LiveTaskPayload, RecordIdExt, Status, Store};
+use database::schema::{
+    ConnectedClient, FilterLiveTasks, LiveTaskPayload, RecordIdExt, Status, Store,
+};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 use crate::app_state::SharedContext;
-use crate::tabs::tasks::client_cards::ClientCardData;
+use crate::tabs::tasks::client_cards::{should_show_connected_client_in_summaries, ClientCardData};
 use crate::tabs::tasks::task_layout::CONNECTED_CLIENTS_KEY;
 use std::collections::BTreeMap;
 use task_layout::TaskLayout;
@@ -41,6 +43,32 @@ impl SharedContext {
 
         let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
         let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
+        let is_privileged = current_user.is_admin() || current_user.is_manager();
+        let current_user_id = current_user.get_id();
+
+        let transport_live = |c: &ConnectedClient| -> bool {
+            self.web_console_layout
+                .ws_clients
+                .get(&c.connection_string)
+                .map(|w| {
+                    use crate::tabs::admin_console::client_interface::TransportKind;
+                    if w.transport.kind() == TransportKind::Tcp {
+                        w.is_connected
+                    } else {
+                        w.is_connected && w.last_pong_time.is_some()
+                    }
+                })
+                .unwrap_or(false)
+        };
+
+        let my_tasks_show_clients_column = page == "My Tasks"
+            && self.clients.iter().any(|c| {
+                let assigned_here = is_privileged
+                    || c.assigned_user
+                        .as_ref()
+                        .is_some_and(|u| *u == current_user_id);
+                assigned_here && should_show_connected_client_in_summaries(c, transport_live(c))
+            });
 
         // Always rebuild task_map to reflect current tasks
         let mut map = BTreeMap::new();
@@ -52,13 +80,10 @@ impl SharedContext {
         });
 
         if page == "My Tasks" {
-            // Lead My Tasks with the connected-clients column so it's the
-            // first thing techs see. Inserted as an empty bucket in the
-            // task map so column-order persistence treats it like any other
-            // column key — the renderer detects the key and substitutes the
-            // client-card UI in place of task rows.
-            map.insert(CONNECTED_CLIENTS_KEY.to_string(), Vec::new());
-            ordered_keys.push(CONNECTED_CLIENTS_KEY.to_string());
+            if my_tasks_show_clients_column {
+                map.insert(CONNECTED_CLIENTS_KEY.to_string(), Vec::new());
+                ordered_keys.push(CONNECTED_CLIENTS_KEY.to_string());
+            }
 
             // Collect tasks for each status and include empty columns so saved order persists
             for status_str in &config.valid_keys {
@@ -209,6 +234,68 @@ impl SharedContext {
             }
         }
 
+        // Build My Tasks connected-client cards before borrowing `task_layouts` mutably.
+        let mut my_tasks_client_cards: Vec<ClientCardData> = Vec::new();
+        if page == "My Tasks" {
+            my_tasks_client_cards = self
+                .clients
+                .iter()
+                .filter(|c| {
+                    let assigned_here = is_privileged
+                        || c.assigned_user
+                            .as_ref()
+                            .is_some_and(|u| *u == current_user_id);
+                    assigned_here
+                        && should_show_connected_client_in_summaries(c, transport_live(c))
+                })
+                .map(|c| {
+                    let ws = self
+                        .web_console_layout
+                        .ws_clients
+                        .get(&c.connection_string);
+                    let system_info = ws.and_then(|w| w.resource_monitor.latest_sysinfo.clone());
+                    let is_ws_connected = ws
+                        .map(|w| {
+                            use crate::tabs::admin_console::client_interface::TransportKind;
+                            if w.transport.kind() == TransportKind::Tcp {
+                                w.is_connected
+                            } else {
+                                w.is_connected && w.last_pong_time.is_some()
+                            }
+                        })
+                        .unwrap_or(false);
+                    let active_session_id = self
+                        .web_console_layout
+                        .active_diagnostic_sessions
+                        .get(&c.connection_string)
+                        .cloned();
+                    ClientCardData {
+                        client: c.clone(),
+                        system_info,
+                        ai_active: active_session_id.is_some(),
+                        active_session_id,
+                        computer_data: None,
+                        linked_task: None,
+                        is_ws_connected,
+                    }
+                })
+                .collect();
+
+            my_tasks_client_cards.sort_by(|a, b| {
+                let a_mine = a.client.assigned_user.as_ref()
+                    .is_some_and(|u| u.key_string() == current_user_id.key_string());
+                let b_mine = b.client.assigned_user.as_ref()
+                    .is_some_and(|u| u.key_string() == current_user_id.key_string());
+                b_mine.cmp(&a_mine)
+                    .then_with(|| b.is_ws_connected.cmp(&a.is_ws_connected))
+                    .then_with(|| {
+                        let a_name = a.client.friendly_name.as_deref().unwrap_or(&a.client.connection_string);
+                        let b_name = b.client.friendly_name.as_deref().unwrap_or(&b.client.connection_string);
+                        a_name.cmp(b_name)
+                    })
+            });
+        }
+
         // Update or create layout
         let layout = self.task_layouts.entry(page.to_string()).or_insert_with(|| {
             let mut layout = TaskLayout::new(
@@ -237,72 +324,7 @@ impl SharedContext {
         layout.update_col_names(ordered_keys);
         // Propagate last_read_notes from SharedContext
         layout.last_read_notes = self.last_read_notes.clone();
-
-        // Build connected-client cards for the My Tasks board.
-        // Visibility: admins/managers see every connected client; regular
-        // users only see clients explicitly assigned to them.
-        if page == "My Tasks" {
-            let is_priviledged = current_user.is_admin() || current_user.is_manager();
-            let current_user_id = current_user.get_id();
-            let mut cards: Vec<ClientCardData> = self
-                .clients
-                .iter()
-                .filter(|c| {
-                    is_priviledged
-                        || c.assigned_user.as_ref().is_some_and(|u| *u == current_user_id)
-                })
-                .map(|c| {
-                    let ws = self
-                        .web_console_layout
-                        .ws_clients
-                        .get(&c.connection_string);
-                    let system_info = ws.and_then(|w| w.resource_monitor.latest_sysinfo.clone());
-                    let is_ws_connected = ws
-                        .map(|w| {
-                            // TCP connections don't use WebSocket pings/pongs;
-                            // liveness is proven by the TCP session itself.
-                            use crate::tabs::admin_console::client_interface::TransportKind;
-                            if w.transport.kind() == TransportKind::Tcp {
-                                w.is_connected
-                            } else {
-                                w.is_connected && w.last_pong_time.is_some()
-                            }
-                        })
-                        .unwrap_or(false);
-                    let active_session_id = self
-                        .web_console_layout
-                        .active_diagnostic_sessions
-                        .get(&c.connection_string)
-                        .cloned();
-                    ClientCardData {
-                        client: c.clone(),
-                        system_info,
-                        ai_active: active_session_id.is_some(),
-                        active_session_id,
-                        computer_data: None,
-                        linked_task: None,
-                        is_ws_connected,
-                    }
-                })
-                .collect();
-
-            // Sort: mine first, then by connection activity, then alphabetically.
-            cards.sort_by(|a, b| {
-                let a_mine = a.client.assigned_user.as_ref()
-                    .is_some_and(|u| u.key_string() == current_user_id.key_string());
-                let b_mine = b.client.assigned_user.as_ref()
-                    .is_some_and(|u| u.key_string() == current_user_id.key_string());
-                b_mine.cmp(&a_mine)
-                    .then_with(|| b.is_ws_connected.cmp(&a.is_ws_connected))
-                    .then_with(|| {
-                        let a_name = a.client.friendly_name.as_deref().unwrap_or(&a.client.connection_string);
-                        let b_name = b.client.friendly_name.as_deref().unwrap_or(&b.client.connection_string);
-                        a_name.cmp(b_name)
-                    })
-            });
-
-            layout.client_cards = cards;
-        }
+        layout.client_cards = my_tasks_client_cards;
 
         // Render the layout
         layout.layout_cols(ui, self.ui_actions_tx.clone());

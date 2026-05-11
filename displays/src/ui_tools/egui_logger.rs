@@ -809,10 +809,9 @@ pub fn get_logs_as_string(max_logs: Option<usize>, include_level: bool, include_
     output
 }
 
-/// Returns the most recent logs as a formatted string suitable for GitHub issues.
-/// Limits output to avoid making issues too large.
+/// Returns recent logs for GitHub issues — capped so extremely long single entries cannot dominate before body-level trimming.
 pub fn get_logs_for_issue() -> String {
-    let logs = get_logs_as_string(Some(100), true, true);
+    let logs = get_logs_as_string(Some(50), true, true);
     if logs.is_empty() {
         return String::from("No logs available");
     }

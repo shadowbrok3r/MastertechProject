@@ -276,11 +276,16 @@ impl TaskLayout {
             .show(ui, |ui| {
             ui.horizontal(|ui| {
                 for (i, name) in self.column_order.clone().iter().enumerate() {
-                    // Special connected-clients column: rendered even when
-                    // `client_cards` is empty so it holds its position in
-                    // the saved column order. Only ever shown on My Tasks.
+                    // Connected-clients column: My Tasks only; omitted when no
+                    // clients pass recency / live-transport filters.
                     if name == CONNECTED_CLIENTS_KEY {
-                        if self.page != "My Tasks" { continue; }
+                        if self.page != "My Tasks" {
+                            continue;
+                        }
+                        // Hide the column entirely when every machine is stale / offline.
+                        if self.client_cards.is_empty() {
+                            continue;
+                        }
                         ui.vertical(|col_ui| {
                             let content_w = Self::COL_W - 4.0;
                             header_frame.show(col_ui, |hui| {
@@ -305,17 +310,9 @@ impl TaskLayout {
                                     .max_height(viewport_h - Self::HEADER_H)
                                     .auto_shrink([false; 2])
                                     .show(fui, |sui| {
-                                        if self.client_cards.is_empty() {
-                                            sui.add_space(8.0);
-                                            sui.label(
-                                                RichText::new("No assigned connected clients")
-                                                    .weak(),
-                                            );
-                                        } else {
-                                            for card in &self.client_cards {
-                                                card.display_client_card(sui, &ui_actions_tx);
-                                                sui.add_space(6.0);
-                                            }
+                                        for card in &self.client_cards {
+                                            card.display_client_card(sui, &ui_actions_tx);
+                                            sui.add_space(6.0);
                                         }
                                     });
                             });
