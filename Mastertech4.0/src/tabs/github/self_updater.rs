@@ -31,34 +31,52 @@ pub struct Asset {
     pub created_at: String,
 }
 
+/// Proxied GitHub API base (Cloudflare Worker — CORS for WASM).
+const GIT_MASTER_TECH_REPO_BASE: &str =
+    "https://git.master-tech.app/repos/shadowbrok3r/MastertechProject";
+
+#[inline]
+fn proxied_github_asset_url(asset_api_url: &str) -> String {
+    asset_api_url.replace("api.github.com", "git.master-tech.app")
+}
+
 pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     let mut downloaded_bytes: u64 = 0;
 
     let response: Value = client
-        .get("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/releases/latest")
+        .get(format!("{GIT_MASTER_TECH_REPO_BASE}/releases/latest"))
         .header(ACCEPT, "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header(USER_AGENT, "shadowbrok3r")
-        // .bearer_auth(database::DOWNLOAD_TOKEN)
+        .header(USER_AGENT, "shadowbrok3r/Mastertech")
         .send()
         .await?
         .json()
         .await?;
 
-    let releases = response.get("assets");
-    if let Some(release) = releases {
-        let url: &str = release[0].get("url").unwrap().as_str().unwrap();
-        let total_length: u64 = release[0].get("size").unwrap().as_u64().unwrap();
+    let releases = response.get("assets").and_then(|a| a.as_array());
+    if let Some(assets) = releases {
+        let Some(asset0) = assets.first() else {
+            return Ok(());
+        };
+        let Some(url) = asset0
+            .get("url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(());
+        };
+        let total_length: u64 = asset0.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
         info!("response: {url}\nLen: {total_length}");
+
+        let url = proxied_github_asset_url(url);
 
         if !url.is_empty() {
             let response = client
-                .get(url)
+                .get(&url)
                 .header(ACCEPT, "application/octet-stream")
                 .header(CONTENT_TYPE, "application/octet-stream")
                 .header("X-GitHub-Api-Version", "2022-11-28")
-                .header(USER_AGENT, "shadowbrok3r")
-                .bearer_auth(database::DOWNLOAD_TOKEN)
+                .header(USER_AGENT, "shadowbrok3r/Mastertech")
                 .send()
                 .await
                 .map_err(|e| {

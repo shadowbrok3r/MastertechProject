@@ -49,8 +49,6 @@ jobs:
       SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
       SCAFFOLD_URL: ${{ secrets.SCAFFOLD_URL }}
       DB_URL: ${{ secrets.DB_URL }}
-      DOWNLOAD_TOKEN: ${{ secrets.DOWNLOAD_TOKEN }}
-      ISSUE_TOKEN: ${{ secrets.ISSUE_TOKEN }}
       STORAGE_URL: ${{ secrets.STORAGE_URL }}
       REGION: ${{ secrets.REGION }}
       DB_URL_DEV: ${{ secrets.DB_URL_DEV }}
@@ -106,8 +104,6 @@ jobs:
       SCAFFOLD_PASS: ${{ secrets.SCAFFOLD_PASS }}
       SCAFFOLD_URL: ${{ secrets.SCAFFOLD_URL }}
       DB_URL: ${{ secrets.DB_URL }}
-      DOWNLOAD_TOKEN: ${{ secrets.DOWNLOAD_TOKEN }}
-      ISSUE_TOKEN: ${{ secrets.ISSUE_TOKEN }}
       STORAGE_URL: ${{ secrets.STORAGE_URL }}
       REGION: ${{ secrets.REGION }}
       DB_URL_DEV: ${{ secrets.DB_URL_DEV }}

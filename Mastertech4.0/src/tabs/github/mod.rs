@@ -23,6 +23,15 @@ use self::issues::create_new_issue;
 pub mod issues;
 pub mod self_updater;
 
+/// Cloudflare Worker in front of GitHub API / asset redirects — CORS-safe for WASM.
+const GIT_MASTER_TECH_REPO_BASE: &str =
+    "https://git.master-tech.app/repos/shadowbrok3r/MastertechProject";
+
+#[inline]
+fn proxied_github_asset_url(asset_api_url: &str) -> String {
+    asset_api_url.replace("api.github.com", "git.master-tech.app")
+}
+
 impl MastertechContext {
     pub fn github(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
@@ -64,39 +73,39 @@ impl MastertechContext {
                 // Get logs before clearing the form
                 let logs = displays::ui_tools::egui_logger::get_logs_for_issue();
                 
-                let github_issue_descript = format!(
-                    "{}\n\n**User:** {} - {}\n\n<details>\n<summary>Application Logs (last 100 entries)</summary>\n\n```\n{}\n```\n</details>", 
-                    self.github_issue_descript.clone(), 
-                    current_user.get_name(), 
-                    current_user.get_email(),
-                    logs
+                let github_issue_descript = displays::tabs::github::build_github_issue_body(
+                    &self.github_issue_descript,
+                    &current_user.get_name(),
+                    &current_user.get_email(),
+                    &logs,
                 );
                 let client = self.client.clone();
-                
+
                 // Clear the form fields immediately
                 self.github_issue_title.clear();
                 self.github_issue_descript.clear();
-                
+
                 spawn(async move {
                     let create_issue = create_new_issue(
-                        github_issue_title, 
-                        github_issue_descript, 
-                        client
-                    ).await;
+                        github_issue_title,
+                        github_issue_descript,
+                        client,
+                    )
+                    .await;
 
                     let toast_tx = get_toast_sender();
                     match create_issue {
                         Ok(val) => {
                             info!("Sent request ok: {val:?}");
                             let _ = toast_tx.try_send(ToastMessage::Success(
-                                "GitHub issue submitted successfully".to_string()
+                                "GitHub issue submitted successfully".to_string(),
                             ));
                         }
                         Err(e) => {
                             error!("Error creating issue: {e:?}");
-                            let _ = toast_tx.try_send(ToastMessage::Error(
-                                format!("Failed to submit issue: {:?}", e)
-                            ));
+                            let _ = toast_tx.try_send(ToastMessage::Error(format!(
+                                "Failed to submit issue: {e:?}"
+                            )));
                         }
                     }
                 });
@@ -209,11 +218,10 @@ pub async fn get_github_releases(
     client: Client,
 ) -> Result<(), Error> {
     let response: Vec<GithubRelease> = client
-        .get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest
+        .get(format!("{GIT_MASTER_TECH_REPO_BASE}/releases"))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "shadowbrok3r")
-        .bearer_auth(database::DOWNLOAD_TOKEN)
+        .header("User-Agent", "shadowbrok3r/Mastertech")
         .send()
         .await?
         .json()
@@ -233,12 +241,13 @@ pub async fn download_release(
         .await;
 
     if !asset.url.is_empty() {
+        let asset_url = proxied_github_asset_url(&asset.url);
+
         let resp = client
-            .get(&asset.url)
-            // .bearer_auth(database::DOWNLOAD_TOKEN)
+            .get(&asset_url)
             .header(ACCEPT, "application/octet-stream")
             .header(CONTENT_TYPE, "application/octet-stream")
-            .header(USER_AGENT, "shadowbrok3r")
+            .header(USER_AGENT, "shadowbrok3r/Mastertech")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
             .await?;

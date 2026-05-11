@@ -63,6 +63,8 @@ pub struct ProcessTableViewer {
     pub refresh_rate_ms: u64,
     /// Last time the process table was updated
     last_update: Instant,
+    /// First refresh bypasses rate limit (`Instant - duration` is invalid on WASM `performance.now()` timeline).
+    immediate_refresh: bool,
     /// Index of the selected refresh rate option
     refresh_rate_idx: usize,
 }
@@ -80,8 +82,8 @@ impl ProcessTableViewer {
             action_rx,
             action_tx,
             refresh_rate_ms: 1000, // Default to 1 second
-            // Initialize to epoch so first update always goes through
-            last_update: Instant::now() - std::time::Duration::from_secs(10),
+            last_update: Instant::now(),
+            immediate_refresh: true,
             refresh_rate_idx: 1, // Index of "1 second" option
         }
     }
@@ -89,7 +91,8 @@ impl ProcessTableViewer {
     /// Set process data, but only if enough time has passed since last update
     pub fn set_data(&mut self, data: Vec<Process>) {
         let elapsed = self.last_update.elapsed().as_millis() as u64;
-        if elapsed >= self.refresh_rate_ms {
+        if self.immediate_refresh || elapsed >= self.refresh_rate_ms {
+            self.immediate_refresh = false;
             self.process_table.replace(data);
             self.last_update = Instant::now();
         }
@@ -97,6 +100,7 @@ impl ProcessTableViewer {
     
     /// Force set data, ignoring the refresh rate
     pub fn force_set_data(&mut self, data: Vec<Process>) {
+        self.immediate_refresh = false;
         self.process_table.replace(data);
         self.last_update = Instant::now();
     }

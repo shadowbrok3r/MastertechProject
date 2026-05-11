@@ -16,19 +16,39 @@ use eframe::egui::{
     Button, Color32, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2, Widget,
 };
 
-/// Minimum seconds since `last_update` before a DB-connected client is
-/// considered stale (mirrors the threshold in the admin console panel).
+/// Yellow-dot “recent heartbeat” threshold in the card header (unchanged).
 const STALE_THRESHOLD_SECS: i64 = 300;
 
-fn recently_active(client: &ConnectedClient) -> bool {
+/// Include a client in My Tasks / Admin Console summaries only if the DB
+/// `last_update` is newer than this **or** an admin transport session is live.
+pub const CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS: i64 = 2 * 3600;
+
+fn last_update_within_secs(client: &ConnectedClient, max_age_secs: i64) -> bool {
     let Some(ref dt) = client.last_update else {
         return false;
     };
     match chrono::DateTime::parse_from_rfc3339(&dt.to_string()) {
         Ok(t) => (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds()
-            < STALE_THRESHOLD_SECS,
+            < max_age_secs,
         Err(_) => false,
     }
+}
+
+/// Whether this client should appear in My Tasks “Connected Clients” and the
+/// Admin Console client list. Live TCP/WebSocket admin sessions always qualify.
+#[must_use]
+pub fn should_show_connected_client_in_summaries(
+    client: &ConnectedClient,
+    is_live_admin_transport: bool,
+) -> bool {
+    if is_live_admin_transport {
+        return true;
+    }
+    last_update_within_secs(client, CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS)
+}
+
+fn recently_active(client: &ConnectedClient) -> bool {
+    last_update_within_secs(client, STALE_THRESHOLD_SECS)
 }
 
 /// Snapshot of a connected client for rendering as a card on the My Tasks

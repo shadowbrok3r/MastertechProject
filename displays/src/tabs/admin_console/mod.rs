@@ -5,6 +5,7 @@ use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
 use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
+use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
@@ -229,15 +230,46 @@ impl SharedContext {
                         b_mine.cmp(&a_mine) // mine first; equal elements keep prior order (stable)
                     });
                 }
+                let visible_indices: Vec<usize> = clients
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, client)| {
+                        let is_ws_connected = ws_client
+                            .ws_clients
+                            .get(&client.connection_string)
+                            .map(|wsc| {
+                                if wsc.transport.kind() == TransportKind::Tcp {
+                                    wsc.is_connected
+                                } else {
+                                    wsc.is_connected && wsc.last_pong_time.is_some()
+                                }
+                            })
+                            .unwrap_or(false);
+                        should_show_connected_client_in_summaries(client, is_ws_connected)
+                            .then_some(i)
+                    })
+                    .collect();
                 let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
-                let total_rows = clients.len();
+                let total_rows = visible_indices.len();
+                if visible_indices.is_empty() {
+                    ui.label(
+                        egui::RichText::new(
+                            "No connected clients with activity in the last 2 hours (or an open admin session).",
+                        )
+                        .weak(),
+                    );
+                    ui.add_space(6.);
+                }
                 ScrollArea::vertical()
                     .max_height(f32::INFINITY)
                     .max_width(f32::INFINITY)
                     .show_rows(ui, row_height, total_rows, |ui, row_range| 
                 {
-                    for index in row_range {
+                    for row in row_range {
                         ui.add_space(4.);
+                        let Some(&index) = visible_indices.get(row) else {
+                            continue;
+                        };
                         if let Some(client) = clients.get(index) {
                             // Check if we have an active WebSocket connection with confirmed remote client activity
                             // Green requires both: master connected AND client actively responding

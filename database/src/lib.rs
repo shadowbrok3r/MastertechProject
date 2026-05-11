@@ -51,8 +51,6 @@ pub fn websocket_url_with_room(base_url: &str, room_id: &str, role: &str) -> Str
     format!("{base}{join}room_id={room_id}&role={role}")
 }
 
-pub const ISSUE_TOKEN: &str = env!("ISSUE_TOKEN");
-pub const DOWNLOAD_TOKEN: &str = env!("DOWNLOAD_TOKEN");
 pub const ODOO_API_KEY: &str = env!("ODOO_API_KEY");
 
 /// SurrealDB `guest` record access password (rotate server-side when exposed).
