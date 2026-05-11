@@ -17,6 +17,7 @@ COPY .env .env
 COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
+COPY vendor vendor
 
 RUN mv trunk MtechServer2.0/trunk
 WORKDIR /MtechServer2.0

@@ -1,15 +1,12 @@
 [target.wasm32-unknown-unknown]
-rustflags = [ 
-    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals", 
-    "-C", "link-arg=--shared-memory",
-    "-C", "link-arg=--max-memory=1073741824",
-    "-C", "link-arg=--import-memory",
-    "-C", "link-arg=--export=__wasm_init_tls",
-    "-C", "link-arg=--export=__tls_size",
-    "-C", "link-arg=--export=__tls_align",
-    "-C", "link-arg=--export=__tls_base",
+# Single-threaded WASM: +atomics + shared/import memory makes rustc emit a module wasm-bindgen
+# treats as "threaded" and expects __heap_base — recent toolchains often omit it →
+# "failed to prepare module for threading". Web workers use gloo-worker (postMessage),
+# not rustc wasm pthreads; omit atomics unless you deliberately revive that stack.
+rustflags = [
+    "-C", "target-feature=+bulk-memory,+mutable-globals",
     '--cfg', 'getrandom_backend="wasm_js"'
-    ] # , "-Awarnings" "--cfg=web_sys_unstable_apis",
+]
 [build]
 target = [ "wasm32-unknown-unknown"]
 
