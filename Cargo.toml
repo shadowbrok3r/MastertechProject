@@ -6,8 +6,8 @@ members = [ "database" , "displays", "Mastertech4.0" ]
 database = { path = "database" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
-surrealdb = { version = "3.1.0-beta.1", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.1.0-beta.1" }
+surrealdb = { version = "3.1.0-beta.2", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.1.0-beta.2" }
 egui_extras = { version = "0.34", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.15", features = ["serde_json"] }
