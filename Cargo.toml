@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0" ]
+members = [ "database" , "displays", "MtechServer2.0" ]
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -26,7 +26,8 @@ uuid = { version = "1", features = ["v4"] }
 
 wasm-bindgen-futures = "0.4"
 wasm-bindgen = "0.2"
-gloo-console = "0.4.0"
+# 0.4 requires js-sys ^0.3.91; surrealdb 3.1.0-beta.2 pins wasm-bindgen-futures 0.4.58 → js-sys 0.3.85.
+gloo-console = "0.3"
 wasm-cookies = "0.2"
 web-time = "1"
 egui_plot = "0.35.0"

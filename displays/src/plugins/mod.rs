@@ -1,5 +1,6 @@
 pub mod host;
 pub mod demo_plugin;
+pub mod remote_script_notify;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod mcp_bridge;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
