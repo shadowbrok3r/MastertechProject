@@ -493,18 +493,18 @@ impl WebSocketClient {
                             self.remote_scripts_viewer.load_custom_scripts(&user.get_user_bucket_name());
                         }
                     } else if let Cmd::RemoteScriptLog(msg) = cmd {
-                        crate::plugins::mcp_bridge::notify_remote_script_log(msg.clone());
+                        crate::plugins::remote_script_notify::notify_remote_script_log(msg.clone());
                         self.remote_scripts_viewer.append_log(msg);
                     } else if let Cmd::RemoteScriptResult { name, status } = cmd {
                         log::info!("Script result: {} - {:?}", name, status);
-                        crate::plugins::mcp_bridge::notify_remote_script_result(
+                        crate::plugins::remote_script_notify::notify_remote_script_result(
                             name.clone(),
                             format!("{:?}", status),
                         );
                         self.remote_scripts_viewer.set_script_result(name, status);
                     } else if let Cmd::RemoteScriptsComplete = cmd {
                         log::info!("All remote scripts completed");
-                        crate::plugins::mcp_bridge::notify_remote_scripts_complete();
+                        crate::plugins::remote_script_notify::notify_remote_scripts_complete();
                         self.remote_scripts_viewer.set_complete();
                     } else if let Cmd::LoadWasmPluginResult { plugin_id, success, message } = cmd {
                         log::info!("WASM plugin deploy result: {plugin_id} success={success} {message}");
