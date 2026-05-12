@@ -1,4 +1,4 @@
-use super::{client_interface::tabs::command_shell::History, AdminConsole};
+use super::{client_interface::tabs::command_shell::History, AdminConsole, SessionLayout};
 use database::{
     schema::{ConnectedClient, Record, RecordIdExt, CONNECTED_CLIENT_TABLE},
     websocket_url_with_room, DATABASE, WS_MASTER_URL, WS_MASTER_URL_LOCAL,
@@ -7,61 +7,62 @@ use crate::tabs::admin_console::client_interface::{AdminTransport, WebSocketClie
 use crate::{Cmd, PlatformSpawner, Spawner};
 
 pub enum ClientUiAction {
-    UndockClient(String),
+    /// Toggle a session between `Docked` and `Floating` display mode.
+    ToggleClientFloat(String),
+    /// Make the given connection string the focused client (receives commands).
+    FocusClient(String),
     DeleteClient(ConnectedClient),
     ConnectClient(ConnectedClient),
     ExportHistory(ConnectedClient),
     /// Open the re-link customer popup for this client (the
-    /// used-machine-with-wrong-owner workflow). See
-    /// `relink_popup.rs` for the popup itself.
+    /// used-machine-with-wrong-owner workflow). See `relink_popup.rs`.
     RelinkCustomer(ConnectedClient),
 }
 
 impl AdminConsole {
     pub fn handle_action(&mut self, action: ClientUiAction) {
         match action {
-            ClientUiAction::UndockClient(connection_string) => {
-                if let Some(docked) = self.undock_client.get_mut(&connection_string) {
-                    *docked = !*docked; // Toggle the state
-                    self.wants_to_undock = false; // Reset intent after toggle
-                } else {
-                    self.undock_client.insert(connection_string, false); // New client starts undocked
-                    self.wants_to_undock = false; // No intent to undock yet
+            ClientUiAction::ToggleClientFloat(connection_string) => {
+                let current = self.session_layout
+                    .get(&connection_string)
+                    .copied()
+                    .unwrap_or_default();
+                let next = match current {
+                    SessionLayout::Docked   => SessionLayout::Floating,
+                    SessionLayout::Floating => SessionLayout::Docked,
+                };
+                self.session_layout.insert(connection_string, next);
+            }
+            ClientUiAction::FocusClient(connection_string) => {
+                if self.ws_clients.contains_key(&connection_string) {
+                    self.focused_client = Some(connection_string);
                 }
-            },
+            }
             ClientUiAction::DeleteClient(mut client) => {
+                if self.focused_client.as_deref() == Some(client.connection_string.as_str()) {
+                    self.focused_client = None;
+                }
                 client.disconnect_client();
                 if let Some(mut ws_client) = self.ws_clients.remove(&client.connection_string) {
                     ws_client.transport.close();
                     drop(ws_client);
                 }
+                self.session_layout.remove(&client.connection_string);
                 self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
             },
             ClientUiAction::ConnectClient(mut client) => {
                 self.open_menu = false;
                 log::info!("Received Connection Command for {}", client.connection_string);
-                
-                // Close any existing docked (non-undocked) clients before connecting to the new one
-                // Only one docked client should be visible at a time
-                let docked_clients: Vec<String> = self.undock_client
-                    .iter()
-                    .filter(|(conn_str, is_undocked)| {
-                        // Find docked clients (is_undocked == false) that are NOT the new client
-                        !**is_undocked && *conn_str != &client.connection_string
-                    })
-                    .map(|(conn_str, _)| conn_str.clone())
-                    .collect();
-                
-                for conn_str in docked_clients {
-                    log::info!("Closing previous docked client: {}", conn_str);
-                    if let Some(mut ws_client) = self.ws_clients.remove(&conn_str) {
-                        ws_client.transport.close();
-                        drop(ws_client);
-                    }
-                    self.undock_client.remove(&conn_str);
-                }
 
-                self.undock_client.insert(client.connection_string.clone(), false);
+                // Register a Docked layout for this client if not already present.
+                // Existing sessions keep their current layout (Docked or Floating) so
+                // the operator can open multiple machines simultaneously.
+                self.session_layout
+                    .entry(client.connection_string.clone())
+                    .or_insert(SessionLayout::Docked);
+
+                // Make this the focused client so commands go to it.
+                self.focused_client = Some(client.connection_string.clone());
 
                 let connect_via_ws = |this: &mut AdminConsole, client: &mut ConnectedClient| -> Option<AdminTransport> {
                     let url = websocket_url_with_room(

@@ -43,7 +43,7 @@ impl SharedContext {
 
         let store_selection = Store::from_presta_store_id(&self.store_selection.to_string());
         let current_user = self.current_user.as_ref().cloned().unwrap_or_default();
-        let is_privileged = current_user.is_admin() || current_user.is_manager();
+        let is_privileged = current_user.is_admin();
         let current_user_id = current_user.get_id();
 
         let transport_live = |c: &ConnectedClient| -> bool {

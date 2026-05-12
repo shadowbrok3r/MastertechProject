@@ -1,5 +1,5 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, Store};
-use displays::tabs::TABS;
+use displays::tabs::{tabs_for_role, TABS};
 use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
 use eframe::egui::{Color32, ComboBox, Response, Ui, UiKind, WidgetText};
 
@@ -44,6 +44,7 @@ impl TabViewer for MtechServerContext {
             },
             "KOTH" => self.shared_ctx.koth.ui(ui),
             "Create Prestashop Order" => self.shared_ctx.prestashop_order_form.ui(ui),
+            "Fleet Dashboard" => self.shared_ctx.fleet_dashboard(ui),
             // "Ai" => self.shared_ctx.ai_playground(ui),
             _ => {}
         }
@@ -80,20 +81,18 @@ impl TabViewer for MtechServerContext {
 
     fn add_popup(&mut self, ui: &mut Ui, surface_index: SurfaceIndex, node_index: NodeIndex) {
         ui.set_width(100.0);
-        for tab in TABS {
+        let is_warehouse = self.shared_ctx.current_user
+            .as_ref()
+            .map(|u| u.is_warehouse())
+            .unwrap_or(false);
+        let visible = tabs_for_role(is_warehouse);
+        for tab in visible {
             if ui
-                .selectable_label(self.open_tabs.contains(tab), tab)
+                .selectable_label(self.open_tabs.contains(*tab), *tab)
                 .clicked()
             {
-                if !self.open_tabs.contains(tab) {
+                if !self.open_tabs.contains(*tab) {
                     self.on_add(surface_index, node_index);
-                    // if let Some(index) = self.shared_ctx.tree.find_tab(&tab.to_string()) {
-                    //     self.shared_ctx.tree.remove_tab(index);
-                    //     self.open_tabs.remove(tab);
-                    // } else {
-                    //     self.open_tabs.insert(tab.to_string());
-                    //     self.shared_ctx.tree.push_to_focused_leaf(tab.to_string());
-                    // }
                 }
             }
         }

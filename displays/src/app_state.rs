@@ -5,8 +5,19 @@ use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{live_data::Action, schema::RecordId};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use anyhow::Error;
+
+/// Lightweight fleet-agent summary fetched from the orchestrator API.
+/// Displayed in the Fleet Dashboard tab for warehouse employees.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FleetAgentSummary {
+    pub machine_id: String,
+    pub agent_version: String,
+    pub last_heartbeat: String,
+    pub last_report_at: Option<String>,
+    pub cpu_avg_pct: f32,
+}
 
 
 #[derive(Serialize, Default, Debug, PartialEq)]
@@ -156,11 +167,6 @@ pub struct SharedContext {
     pub store_selection: u64,
     
     pub new_note: bool,
-    /// tracking for which client we want to undock
-    /// into a floating UI when we click the undock button
-    pub undock_client: HashMap<String, bool>,
-    /// The undock button was clicked for a ConnectedClient
-    pub wants_to_undock: bool,
     /// Theme settings
     pub theme_config: ThemeConfig,
     /// Button state for modifying theme config
@@ -268,6 +274,14 @@ pub struct SharedContext {
     /// `Some` while the popup is open; `None` when closed.
     #[serde(skip)]
     pub client_diagnostics_popup: Option<String>,
+    /// Cached fleet agent list from the orchestrator, displayed in the
+    /// Fleet Dashboard tab for warehouse employees.  Updated by a background
+    /// HTTP poller; `None` until the orchestrator URL is configured.
+    #[serde(skip)]
+    pub fleet_agents: Option<Vec<FleetAgentSummary>>,
+    /// Base URL of the fleet orchestrator used by the Fleet Dashboard.
+    /// Persisted so the setting survives app restarts.
+    pub orchestrator_url: String,
 }
 
 impl SharedContext {
@@ -358,8 +372,6 @@ impl SharedContext {
             ai_thread_channel,
             seb_channel,
             specs_channel,
-            undock_client: HashMap::new(),
-            wants_to_undock: false,
             clients: Vec::new(),
             opened_modals: HashMap::new(),
             new_note: false,
@@ -403,6 +415,8 @@ impl SharedContext {
             read_state_tx, read_state_rx,
             pending_admin_console_focus: None,
             client_diagnostics_popup: None,
+            fleet_agents: None,
+            orchestrator_url: String::new(),
         }
     }
 

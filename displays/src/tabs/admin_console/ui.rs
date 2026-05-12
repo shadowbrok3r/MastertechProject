@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
+use super::SessionLayout;
 use crate::get_database_users;
 use log::info;
 
@@ -44,11 +45,12 @@ fn connection_indicator(is_ws_connected: bool, client: &ConnectedClient) -> (Col
 
 impl AdminConsole {
     pub fn client_header(
-        ui: &mut Ui, 
-        tx: Sender<ClientUiAction>, 
-        client: &ConnectedClient, 
-        undock_client: HashMap<String, bool>,
-        is_ws_connected: bool, // True if WebSocket connection is active and responding
+        ui: &mut Ui,
+        tx: Sender<ClientUiAction>,
+        client: &ConnectedClient,
+        session_layout: HashMap<String, SessionLayout>,
+        focused_client: Option<&str>,
+        is_ws_connected: bool,
     ) {
         let style = ui.style().clone();
         Frame::default()
@@ -157,23 +159,21 @@ impl AdminConsole {
 
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let button = Button::new(RichText::new("⬈").strong().color(ui.style().visuals.warn_fg_color))
+                    // Connect/focus button — opens a session and makes this the focused client.
+                    let connect_btn = Button::new(RichText::new("⬈").strong().color(ui.style().visuals.warn_fg_color))
                         .fill(ui.style().visuals.window_fill)
                         .min_size(Vec2::new(30.0, 30.))
-                        .ui(ui);
+                        .ui(ui)
+                        .on_hover_text("Open / focus this machine");
 
-                    if button.clicked() {
+                    if connect_btn.clicked() {
                         info!("Sent Connection Command");
                         let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
                     }
 
-                    // Re-link customer button. Opens a popup where the
-                    // admin searches by phone / email / order # and
-                    // commits a manual customer binding (sets
-                    // `customer_locked` so the OA-key auto-detection
-                    // stops overwriting it on reconnect).
+                    // Re-link customer button.
                     let relink_color = if client.customer_locked {
-                        Color32::from_rgb(120, 200, 255) // distinct cue when already locked
+                        Color32::from_rgb(120, 200, 255)
                     } else {
                         Color32::from_rgb(199, 202, 245)
                     };
@@ -191,18 +191,39 @@ impl AdminConsole {
                         let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
                     }
 
-                    let txt = if let Some(docked) = undock_client.get(client.connection_string.as_str()) {
-                        if *docked { "🔒" } // Docked = locked
-                        else { "🔓" }       // Undocked = unlocked
-                    } else { "🔒" };        // Default to docked
-
-                    let undock = Button::new(RichText::new(txt).strong().color(Color32::LIGHT_RED))
+                    // Float / dock toggle button.
+                    let layout = session_layout
+                        .get(client.connection_string.as_str())
+                        .copied()
+                        .unwrap_or_default();
+                    let (float_glyph, float_tip) = match layout {
+                        SessionLayout::Floating => ("⧉", "Floating — click to dock"),
+                        SessionLayout::Docked   => ("□", "Docked — click to float"),
+                    };
+                    let float_btn = Button::new(RichText::new(float_glyph).strong().color(Color32::LIGHT_RED))
                         .fill(ui.style().visuals.window_fill)
                         .min_size(Vec2::new(30., 30.))
-                        .ui(ui);
+                        .ui(ui)
+                        .on_hover_text(float_tip);
 
-                    if undock.clicked() {
-                        let _ = tx.try_send(ClientUiAction::UndockClient(client.connection_string.clone()));
+                    if float_btn.clicked() {
+                        let _ = tx.try_send(ClientUiAction::ToggleClientFloat(client.connection_string.clone()));
+                    }
+
+                    // Focus button — makes this the active client for commands without changing layout.
+                    let is_focused = focused_client == Some(client.connection_string.as_str());
+                    let focus_color = if is_focused {
+                        Color32::from_rgb(51, 255, 189)
+                    } else {
+                        Color32::GRAY
+                    };
+                    let focus_btn = Button::new(RichText::new("◉").strong().color(focus_color))
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(30., 30.))
+                        .ui(ui)
+                        .on_hover_text(if is_focused { "Focused (receives commands)" } else { "Set as focused client" });
+                    if focus_btn.clicked() {
+                        let _ = tx.try_send(ClientUiAction::FocusClient(client.connection_string.clone()));
                     }
 
                     let button = Button::new(RichText::new("✖").strong().color(ui.style().visuals.error_fg_color))
@@ -247,20 +268,23 @@ impl AdminConsole {
             #[cfg(not(target_arch = "wasm32"))]
             WebConsolePageState::AiPlayground => self.ai_playground.enhanced_ai_playground(ui),
             _ => {
-                for client in self.clients.iter() {
-                    if self.undock_client.iter().any(|c| 
-                        !c.1 && c.0 == &client.connection_string
-                    ) {
-                        if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string) {
-                            // Sync the latest ConnectedClient data (especially last_activity) from live queries
-                            ws_client.client = client.clone();
-                            ws_client.show(ui);
+                // Render the focused client (Docked layout) in the central panel.
+                if let Some(focused) = self.focused_client.clone() {
+                    let layout = self.session_layout
+                        .get(&focused)
+                        .copied()
+                        .unwrap_or_default();
+                    if layout == SessionLayout::Docked {
+                        if let Some(data) = self.clients.iter().find(|c| c.connection_string == focused).cloned() {
+                            if let Some(ws_client) = self.ws_clients.get_mut(&focused) {
+                                ws_client.client = data;
+                                ws_client.show(ui);
+                            }
                         }
                     }
                 }
             }
         }
-    
     }
 }
 

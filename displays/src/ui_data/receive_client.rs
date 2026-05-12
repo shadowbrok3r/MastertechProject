@@ -117,11 +117,6 @@ impl SharedContext {
             //         .entry(client.connection_string.clone())
             //         .or_insert(ws_client);
             // }
-            for client in connected_clients {
-                self
-                    .undock_client
-                    .insert(client.connection_string, false);
-            }
         }
     }
 }
