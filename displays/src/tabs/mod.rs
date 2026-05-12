@@ -20,6 +20,7 @@ pub mod presta_order;
 pub mod checkin_form;
 pub mod sales_tracker;
 pub mod web_console;
+pub mod fleet_dashboard;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
 
@@ -152,6 +153,10 @@ impl Tabs {
     }
 }
 
+/// All tabs available to frontline / general users (WASM build).
+///
+/// Warehouse employees get [`WAREHOUSE_TABS_WASM`] instead, which is a
+/// stripped-down set focused on fleet health and QC status.
 #[cfg(target_arch="wasm32")]
 pub const TABS: [&str; 16] = [
     "My Tasks",
@@ -172,6 +177,7 @@ pub const TABS: [&str; 16] = [
     "Create Prestashop Order",
 ];
 
+/// All tabs available to frontline / general users (native build).
 #[cfg(not(target_arch="wasm32"))]
 pub const TABS: [&str; 27] = [
     "TUR Sheet",
@@ -202,6 +208,53 @@ pub const TABS: [&str; 27] = [
     "Threads",
     "Plugins",
 ];
+
+// ── Warehouse tab sets ────────────────────────────────────────────────────────
+
+/// Tabs shown to warehouse employees in the WASM (web) build.
+///
+/// Excludes POS-oriented tabs (sales, Prestashop orders) and exposes the
+/// fleet dashboard and QC-specific views instead.
+#[cfg(target_arch="wasm32")]
+pub const WAREHOUSE_TABS: &[&str] = &[
+    "Fleet Dashboard",
+    "Admin Console",
+    "Logs",
+    "My Tools",
+    "Threads",
+];
+
+/// Tabs shown to warehouse employees in the native build.
+#[cfg(not(target_arch="wasm32"))]
+pub const WAREHOUSE_TABS: &[&str] = &[
+    "Fleet Dashboard",
+    "Admin Console",
+    "Web Console",
+    "Resource Monitor",
+    "Logs",
+    "My Tools",
+    "Scripts",
+    "Plugins",
+    "Threads",
+];
+
+/// Default tabs that open automatically when a warehouse user first logs in.
+pub const WAREHOUSE_DEFAULT_OPEN: &[&str] = &[
+    "Fleet Dashboard",
+    "Admin Console",
+];
+
+/// Convenience helper — returns the correct tab list for a user based on role.
+///
+/// Call this at login time to configure the initial `open_tabs` set and to
+/// populate the View → tab menu.
+pub fn tabs_for_role(is_warehouse: bool) -> &'static [&'static str] {
+    if is_warehouse {
+        WAREHOUSE_TABS
+    } else {
+        &TABS
+    }
+}
 
 impl SharedContext {
     pub fn store_selection_menu(&mut self, ui: &mut Ui) {
@@ -248,6 +301,15 @@ impl egui_dock::TabViewer for SharedContext {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {
+        // Gate sensitive tabs behind role checks before dispatching.
+        if tab == "Query Editor" {
+            let allowed = self.current_user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
+            if !allowed { return; }
+        }
+        if tab == "Fleet Dashboard" {
+            self.fleet_dashboard(ui);
+            return;
+        }
         match tab.as_str() {
             "My Tasks" => self.render_layout(ui, "My Tasks"),
             "Store Tasks" => self.render_layout(ui, "Store Tasks"),
@@ -330,17 +392,17 @@ impl egui_dock::TabViewer for SharedContext {
 
     fn add_popup(&mut self, ui: &mut Ui, surface_index: egui_dock::SurfaceIndex, node_index: egui_dock::NodeIndex) {
         ui.set_width(100.0);
-        for tab in TABS {
+        let is_warehouse = self.current_user.as_ref().map(|u| u.is_warehouse()).unwrap_or(false);
+        let visible = tabs_for_role(is_warehouse);
+        for tab in visible {
             if ui
-                .selectable_label(self.open_tabs.contains(tab), tab)
+                .selectable_label(self.open_tabs.contains(*tab), *tab)
                 .clicked()
             {
-                // Queue the add/remove to be applied after DockArea::show
-                if !self.open_tabs.contains(tab) {
+                if !self.open_tabs.contains(*tab) {
                     self.on_add(surface_index, node_index);
                     self.pending_tab_adds.push((surface_index, node_index, tab.to_string()));
                 } else {
-                    // Toggle off: request remove by name
                     self.pending_tab_removes.push(tab.to_string());
                 }
                 ui.close_kind(UiKind::Menu);

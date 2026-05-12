@@ -1,8 +1,7 @@
 use windows::{
-    core::PCWSTR,
+    core::{w, PCWSTR, GUID},
     Win32::{Foundation::HANDLE, NetworkManagement::{IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH}, Ndis::IF_OPER_STATUS, WiFi::{wlan_interface_state_connected, WlanCloseHandle, WlanConnect, WlanEnumInterfaces, WlanGetAvailableNetworkList, WlanOpenHandle, WlanQueryInterface, WlanReasonCodeToString, WlanSetProfile, DOT11_BSS_TYPE, DOT11_SSID, WLAN_AVAILABLE_NETWORK_LIST, WLAN_CONNECTION_ATTRIBUTES, WLAN_CONNECTION_MODE, WLAN_CONNECTION_PARAMETERS, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST, WLAN_INTF_OPCODE}}, Networking::WinSock::AF_UNSPEC},
 };
-use windows_core::w;
 use std::ptr::null_mut;
 
 /// Connect to a Wi-Fi SSID, optionally specifying a password and BSSID
@@ -102,7 +101,7 @@ pub fn connect_to_wifi(ssid: &str, password: Option<&str>, bssid: Option<[u8; 6]
 }
 
 /// Creates a Wi-Fi profile for the SSID with the given password
-pub fn create_wifi_profile(client_handle: HANDLE, interface_guid: &windows_core::GUID, ssid: &str, _password: &str) -> anyhow::Result<()> {
+pub fn create_wifi_profile(client_handle: HANDLE, interface_guid: &GUID, ssid: &str, _password: &str) -> anyhow::Result<()> {
     log::info!("Creating a Wi-Fi profile for SSID: {}", ssid);
     // WPA2-PSK profile with hex SSID
     let profile_xml = w!(r#"<?xml version="1.0"?>

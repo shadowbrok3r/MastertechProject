@@ -1,5 +1,5 @@
 use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, REG_SAM_FLAGS, REG_VALUE_TYPE};
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_SUCCESS;
 // use windows_registry::*;
 
@@ -33,10 +33,10 @@ fn get_installed_programs_from_registry(key: &str) -> anyhow::Result<Vec<String>
             let result = RegEnumKeyExW(
                 h_key,
                 index,
-                Some(windows_core::PWSTR(subkey_name.as_mut_ptr())),
+                Some(PWSTR(subkey_name.as_mut_ptr())),
                 &mut subkey_len,
                 Some(std::ptr::null_mut()), // Reserved for system use
-                Some(windows_core::PWSTR(std::ptr::null_mut())), // No class name needed
+                Some(PWSTR(std::ptr::null_mut())), // No class name needed
                 Some(std::ptr::null_mut()), // No filetime needed
                 Some(std::ptr::null_mut()), // No last write time needed
             );

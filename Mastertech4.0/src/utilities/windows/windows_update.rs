@@ -1,7 +1,7 @@
 use crossbeam::channel::Sender;
 use windows::{
     core::{
-        implement, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
+        implement, Error, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
     },
     Win32::{
         Foundation::{HANDLE, VARIANT_TRUE}, 
@@ -97,9 +97,9 @@ impl IDownloadProgressChangedCallback_Impl for DummyProgressCallback_Impl {
 impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
     fn Invoke(
         &self, 
-        _downloadjob: windows_core::Ref<'_, IDownloadJob>, 
-        _callbackargs: windows_core::Ref<'_, windows::Win32::System::UpdateAgent::IDownloadCompletedCallbackArgs>
-    ) -> windows_core::Result<()> {
+        _downloadjob: Ref<'_, IDownloadJob>, 
+        _callbackargs: Ref<'_, windows::Win32::System::UpdateAgent::IDownloadCompletedCallbackArgs>
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -125,9 +125,9 @@ impl IInstallationProgressChangedCallback_Impl for DummyInstallProgressCallback_
 impl IInstallationCompletedCallback_Impl for DummyInstallCompletedCallback_Impl {
     fn Invoke(
         &self, 
-        _installjob: windows_core::Ref<'_, IInstallationJob>, 
-        _callbackargs: windows_core::Ref<'_, IInstallationCompletedCallbackArgs>
-    ) -> windows_core::Result<()> {
+        _installjob: Ref<'_, IInstallationJob>, 
+        _callbackargs: Ref<'_, IInstallationCompletedCallbackArgs>
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -396,7 +396,7 @@ pub fn reboot_system() -> Result<()> {
         // EWX_FORCE forces all running applications to close.
         if let Err(e) = ExitWindowsEx(EWX_REBOOT | EWX_FORCE, Shutdown::SHUTDOWN_REASON(0)) {
             log::info!("{e:?}");
-            return Err(windows_core::Error::new(e.code(), e.message()));
+            return Err(Error::new(e.code(), e.message()));
         }
     }
     Ok(())

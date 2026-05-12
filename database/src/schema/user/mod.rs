@@ -59,6 +59,10 @@ pub enum UserAuthorization {
     User,
     Root,
     Manager,
+    /// Warehouse floor employees: QC technicians and logistics staff.
+    /// Gets the warehouse tab set (fleet health, QC status) instead of the
+    /// standard frontline set (tasks, sales, inventory).
+    Warehouse,
 }
 
 
@@ -113,6 +117,7 @@ impl UserAuthorization {
             Self::User => "User",
             Self::Root => "Root",
             Self::Manager => "Manager",
+            Self::Warehouse => "Warehouse",
         }
     }
     pub fn from_str(authorization: &str) -> Self {
@@ -120,6 +125,7 @@ impl UserAuthorization {
             "User" => Self::User,
             "Root" => Self::Root,
             "Manager" => Self::Manager,
+            "Warehouse" => Self::Warehouse,
             _ => Self::User
         }
     }
@@ -140,18 +146,26 @@ impl User {
 
     pub fn is_admin(&self) -> bool {
         match self.authorization {
-            UserAuthorization::User => false,
-            UserAuthorization::Root => true,
-            UserAuthorization::Manager => false,
+            UserAuthorization::User      => false,
+            UserAuthorization::Root      => true,
+            UserAuthorization::Manager   => false,
+            UserAuthorization::Warehouse => false,
         }
     }
 
     pub fn is_manager(&self) -> bool {
         match self.authorization {
-            UserAuthorization::User => false,
-            UserAuthorization::Root => false,
-            UserAuthorization::Manager => true,
+            UserAuthorization::User      => false,
+            UserAuthorization::Root      => false,
+            UserAuthorization::Manager   => true,
+            UserAuthorization::Warehouse => false,
         }
+    }
+
+    /// Returns `true` for warehouse floor employees (QC techs, logistics).
+    /// This role gets the warehouse tab set in `MtechServer2.0`.
+    pub fn is_warehouse(&self) -> bool {
+        matches!(self.authorization, UserAuthorization::Warehouse)
     }
 
     pub fn get_authorization(&self) -> UserAuthorization {

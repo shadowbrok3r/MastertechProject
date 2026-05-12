@@ -1,4 +1,5 @@
 use crate::{app_state::SharedContext, modals::{task_modal::ModalAction, ModalType, ModalWindow}};
+use crate::tabs::admin_console::SessionLayout;
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId, Window};
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use database::schema::RecordIdExt;
@@ -7,17 +8,18 @@ use log::info;
 impl SharedContext {
     pub fn handle_viewports(&mut self, ctx: &Context) {
         let ws_layout = &mut self.web_console_layout;
-        let undock_clients = &ws_layout.undock_client;
 
-        for (client_id, wants_to_undock) in undock_clients.iter() {
-            // info!("ID: {client_id:?}\nviewport: {:?}", wants_to_undock);
-            let x = Arc::new(AtomicBool::new(false));
-            
-            if *wants_to_undock {
-                x.store(true, Ordering::Relaxed);
-            }
+        // Collect the list of Floating sessions to avoid holding an immutable
+        // borrow on `session_layout` while we mutably borrow `ws_clients`.
+        let floating: Vec<String> = ws_layout
+            .session_layout
+            .iter()
+            .filter(|(_, layout)| **layout == SessionLayout::Floating)
+            .map(|(id, _)| id.clone())
+            .collect();
 
-            if x.load(Ordering::Relaxed) && cfg!(not(target_arch="wasm32")) {
+        for client_id in floating.iter() {
+            if cfg!(not(target_arch = "wasm32")) {
                 let viewport_id = ViewportId::from_hash_of(client_id);
                 let viewport_builder = ViewportBuilder::default()
                     .with_taskbar(true)
@@ -26,11 +28,7 @@ impl SharedContext {
                     .with_resizable(true)
                     .with_title(client_id);
 
-                ctx.show_viewport_immediate(
-                    viewport_id,
-                    viewport_builder,
-                    |ctx, _class| 
-                {
+                ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
                     CentralPanel::default().show(ctx, |ui| {
                         ui.set_min_size([1000., 900.].into());
                         if let Some(ws_client) = ws_layout.ws_clients.get_mut(client_id) {
@@ -38,21 +36,23 @@ impl SharedContext {
                         }
                     });
                     if ctx.input(|i| i.viewport().close_requested()) {
-                        x.store(false, Ordering::Relaxed); // Handle viewport close
+                        // Revert to Docked when the user closes the OS window.
+                        ws_layout
+                            .session_layout
+                            .insert(client_id.clone(), SessionLayout::Docked);
                     }
                 });
-            } else if x.load(Ordering::Relaxed) {
-                Window::new(client_id)
+            } else {
+                Window::new(client_id.as_str())
                     .min_size([1100., 950.])
-                    .show(ctx, |ui| 
-                {
-                    CentralPanel::default().show_inside(ui, |ui| {
-                        ui.set_min_size([1100., 950.].into());
-                        if let Some(ws_client) = ws_layout.ws_clients.get_mut(client_id) {
-                            ws_client.show(ui);
-                        }
+                    .show(ctx, |ui| {
+                        CentralPanel::default().show_inside(ui, |ui| {
+                            ui.set_min_size([1100., 950.].into());
+                            if let Some(ws_client) = ws_layout.ws_clients.get_mut(client_id) {
+                                ws_client.show(ui);
+                            }
+                        });
                     });
-                });
             }
         }
     

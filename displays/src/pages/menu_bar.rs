@@ -1,4 +1,4 @@
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, TABS}, PlatformSpawner, Spawner, TaskUiActions};
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, tabs_for_role, TABS}, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -15,15 +15,16 @@ impl SharedContext {
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
                         ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
-                            // allow certain tabs to be toggled
-                            for tab in TABS {
+                            let is_warehouse = user.is_warehouse();
+                            let visible_tabs = tabs_for_role(is_warehouse);
+                            for tab in visible_tabs {
                                 if ui
-                                    .selectable_label(self.open_tabs.contains(tab), tab)
+                                    .selectable_label(self.open_tabs.contains(*tab), *tab)
                                     .clicked()
                                 {
                                     if let Some(index) = self.tree.find_tab(&tab.to_string()) {
                                         self.tree.remove_tab(index);
-                                        self.open_tabs.remove(tab);
+                                        self.open_tabs.remove(*tab);
                                     } else {
                                         self.open_tabs.insert(tab.to_string());
                                         self.tree.push_to_focused_leaf(tab.to_string());

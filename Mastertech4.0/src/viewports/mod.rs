@@ -1,6 +1,7 @@
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportCommand, ViewportId};
 use std::{sync::{atomic::Ordering, Arc}, time::Duration};
-use displays::tabs::admin_console::AdminConsole;
+use displays::tabs::admin_console::client_interface::TransportKind;
+use displays::tabs::admin_console::{AdminConsole, SessionLayout};
 use crate::app_state::MasterTechApp;
 use log::info;
 
@@ -64,63 +65,68 @@ impl MasterTechApp{
             });
         }
 
-        if self.context.shared_ctx.web_console_layout.wants_to_undock {
-            let layout = &mut self.context.shared_ctx.web_console_layout;
-            let undock_client = layout.undock_client.clone();
-            for client in self.context.shared_ctx.clients.clone() {
-                let should_we_undock = if let Some(undock) = undock_client.get(&client.connection_string)
-                {
-                    undock
-                } else {
-                    &false
-                };
+        let layout = &mut self.context.shared_ctx.web_console_layout;
+        for client in self.context.shared_ctx.clients.clone() {
+            let is_floating = layout
+                .session_layout
+                .get(&client.connection_string)
+                .copied()
+                .unwrap_or_default()
+                == SessionLayout::Floating;
 
-                if *should_we_undock {
-                    let show_ws_viewport = self.context.show_ws_viewport.clone();
-                    let client_hash = client.connection_string.clone();
-                    let client_friendly_name = client.friendly_name.clone();
-                    let viewport_id = ViewportId::from_hash_of(format!("deferred_viewport_ws_connection {client_hash}"));
-                    let viewport_builder = ViewportBuilder::default()
-                        .with_title(format!("{}", client_friendly_name.unwrap_or(client_hash)))
-                        .with_inner_size([400.0, 500.0]);
-                    
-                    ctx.show_viewport_immediate(
-                        viewport_id,
-                        viewport_builder,
-                        |ctx, _class| 
-                    {
-
-                        CentralPanel::default().show(ctx, |ui| {
-                            
-                            let tx = layout.ui_actions_channel.0.clone();
-                            
-                            // Check if we have an active WebSocket connection with confirmed remote client activity
-                            // Green requires both: master connected AND client actively responding
-                            let is_ws_connected = layout.ws_clients
-                                .get(&client.connection_string)
-                                .map(|wsc| wsc.is_connected && wsc.last_pong_time.is_some())
-                                .unwrap_or(false);
-                            
-                            ui.horizontal(|ui| AdminConsole::client_header(
-                                ui, 
-                                tx, 
-                                &client.clone(), 
-                                undock_client.clone(),
-                                is_ws_connected,
-                            ));
-                            if let Some(ws_client) =
-                                layout.ws_clients.get_mut(&client.connection_string)
-                            {
-                                ws_client.show(ui);
-                            }
-                        });
-
-                        if ctx.input(|i| i.viewport().close_requested()) {
-                            show_ws_viewport.store(false, Ordering::Relaxed); // Tell parent to close us.
-                        }
-                    });
-                }
+            if !is_floating {
+                continue;
             }
+
+            let client_hash = client.connection_string.clone();
+            let client_friendly_name = client.friendly_name.clone();
+            let viewport_id =
+                ViewportId::from_hash_of(format!("deferred_viewport_ws_connection {client_hash}"));
+            let viewport_builder = ViewportBuilder::default()
+                .with_title(format!(
+                    "{}",
+                    client_friendly_name.unwrap_or(client_hash.clone())
+                ))
+                .with_inner_size([400.0, 500.0]);
+
+            ctx.show_viewport_immediate(viewport_id, viewport_builder, |ctx, _class| {
+                #[allow(deprecated)]
+                CentralPanel::default().show(ctx, |ui| {
+                    let tx = layout.ui_actions_channel.0.clone();
+
+                    let is_ws_connected = layout
+                        .ws_clients
+                        .get(&client.connection_string)
+                        .map(|wsc| {
+                            if wsc.transport.kind() == TransportKind::Tcp {
+                                wsc.is_connected
+                            } else {
+                                wsc.is_connected && wsc.last_pong_time.is_some()
+                            }
+                        })
+                        .unwrap_or(false);
+
+                    ui.horizontal(|ui| {
+                        AdminConsole::client_header(
+                            ui,
+                            tx,
+                            &client,
+                            layout.session_layout.clone(),
+                            layout.focused_client.as_deref(),
+                            is_ws_connected,
+                        );
+                    });
+                    if let Some(ws_client) = layout.ws_clients.get_mut(&client.connection_string) {
+                        ws_client.show(ui);
+                    }
+                });
+
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    layout
+                        .session_layout
+                        .insert(client.connection_string.clone(), SessionLayout::Docked);
+                }
+            });
         }
 
         #[cfg(not(target_arch = "wasm32"))]

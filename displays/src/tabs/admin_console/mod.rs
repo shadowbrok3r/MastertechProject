@@ -21,6 +21,20 @@ pub mod ui;
 
 pub use relink_popup::RelinkClientPopup;
 
+/// Controls whether a remote-client session is shown inline (docked in the
+/// central panel when it is also the focused client) or in its own floating
+/// OS viewport / egui Window.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SessionLayout {
+    /// Show in the admin-console central panel.  Only one docked client is
+    /// rendered at a time; whichever one matches `AdminConsole::focused_client`
+    /// is the active one that receives keyboard input and plugin commands.
+    #[default]
+    Docked,
+    /// Render in a separate OS viewport (native) or egui Window (WASM).
+    Floating,
+}
+
 #[derive(Serialize, Default)]
 pub enum WebConsolePageState {
     #[default]
@@ -35,20 +49,21 @@ pub struct AdminConsole {
     pub client_map: BTreeMap<String, Vec<ConnectedClient>>,
     pub clients: Vec<ConnectedClient>,
     pub search_inputs: HashMap<String, String>,
-    // pub connected_clients: Vec<ConnectedClient>,
-    // pub disconnected_clients: Vec<ConnectedClient>,
     open_menu: bool,
     #[serde(skip)]
     pub ui_actions_channel: (Sender<ClientUiAction>, Receiver<ClientUiAction>),
     state: WebConsolePageState,
     pub sort_by: HashMap<String, SortOptions>,
-    pub last_sort_field: Option<SortField>,    
+    pub last_sort_field: Option<SortField>,
     pub loading: bool,
-    /// tracking for which client we want to undock
-    /// into a floating UI when we click the undock button
-    pub undock_client: HashMap<String, bool>,
-    /// The undock button was clicked for a ConnectedClient
-    pub wants_to_undock: bool,
+    /// Per-session display mode.  Each entry maps a `connection_string` to
+    /// either `Docked` (show in the central panel) or `Floating` (own window).
+    /// Replaces the old `undock_client: HashMap<String, bool>` whose `bool`
+    /// meaning was inverted and confusing.
+    pub session_layout: HashMap<String, SessionLayout>,
+    /// The connection string of the machine that currently has keyboard /
+    /// script / plugin-command focus.  `None` when no session is open.
+    pub focused_client: Option<String>,
     #[serde(skip)]
     pub filesystem: FileSystem,
     #[serde(skip)]
@@ -77,13 +92,13 @@ impl AdminConsole {
         Self {
             clients,
             client_map,
-            search_inputs: Default::default(), 
+            search_inputs: Default::default(),
             open_menu: true,
             sort_by: Default::default(),
             last_sort_field: Default::default(),
             loading: false,
-            undock_client: Default::default(),
-            wants_to_undock: false,
+            session_layout: Default::default(),
+            focused_client: None,
             filesystem: FileSystem::new(),
             ws_clients: Default::default(),
             active_diagnostic_sessions: Default::default(),
@@ -230,7 +245,7 @@ impl SharedContext {
                         b_mine.cmp(&a_mine) // mine first; equal elements keep prior order (stable)
                     });
                 }
-                let visible_indices: Vec<usize> = clients
+                        let visible_indices: Vec<usize> = clients
                     .iter()
                     .enumerate()
                     .filter_map(|(i, client)| {
@@ -249,6 +264,7 @@ impl SharedContext {
                             .then_some(i)
                     })
                     .collect();
+
                 let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
                 let total_rows = visible_indices.len();
                 if visible_indices.is_empty() {
@@ -287,10 +303,11 @@ impl SharedContext {
                         .unwrap_or(false);
                             
                             AdminConsole::client_header(
-                                ui, 
-                                ws_client.ui_actions_channel.0.clone(), 
-                                client, 
-                                ws_client.undock_client.clone(),
+                                ui,
+                                ws_client.ui_actions_channel.0.clone(),
+                                client,
+                                ws_client.session_layout.clone(),
+                                ws_client.focused_client.as_deref(),
                                 is_ws_connected,
                             );
                         }

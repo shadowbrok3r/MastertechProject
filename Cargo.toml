@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "MtechServer2.0" ]
+members = [ "database" , "displays", "Mastertech4.0", "qc-app", "stress-kit", "axum_server" ]
 
 [workspace.dependencies]
+stress-kit = { path = "stress-kit" }
 database = { path = "database" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
@@ -81,7 +82,6 @@ incremental = true     # cache unchanged crates between rebuilds
 
 
 [patch.crates-io]
-reqwest-eventsource = { path = "vendor/patches/reqwest-eventsource" }
 async-openai-wasm = { path = "vendor/patches/async-openai-wasm" }
 
 # [profile.wasm-release] # trunk build --release --profile wasm-release
