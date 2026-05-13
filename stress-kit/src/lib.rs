@@ -30,17 +30,31 @@
 
 mod stressors;
 pub mod scenario;
+pub mod telemetry;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Stressor {
     Cpu,
     Memory,
     Disk,
+    /// Square `f32` matmul; reports Mflop/s.
+    Matrix,
+    /// Bulk memcpy of paired buffers; reports GB/s.
+    Memcpy,
+    /// Hot-loop bitops (popcount, ctlz, cttz, rotate); reports Mop/s.
+    Bitops,
+    /// Cache-line thrash with `_mm_prefetch`/`_mm_clflush` on x86_64; reports Mref/s.
+    Cache,
+    /// Page-touch + churn to pressure the working set / page file; reports MiB/s.
+    Vm,
 }
 
 impl Stressor {
@@ -49,6 +63,11 @@ impl Stressor {
             Self::Cpu => "CPU",
             Self::Memory => "Memory",
             Self::Disk => "Disk I/O",
+            Self::Matrix => "Matrix",
+            Self::Memcpy => "Memcpy",
+            Self::Bitops => "Bitops",
+            Self::Cache => "Cache",
+            Self::Vm => "VM",
         }
     }
 
@@ -57,12 +76,17 @@ impl Stressor {
             Self::Cpu => "Mop/s",
             Self::Memory => "MiB/s",
             Self::Disk => "MiB/s",
+            Self::Matrix => "Mflop/s",
+            Self::Memcpy => "GB/s",
+            Self::Bitops => "Mop/s",
+            Self::Cache => "Mref/s",
+            Self::Vm => "MiB/s",
         }
     }
 }
 
 /// Single-run settings. In [`scenario::ScenarioStage`], `timeout` is ignored; stage length is `duration_secs`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StressConfig {
     pub stressor: Stressor,
     /// `0` = logical CPU count.
@@ -87,7 +111,7 @@ impl Default for StressConfig {
 }
 
 /// Sample from the supervisor (~500 ms): elapsed wall time, throughput (`Stressor::throughput_unit`), optional worker warning.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metrics {
     pub elapsed_secs: f64,
     pub throughput: f64,

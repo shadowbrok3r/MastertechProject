@@ -1,6 +1,11 @@
+pub mod bitops;
+pub mod cache;
 pub mod cpu;
 pub mod disk;
+pub mod matrix;
+pub mod memcpy;
 pub mod memory;
+pub mod vm;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -47,5 +52,10 @@ pub(crate) fn run_core(
             memory::run(thread_count, config.memory_cap_mb, cancel, tx, started_at)
         }
         Stressor::Disk => disk::run(thread_count, config.disk_file_mb, cancel, tx, started_at),
+        Stressor::Matrix => matrix::run(thread_count, cancel, tx, started_at),
+        Stressor::Memcpy => memcpy::run(thread_count, cancel, tx, started_at),
+        Stressor::Bitops => bitops::run(thread_count, cancel, tx, started_at),
+        Stressor::Cache => cache::run(thread_count, cancel, tx, started_at),
+        Stressor::Vm => vm::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
     }
 }

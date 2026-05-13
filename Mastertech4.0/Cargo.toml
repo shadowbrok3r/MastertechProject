@@ -79,6 +79,7 @@ rusqlite = { version = "0.39.0", features = ["bundled"] }
 
 # nvme = "0.2.2"
 
+stress-kit.workspace = true
 surrealdb.workspace = true
 ratatui = { workspace = true }
 egui_extras.workspace = true
