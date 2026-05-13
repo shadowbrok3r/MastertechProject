@@ -492,6 +492,36 @@ pub struct PluginUsageRefParam {
     pub tool_name: String,
 }
 
+/// Deserialize `Option<Vec<String>>` accepting either a JSON array (`["a","b"]`)
+/// or a JSON-stringified array (`"[\"a\",\"b\"]"`). Some MCP clients stringify
+/// nested array arguments before sending; this lets the schema-correct array
+/// form continue to work while also accepting the stringified form.
+fn deserialize_optional_string_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Input {
+        Vec(Vec<String>),
+        Str(String),
+    }
+
+    match Option::<Input>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Input::Vec(v)) => Ok(Some(v)),
+        Some(Input::Str(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            serde_json::from_str::<Vec<String>>(trimmed)
+                .map(Some)
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+
 // ─── Plugin Registry parameter types ────────────────────────────────────────
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -549,6 +579,7 @@ pub struct CreateDiagnosticSessionParams {
     #[schemars(description = "Technician performing the diagnosis")]
     pub tech: Option<String>,
     #[schemars(description = "Initial tags for categorizing this session")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
 }
 
