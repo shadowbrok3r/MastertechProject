@@ -2153,11 +2153,242 @@ if (Test-Path $path) {{
                             }
                         }
 
+                        "Any Recent Blue Screens?" => {
+                            let ps_cmd = r#"
+$days = 30
+$start = (Get-Date).AddDays(-$days)
+$evts = New-Object System.Collections.Generic.List[Object]
+$filters = @(
+    @{ LogName = 'System';      ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; StartTime = $start },
+    @{ LogName = 'System';      Id = 1001; StartTime = $start },
+    @{ LogName = 'System';      Id = 1003; StartTime = $start },
+    @{ LogName = 'System';      Id = 41;   StartTime = $start },
+    @{ LogName = 'System';      Id = 6008; StartTime = $start },
+    @{ LogName = 'System';      Id = 4101; StartTime = $start },
+    @{ LogName = 'Application'; ProviderName = 'Windows Error Reporting'; Id = 1001; StartTime = $start }
+)
+foreach ($f in $filters) {
+    try {
+        Get-WinEvent -FilterHashtable $f -ErrorAction SilentlyContinue |
+            ForEach-Object { $null = $evts.Add($_) }
+    } catch {}
+}
+if ($evts.Count -eq 0) {
+    Write-Output ("No BugCheck / WER / Kernel-Power / TDR (nvlddmkm 4101) events in the last {0} days." -f $days)
+} else {
+    Write-Output ("Found {0} BSOD/TDR-related events in the last {1} days (most recent 25):" -f $evts.Count, $days)
+    $evts | Sort-Object TimeCreated -Descending | Select-Object -First 25 | ForEach-Object {
+        $first = ($_.Message -split "`r?`n") | Where-Object { $_.Trim() -ne '' } | Select-Object -First 1
+        Write-Output ("[{0}] id={1} provider={2} level={3} :: {4}" -f $_.TimeCreated, $_.Id, $_.ProviderName, $_.LevelDisplayName, $first)
+    }
+}
+$mini = Get-ChildItem -Path "$env:SystemRoot\Minidump" -Filter '*.dmp' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 10
+if ($mini) {
+    Write-Output "Recent minidumps:"
+    foreach ($d in $mini) { Write-Output ("  {0}  {1} bytes  {2}" -f $d.LastWriteTime, $d.Length, $d.FullName) }
+} else {
+    Write-Output "No minidumps in $env:SystemRoot\Minidump"
+}
+$memdmp = Join-Path $env:SystemRoot 'MEMORY.DMP'
+if (Test-Path $memdmp) {
+    $f = Get-Item $memdmp
+    Write-Output ("MEMORY.DMP present: {0} bytes, last written {1}" -f $f.Length, $f.LastWriteTime)
+}
+"#;
+                            let output = tokio::process::Command::new("powershell")
+                                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd])
+                                .output()
+                                .await;
+                            match output {
+                                Ok(out) => {
+                                    let stdout = String::from_utf8_lossy(&out.stdout);
+                                    let stderr = String::from_utf8_lossy(&out.stderr);
+                                    for line in stdout.lines() {
+                                        if !line.trim().is_empty() { send_log(sender, line.to_string()); }
+                                    }
+                                    for line in stderr.lines() {
+                                        if !line.trim().is_empty() { send_log(sender, format!("[stderr] {line}")); }
+                                    }
+                                    if out.status.success() {
+                                        send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                    } else {
+                                        send_log(sender, format!("Exit code: {:?}", out.status.code()));
+                                        send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    }
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error running BSOD check: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Is Hibernation/Sleep enabled?" => {
+                            let ps_cmd = r#"
+Write-Output ((powercfg /getactivescheme) -join '')
+$settings = @(
+    @{ Name='Sleep after';      Sub='238c9fa8-0aad-41ed-83f4-97be242c8f20'; Guid='29f6c1db-86da-48c5-9fdb-f2b67b1f44da'; Units='Seconds' },
+    @{ Name='Hibernate after';  Sub='238c9fa8-0aad-41ed-83f4-97be242c8f20'; Guid='9d7815a6-7ee4-497e-8888-515a05f02364'; Units='Seconds' },
+    @{ Name='Hybrid sleep';     Sub='238c9fa8-0aad-41ed-83f4-97be242c8f20'; Guid='94ac6d29-73ce-41a6-809f-6363ba21b47e'; Units='OnOff'   },
+    @{ Name='Turn off display'; Sub='7516b95f-f776-4464-8c53-06167f40cc99'; Guid='3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'; Units='Seconds' }
+)
+$anyEnabled = $false
+foreach ($s in $settings) {
+    $out = powercfg /query SCHEME_CURRENT $s.Sub $s.Guid 2>$null
+    $acMatch = $out | Select-String 'Current AC Power Setting Index:\s*(0x[0-9a-fA-F]+)'
+    $dcMatch = $out | Select-String 'Current DC Power Setting Index:\s*(0x[0-9a-fA-F]+)'
+    $ac = if ($acMatch) { $acMatch.Matches[0].Groups[1].Value } else { '0x00000000' }
+    $dc = if ($dcMatch) { $dcMatch.Matches[0].Groups[1].Value } else { '0x00000000' }
+    if ($s.Units -eq 'Seconds') {
+        $acVal = [uint32]$ac
+        $dcVal = [uint32]$dc
+        Write-Output ("{0}: AC={1}s  DC={2}s" -f $s.Name, $acVal, $dcVal)
+        if ($acVal -gt 0 -or $dcVal -gt 0) { $anyEnabled = $true }
+    } else {
+        $acOn = if ($ac -ne '0x00000000') { 'On' } else { 'Off' }
+        $dcOn = if ($dc -ne '0x00000000') { 'On' } else { 'Off' }
+        Write-Output ("{0}: AC={1}  DC={2}" -f $s.Name, $acOn, $dcOn)
+        if ($acOn -eq 'On' -or $dcOn -eq 'On') { $anyEnabled = $true }
+    }
+}
+$states = (powercfg /availablesleepstates 2>&1) -join "`n"
+if ($states -match 'Hibernate') { Write-Output 'Hibernation available: YES' } else { Write-Output 'Hibernation available: NO' }
+if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one setting' } else { Write-Output 'Sleep/Hibernation: all timeouts at 0 (disabled)' }
+"#;
+                            let output = tokio::process::Command::new("powershell")
+                                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd])
+                                .output()
+                                .await;
+                            match output {
+                                Ok(out) => {
+                                    let stdout = String::from_utf8_lossy(&out.stdout);
+                                    let stderr = String::from_utf8_lossy(&out.stderr);
+                                    for line in stdout.lines() {
+                                        if !line.trim().is_empty() { send_log(sender, line.to_string()); }
+                                    }
+                                    for line in stderr.lines() {
+                                        if !line.trim().is_empty() { send_log(sender, format!("[stderr] {line}")); }
+                                    }
+                                    if out.status.success() {
+                                        send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                    } else {
+                                        send_log(sender, format!("Exit code: {:?}", out.status.code()));
+                                        send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    }
+                                }
+                                Err(e) => {
+                                    send_log(sender, format!("Error querying power options: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Check Updates" => {
+                            send_log(sender, "Checking internet before Windows Update search...".into());
+                            match crate::utilities::windows::net_adapter::ensure_internet_connected().await {
+                                Ok(_) => send_log(sender, "Internet confirmed".into()),
+                                Err(e) => {
+                                    send_log(sender, format!("No internet: {e}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                    continue;
+                                }
+                            }
+                            send_log(sender, "Searching for available Windows updates (no install)...".into());
+
+                            let (update_tx, update_rx) = crossbeam::channel::unbounded();
+                            let handle = std::thread::spawn(move || {
+                                crate::utilities::windows::windows_update::install_windows_updates(
+                                    update_tx, false, false,
+                                )
+                            });
+
+                            loop {
+                                match update_rx.recv_timeout(std::time::Duration::from_millis(250)) {
+                                    Ok(event) => {
+                                        use crate::utilities::windows::windows_update::WindowsUpdateEvent;
+                                        match event {
+                                            WindowsUpdateEvent::UpdateLogs(msg) => send_log(sender, msg),
+                                            WindowsUpdateEvent::DownloadPercentage(_) | WindowsUpdateEvent::InstallPercentage(_) => {}
+                                            WindowsUpdateEvent::ReturnedUpdates(updates) => {
+                                                let pending: Vec<_> = updates.updates.iter().filter(|u| !u.is_installed).collect();
+                                                send_log(sender, format!(
+                                                    "{} updates returned ({} pending, {} already installed)",
+                                                    updates.updates.len(),
+                                                    pending.len(),
+                                                    updates.updates.len() - pending.len()
+                                                ));
+                                                for u in &pending {
+                                                    send_log(sender, format!("  [pending] {}", u.title));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                                        if handle.is_finished() {
+                                            while let Ok(event) = update_rx.try_recv() {
+                                                use crate::utilities::windows::windows_update::WindowsUpdateEvent;
+                                                match event {
+                                                    WindowsUpdateEvent::UpdateLogs(msg) => send_log(sender, msg),
+                                                    WindowsUpdateEvent::ReturnedUpdates(updates) => {
+                                                        send_log(sender, format!("{} updates returned", updates.updates.len()));
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    Err(crossbeam::channel::RecvTimeoutError::Disconnected) => break,
+                                }
+                            }
+
+                            match handle.join() {
+                                Ok(Ok(_)) => {
+                                    send_log(sender, "Windows update check finished".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Success);
+                                }
+                                Ok(Err(e)) => {
+                                    send_log(sender, format!("Windows update check error: {e:?}"));
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                                Err(_) => {
+                                    send_log(sender, "Windows update check thread panicked".into());
+                                    send_result(sender, &script.name, RemoteScriptStatus::Failed);
+                                }
+                            }
+                        }
+
+                        "Run Prechecks" => {
+                            let mut all_ok = true;
+                            match crate::utilities::windows::registry::disable_notifications() {
+                                Ok(results) => for r in &results { send_log(sender, format!("notifications => {r}")); }
+                                Err(e) => { send_log(sender, format!("notifications error: {e}")); all_ok = false; }
+                            }
+                            match crate::utilities::windows::registry::align_taskbar_left() {
+                                Ok(results) => for r in &results { send_log(sender, format!("taskbar => {}", r.trim())); }
+                                Err(e) => { send_log(sender, format!("taskbar error: {e}")); all_ok = false; }
+                            }
+                            match crate::utilities::windows::net_adapter::scan_wifi_networks() {
+                                Ok(networks) => send_log(sender, format!("wifi networks visible: {}", networks.len())),
+                                Err(e) => { send_log(sender, format!("wifi scan error: {e}")); all_ok = false; }
+                            }
+                            match crate::utilities::windows::net_adapter::get_wlan_status() {
+                                Ok(_) => send_log(sender, "wlan status: OK".into()),
+                                Err(e) => send_log(sender, format!("wlan status: {e:?}")),
+                            }
+                            match crate::utilities::windows::net_adapter::check_network_adapters() {
+                                Ok(adapters) => send_log(sender, format!("network adapters: {adapters:?}")),
+                                Err(e) => { send_log(sender, format!("adapter check error: {e}")); all_ok = false; }
+                            }
+                            send_result(sender, &script.name, if all_ok { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed });
+                        }
+
                         "Disable proxy settings" | "Disable Startup Apps" | "Run Tron"
                         | "Run SuperAntiSpyware Scan" | "Run Webroot Scan" | "Data Transfer"
-                        | "Any Recent Blue Screens?" | "When Was The Last Service Date?"
-                        | "Are there scheduled tasks for it?" | "Is Hibernation/Sleep enabled?"
-                        | "Check Updates" | "Run Prechecks" | "Run Junkware Category" => {
+                        | "When Was The Last Service Date?"
+                        | "Are there scheduled tasks for it?"
+                        | "Run Junkware Category" => {
                             send_log(sender, format!("'{}' not yet implemented for remote execution", script.name));
                             send_result(sender, &script.name, RemoteScriptStatus::Failed);
                         }
