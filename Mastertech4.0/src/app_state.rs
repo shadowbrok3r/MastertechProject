@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, CONNECTED_CLIENT_TABLE}};
+use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}};
 use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
 use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
@@ -205,7 +205,21 @@ impl MasterTechApp {
 
             task_data: LiveTaskPayload::default(),
             computer_data: {
+                // Pin computer_data.id to the canonical hostname:client_hash[..9]
+                // form at startup so any code that reads it before spec-gather
+                // finishes (notably the auto-connect path in first_run.rs that
+                // writes `connected_client.computer`) sees the same id that
+                // get_computer_data() will eventually upsert into the computer
+                // table. Otherwise the default random UUID leaks into
+                // connected_client.computer and produces a dangling reference.
+                //
+                // One-off repair for already-dangling rows written before this
+                // fix (run once against prod):
+                //   UPDATE connected_client
+                //   SET computer = type::thing('computer', connection_string)
+                //   WHERE computer NOT IN (SELECT VALUE id FROM computer);
                 let mut cd = ComputerData::default();
+                cd.id = RecordId::new(COMPUTER_TABLE.to_string(), url_string.clone());
                 cd.hostname = hostname;
                 cd.cpu = cpu_brand;
                 cd
