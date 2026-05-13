@@ -1,4 +1,6 @@
-//! Per-core CPU table
+//! Per-core CPU table plus a bottom summary strip for the system-wide
+//! telemetry that doesn't fit a per-core row (memory, page file, vmmem,
+//! disk r/w, network rx/tx, WHEA delta).
 
 use eframe::egui::{self, Widget};
 use egui_data_table::{
@@ -7,6 +9,7 @@ use egui_data_table::{
 };
 use egui_extras::Column;
 use serde::Serialize;
+use stress_kit::telemetry::TelemetrySnapshot;
 
 use crate::hw_sampler::CoreRow;
 
@@ -189,6 +192,7 @@ pub struct HwTable {
     table: DataTable<CoreRow>,
     viewer: CoreRowViewer,
     refresh_label: String,
+    snapshot: TelemetrySnapshot,
 }
 
 impl HwTable {
@@ -197,17 +201,20 @@ impl HwTable {
             table: DataTable::new(),
             viewer: CoreRowViewer::default(),
             refresh_label: String::new(),
+            snapshot: TelemetrySnapshot::default(),
         }
     }
 
-    /// Replace rows from the sampler.
-    pub fn update(&mut self, rows: Vec<CoreRow>) {
+    /// Replace rows + system-wide stats from the latest sampler snapshot.
+    pub fn update(&mut self, snapshot: TelemetrySnapshot) {
+        let rows = snapshot.cores.clone();
         self.refresh_label = if rows.is_empty() {
             "Waiting for first sample…".into()
         } else {
             format!("{} logical cores", rows.len())
         };
         self.table.replace(rows);
+        self.snapshot = snapshot;
     }
 
     /// Draw the full table UI.
@@ -236,6 +243,14 @@ impl HwTable {
                 });
             });
 
+        #[allow(deprecated)]
+        egui::TopBottomPanel::bottom("hw_table_summary")
+            .resizable(false)
+            .min_size(56.0)
+            .show_inside(ui, |ui| {
+                self.show_summary(ui);
+            });
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::horizontal()
                 .auto_shrink(false)
@@ -249,6 +264,120 @@ impl HwTable {
                 });
         });
     }
+
+    fn show_summary(&self, ui: &mut egui::Ui) {
+        let s = &self.snapshot;
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            // RAM
+            chip(
+                ui,
+                "RAM",
+                &format!(
+                    "{:.1}% — {} / {} MB",
+                    s.memory.used_pct, s.memory.used_mb, s.memory.total_mb
+                ),
+                usage_color(s.memory.used_pct),
+            );
+
+            // Page file
+            chip(
+                ui,
+                "Page file",
+                &format!(
+                    "{:.1}% — {} / {} MB",
+                    s.memory.page_file_used_pct,
+                    s.memory.page_file_used_mb,
+                    s.memory.page_file_total_mb
+                ),
+                usage_color(s.memory.page_file_used_pct),
+            );
+
+            // vmmem (WSL / Hyper-V host) — only when present
+            if let Some(mb) = s.memory.vmmem_mb {
+                chip(
+                    ui,
+                    "vmmem",
+                    &format!("{mb} MB"),
+                    egui::Color32::from_rgb(140, 180, 230),
+                );
+            }
+
+            // Top disk by combined throughput
+            if let Some(d) = top_disk(&s.disks) {
+                chip(
+                    ui,
+                    &format!("Disk {}", d.name),
+                    &format!("R {:.1} / W {:.1} MB/s", d.read_mb_per_s, d.write_mb_per_s),
+                    egui::Color32::from_rgb(160, 200, 140),
+                );
+            }
+
+            // Top network by combined throughput
+            if let Some(n) = top_network(&s.networks) {
+                chip(
+                    ui,
+                    &format!("Net {}", n.name),
+                    &format!("Rx {:.1} / Tx {:.1} Mbps", n.rx_mbps, n.tx_mbps),
+                    egui::Color32::from_rgb(160, 200, 220),
+                );
+            }
+
+            // WHEA
+            if let Some(w) = &s.whea {
+                let color = if w.delta_since_program_start > 0 {
+                    egui::Color32::from_rgb(220, 80, 60)
+                } else {
+                    egui::Color32::from_rgb(140, 200, 140)
+                };
+                chip(
+                    ui,
+                    "WHEA",
+                    &format!(
+                        "+{} new (since boot: {})",
+                        w.delta_since_program_start, w.absolute_since_boot
+                    ),
+                    color,
+                );
+            }
+        });
+        ui.add_space(4.0);
+    }
+}
+
+fn chip(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32) {
+    egui::Frame::default()
+        .fill(ui.visuals().extreme_bg_color)
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(label).small().weak());
+                ui.colored_label(color, egui::RichText::new(value).strong());
+            });
+        });
+}
+
+fn top_disk(
+    disks: &[stress_kit::telemetry::DiskRateSample],
+) -> Option<&stress_kit::telemetry::DiskRateSample> {
+    disks
+        .iter()
+        .max_by(|a, b| {
+            (a.read_mb_per_s + a.write_mb_per_s)
+                .partial_cmp(&(b.read_mb_per_s + b.write_mb_per_s))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+fn top_network(
+    nets: &[stress_kit::telemetry::NetworkRateSample],
+) -> Option<&stress_kit::telemetry::NetworkRateSample> {
+    nets.iter().max_by(|a, b| {
+        (a.rx_mbps + a.tx_mbps)
+            .partial_cmp(&(b.rx_mbps + b.tx_mbps))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
 }
 
 impl Default for HwTable {

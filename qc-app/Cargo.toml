@@ -14,7 +14,7 @@ eframe = { version = "0.34", features = ["persistence", "serde", "default_fonts"
 stress-kit.workspace = true
 egui-data-table.workspace = true
 egui_extras.workspace = true
-sysinfo = "0.31"
+sysinfo = { version = "0.39", features = ["serde", "multithread"] }
 log.workspace = true
 anyhow.workspace = true
 serde.workspace = true

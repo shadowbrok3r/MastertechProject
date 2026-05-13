@@ -160,7 +160,7 @@ pub fn generate_client_id(hostname: String, cpu: String) -> String {
 fn host_name_and_cpu_brand() -> (String, String) {
     let hostname = System::host_name().unwrap_or_else(|| "unknown-host".to_string());
     let mut sys = System::new_with_specifics(
-        RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
+        RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
     );
     sys.refresh_cpu_list(CpuRefreshKind::everything());
     let cpu = sys

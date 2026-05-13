@@ -611,6 +611,23 @@ pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Resul
     Ok(())
 }
 
+/// Shared `stress-kit` telemetry agent for the Fleet Dashboard.
+/// First call boots a background sampler; subsequent calls reuse it.
+pub fn shared_telemetry_agent() -> std::sync::Arc<stress_kit::telemetry::TelemetryAgent> {
+    use once_cell::sync::OnceCell;
+    static AGENT: OnceCell<std::sync::Arc<stress_kit::telemetry::TelemetryAgent>> = OnceCell::new();
+    AGENT
+        .get_or_init(|| std::sync::Arc::new(stress_kit::telemetry::TelemetryAgent::start(1000)))
+        .clone()
+}
+
+/// Latest hardware telemetry snapshot from the shared `stress-kit` agent.
+/// Pairs with `qc-app`'s `get_extended_telemetry` MCP tool so both apps
+/// publish the same shape.
+pub fn current_telemetry_snapshot() -> stress_kit::telemetry::TelemetrySnapshot {
+    shared_telemetry_agent().snapshot()
+}
+
 pub async fn get_sysinfo_no_gpu() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let gpu_info = Gpu::default();    
     let sys = &mut SYSINFO.lock().await;

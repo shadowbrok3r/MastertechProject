@@ -254,11 +254,12 @@ impl eframe::App for QcApp {
             self.hw_sampler = Some(HwSampler::start(1000));
         }
 
-        // Copy sampler rows into `hw_table` for the monitor window.
+        // Copy sampler snapshot into `hw_table` for the monitor window.
         let current_cores = if let Some(ref sampler) = self.hw_sampler {
-            let rows = sampler.get();
+            let snapshot = sampler.snapshot();
+            let rows = snapshot.cores.clone();
             if let Ok(mut table) = self.hw_table.lock() {
-                table.update(rows.clone());
+                table.update(snapshot);
             }
             rows
         } else {
@@ -271,6 +272,7 @@ impl eframe::App for QcApp {
                 latest_cores: Arc::new(Mutex::new(vec![])),
                 last_report: Arc::new(Mutex::new(None)),
                 report_sink: Arc::new(Mutex::new(None)),
+                telemetry: Arc::new(Mutex::new(None)),
             });
             spawn_mcp_servers(state.clone());
             self.mcp_state = Some(state);
@@ -282,6 +284,13 @@ impl eframe::App for QcApp {
             }
             if let Ok(mut g) = state.report_sink.lock() {
                 *g = self.report_sink.clone();
+            }
+            if let Some(ref sampler) = self.hw_sampler {
+                if let Ok(mut g) = state.telemetry.lock() {
+                    if g.is_none() {
+                        *g = Some(sampler.agent());
+                    }
+                }
             }
         }
 

@@ -169,4 +169,11 @@ impl HwSnapshot {
         };
         Self { cores: snaps, avg_usage_pct, peak_usage_pct, avg_temp_c }
     }
+
+    /// Build an `HwSnapshot` from the full telemetry agent snapshot. Equivalent
+    /// to `from_cores(&snapshot.cores)` today; kept as a named helper so the MCP
+    /// pipeline doesn't need to know that detail.
+    pub fn from_telemetry(snapshot: &stress_kit::telemetry::TelemetrySnapshot) -> Self {
+        Self::from_cores(&snapshot.cores)
+    }
 }

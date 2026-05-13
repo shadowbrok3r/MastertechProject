@@ -8,9 +8,12 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{Metrics, StressConfig};
 use crate::stressors;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioStage {
     pub label: String,
     /// `timeout` ignored; use `duration_secs`.
@@ -19,6 +22,7 @@ pub struct ScenarioStage {
     pub duration_secs: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioDefinition {
     pub stages: Vec<ScenarioStage>,
     pub total_wall_secs: Option<u64>,
@@ -26,7 +30,8 @@ pub struct ScenarioDefinition {
     pub repeat_until_total: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     Completed,
     Cancelled,
@@ -43,6 +48,8 @@ impl FinishReason {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ScenarioEvent {
     StageStarted {
         index: usize,
