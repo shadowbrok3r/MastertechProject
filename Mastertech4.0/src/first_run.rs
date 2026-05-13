@@ -90,6 +90,41 @@ impl MasterTechApp {
     pub fn receive_logic(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         if self.context.shared_ctx.first_run { self.first_run(ctx); }
 
+        // Spawn the direct-TCP admin listener as early as possible, decoupled
+        // from the heavy spec-gather below. The listener only needs the
+        // client RecordId, which is derived from hostname + CPU brand --
+        // both cheap, neither routed through PowerShell/JSON. Previously
+        // this spawn was gated on `computer_data_rx` returning Ok, so a
+        // single JSON parse failure inside `get_computer_data` (e.g.
+        // "Trailing characters at line 65 column 5" from the installed-
+        // programs PS script on certain machines) silently prevented the
+        // listener from ever binding and the firewall rule from ever being
+        // added -- breaking direct-TCP admin connections for that machine.
+        // `TCP_LISTENER_STARTED` keeps this exactly-once for the process.
+        if !TCP_LISTENER_STARTED.swap(true, Ordering::SeqCst) {
+            spawn(async move {
+                // sysinfo's refresh_all inside get_client_hash is CPU-bound;
+                // hop to a blocking worker so we never stall the reactor.
+                let client_uuid = match tokio::task::spawn_blocking(
+                    || crate::filesystem::get_client_hash().id,
+                ).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        log::error!(
+                            "Direct-TCP listener: failed to compute client id: {e}"
+                        );
+                        return;
+                    }
+                };
+                // Mirror terminal-mode's brief head-start so the WS sender has
+                // a chance to upsert the connected_client row before we publish
+                // local_ip + tcp_port. The publish step also retries with
+                // exponential back-off, so this sleep is belt-and-suspenders.
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                spawn_direct_tcp_listener(client_uuid).await;
+            });
+        }
+
         if self.context.client_friendly_name.is_empty() {
             if let Ok(name) = self.context.friendly_name_rx.try_recv() {
                 if !name.is_empty() {
@@ -252,22 +287,16 @@ impl MasterTechApp {
             ));
             
             self.context.client_uuid = RecordId::new(
-                CONNECTED_CLIENT_TABLE.to_string(), 
+                CONNECTED_CLIENT_TABLE.to_string(),
                 url_string.clone()
             );
 
-            // Spawn the direct-TCP admin listener once per process. The
-            // WebSocket relay path remains active in parallel so admins
-            // older than this build (or remote, off-LAN admins) keep
-            // working. The admin console will prefer TCP when
-            // `local_ip` + `tcp_port` are both populated on the
-            // `connected_client` row.
-            if !TCP_LISTENER_STARTED.swap(true, Ordering::SeqCst) {
-                let client_uuid = self.context.client_uuid.clone();
-                spawn(async move {
-                    spawn_direct_tcp_listener(client_uuid).await;
-                });
-            }
+            // Note: the direct-TCP admin listener is no longer spawned here.
+            // It now fires at the top of `receive_logic` as soon as the
+            // process starts, decoupled from `get_computer_data` (which can
+            // fail on installed-programs JSON parse errors and previously
+            // blocked the listener from ever starting). The WebSocket relay
+            // path remains active in parallel for off-LAN admins.
 
             #[cfg(target_os = "windows")]
             if self.context.client_friendly_name.is_empty() {

@@ -216,16 +216,31 @@ impl ComputerInfo for ComputerData {
 
         #[cfg(target_os="windows")]
         {
-            let installed_programs = crate::utilities::scripts::InstalledProgram::get_installed_programs()?;
-            if let Ok(programs) = serde_json::to_value(installed_programs) {
-                self.installed_programs = Some(programs);
+            // Both of these probes run PowerShell and parse JSON; either can
+            // fail on machines where the PS pipeline emits stray stdout
+            // around `ConvertTo-Json` (seen as "Trailing characters at line N
+            // column 5" from serde_json). Treat both as non-fatal: they only
+            // populate optional reporting fields, and a failure here used to
+            // sink the entire spec-gather -- which in turn blocked the
+            // direct-TCP admin listener from ever starting.
+            match crate::utilities::scripts::InstalledProgram::get_installed_programs() {
+                Ok(installed_programs) => {
+                    if let Ok(programs) = serde_json::to_value(installed_programs) {
+                        self.installed_programs = Some(programs);
+                    }
+                }
+                Err(e) => log::warn!(
+                    "Filesystem -> get_computer_data -> installed_programs scan failed (continuing): {e:?}"
+                ),
             }
 
-            let license_status = check_windows_activation()?;
-            if license_status.license_status == 1 {
-                self.windows_active = Some(true);
-            } else {
-                self.windows_active = Some(false);
+            match check_windows_activation() {
+                Ok(license_status) => {
+                    self.windows_active = Some(license_status.license_status == 1);
+                }
+                Err(e) => log::warn!(
+                    "Filesystem -> get_computer_data -> windows activation check failed (continuing): {e:?}"
+                ),
             }
         }
 
