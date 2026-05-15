@@ -1,19 +1,19 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0", "qc-app", "stress-kit", "axum_server" ]
+members = [ "database" , "displays", "Mastertech4.0", "qc-app", "stress-kit"]
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }
 database = { path = "database" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
-surrealdb = { version = "3.1.0-beta.2", features = ["protocol-ws"] }
-surrealdb-types = { version = "3.1.0-beta.2" }
+surrealdb = { version = "3.1.0-beta.3", features = ["protocol-ws"] }
+surrealdb-types = { version = "3.1.0-beta.3" }
 egui_extras = { version = "0.34", features = ["datepicker", "syntect", "serde", "image", "all_loaders" ]}
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", features = ["persistency"]}
 egui_json_tree = { version = "0.15", features = ["serde_json"] }
 egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock",  features = [ "serde" ] }
-rmcp = { version = "1.6.0", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
+rmcp = { version = "1.7.0", features = ["server", "client", "transport-async-rw", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }
