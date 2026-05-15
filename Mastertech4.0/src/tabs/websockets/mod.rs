@@ -894,6 +894,88 @@ impl WebConsoleFrontend {
                     }
                 });
             }
+            Cmd::ListInstalledPrograms => {
+                // Slice 3: registry walk across HKLM / WOW6432Node /
+                // HKCU, returning one InstalledProgram per row.
+                log::info!("websockets -> Listing installed programs");
+                let tx = self.command_tx.clone();
+                spawn(async move {
+                    #[cfg(target_os = "windows")]
+                    let programs = crate::utilities::windows::installed_programs::list_installed_programs().await;
+                    #[cfg(not(target_os = "windows"))]
+                    let programs: Vec<displays::InstalledProgram> = Vec::new();
+
+                    let response = Cmd::InstalledProgramsResponse(programs);
+                    if let Ok(payload) = encode_to_vec(&response, standard()) {
+                        let _ = tx.try_send(payload);
+                    }
+                });
+            }
+            Cmd::UninstallProgram { id, prefer_silent } => {
+                // Slice 3: walks the strategy ladder
+                // (QuietUninstallString → MSI silent rewrite →
+                // heuristic silent switch → raw command) inside
+                // `run_uninstall`, then ships the result back so
+                // the viewer can refresh / show status.
+                log::info!("websockets -> Uninstalling program id={id} prefer_silent={prefer_silent}");
+                let tx = self.command_tx.clone();
+                spawn(async move {
+                    #[cfg(target_os = "windows")]
+                    let result = {
+                        // Re-enumerate to find the requested row.
+                        // The admin only sends us the registry
+                        // subkey id; we own the full registry row
+                        // here. Doing this lookup on the client
+                        // means the admin doesn't have to keep
+                        // stale UninstallString values in its
+                        // session state.
+                        let programs = crate::utilities::windows::installed_programs::list_installed_programs().await;
+                        match programs.iter().find(|p| p.id == id) {
+                            Some(p) => {
+                                let (ok, msg) = crate::utilities::windows::installed_programs::run_uninstall(p, prefer_silent).await;
+                                Cmd::UninstallProgramResult { id: id.clone(), success: ok, message: msg }
+                            }
+                            None => Cmd::UninstallProgramResult {
+                                id: id.clone(),
+                                success: false,
+                                message: format!("No installed-program row with id={id}"),
+                            },
+                        }
+                    };
+                    #[cfg(not(target_os = "windows"))]
+                    let result = Cmd::UninstallProgramResult {
+                        id: id.clone(),
+                        success: false,
+                        message: "Uninstall is Windows-only".to_string(),
+                    };
+
+                    if let Ok(payload) = encode_to_vec(&result, standard()) {
+                        let _ = tx.try_send(payload);
+                    }
+                });
+            }
+            Cmd::GatherSecurityInventory => {
+                // Slice 2 of the AV-data refactor: admin asked us to
+                // enumerate installed security products. We hand the
+                // job to the dedicated gatherer in
+                // `utilities::windows::antivirus::gather_security_inventory`
+                // (WMI SecurityCenter2 + registry uninstall join) and
+                // ship the structured list straight back — the admin
+                // upserts it onto the linked `computer` row.
+                log::info!("websockets -> Gathering security inventory");
+                let tx = self.command_tx.clone();
+                spawn(async move {
+                    #[cfg(target_os = "windows")]
+                    let products = crate::utilities::windows::antivirus::gather_security_inventory().await;
+                    #[cfg(not(target_os = "windows"))]
+                    let products: Vec<database::schema::InstalledSecurityProduct> = Vec::new();
+
+                    let response = Cmd::SecurityInventoryResponse(products);
+                    if let Ok(payload) = encode_to_vec(&response, standard()) {
+                        let _ = tx.try_send(payload);
+                    }
+                });
+            }
             Cmd::ListServices => {
                 log::info!("websockets -> Listing services");
                 let tx = self.command_tx.clone();

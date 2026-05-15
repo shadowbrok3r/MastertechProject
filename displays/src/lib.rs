@@ -67,6 +67,42 @@ static GLOBAL_USERS_CHANNEL: Lazy<(Sender<Vec<User>>, Receiver<Vec<User>>)> = La
 /// Global channel for toast messages from async contexts
 static GLOBAL_TOAST_CHANNEL: Lazy<(Sender<ToastMessage>, Receiver<ToastMessage>)> = Lazy::new(|| crossbeam::channel::unbounded());
 
+/// Global channel for the slice-2 "security inventory arrived from a
+/// connected client" event. The producer is the per-session
+/// `WebSocketClient::receive` handler matching
+/// `Cmd::SecurityInventoryResponse`; the consumer is
+/// `AdminConsole::receive` which (a) caches the inventory by
+/// `connection_string` for the expanded client-row body to render
+/// without a DB round-trip, and (b) upserts it onto the linked
+/// `computer` row's `current_antivirus` field so it survives session
+/// teardown.
+///
+/// Going through a global Lazy channel keeps this slice's surface
+/// area tight: no `WebSocketClient::new` signature change, no extra
+/// field plumbed through `client_action::handle_action`, just the
+/// same shape used by `GLOBAL_TOAST_CHANNEL`.
+static GLOBAL_SECURITY_INVENTORY_CHANNEL: Lazy<(
+    Sender<SecurityInventoryEvent>,
+    Receiver<SecurityInventoryEvent>,
+)> = Lazy::new(|| crossbeam::channel::unbounded());
+
+/// Payload pushed on [`GLOBAL_SECURITY_INVENTORY_CHANNEL`] — pairs
+/// the source `connection_string` (so the admin knows which row to
+/// update) with the freshly-gathered inventory.
+#[derive(Debug, Clone)]
+pub struct SecurityInventoryEvent {
+    pub connection_string: String,
+    pub products: Vec<database::schema::InstalledSecurityProduct>,
+}
+
+pub fn get_security_inventory_sender() -> Sender<SecurityInventoryEvent> {
+    GLOBAL_SECURITY_INVENTORY_CHANNEL.0.clone()
+}
+
+pub fn get_security_inventory_receiver() -> Receiver<SecurityInventoryEvent> {
+    GLOBAL_SECURITY_INVENTORY_CHANNEL.1.clone()
+}
+
 pub fn get_users_channel_sender() -> Sender<Vec<User>> {
     GLOBAL_USERS_CHANNEL.0.clone()
 }
@@ -293,7 +329,13 @@ pub enum Cmd {
     LiveData,
     TaskManager,
     FileSystemAction(FileSystemAction),
-    UninstallProgram(String),
+    // (The legacy `UninstallProgram(String)` tuple variant lived
+    // here but was never handled — only a commented-out
+    // `todo!()` in `terminal_mode`. The new struct variant
+    // `UninstallProgram { id, prefer_silent }` is defined below
+    // alongside `ListInstalledPrograms` / `InstalledProgramsResponse` /
+    // `UninstallProgramResult` so all of the slice-3 wire shapes
+    // are grouped together.)
     PullKeys(String),
     PullTicket(String),
     InteractiveInput(String),
@@ -369,6 +411,45 @@ pub enum Cmd {
     RegistryBackupResponse { success: bool, backup_path: String, message: String },
     CommitRegistryEdits(Vec<RegistryEdit>),
     RegistryEditResponse { success: bool, message: String },
+
+    // --- Security inventory (slice 2 of the AV-data refactor) ---
+    /// Ask the remote client to enumerate its installed security
+    /// products (antivirus / antispyware / EDR) via WMI
+    /// `SecurityCenter2`, backstopped by a registry uninstall walk
+    /// for missing version/publisher fields. Sent from the admin
+    /// console on `ConnectClient`; the response gets upserted onto
+    /// the client's linked `computer` row's `current_antivirus`
+    /// field.
+    GatherSecurityInventory,
+    /// Response payload from the remote client carrying the
+    /// gathered list. Uses the `InstalledSecurityProduct` struct
+    /// (re-exported from `database::schema::computer`) directly so
+    /// the admin can `DATABASE.update(...)` it onto the `computer`
+    /// row without any field-by-field copying.
+    SecurityInventoryResponse(Vec<database::schema::InstalledSecurityProduct>),
+
+    // --- Installed Programs (slice 3 of the connected-client refactor) ---
+    /// Enumerate every installed program from the registry's
+    /// `Uninstall` subtrees (HKLM, HKLM\WOW6432Node, HKCU). Used
+    /// by the admin's Installed Programs viewer.
+    ListInstalledPrograms,
+    InstalledProgramsResponse(Vec<InstalledProgram>),
+    /// Uninstall the program identified by its registry subkey
+    /// name. When `prefer_silent` is true the client tries (in
+    /// order) the publisher's `QuietUninstallString`, an
+    /// MSI-rewrite to `MsiExec.exe /X{guid} /qn`, or a heuristic
+    /// silent-switch append (`/S` for NSIS, `/SILENT /NORESTART`
+    /// for InnoSetup). If none of those work it falls through to
+    /// the raw `UninstallString` — which usually pops the GUI
+    /// uninstaller on the remote. The result includes whichever
+    /// strategy was tried so the operator can see what
+    /// happened.
+    UninstallProgram { id: String, prefer_silent: bool },
+    UninstallProgramResult {
+        id: String,
+        success: bool,
+        message: String,
+    },
 
     // --- Startup Apps ---
     ListStartupApps,
@@ -463,6 +544,50 @@ pub struct EventLogEntry {
     pub source: String,
     pub event_id: u32,
     pub message: String,
+}
+
+/// One installed-program entry surfaced by the slice-3 Installed
+/// Programs viewer. Built on the client side from a registry walk
+/// of HKLM, HKLM\Wow6432Node, and HKCU's `Uninstall` subtrees.
+///
+/// The `id` field is the registry subkey *name* (e.g.
+/// `"{C2C7E2E6-…}"` for MSI products or `"OBS-Studio"` for ad-hoc
+/// installers) — that's the only stable identifier we have for
+/// the uninstall round-trip, since `DisplayName` can be edited
+/// post-install and isn't unique across `WOW6432Node` /
+/// `LOCAL_MACHINE` collisions.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InstalledProgram {
+    /// Registry subkey name — the canonical id we pass back as
+    /// the argument to `Cmd::UninstallProgram`.
+    pub id: String,
+    /// `DisplayName` value, or the subkey name as a fallback.
+    pub name: String,
+    /// `DisplayVersion` if the publisher set one.
+    pub version: Option<String>,
+    /// `Publisher` value.
+    pub publisher: Option<String>,
+    /// `InstallDate` formatted as `YYYYMMDD` (Windows convention).
+    pub install_date: Option<String>,
+    /// `EstimatedSize` in KiB if the publisher reported it.
+    pub estimated_size_kb: Option<u64>,
+    /// `UninstallString` — the raw command line the publisher
+    /// registered for uninstalling the product. May or may not be
+    /// silent. Used as the fallback when `quiet_uninstall_string`
+    /// is missing and we can't synthesize a silent variant from
+    /// it.
+    pub uninstall_string: Option<String>,
+    /// `QuietUninstallString` — when present, this is the
+    /// publisher's pre-built no-UI uninstall command. Preferred
+    /// when the admin requested `prefer_silent: true`.
+    pub quiet_uninstall_string: Option<String>,
+    /// Where the row was found, so the admin UI can show e.g.
+    /// `"HKCU"` to distinguish per-user installs from system-wide.
+    pub registry_hive: String,
+    /// `true` if this row sits under a `WOW6432Node` path (i.e.
+    /// is a 32-bit product on a 64-bit host). Lets the viewer
+    /// surface that distinction in a column.
+    pub is_wow6432: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

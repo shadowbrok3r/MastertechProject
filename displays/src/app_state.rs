@@ -193,6 +193,14 @@ pub struct SharedContext {
     pub refresh: bool,
     #[serde(skip)]
     pub timer: Option<web_time::Instant>,
+    /// Most recent toast text and when it was shown. Used by the toast
+    /// consumer in `ui_data::mod` to suppress back-to-back identical
+    /// messages (e.g. the admin_transport retry loop firing a "TCP
+    /// connect failed" toast every 3 seconds). The window is short — a
+    /// genuinely repeating problem will re-toast once the previous
+    /// notification has faded.
+    #[serde(skip)]
+    pub last_toast: Option<(String, web_time::Instant)>,
     #[serde(skip)]
     pub filesystem: FileSystem,
     #[serde(skip)]
@@ -274,6 +282,36 @@ pub struct SharedContext {
     /// `Some` while the popup is open; `None` when closed.
     #[serde(skip)]
     pub client_diagnostics_popup: Option<String>,
+    /// Diagnostic sessions fetched for the currently-open client popup.
+    /// Cleared and refilled whenever `client_diagnostics_popup` flips to a
+    /// new connection_string.
+    #[serde(skip)]
+    pub client_diagnostics_sessions: Vec<crate::modals::tabs::DiagnosticSessionView>,
+    /// Whether the background SurrealDB fetch is still in flight.
+    #[serde(skip)]
+    pub client_diagnostics_loading: bool,
+    /// Which connection_string the current `client_diagnostics_sessions`
+    /// belongs to. Used to detect when the popup target changed and we
+    /// need to refetch. `None` means "no fetch has been kicked off
+    /// yet" — distinct from "fetched but got zero sessions back."
+    #[serde(skip)]
+    pub client_diagnostics_loaded_for: Option<String>,
+    /// Last error from the diagnostics fetch, surfaced in the popup body.
+    #[serde(skip)]
+    pub client_diagnostics_error: Option<String>,
+    /// Async background loaders post `DiagnosticSessionView`s here; the
+    /// `receive_shared_ui` pump drains the channel into
+    /// `client_diagnostics_sessions` each frame, same pattern the Task
+    /// Modal already uses.
+    #[serde(skip)]
+    pub client_diagnostics_tx: Sender<crate::modals::tabs::DiagnosticSessionView>,
+    #[serde(skip)]
+    pub client_diagnostics_rx: Receiver<crate::modals::tabs::DiagnosticSessionView>,
+    /// Selection state inside the popup (matches the `selected: &mut
+    /// Option<RecordId>` parameter that
+    /// `display_diagnostics_page` expects).
+    #[serde(skip)]
+    pub client_diagnostics_selected: Option<RecordId>,
     /// Cached fleet agent list from the orchestrator, displayed in the
     /// Fleet Dashboard tab for warehouse employees.  Updated by a background
     /// HTTP poller; `None` until the orchestrator URL is configured.
@@ -298,6 +336,8 @@ impl SharedContext {
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (read_state_tx, read_state_rx) = channel::unbounded::<Vec<TaskNoteRead>>();
+        let (client_diagnostics_tx, client_diagnostics_rx) =
+            channel::unbounded::<crate::modals::tabs::DiagnosticSessionView>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
@@ -392,6 +432,7 @@ impl SharedContext {
             show_tasks_viewport: HashMap::new(),
             refresh: false,
             timer: None,
+            last_toast: None,
             filesystem,
             web_console_layout,
             web_console: WebConsole::new(),
@@ -415,6 +456,13 @@ impl SharedContext {
             read_state_tx, read_state_rx,
             pending_admin_console_focus: None,
             client_diagnostics_popup: None,
+            client_diagnostics_sessions: Vec::new(),
+            client_diagnostics_loading: false,
+            client_diagnostics_loaded_for: None,
+            client_diagnostics_error: None,
+            client_diagnostics_tx,
+            client_diagnostics_rx,
+            client_diagnostics_selected: None,
             fleet_agents: None,
             orchestrator_url: String::new(),
         }

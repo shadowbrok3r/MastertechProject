@@ -227,6 +227,27 @@ impl DiagnosticSession {
         Ok(sessions)
     }
 
+    /// Fetch every diagnostic session that's been recorded against a
+    /// specific `connection_string`. Used by the Admin Console's
+    /// per-client "Diagnostics" popup (the button on the My Tasks
+    /// connected-client card), which only knows the connection string
+    /// — not the task or computer id — when the user opens it.
+    ///
+    /// Returns up to 50 sessions, newest first.
+    pub async fn list_for_connection(
+        connection_string: &str,
+    ) -> anyhow::Result<Vec<Self>> {
+        let sql = "SELECT * FROM diagnostic_session \
+                   WHERE connection_string == $cs \
+                   ORDER BY started_at DESC LIMIT 50";
+        let sessions: Vec<Self> = DATABASE
+            .query(sql)
+            .bind(("cs", connection_string.to_string()))
+            .await?
+            .take(0)?;
+        Ok(sessions)
+    }
+
     /// Fetch all diagnostic sessions linked to a task (via `task_ref`) or to
     /// the same `computer_id` the task references. Used by the task modal's
     /// Diagnostics tab to show every prior diagnosis for this machine.

@@ -196,7 +196,52 @@ async fn main() -> eframe::Result<()> {
                 .help("Continue running scripts based on where we left off")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            clap::Arg::new("mcp-stdio")
+                .long("mcp-stdio")
+                .help("Run only the plugin MCP server over stdin/stdout (for Claude Desktop). Skips the GUI entirely; logs go to stderr.")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
+
+    // ── --mcp-stdio: headless single-session MCP for Claude Desktop ────────────
+    //
+    // Must come before every other branch because:
+    //   * Claude Desktop spawns us as a child process and talks JSON-RPC on
+    //     stdio. Anything that writes to *stdout* corrupts the framing — so we
+    //     pin the logger to stderr and skip the multi_log/egui_logger setup.
+    //   * eframe / the GUI mode auto-spawns the TCP :9003 and HTTP :9004 plugin
+    //     MCP servers from inside `logic()`. Re-spawning them here would cause
+    //     a `bind: address in use` if a GUI instance is already running, and
+    //     they're useless to Claude Desktop anyway.
+    //   * No `process::exit(0)` race with eframe's drop path.
+    if matches.get_flag("mcp-stdio") {
+        let _ = env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("info"),
+        )
+        .target(env_logger::Target::Stderr)
+        .try_init();
+
+        log::info!("Mastertech --mcp-stdio: starting plugin MCP server on stdio (no GUI)");
+
+        let (plugin_dispatcher, _plugin_cmd_rx) =
+            displays::plugins::DefaultEventDispatcher::new();
+        let plugin_manager = {
+            let mut mgr = displays::plugins::PluginManager::new();
+            mgr.set_dispatcher(plugin_dispatcher);
+            std::sync::Arc::new(std::sync::RwLock::new(mgr))
+        };
+
+        if let Err(e) =
+            displays::plugins::run_plugin_mcp_server_stdio(plugin_manager).await
+        {
+            log::error!("Plugin MCP stdio server error: {e:?}");
+            std::process::exit(1);
+        }
+        // Peer closed cleanly — exit so we release stdin/stdout handles and
+        // the parent (Claude Desktop) can clean up its child-process record.
+        std::process::exit(0);
+    }
 
     if matches.get_flag("term") {
         let _init = tui_logger::init_logger(log::LevelFilter::Info);

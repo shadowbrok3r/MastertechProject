@@ -27,6 +27,10 @@
 //! - **HTTP 9004** — [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)
 //!   at `http://127.0.0.1:9004/mcp` for Cursor and other HTTP MCP clients.
 //!   (Pointing those clients at port 9003 fails: they send HTTP, not framed JSON-RPC bytes.)
+//! - **stdio** — single-session MCP over the process's stdin/stdout (`run_plugin_mcp_server_stdio`).
+//!   Designed for Claude Desktop and other launcher-based clients that spawn the server as a
+//!   child process and speak JSON-RPC on its stdio. **Only safe when the global logger writes
+//!   to stderr** — any byte that lands on stdout corrupts the JSON-RPC framing.
 //!
 //!   **Session lifecycle:** After `initialize`, the client must POST `notifications/initialized`
 //!   on the same `Mcp-Session-Id` before `tools/call` or other requests. Skipping that leaves the
@@ -2900,6 +2904,75 @@ pub async fn run_plugin_mcp_server(manager: Arc<RwLock<PluginManager>>) -> anyho
                         }
                     }
                     Err(e) => log::error!("Plugin MCP: failed to serve {client_addr}: {e:?}"),
+                }
+            }
+        }
+    }
+}
+
+// ─── stdio server ──────────────────────────────────────────────────────────────
+
+/// Start the plugin MCP server on the process's stdin/stdout.
+///
+/// Intended for Claude Desktop and other launcher-based MCP clients that spawn
+/// the server as a child process and pipe JSON-RPC over its stdio. Unlike the
+/// TCP/HTTP variants, stdio is a single in-process pipe — one session per
+/// process — so when the peer closes its end this function returns.
+///
+/// # Stdout must stay clean
+///
+/// The MCP framing on this transport rides directly on stdout. **The global
+/// logger must write to stderr** (env_logger's default), and nothing else in
+/// the process may `println!` / write to stdout while this function is
+/// running. A single stray byte on stdout will desync the client.
+///
+/// Because of that constraint, callers usually gate this behind a CLI flag
+/// (e.g. `--mcp-stdio`) and skip the GUI/eframe path entirely when the flag
+/// is present.
+pub async fn run_plugin_mcp_server_stdio(manager: Arc<RwLock<PluginManager>>) -> anyhow::Result<()> {
+    if let Err(e) = database::schema::define_bucket("plugins", "memory").await {
+        log::warn!("Failed to define 'plugins' bucket (non-fatal): {e}");
+    } else {
+        log::info!("SurrealDB 'plugins' bucket initialized");
+    }
+
+    ensure_script_run_drainer_spawned();
+
+    log::info!("Plugin MCP Server attaching to stdio (single session)");
+
+    let provider = PluginToolProvider::new(manager);
+    // `transport-async-rw` is already enabled; the (Stdin, Stdout) tuple
+    // implements rmcp's IntoTransport via its AsyncRead/AsyncWrite impls, so
+    // we don't need to pull in the `transport-io` feature just for the
+    // `rmcp::transport::stdio()` helper.
+    let transport = (tokio::io::stdin(), tokio::io::stdout());
+
+    tokio::select! {
+        biased;
+        _ = crate::wait_for_shutdown() => {
+            log::info!("Plugin MCP stdio -> shutdown signaled; exiting");
+            Ok(())
+        }
+        served = rmcp::serve_server(provider, transport) => {
+            match served {
+                Ok(handle) => {
+                    if let Err(e) = handle.waiting().await {
+                        let msg = e.to_string();
+                        if msg.contains("connection closed")
+                            || msg.contains("Connection reset")
+                            || msg.contains("broken pipe")
+                        {
+                            log::info!("Plugin MCP stdio peer disconnected.");
+                        } else {
+                            log::error!("Plugin MCP stdio session error: {e:?}");
+                            return Err(e.into());
+                        }
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!("Plugin MCP stdio: failed to serve session: {e:?}");
+                    Err(e.into())
                 }
             }
         }

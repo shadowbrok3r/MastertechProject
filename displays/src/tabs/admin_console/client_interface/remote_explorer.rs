@@ -11,9 +11,9 @@
 //! - Context menu with download, copy to tools, delete options
 
 use eframe::egui::{
-    self, Align, CentralPanel, Color32, Frame, Key, KeyboardShortcut, Layout, Margin,
-    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui,
-    Vec2, CornerRadius, scroll_area, Widget
+    self, Align, Align2, CentralPanel, Color32, FontId, Frame, Key, KeyboardShortcut, Layout,
+    Margin, Response, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, Vec2, CornerRadius,
+    scroll_area, Widget,
 };
 use crossbeam::channel::{Sender, Receiver};
 use egui_data_table::{
@@ -31,6 +31,53 @@ pub struct FolderShortcut {
     pub name: String,
     pub icon: &'static str,
     pub path: String,
+}
+
+/// Full-width, **left-aligned** selectable row for the explorer's side
+/// panels.
+///
+/// egui's [`Button`] and the deprecated `SelectableLabel` both center
+/// their text inside the allocated rect with no public way to override
+/// horizontal alignment. That makes them wrong for a Windows-style file
+/// pane, where every entry's text needs to start at the left edge so the
+/// eye can scan a vertical column of filenames without tracking past
+/// centered whitespace.
+///
+/// This helper allocates an exact `[width, height]` rect, paints the
+/// hover/selected background from the current style's
+/// `interact_selectable` visuals, and draws the label at
+/// `Align2::LEFT_CENTER` with an 8 px left inset. The returned
+/// [`Response`] behaves like any other clickable widget — supports
+/// `clicked()` / `double_clicked()` / `context_menu(...)` / `on_hover_*`.
+fn sidebar_row(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    selected: bool,
+    label: impl Into<String>,
+) -> Response {
+    let label = label.into();
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+
+    let visuals = ui.style().interact_selectable(&response, selected);
+
+    // Only paint a background when there's something to indicate — keeps
+    // the resting state of the panel clean.
+    if selected || response.hovered() {
+        ui.painter()
+            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+    }
+
+    let text_pos = rect.left_center() + Vec2::new(8.0, 0.0);
+    ui.painter().text(
+        text_pos,
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        visuals.text_color(),
+    );
+
+    response
 }
 
 /// Tool entry from My Tools (SurrealDB bucket)
@@ -667,119 +714,181 @@ impl RemoteExplorer {
     }
     
     fn display_top_panel(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
+        // Windows File Explorer toolbar layout:
+        //
+        //   [⬆][🏠][⟲]   <path input fills remainder>           [View ▾]
+        //
+        // Navigation is a tight three-button group at the left (no
+        // separator between them — Windows Explorer doesn't either).
+        // The three sidebar/preview toggles used to sit between the nav
+        // buttons and the path bar; they've moved into the right-aligned
+        // **View** menu so the toolbar reads as a single intent (where
+        // to go, what to see) instead of a jumble of selectable_labels.
+        //
+        // Uniform button size: each nav button is a square `NAV_BTN_W ×
+        // NAV_BTN_W`, matching Explorer's chrome.
+        const NAV_BTN_W: f32 = 28.0;
+
         eframe::egui::Panel::top("RemoteExplorerTop")
             .frame(Frame::default().outer_margin(Margin::symmetric(5, 2)))
-            .exact_size(35.)
+            .exact_size(36.)
             .show_inside(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    // Navigation buttons
-                    if ui.button(RichText::new("⬆").heading())
-                        .on_hover_text("Parent Folder")
-                        .clicked() 
+                    // Up — parent directory.
+                    if ui
+                        .add_sized(
+                            [NAV_BTN_W, NAV_BTN_W],
+                            egui::Button::new(RichText::new("⬆").size(16.0)),
+                        )
+                        .on_hover_text("Up to parent folder (Alt+Up)")
+                        .clicked()
                     {
                         self.navigate_up(cmd_tx);
                     }
-                    
-                    if ui.button(RichText::new("🏠").heading())
+
+                    // Home — back to the remote machine's current dir.
+                    // The BMP house glyph U+2302 (⌂) sounded safe but
+                    // isn't in the loaded proportional font and rendered
+                    // as a missing-glyph box. The supplementary-plane
+                    // 🏠 emoji *is* covered by egui's bundled fallback,
+                    // so we use it directly — same as the original.
+                    if ui
+                        .add_sized(
+                            [NAV_BTN_W, NAV_BTN_W],
+                            egui::Button::new(RichText::new("🏠").size(16.0)),
+                        )
                         .on_hover_text("Home")
-                        .clicked() 
+                        .clicked()
                     {
                         self.navigate_to("current".to_string(), cmd_tx);
                     }
-                    
-                    if ui.button(RichText::new("⟲").heading())
-                        .on_hover_text("Refresh")
-                        .clicked() 
+
+                    // Refresh.
+                    if ui
+                        .add_sized(
+                            [NAV_BTN_W, NAV_BTN_W],
+                            egui::Button::new(RichText::new("⟲").size(16.0)),
+                        )
+                        .on_hover_text("Refresh (F5)")
+                        .clicked()
                     {
                         self.refresh(cmd_tx);
                     }
-                    
-                    // Toggle buttons for sidebars
-                    ui.separator();
-                    
-                    if ui.selectable_label(self.sidebar_visible, "📁")
-                        .on_hover_text("Toggle Navigation Sidebar")
-                        .clicked()
-                    {
-                        self.sidebar_visible = !self.sidebar_visible;
-                    }
-                    
-                    if ui.selectable_label(self.tools_sidebar_visible, "🧰")
-                        .on_hover_text("Toggle My Tools")
-                        .clicked()
-                    {
-                        self.tools_sidebar_visible = !self.tools_sidebar_visible;
-                    }
-                    
-                    if ui.selectable_label(self.preview_visible, "👁")
-                        .on_hover_text("Toggle Preview Pane")
-                        .clicked()
-                    {
-                        self.preview_visible = !self.preview_visible;
-                    }
-                    
-                    ui.add_space(10.);
-                    
-                    // Path input
+
+                    // Path input — fills the remaining space between the
+                    // nav group on the left and the View menu pinned to
+                    // the right edge. We reserve ~90 px for the View
+                    // button at the right so the TextEdit doesn't shove
+                    // it off-screen on narrow windows.
+                    const VIEW_BTN_RESERVED: f32 = 90.0;
+                    let path_width = (ui.available_width() - VIEW_BTN_RESERVED).max(120.0);
                     let pre_modified_path = self.path_input.clone();
-                    let response = ui.add(TextEdit::singleline(&mut self.path_input)
-                        .desired_width(ui.available_width() - 10.)
-                        .hint_text("Enter path..."));
-                    
+                    let response = ui.add(
+                        TextEdit::singleline(&mut self.path_input)
+                            .desired_width(path_width)
+                            .hint_text("Enter path..."),
+                    );
                     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                         if self.path_input != pre_modified_path {
                             self.navigate_to(self.path_input.clone(), cmd_tx);
                         }
                     }
+
+                    // View menu — pane toggles, right-aligned.
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.menu_button(RichText::new("View ▾"), |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new("Navigation sidebar")
+                                        .selected(self.sidebar_visible),
+                                )
+                                .clicked()
+                            {
+                                self.sidebar_visible = !self.sidebar_visible;
+                                ui.close();
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new("My Tools sidebar")
+                                        .selected(self.tools_sidebar_visible),
+                                )
+                                .clicked()
+                            {
+                                self.tools_sidebar_visible = !self.tools_sidebar_visible;
+                                ui.close();
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new("Preview pane")
+                                        .selected(self.preview_visible),
+                                )
+                                .clicked()
+                            {
+                                self.preview_visible = !self.preview_visible;
+                                ui.close();
+                            }
+                        });
+                    });
                 });
             });
     }
     
     fn display_left_sidebar(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>, stroke: Stroke, radius: CornerRadius) {
+        // Sidebar entries (drives and quick-access shortcuts) used to
+        // be plain `selectable_label` calls, which size to their text and
+        // produced a ragged left column. Every entry is now sized to the
+        // sidebar's full width with the same row height so the panel
+        // reads as a uniform list — Windows Explorer's navigation pane
+        // behavior.
+        const ENTRY_H: f32 = 24.0;
+
         let sidebar_frame = Frame::default()
             .fill(Color32::from_rgb(20, 20, 24))
             .inner_margin(Margin::same(8))
             .corner_radius(radius)
             .stroke(stroke);
-        
+
         eframe::egui::Panel::left("RemoteExplorerSidebar")
             .frame(sidebar_frame)
             .resizable(true)
-            .default_size(150.)
-            .min_size(120.)
-            .max_size(250.)
+            .default_size(160.)
+            .min_size(140.)
+            .max_size(260.)
             .show_inside(ui, |ui| {
                 let mut navigate_to_path: Option<String> = None;
-                
+
                 ScrollArea::vertical().show(ui, |ui| {
-                    // Drives section
-                    if !self.drives.is_empty() {
-                        ui.label(RichText::new("💾 Drives").strong().color(Color32::LIGHT_GRAY));
-                        ui.add_space(4.);
-                        
-                        for drive in &self.drives {
-                            let label = format!("💿 {}", drive);
-                            if ui.selectable_label(false, label).clicked() {
-                                navigate_to_path = Some(drive.clone());
-                            }
-                        }
-                        
-                        ui.add_space(12.);
-                    }
-                    
-                    // Quick access shortcuts
+                    let entry_w = ui.available_width();
+
+                    // Quick access first — matches Windows File Explorer's
+                    // navigation-pane ordering. ⭐ is BMP (U+2B50) and
+                    // renders in the default proportional font.
                     ui.label(RichText::new("⭐ Quick Access").strong().color(Color32::LIGHT_GRAY));
                     ui.add_space(4.);
-                    
+
                     for shortcut in &self.shortcuts {
                         let label = format!("{} {}", shortcut.icon, shortcut.name);
-                        if ui.selectable_label(false, label).clicked() {
+                        if sidebar_row(ui, entry_w, ENTRY_H, false, label).clicked() {
                             navigate_to_path = Some(shortcut.path.clone());
                         }
                     }
+
+                    if !self.drives.is_empty() {
+                        ui.add_space(12.);
+                        // Plain "Drives" header (no supplementary-plane
+                        // emoji prefix that may fall back to a missing-
+                        // glyph box).
+                        ui.label(RichText::new("Drives").strong().color(Color32::LIGHT_GRAY));
+                        ui.add_space(4.);
+
+                        for drive in &self.drives {
+                            if sidebar_row(ui, entry_w, ENTRY_H, false, drive.clone()).clicked() {
+                                navigate_to_path = Some(drive.clone());
+                            }
+                        }
+                    }
                 });
-                
-                // Apply navigation after borrow ends
+
                 if let Some(path) = navigate_to_path {
                     self.navigate_to(path, cmd_tx);
                 }
@@ -808,12 +917,26 @@ impl RemoteExplorer {
                 // Tools list section (top half when preview is shown)
                 let tools_height = if has_preview { total_height * 0.4 } else { total_height };
                 
+                // Per-tool-row height — kept uniform with the left
+                // sidebar's `ENTRY_H` so both side panels feel like the
+                // same widget family.
+                const TOOL_ENTRY_H: f32 = 24.0;
+
                 ui.allocate_ui_with_layout(
                     Vec2::new(ui.available_width(), tools_height),
                     Layout::top_down(Align::LEFT),
                     |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("🧰 My Tools").strong().color(Color32::from_rgb(200, 180, 255)));
+                            // Plain "My Tools" text — the previous 🧰
+                            // toolbox emoji (U+1F9F0) is in the
+                            // supplementary plane and isn't covered by
+                            // egui's bundled emoji fallback font, so it
+                            // rendered as a missing-glyph box.
+                            ui.label(
+                                RichText::new("My Tools")
+                                    .strong()
+                                    .color(Color32::from_rgb(200, 180, 255)),
+                            );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui.small_button("⟲").on_hover_text("Refresh").clicked() {
                                     self.refresh_tools_async();
@@ -824,7 +947,7 @@ impl RemoteExplorer {
                             });
                         });
                         ui.separator();
-                        
+
                         if self.tools_loading {
                             ui.spinner();
                             ui.label("Loading tools...");
@@ -835,40 +958,45 @@ impl RemoteExplorer {
                         } else {
                             let mut copy_to_client: Option<usize> = None;
                             let mut delete_tool: Option<usize> = None;
-                            
+
                             ScrollArea::vertical()
                                 .id_salt("my_tools_scroll")
                                 .max_height(tools_height - 40.)
                                 .show(ui, |ui| {
+                                let entry_w = ui.available_width();
                                 for (idx, tool) in self.my_tools.iter().enumerate() {
                                     let is_selected = self.selected_tool_idx == Some(idx);
-                                    let icon = if tool.is_text { "📜" } else { "📦" };
+                                    // 📜 / 📦 are supplementary-plane
+                                    // emoji too — swap to BMP markers so
+                                    // every entry reliably gets an icon
+                                    // (◈ = text doc, ◆ = binary blob).
+                                    let icon = if tool.is_text { "◈" } else { "◆" };
                                     let label = format!("{} {}", icon, tool.name);
-                                    
-                                    let response = ui.selectable_label(is_selected, label);
-                                    
+
+                                    let response =
+                                        sidebar_row(ui, entry_w, TOOL_ENTRY_H, is_selected, label);
                                     response.clone().on_hover_text(format!("{} bytes", tool.size));
-                                    
+
                                     if response.clicked() {
                                         self.selected_tool_idx = Some(idx);
                                     }
-                                    
+
                                     // Double-click to copy to client
                                     if response.double_clicked() {
                                         copy_to_client = Some(idx);
                                     }
-                                    
+
                                     response.context_menu(|ui| {
                                         ui.set_min_width(180.0);
-                                        
-                                        if ui.button("📤 Copy to Client").clicked() {
+
+                                        if ui.button("Copy to Client").clicked() {
                                             copy_to_client = Some(idx);
                                             ui.close();
                                         }
-                                        
+
                                         ui.separator();
-                                        
-                                        if ui.button("🗑 Delete from My Tools").clicked() {
+
+                                        if ui.button("Delete from My Tools").clicked() {
                                             delete_tool = Some(idx);
                                             ui.close();
                                         }

@@ -25,7 +25,7 @@ impl SharedContext {
                     // For Update action, only notify if connection state actually changed
                     // For Delete action, always notify (client removed)
                     match action {
-                        Action::Create => true,
+                        Action::Create => false,
                         Action::Update => {
                             // Check if this client's connection state changed
                             let old_connected = self.clients.iter()
@@ -35,7 +35,7 @@ impl SharedContext {
                             // Only notify if connected state actually changed
                             old_connected != Some(new_client.connected)
                         }
-                        Action::Delete => true,
+                        Action::Delete => false,
                     }
                 } else {
                     false
@@ -70,7 +70,7 @@ impl SharedContext {
                 
                 let toast_opts = ToastOptions::default()
                     .show_progress(true)
-                    .duration_in_seconds(5.0);
+                    .duration_in_seconds(2.0);
 
                 let client_toast = Toast {
                     kind,

@@ -75,6 +75,18 @@ pub struct AdminConsole {
     /// connected-client cards to show an "AI active" badge.
     #[serde(skip)]
     pub active_diagnostic_sessions: HashMap<String, String>,
+    /// In-memory cache of the latest security inventory we received
+    /// from each connected client (slice 2 of the AV refactor).
+    /// Keyed by `connection_string`. Populated by the
+    /// `Cmd::SecurityInventoryResponse` handler on the admin side
+    /// every time a session is opened and the client replies. Also
+    /// persisted to the linked `computer` row's `current_antivirus`
+    /// field via a `DATABASE.query("UPDATE …")`, so a later session
+    /// on a different admin still sees the data; the in-memory copy
+    /// just lets the expanded client-row body render without a DB
+    /// round trip per frame.
+    #[serde(skip)]
+    pub security_inventory: HashMap<String, Vec<database::schema::InstalledSecurityProduct>>,
     pub error: String,
     script_editor: ScriptEditor,
     pub ai_playground: EnhancedAiPlayground,
@@ -102,6 +114,7 @@ impl AdminConsole {
             filesystem: FileSystem::new(),
             ws_clients: Default::default(),
             active_diagnostic_sessions: Default::default(),
+            security_inventory: Default::default(),
             ui_actions_channel,
             error: Default::default(),
             state: Default::default(),
@@ -121,6 +134,68 @@ impl AdminConsole {
         self.filesystem.receive();
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             self.handle_action(action);
+            ctx.request_repaint();
+        }
+
+        // Slice 2 of the AV-data refactor: drain any
+        // `SecurityInventoryResponse`s the per-session
+        // `WebSocketClient` pumped through the global channel. We do
+        // two things per event: (1) cache the in-memory copy so the
+        // expanded client-row body renders without hitting the DB,
+        // and (2) fire-and-forget upsert it onto the linked
+        // `computer` row's `current_antivirus` field so the data
+        // outlives the admin session.
+        let inv_rx = crate::get_security_inventory_receiver();
+        while let Ok(event) = inv_rx.try_recv() {
+            log::info!(
+                "AdminConsole::receive -> caching security inventory for {} ({} products)",
+                event.connection_string,
+                event.products.len(),
+            );
+            self.security_inventory
+                .insert(event.connection_string.clone(), event.products.clone());
+
+            // Find the linked computer record (if any) and upsert.
+            // Doing the lookup via the cached `clients` list is
+            // cheaper than a DB round-trip per response.
+            let computer_id = self
+                .clients
+                .iter()
+                .find(|c| c.connection_string == event.connection_string)
+                .and_then(|c| c.computer.clone());
+
+            if let Some(id) = computer_id {
+                let products = event.products.clone();
+                let cs = event.connection_string.clone();
+                crate::PlatformSpawner::spawn(async move {
+                    // Use a raw UPDATE so we touch only this one
+                    // field — avoids reading the whole ComputerData,
+                    // mutating, and re-upserting (which is racy if
+                    // anything else writes the row concurrently).
+                    let res: Result<_, surrealdb::Error> = database::DATABASE
+                        .query("UPDATE $id SET current_antivirus = $products")
+                        .bind(("id", id))
+                        .bind(("products", products))
+                        .await;
+                    match res {
+                        Ok(_) => log::info!(
+                            "Persisted security inventory for {cs} to computer row"
+                        ),
+                        Err(e) => log::error!(
+                            "Failed to persist security inventory for {cs}: {e}"
+                        ),
+                    }
+                });
+            } else {
+                // No linked computer — the data still lives in the
+                // in-memory cache so the row can render, just won't
+                // survive this session. Common for freshly checked-in
+                // machines that haven't been linked yet.
+                log::debug!(
+                    "AdminConsole::receive -> no linked computer for {}; inventory is in-memory only",
+                    event.connection_string,
+                );
+            }
             ctx.request_repaint();
         }
 
@@ -146,6 +221,40 @@ impl AdminConsole {
 impl SharedContext {
     pub fn admin_console(&mut self, ui: &mut Ui){
         self.web_console_layout.receive(ui.ctx());
+
+        // Drain `pending_admin_console_focus`, set by clicking
+        // "Open Console" on a My Tasks client card. The action handler
+        // in `receive_ui_action.rs` only used to flip
+        // `pending_activate_tab` to "Admin Console" — actually opening
+        // the session on the named client was never wired through, so
+        // the user landed here with nothing focused. We now:
+        //
+        //   1. If there's already an open `ws_clients` entry, just
+        //      flip `focused_client` (avoids re-dialing).
+        //   2. Otherwise look the full `ConnectedClient` up by
+        //      connection_string and dispatch `ConnectClient` so the
+        //      transport actually connects.
+        //   3. If the lookup misses (the live-data feed hasn't
+        //      populated `clients` yet on this frame), re-store the
+        //      pending value so the next frame retries.
+        if let Some(cs) = self.pending_admin_console_focus.take() {
+            if self.web_console_layout.ws_clients.contains_key(&cs) {
+                self.web_console_layout.focused_client = Some(cs);
+            } else if let Some(client) = self
+                .web_console_layout
+                .clients
+                .iter()
+                .find(|c| c.connection_string == cs)
+                .cloned()
+            {
+                self.web_console_layout
+                    .handle_action(ClientUiAction::ConnectClient(client));
+            } else {
+                // Client list isn't ready yet — wait one frame.
+                self.pending_admin_console_focus = Some(cs);
+            }
+        }
+
         let inner_margin = Margin::same(3);
         let outer_margin = Margin::same(0);
         let stroke = Stroke::new(0.7, Color32::from_additive_luminance(150));
@@ -201,10 +310,70 @@ impl SharedContext {
                 if Button::new("🎮 AI Playground")
                     .min_size(Vec2::new(95.0, 15.0))
                     .ui(ui)
-                    .clicked() 
+                    .clicked()
                 {
                     self.web_console_layout.state = WebConsolePageState::AiPlayground;
                 }
+
+                // ── Active-client breadcrumb ────────────────────────────
+                //
+                // Until now operators had to remember which client they
+                // last clicked on to know what the Admin Console's
+                // central panel was talking to. We surface the focused
+                // client's friendly_name + connection_string next to the
+                // tab buttons so it's always at a glance.
+                //
+                // The breadcrumb is right-aligned in the remaining space
+                // so it sits visually opposite the "Show Clients" toggle
+                // on the left edge.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if let Some(focused) = self.web_console_layout.focused_client.as_deref() {
+                        let lookup = self
+                            .web_console_layout
+                            .clients
+                            .iter()
+                            .find(|c| c.connection_string == focused);
+                        let (name, conn) = match lookup {
+                            Some(c) => (
+                                c.friendly_name.clone().unwrap_or_else(|| "(unnamed)".into()),
+                                c.connection_string.clone(),
+                            ),
+                            None => ("(unknown)".to_string(), focused.to_string()),
+                        };
+
+                        // Render right-to-left, so push them in reverse
+                        // visual order: connection_string first → name →
+                        // label.
+                        ui.label(
+                            egui::RichText::new(conn)
+                                .small()
+                                .color(Color32::from_rgb(160, 160, 180)),
+                        );
+                        ui.label(
+                            egui::RichText::new(" · ")
+                                .small()
+                                .color(Color32::DARK_GRAY),
+                        );
+                        ui.label(
+                            egui::RichText::new(name)
+                                .small()
+                                .strong()
+                                .color(Color32::from_rgb(51, 255, 189)),
+                        );
+                        ui.label(
+                            egui::RichText::new("Active:")
+                                .small()
+                                .color(Color32::GRAY),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("No active client")
+                                .small()
+                                .italics()
+                                .color(Color32::DARK_GRAY),
+                        );
+                    }
+                });
             });
         });
 
@@ -265,8 +434,6 @@ impl SharedContext {
                     })
                     .collect();
 
-                let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
-                let total_rows = visible_indices.len();
                 if visible_indices.is_empty() {
                     ui.label(
                         egui::RichText::new(
@@ -276,16 +443,18 @@ impl SharedContext {
                     );
                     ui.add_space(6.);
                 }
+                // Rows can grow/shrink as the user expands a client's
+                // collapsing header, so we can't use `show_rows` (which
+                // assumes a uniform row height for virtualization). The
+                // visible-indices filter already trims to a handful of
+                // active clients, so a non-virtualized `show` is fine.
                 ScrollArea::vertical()
                     .max_height(f32::INFINITY)
                     .max_width(f32::INFINITY)
-                    .show_rows(ui, row_height, total_rows, |ui, row_range| 
+                    .show(ui, |ui|
                 {
-                    for row in row_range {
+                    for &index in &visible_indices {
                         ui.add_space(4.);
-                        let Some(&index) = visible_indices.get(row) else {
-                            continue;
-                        };
                         if let Some(client) = clients.get(index) {
                             // Check if we have an active WebSocket connection with confirmed remote client activity
                             // Green requires both: master connected AND client actively responding
@@ -302,6 +471,10 @@ impl SharedContext {
                         })
                         .unwrap_or(false);
                             
+                            let inventory = ws_client
+                                .security_inventory
+                                .get(&client.connection_string)
+                                .map(|v| v.as_slice());
                             AdminConsole::client_header(
                                 ui,
                                 ws_client.ui_actions_channel.0.clone(),
@@ -309,6 +482,7 @@ impl SharedContext {
                                 ws_client.session_layout.clone(),
                                 ws_client.focused_client.as_deref(),
                                 is_ws_connected,
+                                inventory,
                             );
                         }
                     }
