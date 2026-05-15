@@ -8,6 +8,7 @@ use remote_explorer::RemoteExplorer;
 use event_log_viewer::EventLogViewer;
 use services_viewer::ServicesViewer;
 use task_scheduler_viewer::TaskSchedulerViewer;
+use installed_programs_viewer::InstalledProgramsViewer;
 use registry_editor::RegistryEditor;
 use startup_apps_viewer::StartupAppsViewer;
 use remote_scripts_viewer::RemoteScriptsViewer;
@@ -33,6 +34,7 @@ pub mod remote_explorer;
 pub mod event_log_viewer;
 pub mod services_viewer;
 pub mod task_scheduler_viewer;
+pub mod installed_programs_viewer;
 pub mod registry_editor;
 pub mod startup_apps_viewer;
 pub mod remote_scripts_viewer;
@@ -139,6 +141,8 @@ pub struct WebSocketClient {
     pub event_log_viewer: EventLogViewer,
     pub services_viewer: ServicesViewer,
     pub task_scheduler_viewer: TaskSchedulerViewer,
+    /// Slice 3: Installed Programs view + uninstall round-trip.
+    pub installed_programs_viewer: InstalledProgramsViewer,
     pub registry_editor: RegistryEditor,
     pub startup_apps_viewer: StartupAppsViewer,
     pub remote_scripts_viewer: RemoteScriptsViewer,
@@ -292,6 +296,7 @@ Get-WmiObject")
             event_log_viewer: EventLogViewer::new(),
             services_viewer: ServicesViewer::new(),
             task_scheduler_viewer: TaskSchedulerViewer::new(),
+            installed_programs_viewer: InstalledProgramsViewer::new(),
             registry_editor: RegistryEditor::new(),
             startup_apps_viewer: StartupAppsViewer::new(),
             remote_scripts_viewer: RemoteScriptsViewer::new(),

@@ -1,4 +1,4 @@
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, TaskNotePayload, TaskNoteRead, User, CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User, CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::Style;
@@ -240,6 +240,14 @@ impl crate::app_state::SharedContext {
         self.receive_extracted_specs();
         self.filesystem.receive();
         
+        // Deduplicate back-to-back identical toasts within a short
+        // window. Without this, a repeating signal like the
+        // admin_transport reconnect loop (one toast every 3 s) buries
+        // the toast stack and the user has to dismiss the same message
+        // dozens of times. The window is intentionally short — a real
+        // recurring problem will surface again once the previous toast
+        // has had time to be read.
+        const DEDUP_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
         let toast_rx = get_toast_receiver();
         while let Ok(msg) = toast_rx.try_recv() {
             let (kind, text) = match msg {
@@ -248,12 +256,29 @@ impl crate::app_state::SharedContext {
                 ToastMessage::Warning(text) => (ToastKind::Warning, text),
                 ToastMessage::Info(text) => (ToastKind::Info, text),
             };
+
+            let now = web_time::Instant::now();
+            let is_dup = self
+                .last_toast
+                .as_ref()
+                .is_some_and(|(prev_text, ts)| prev_text == &text && now.duration_since(*ts) < DEDUP_WINDOW);
+            if is_dup {
+                // Skip — but still bump the timestamp so a burst of
+                // identical retries gets fully collapsed rather than
+                // re-firing every DEDUP_WINDOW.
+                if let Some(entry) = self.last_toast.as_mut() {
+                    entry.1 = now;
+                }
+                continue;
+            }
+            self.last_toast = Some((text.clone(), now));
+
             self.toasts.add(Toast {
                 kind,
                 text: text.into(),
                 options: ToastOptions::default()
                     .show_progress(true)
-                    .duration_in_seconds(6.0),
+                    .duration_in_seconds(3.0),
                 style: ToastStyle::default(),
             });
         }
@@ -295,7 +320,122 @@ impl crate::app_state::SharedContext {
         self.admin_notification_ui(ctx);
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
+        self.client_diagnostics_popup_ui(ctx);
         self.toasts.show(ctx);
+    }
+
+    /// Per-frame pump + renderer for the connected-client diagnostics
+    /// popup (the popup the "🔬 Diagnostics" button on a My Tasks card
+    /// triggers).
+    ///
+    /// Flow:
+    ///   1. Drain any `DiagnosticSessionView`s posted by the
+    ///      background loader.
+    ///   2. If the popup target changed since we last fetched, clear
+    ///      state and spawn a fresh `list_for_connection` query.
+    ///   3. If the popup is open, render an `egui::Window` that reuses
+    ///      the same `display_diagnostics_page` widget the Task Modal
+    ///      already uses — so the user sees identical layout
+    ///      regardless of where they opened diagnostics from.
+    fn client_diagnostics_popup_ui(&mut self, ctx: &eframe::egui::Context) {
+        // 1. Drain incoming sessions.
+        while let Ok(view) = self.client_diagnostics_rx.try_recv() {
+            self.client_diagnostics_sessions.push(view);
+        }
+
+        // Take a copy of the target so we can mutate state below without
+        // borrow conflicts.
+        let Some(target) = self.client_diagnostics_popup.clone() else {
+            return;
+        };
+
+        // 2. If the popup target changed, kick off a refetch.
+        let needs_load = match &self.client_diagnostics_loaded_for {
+            Some(prev) if prev == &target => false,
+            _ => true,
+        };
+        if needs_load {
+            self.client_diagnostics_sessions.clear();
+            self.client_diagnostics_error = None;
+            self.client_diagnostics_selected = None;
+            self.client_diagnostics_loading = true;
+            self.client_diagnostics_loaded_for = Some(target.clone());
+
+            let tx = self.client_diagnostics_tx.clone();
+            let cs = target.clone();
+            crate::PlatformSpawner::spawn(async move {
+                match database::schema::DiagnosticSession::list_for_connection(&cs).await {
+                    Ok(sessions) => {
+                        for s in sessions {
+                            // Re-fetch the full session each time to get
+                            // the entries — `list_for_connection`
+                            // returns the bare session rows.
+                            let entries = match database::schema::DiagnosticSession::get_full(
+                                &s.id.key_string(),
+                            )
+                            .await
+                            {
+                                Ok(Some(full)) => full.entries,
+                                _ => Vec::new(),
+                            };
+                            let _ = tx.try_send(crate::modals::tabs::DiagnosticSessionView {
+                                session: s,
+                                entries,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("client_diagnostics_popup: load failed for {cs}: {e:?}");
+                    }
+                }
+            });
+        }
+
+        // 3. Render the popup. Mark loading complete once the channel
+        // has at least drained once and is empty — there's no explicit
+        // "done" signal so we treat "no new items pending" as done. A
+        // future iteration could send a sentinel.
+        if self.client_diagnostics_loading
+            && self.client_diagnostics_rx.is_empty()
+            && !self.client_diagnostics_sessions.is_empty()
+        {
+            self.client_diagnostics_loading = false;
+        }
+
+        let mut still_open = true;
+        eframe::egui::Window::new(format!("Diagnostics — {target}"))
+            .id(eframe::egui::Id::new(("client_diagnostics_popup", &target)))
+            .open(&mut still_open)
+            .resizable(true)
+            .collapsible(false)
+            .default_size([720.0, 560.0])
+            .min_width(480.0)
+            .show(ctx, |ui| {
+                let avail = ui.available_size();
+                crate::modals::tabs::display_diagnostics_page(
+                    ui,
+                    avail,
+                    &self.client_diagnostics_sessions,
+                    self.client_diagnostics_loading,
+                    self.client_diagnostics_error.as_deref(),
+                    &mut self.client_diagnostics_selected,
+                    // The Admin Console popup has no associated ticket,
+                    // so check-in notes are empty here — the widget
+                    // already renders a placeholder when they are.
+                    "",
+                );
+            });
+
+        if !still_open {
+            // User closed the window; reset everything so reopening
+            // refetches cleanly.
+            self.client_diagnostics_popup = None;
+            self.client_diagnostics_loaded_for = None;
+            self.client_diagnostics_sessions.clear();
+            self.client_diagnostics_loading = false;
+            self.client_diagnostics_error = None;
+            self.client_diagnostics_selected = None;
+        }
     }
 }
 

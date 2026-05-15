@@ -228,12 +228,22 @@ async fn run_tcp_session(
             Ok(Err(e)) => {
                 log::warn!("admin_transport -> connect to {target_addr} failed: {e}; retrying in {RETRY_INTERVAL:?}");
                 let _ = in_tx.send(WsEvent::Error(format!("TCP connect failed: {e} (retrying…)")));
+                // Surface as a toast so the operator sees the failure
+                // even when their attention is on a different tab.
+                // Dedup at the consumer side will collapse the 3-second
+                // retry storm into a single visible toast.
+                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                    format!("Admin TCP connect to {target_addr} failed: {e}"),
+                ));
                 tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
             Err(_) => {
                 log::warn!("admin_transport -> connect to {target_addr} timed out; retrying in {RETRY_INTERVAL:?}");
                 let _ = in_tx.send(WsEvent::Error(format!("TCP connect timed out (retrying…)")));
+                let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
+                    format!("Admin TCP connect to {target_addr} timed out (retrying…)"),
+                ));
                 tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }

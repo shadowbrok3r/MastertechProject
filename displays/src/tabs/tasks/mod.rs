@@ -136,7 +136,7 @@ impl SharedContext {
         // When searching, render the best-matching page's layout ephemerally in this tab
         if self.search_results.is_some() {
             // Helper to build the map for a target page and return (map, ordered_keys, total_count)
-            let mut build_for_page = |target_page: &str| -> (BTreeMap<String, Vec<LiveTaskPayload>>, Vec<String>, usize) {
+            let build_for_page = |target_page: &str| -> (BTreeMap<String, Vec<LiveTaskPayload>>, Vec<String>, usize) {
                 let mut target_map = BTreeMap::new();
                 let mut target_ordered_keys = Vec::new();
                 if target_page == "My Tasks" {

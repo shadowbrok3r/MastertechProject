@@ -426,7 +426,24 @@ fn TaskModal(props: TaskModalProps) -> Element {
                         div { class: "mt-2",
                             div { class: "text-stardust font-semibold", "Antivirus" }
                             ul { class: "list-disc ml-4 text-moonlight",
-                                for av in c.current_antivirus.iter() { li { {av.clone()} } }
+                                // `current_antivirus` was `Vec<String>`,
+                                // now `Vec<InstalledSecurityProduct>`.
+                                // Mobile UI keeps it terse — just the
+                                // name, optionally with version and an
+                                // Active / Disabled indicator.
+                                for product in c.current_antivirus.iter() {
+                                    li {
+                                        {match product.version.as_deref() {
+                                            Some(v) => format!("{} {}", product.name, v),
+                                            None => product.name.clone(),
+                                        }}
+                                        {match product.active {
+                                            Some(true) => " (Active)",
+                                            Some(false) => " (Disabled)",
+                                            None => "",
+                                        }}
+                                    }
+                                }
                             }
                         }
                     }

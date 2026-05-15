@@ -4,7 +4,7 @@ use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::c
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
-use database::schema::RecordId;
+use database::schema::{RecordId, RecordIdExt};
 use serde::Deserialize;
 use serde::Serialize;
 use chrono::Utc;
@@ -44,6 +44,14 @@ pub struct TaskLayout{
     /// `SharedContext` so newly connected clients appear immediately.
     #[serde(skip)]
     pub client_cards: Vec<ClientCardData>,
+    /// Free-text filter applied to the connected-clients column.
+    /// Matches case-insensitively against `connection_string`,
+    /// `friendly_name`, and the resolved assigned-user name. Kept on
+    /// `TaskLayout` (rather than per-page state in `SharedContext`) so
+    /// every page that shows a connected-clients column carries its
+    /// own filter independently.
+    #[serde(skip)]
+    pub client_filter: String,
 }
 
 /// Sentinel `column_order` key that means "render the connected-clients
@@ -125,7 +133,43 @@ impl TaskLayout {
             has_run: false,
             last_read_notes: HashMap::new(),
             client_cards: Vec::new(),
+            client_filter: String::new(),
         }
+    }
+
+    /// Case-insensitive substring match against the three identifying
+    /// fields of a connected-client card. Returns `true` when the
+    /// filter is empty so the unfiltered list is the default.
+    fn client_card_matches_filter(card: &ClientCardData, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let q = query.to_lowercase();
+
+        if card.client.connection_string.to_lowercase().contains(&q) {
+            return true;
+        }
+        if let Some(fname) = card.client.friendly_name.as_deref() {
+            if fname.to_lowercase().contains(&q) {
+                return true;
+            }
+        }
+        // Resolve the assigned tech's display name once per card —
+        // matches by username, not the raw RecordId, since that's what
+        // the operator sees on screen.
+        if let Some(ref user_id) = card.client.assigned_user {
+            let users = crate::get_database_users();
+            if let Some(name) = users
+                .iter()
+                .find(|u| u.get_id().key_string() == user_id.key_string())
+                .map(|u| u.get_name().to_string())
+            {
+                if name.to_lowercase().contains(&q) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn receive(&mut self) {
@@ -286,20 +330,59 @@ impl TaskLayout {
                         if self.client_cards.is_empty() {
                             continue;
                         }
+
+                        // Pre-compute the visible-after-filter list so
+                        // both the header count and the card iteration
+                        // see the same set. Cloning indices (cheap)
+                        // avoids re-running the case-insensitive
+                        // substring + user-name lookup twice.
+                        let filter_query = self.client_filter.clone();
+                        let visible_cards: Vec<&ClientCardData> = self
+                            .client_cards
+                            .iter()
+                            .filter(|c| Self::client_card_matches_filter(c, &filter_query))
+                            .collect();
+                        let total = self.client_cards.len();
+                        let shown = visible_cards.len();
+
                         ui.vertical(|col_ui| {
                             let content_w = Self::COL_W - 4.0;
                             header_frame.show(col_ui, |hui| {
                                 hui.set_min_width(content_w);
                                 hui.set_max_width(content_w);
-                                hui.horizontal(|hui| {
-                                    hui.label(
-                                        RichText::new(format!(
-                                            "🖥 Connected Clients ({})",
-                                            self.client_cards.len()
-                                        ))
-                                        .color(style.visuals.warn_fg_color)
-                                        .strong(),
-                                    );
+                                hui.vertical(|hui| {
+                                    hui.horizontal(|hui| {
+                                        let label_text = if filter_query.is_empty() {
+                                            format!("🖥 Connected Clients ({total})")
+                                        } else {
+                                            format!("🖥 Connected Clients ({shown}/{total})")
+                                        };
+                                        hui.label(
+                                            RichText::new(label_text)
+                                                .color(style.visuals.warn_fg_color)
+                                                .strong(),
+                                        );
+                                    });
+                                    // Filter input: matches against
+                                    // connection_string / friendly_name
+                                    // / assigned tech. Width is locked
+                                    // to the header content so it lines
+                                    // up with the cards below.
+                                    hui.horizontal(|hui| {
+                                        let resp = hui.add(
+                                            eframe::egui::TextEdit::singleline(&mut self.client_filter)
+                                                .desired_width(content_w - 36.0)
+                                                .hint_text("Filter by name, connection, tech…"),
+                                        );
+                                        if !self.client_filter.is_empty()
+                                            && hui.small_button("✖")
+                                                .on_hover_text("Clear filter")
+                                                .clicked()
+                                        {
+                                            self.client_filter.clear();
+                                            resp.surrender_focus();
+                                        }
+                                    });
                                 });
                             });
                             column_frame.show(col_ui, |fui| {
@@ -310,7 +393,16 @@ impl TaskLayout {
                                     .max_height(viewport_h - Self::HEADER_H)
                                     .auto_shrink([false; 2])
                                     .show(fui, |sui| {
-                                        for card in &self.client_cards {
+                                        if visible_cards.is_empty() {
+                                            sui.add_space(8.0);
+                                            sui.label(
+                                                RichText::new("No clients match your filter.")
+                                                    .italics()
+                                                    .weak(),
+                                            );
+                                            return;
+                                        }
+                                        for card in &visible_cards {
                                             card.display_client_card(sui, &ui_actions_tx);
                                             sui.add_space(6.0);
                                         }

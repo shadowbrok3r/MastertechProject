@@ -477,6 +477,54 @@ impl WebSocketClient {
                         if success && !self.registry_editor.selected_key.is_empty() {
                             let _ = self.send_cmd_tx.try_send(Cmd::ListRegistryKeys(self.registry_editor.selected_key.clone()));
                         }
+                    } else if let Cmd::InstalledProgramsResponse(programs) = cmd {
+                        // Slice 3: client finished its registry
+                        // walk and shipped the list. Drop it into
+                        // the viewer's `entries` so the
+                        // egui_data_table re-renders.
+                        log::info!(
+                            "Received {} installed programs for {}",
+                            programs.len(),
+                            self.client.connection_string,
+                        );
+                        self.installed_programs_viewer.set_entries(programs);
+                    } else if let Cmd::UninstallProgramResult { id, success, message } = cmd {
+                        // Slice 3: uninstall returned. Always
+                        // surface the result in the viewer's
+                        // status row so the admin sees which
+                        // strategy fired (or why nothing
+                        // happened). On success we re-fetch the
+                        // program list so the row disappears.
+                        log::info!(
+                            "Uninstall result for {id} on {}: success={success} {message}",
+                            self.client.connection_string,
+                        );
+                        self.installed_programs_viewer.set_action_result(id, success, message);
+                        if success {
+                            self.installed_programs_viewer.loading = true;
+                            let _ = self.send_cmd_tx.try_send(Cmd::ListInstalledPrograms);
+                        }
+                    } else if let Cmd::SecurityInventoryResponse(products) = cmd {
+                        // Slice 2 of the AV refactor: the remote
+                        // client finished its WMI + registry walk
+                        // and shipped us the structured list. Push
+                        // it through the global channel — the
+                        // `AdminConsole::receive` loop drains the
+                        // channel, caches by connection_string for
+                        // the row's expanded body to render, and
+                        // upserts the `computer` row so the data
+                        // survives this session.
+                        log::info!(
+                            "Received security inventory for {} ({} products)",
+                            self.client.connection_string,
+                            products.len(),
+                        );
+                        let _ = crate::get_security_inventory_sender().try_send(
+                            crate::SecurityInventoryEvent {
+                                connection_string: self.client.connection_string.clone(),
+                                products,
+                            },
+                        );
                     } else if let Cmd::StartupAppsResponse(apps) = cmd {
                         log::info!("Received {} startup apps", apps.len());
                         self.startup_apps_viewer.set_entries(apps);

@@ -106,6 +106,10 @@ impl MasterTechApp{
                         })
                         .unwrap_or(false);
 
+                    let inventory = layout
+                        .security_inventory
+                        .get(&client.connection_string)
+                        .map(|v| v.as_slice());
                     ui.horizontal(|ui| {
                         AdminConsole::client_header(
                             ui,
@@ -114,6 +118,7 @@ impl MasterTechApp{
                             layout.session_layout.clone(),
                             layout.focused_client.as_deref(),
                             is_ws_connected,
+                            inventory,
                         );
                     });
                     if let Some(ws_client) = layout.ws_clients.get_mut(&client.connection_string) {

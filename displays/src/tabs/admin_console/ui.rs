@@ -1,4 +1,7 @@
-use eframe::egui::{text::LayoutJob, Align, Button, Color32, FontFamily, FontId, Frame, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText};
+use eframe::egui::{
+    collapsing_header::CollapsingState, text::LayoutJob, Align, Button, Color32, FontFamily,
+    FontId, Frame, Grid, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText,
+};
 use database::schema::{ConnectedClient, RecordIdExt};
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
@@ -15,6 +18,12 @@ use super::{AdminConsole, WebConsolePageState};
 /// is conservative; the client heartbeats every ~30 s so anything older than
 /// that is either crashed or unreachable.
 const STALE_THRESHOLD_SECS: i64 = 300;
+
+/// Uniform row height for the buttons inside a client row. All action
+/// buttons and the name button are sized to this so the row is visually
+/// rectangular regardless of glyph metrics.
+const ROW_BTN_H: f32 = 30.0;
+const ROW_BTN_W: f32 = 30.0;
 
 /// Returns `true` if the client's `last_update` was within [`STALE_THRESHOLD_SECS`].
 fn recently_active(client: &ConnectedClient) -> bool {
@@ -43,7 +52,76 @@ fn connection_indicator(is_ws_connected: bool, client: &ConnectedClient) -> (Col
     }
 }
 
+/// Compose the friendly-name / connection-string text for a client into a
+/// styled `WidgetText`. Mirrors the original two-tone behaviour: friendly
+/// name in mint green, or `hostname:hash` with the hostname in mint and
+/// the hash in muted lavender.
+fn client_name_text(client: &ConnectedClient) -> WidgetText {
+    let mut job = LayoutJob::default();
+    if let Some(ref friendly_name) = client.friendly_name {
+        job.append(
+            friendly_name,
+            0.0,
+            TextFormat {
+                font_id: FontId::new(13., FontFamily::Proportional),
+                color: Color32::from_rgb(51, 255, 189),
+                valign: Align::Center,
+                ..Default::default()
+            },
+        );
+    } else if let Some((host, hash)) = client.connection_string.split_once(':') {
+        job.append(
+            &format!("{host}:"),
+            0.0,
+            TextFormat {
+                font_id: FontId::new(13., FontFamily::Proportional),
+                color: Color32::from_rgb(51, 255, 189),
+                valign: Align::Center,
+                ..Default::default()
+            },
+        );
+        job.append(
+            hash,
+            0.0,
+            TextFormat {
+                font_id: FontId::new(13., FontFamily::Proportional),
+                color: Color32::from_rgb(199, 202, 245),
+                valign: Align::Center,
+                ..Default::default()
+            },
+        );
+    } else {
+        job.append(
+            &client.connection_string,
+            0.0,
+            TextFormat {
+                font_id: FontId::new(13., FontFamily::Proportional),
+                color: Color32::from_rgb(51, 255, 189),
+                valign: Align::Center,
+                ..Default::default()
+            },
+        );
+    }
+    WidgetText::from(job)
+}
+
 impl AdminConsole {
+    /// Render a single client row in the connected-clients list.
+    ///
+    /// **Layout (always visible):** uniform-height strip of
+    /// `[chevron] [status dot] [name button (stretches)] [focus] [connect]`.
+    ///
+    /// **Layout (when expanded):** below the strip the row reveals a
+    /// details grid (connection_string, last update, customer/computer
+    /// linkage, direct-TCP, etc.) plus the secondary action buttons —
+    /// **Disconnect**, **Re-link**, **Dock / Float** — which used to be
+    /// pinned to the row at all times. Tucking them behind the chevron
+    /// keeps the collapsed row compact and prevents accidental clicks on
+    /// destructive actions (notably Disconnect).
+    ///
+    /// State persistence: the open/closed state lives in egui memory
+    /// keyed by `connection_string`, so the caller doesn't need to thread
+    /// any new state through.
     pub fn client_header(
         ui: &mut Ui,
         tx: Sender<ClientUiAction>,
@@ -51,215 +129,280 @@ impl AdminConsole {
         session_layout: HashMap<String, SessionLayout>,
         focused_client: Option<&str>,
         is_ws_connected: bool,
+        // Slice 2: latest gathered security inventory for this
+        // client, or `None` if none has arrived (yet) this session.
+        // Rendered as an extra section in the expanded body.
+        security_inventory: Option<&[database::schema::InstalledSecurityProduct]>,
     ) {
         let style = ui.style().clone();
+        let row_id = ui.make_persistent_id((
+            "admin_client_row",
+            client.connection_string.as_str(),
+        ));
+        let mut collapse = CollapsingState::load_with_default_open(ui.ctx(), row_id, false);
+
+        // Pre-compute the fields the details grid needs, so the body
+        // closure doesn't need to re-parse on every frame.
+        let parsed_date = DateTime::parse_from_rfc3339(
+            &client
+                .last_update
+                .clone()
+                .unwrap_or(Utc::now().into())
+                .to_string(),
+        )
+        .unwrap_or_default()
+        .with_timezone(&Local);
+        let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
+        let assigned_user_text = if let Some(ref user_id) = client.assigned_user {
+            let users = get_database_users();
+            users
+                .iter()
+                .find(|u| u.get_id().key_string() == user_id.key_string())
+                .map(|u| u.get_name().to_string())
+                .unwrap_or_else(|| user_id.key_string().to_string())
+        } else {
+            "(none)".to_string()
+        };
+
         Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4))
             .outer_margin(Margin::symmetric(3, 0))
             .corner_radius(eframe::egui::CornerRadius::same(5))
             .stroke(style.visuals.window_stroke)
-            .show(ui, |ui| 
-        {
-            // let ui = &mut header_frame.content_ui;
-            ui.set_height(25.);
-            ui.horizontal_top(|ui| {
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    // Green dot indicator for active connection
-                    let (indicator_color, indicator_text) = connection_indicator(is_ws_connected, client);
-                    
-                    ui.colored_label(indicator_color, indicator_text);
-                    ui.add_space(4.0);
-                    
-                    // Create a new LayoutJob
-                    let mut job = LayoutJob::default();
+            .show(ui, |ui| {
+                // ── Header row ───────────────────────────────────────────────
+                //
+                // We avoid `egui_extras::StripBuilder` here even though it
+                // has a tidy "fill remaining" cell, because its
+                // `.horizontal()` allocates from
+                // `available_rect_before_wrap()` — and inside the parent
+                // `ScrollArea::show(...)` that rect is effectively
+                // unbounded vertically. The first client row would then
+                // stretch to the full viewport height (a bug observed in
+                // the wild). A plain `ui.horizontal` sizes itself to the
+                // max of its children's heights, which is what we want.
+                //
+                // To still get a "fill remaining width" name button we
+                // compute the remaining horizontal budget manually after
+                // accounting for the right-side buttons.
+                let is_focused = focused_client == Some(client.connection_string.as_str());
+                let focus_color = if is_focused {
+                    Color32::from_rgb(51, 255, 189)
+                } else {
+                    Color32::GRAY
+                };
+                let (indicator_color, indicator_text) =
+                    connection_indicator(is_ws_connected, client);
+                let arrow = if collapse.is_open() { "⏷" } else { "⏵" };
 
-                    if let Some(friendly_name) = client.clone().friendly_name {
-                        job.append(
-                            &friendly_name,
-                            0.0,
-                            TextFormat {
-                                font_id: FontId::new(13., FontFamily::Proportional),
-                                color: Color32::from_rgb(51, 255, 189), // Set the color for the first part
-                                valign: Align::Min,
-                                ..Default::default()
-                            },
-                        );
-                    } else {
-                        let conn_string = &client.connection_string;
-                        let txt = conn_string.split_once(':');
-                        if let Some(txt) = txt {
-                            let text = format!("{}:", txt.0);
-                            job.append(
-                                &text,
-                                0.0,
-                                TextFormat {
-                                    font_id: FontId::new(13., FontFamily::Proportional),
-                                    color: Color32::from_rgb(51, 255, 189), // Set the color for the first part
-                                    valign: Align::Min,
-                                    ..Default::default()
-                                },
-                            );
-                            job.append(
-                                txt.1,
-                                0.0,
-                                TextFormat {
-                                    font_id: FontId::new(13., FontFamily::Proportional),
-                                    color: Color32::from_rgb(199, 202, 245),
-                                    valign: Align::Min,
-                                    ..Default::default()
-                                },
-                            );
-                        }
-                    };
-
-                    // Convert LayoutJob to WidgetText
-                    let formatted_text = WidgetText::from(job);
-
-                    // Pre-compute the friendly fields the rich hover panel
-                    // needs (does the same date parse + user resolve as
-                    // before, just done once and surfaced through the
-                    // panel rather than a single-line tooltip).
-                    let parsed_date = DateTime::parse_from_rfc3339(
-                        &client.last_update.clone().unwrap_or(Utc::now().into()).to_string()
-                    )
-                    .unwrap_or_default()
-                    .with_timezone(&Local);
-                    let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                    let assigned_user_text = if let Some(ref user_id) = client.assigned_user {
-                        let users = get_database_users();
-                        users.iter()
-                            .find(|u| u.get_id().key_string() == user_id.key_string())
-                            .map(|u| u.get_name().to_string())
-                            .unwrap_or_else(|| user_id.key_string().to_string())
-                    } else {
-                        "(none)".to_string()
-                    };
-
-                    // The hover panel exposes everything an admin needs
-                    // to identify the machine without opening it: raw
-                    // connection_string, friendly name, direct-TCP
-                    // address (when published), DB linkage, and a hint
-                    // pointing at the 🔗 button for the re-link flow.
-                    let client_for_hover = client.clone();
-                    let formatted_date_h = formatted_date.clone();
-                    let assigned_user_h = assigned_user_text.clone();
-                    let _ = Button::new(formatted_text)
-                        .ui(ui)
-                        .on_hover_ui(|ui| {
-                            client_hover_panel(
-                                ui,
-                                &client_for_hover,
-                                &formatted_date_h,
-                                &assigned_user_h,
-                                is_ws_connected,
-                            );
-                        });
-                });
-
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Connect/focus button — opens a session and makes this the focused client.
-                    let connect_btn = Button::new(RichText::new("⬈").strong().color(ui.style().visuals.warn_fg_color))
+                ui.horizontal(|ui| {
+                    // Chevron toggles the collapsing body.
+                    let chevron = Button::new(RichText::new(arrow).strong())
                         .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(30.0, 30.))
+                        .min_size(Vec2::new(ROW_BTN_W, ROW_BTN_H))
                         .ui(ui)
-                        .on_hover_text("Open / focus this machine");
+                        .on_hover_text(if collapse.is_open() {
+                            "Collapse client details"
+                        } else {
+                            "Expand client details & secondary actions"
+                        });
+                    if chevron.clicked() {
+                        collapse.toggle(ui);
+                    }
 
+                    // Status dot — vertically centered within the row by
+                    // wrapping in a small fixed allocation so it doesn't
+                    // ride high on the baseline next to the buttons.
+                    ui.add_sized(
+                        [16.0, ROW_BTN_H],
+                        eframe::egui::Label::new(
+                            RichText::new(indicator_text).color(indicator_color),
+                        ),
+                    );
+
+                    // Name button fills the remainder. `item_spacing.x`
+                    // appears between every child the parent
+                    // `ui.horizontal` lays out, including between the
+                    // last item before us and us, and between us and the
+                    // two right-side buttons — so reserve two gaps' worth
+                    // of spacing on top of the two button widths.
+                    let item_gap = ui.spacing().item_spacing.x;
+                    let right_strip_w = ROW_BTN_W * 2.0 + item_gap * 2.0;
+                    let name_w = (ui.available_width() - right_strip_w).max(80.0);
+
+                    let name_btn = Button::new(client_name_text(client))
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(name_w, ROW_BTN_H))
+                        .ui(ui)
+                        .on_hover_text(
+                            "Click to expand client details and secondary actions",
+                        );
+                    if name_btn.clicked() {
+                        collapse.toggle(ui);
+                    }
+
+                    // Focus — always visible: changes which client
+                    // receives commands without opening a session.
+                    let focus_btn =
+                        Button::new(RichText::new("◉").strong().color(focus_color))
+                            .fill(ui.style().visuals.window_fill)
+                            .min_size(Vec2::new(ROW_BTN_W, ROW_BTN_H))
+                            .ui(ui)
+                            .on_hover_text(if is_focused {
+                                "Focused (receives commands)"
+                            } else {
+                                "Set as focused client"
+                            });
+                    if focus_btn.clicked() {
+                        let _ = tx.try_send(ClientUiAction::FocusClient(
+                            client.connection_string.clone(),
+                        ));
+                    }
+
+                    // Connect / open — always visible: the primary
+                    // action for this row.
+                    let connect_btn = Button::new(
+                        RichText::new("⬈")
+                            .strong()
+                            .color(ui.style().visuals.warn_fg_color),
+                    )
+                    .fill(ui.style().visuals.window_fill)
+                    .min_size(Vec2::new(ROW_BTN_W, ROW_BTN_H))
+                    .ui(ui)
+                    .on_hover_text("Open / focus this machine");
                     if connect_btn.clicked() {
                         info!("Sent Connection Command");
                         let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
                     }
+                });
 
-                    // Re-link customer button.
+                // ── Expanded body ─────────────────────────────────────────────
+                if collapse.is_open() {
+                    ui.add_space(6.);
+                    ui.separator();
+                    ui.add_space(4.);
+
+                    client_details_grid(
+                        ui,
+                        client,
+                        &formatted_date,
+                        &assigned_user_text,
+                        is_ws_connected,
+                    );
+
+                    // Slice 2: security inventory section. Renders
+                    // only when we have data — operators looking at
+                    // a client that hasn't yet responded to the
+                    // GatherSecurityInventory request shouldn't see
+                    // a "Security: (empty)" placeholder either.
+                    if let Some(products) = security_inventory {
+                        if !products.is_empty() {
+                            ui.add_space(8.);
+                            ui.separator();
+                            ui.add_space(4.);
+                            ui.label(
+                                RichText::new("Security inventory")
+                                    .small()
+                                    .color(Color32::GRAY),
+                            );
+                            ui.add_space(2.);
+                            render_security_inventory(ui, products);
+                        }
+                    }
+
+                    ui.add_space(8.);
+                    ui.separator();
+                    ui.add_space(4.);
+
+                    ui.label(
+                        RichText::new("Actions")
+                            .small()
+                            .color(Color32::GRAY),
+                    );
+                    ui.add_space(2.);
+
+                    // Secondary actions: kept off the always-visible row
+                    // because they're either destructive (Disconnect),
+                    // rare (Re-link, the linkage-fix flow), or layout
+                    // tweaks (Dock/Float). Uniform sized so it reads as a
+                    // toolbar rather than ad-hoc buttons.
+                    let layout = session_layout
+                        .get(client.connection_string.as_str())
+                        .copied()
+                        .unwrap_or_default();
+                    let (float_label, float_tip) = match layout {
+                        SessionLayout::Floating => {
+                            ("🔓 Dock", "Floating (unlocked) — click to dock")
+                        }
+                        SessionLayout::Docked => {
+                            ("🔒 Float", "Docked (locked) — click to float")
+                        }
+                    };
                     let relink_color = if client.customer_locked {
                         Color32::from_rgb(120, 200, 255)
                     } else {
                         Color32::from_rgb(199, 202, 245)
                     };
-                    let relink_glyph = if client.customer_locked { "🔗" } else { "🔍" };
-                    let relink = Button::new(RichText::new(relink_glyph).strong().color(relink_color))
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(30., 30.))
-                        .ui(ui)
-                        .on_hover_text(if client.customer_locked {
-                            "Customer is locked (manually re-linked).\nClick to change linkage."
-                        } else {
-                            "Re-link to a different customer\n(used-machine-was-our-customer fix)"
-                        });
-                    if relink.clicked() {
-                        let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
-                    }
-
-                    // Float / dock toggle button.
-                    let layout = session_layout
-                        .get(client.connection_string.as_str())
-                        .copied()
-                        .unwrap_or_default();
-                    let (float_glyph, float_tip) = match layout {
-                        SessionLayout::Floating => ("⧉", "Floating — click to dock"),
-                        SessionLayout::Docked   => ("□", "Docked — click to float"),
+                    let (relink_label, relink_tip) = if client.customer_locked {
+                        (
+                            "🔗 Re-link",
+                            "Customer is locked (manually re-linked).\nClick to change linkage.",
+                        )
+                    } else {
+                        (
+                            "🔍 Re-link",
+                            "Re-link to a different customer\n(used-machine-was-our-customer fix)",
+                        )
                     };
-                    let float_btn = Button::new(RichText::new(float_glyph).strong().color(Color32::LIGHT_RED))
+
+                    ui.horizontal(|ui| {
+                        let disconnect = Button::new(
+                            RichText::new("✖ Disconnect")
+                                .strong()
+                                .color(ui.style().visuals.error_fg_color),
+                        )
                         .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(30., 30.))
+                        .min_size(Vec2::new(130., ROW_BTN_H))
+                        .ui(ui)
+                        .on_hover_text(
+                            "Disconnect this client\n\
+                             (closes the local session and removes it from the list;\n\
+                             the connected_client record stays in the database)",
+                        );
+                        if disconnect.clicked() {
+                            let _ = tx.try_send(ClientUiAction::DisconnectClient(client.clone()));
+                        }
+
+                        let relink = Button::new(
+                            RichText::new(relink_label).strong().color(relink_color),
+                        )
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(130., ROW_BTN_H))
+                        .ui(ui)
+                        .on_hover_text(relink_tip);
+                        if relink.clicked() {
+                            let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
+                        }
+
+                        let float_btn = Button::new(
+                            RichText::new(float_label).strong().color(Color32::LIGHT_RED),
+                        )
+                        .fill(ui.style().visuals.window_fill)
+                        .min_size(Vec2::new(110., ROW_BTN_H))
                         .ui(ui)
                         .on_hover_text(float_tip);
-
-                    if float_btn.clicked() {
-                        let _ = tx.try_send(ClientUiAction::ToggleClientFloat(client.connection_string.clone()));
-                    }
-
-                    // Focus button — makes this the active client for commands without changing layout.
-                    let is_focused = focused_client == Some(client.connection_string.as_str());
-                    let focus_color = if is_focused {
-                        Color32::from_rgb(51, 255, 189)
-                    } else {
-                        Color32::GRAY
-                    };
-                    let focus_btn = Button::new(RichText::new("◉").strong().color(focus_color))
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(30., 30.))
-                        .ui(ui)
-                        .on_hover_text(if is_focused { "Focused (receives commands)" } else { "Set as focused client" });
-                    if focus_btn.clicked() {
-                        let _ = tx.try_send(ClientUiAction::FocusClient(client.connection_string.clone()));
-                    }
-
-                    let button = Button::new(RichText::new("✖").strong().color(ui.style().visuals.error_fg_color))
-                        .fill(ui.style().visuals.window_fill)
-                        .min_size(Vec2::new(30., 30.))
-                        .ui(ui);
-
-                    if button.clicked() {
-                        let _ = tx.try_send(ClientUiAction::DeleteClient(client.clone()));
-                    }
-                    // ui.add_space(10.0);
-
-                    // let export =
-                    //     Button::new(RichText::new("Export").size(10.0).color(Color32::LIGHT_RED))
-                    //         .fill(Color32::TRANSPARENT)
-                    //         .min_size(Vec2::new(30.0, ui.available_height()))
-                    //         .ui(ui);
-
-                    // if export.clicked() {
-                    //     let _ = tx.try_send(ClientUiAction::ExportHistory(client.clone()));
-                    // }
-                    
-                });
+                        if float_btn.clicked() {
+                            let _ = tx.try_send(ClientUiAction::ToggleClientFloat(
+                                client.connection_string.clone(),
+                            ));
+                        }
+                    });
+                }
             });
-        });
 
-        // let response = header_frame.allocate_space(ui);
-        // if response.hovered() {
-        //     header_frame.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
-        //     header_frame.frame.shadow = style.visuals.window_shadow;
-        // } else {
-        //     header_frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
-        // }
-        // header_frame.
-        // header_frame.paint(ui);
-
+        // Persist the open/closed flip we may have made via `toggle()`.
+        collapse.store(ui.ctx());
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
@@ -288,26 +431,17 @@ impl AdminConsole {
     }
 }
 
-/// Rich hover-panel for a client button. Shows everything an admin needs
-/// to identify a machine without having to open it: raw connection
-/// string (the auto-derived hostname:hash), friendly_name (and whether
-/// it's locked), direct-TCP advertise address (when published), and the
-/// usual last-update / assigned-user / customer / computer linkages.
-///
-/// The previous tooltip was a single string with date+user; this is the
-/// place to add anything else admins keep asking for.
-fn client_hover_panel(
+/// Render the detail fields for a client in a two-column grid. This was
+/// previously a hover popup; it's now the contents of the row's
+/// collapsing body so admins can leave details pinned open while they
+/// work, copy values out of it, etc.
+fn client_details_grid(
     ui: &mut Ui,
     client: &ConnectedClient,
     formatted_date: &str,
     assigned_user: &str,
     is_ws_connected: bool,
 ) {
-    use eframe::egui::Grid;
-
-    ui.set_max_width(420.);
-
-    // Header line: friendly name (if any) + lock indicator
     if let Some(fname) = client.friendly_name.as_deref() {
         ui.horizontal(|ui| {
             ui.label(
@@ -330,7 +464,7 @@ fn client_hover_panel(
         ui.add_space(2.);
     }
 
-    Grid::new(("client_hover_panel", &client.connection_string))
+    Grid::new(("client_details_grid", &client.connection_string))
         .num_columns(2)
         .spacing(eframe::egui::Vec2::new(10., 2.))
         .show(ui, |ui| {
@@ -385,23 +519,69 @@ fn client_hover_panel(
                 row(ui, "Created", &created.to_string());
             }
         });
-
-    ui.add_space(6.);
-    ui.label(
-        RichText::new(
-            if client.customer_locked {
-                "Click 🔗 to change linkage."
-            } else {
-                "Click 🔍 to re-link to a different customer."
-            },
-        )
-        .small()
-        .color(Color32::GRAY),
-    );
 }
 
 fn row(ui: &mut Ui, key: &str, val: &str) {
     ui.label(RichText::new(key).small().color(Color32::GRAY));
     ui.label(RichText::new(val).small());
     ui.end_row();
+}
+
+/// Render the slice-2 security-inventory list inside an expanded
+/// client row. Three columns: product (name + version when known),
+/// status badge (Active / Disabled / —), source pill
+/// (SecurityCenter / Registry / Heuristic). The pill makes it
+/// obvious whether "Webroot Active" is a Windows-Security-Center
+/// fact or a registry-walk inference — operators triaging an
+/// infected machine want to know which one before they trust it.
+fn render_security_inventory(
+    ui: &mut Ui,
+    products: &[database::schema::InstalledSecurityProduct],
+) {
+    use database::schema::SecurityProductSource;
+
+    Grid::new("client_security_inventory_grid")
+        .num_columns(3)
+        .spacing(eframe::egui::Vec2::new(10., 2.))
+        .show(ui, |ui| {
+            for product in products {
+                // Column 1: name + version (+ vendor if we have it
+                // but no version, so the grid row doesn't go bare).
+                let label = match (
+                    product.version.as_deref(),
+                    product.vendor.as_deref(),
+                ) {
+                    (Some(v), _) => format!("{}  {v}", product.name),
+                    (None, Some(vendor)) => format!("{}  ({vendor})", product.name),
+                    (None, None) => product.name.clone(),
+                };
+                ui.label(RichText::new(label).small());
+
+                // Column 2: status badge.
+                let (color, text) = match product.active {
+                    Some(true) => (Color32::from_rgb(100, 200, 100), "● Active"),
+                    Some(false) => (Color32::from_rgb(255, 150, 80), "○ Disabled"),
+                    None => (Color32::GRAY, "—"),
+                };
+                ui.label(RichText::new(text).small().color(color));
+
+                // Column 3: source pill — short and color-coded so
+                // the eye can pick out "is this data trustworthy?"
+                // without reading the full word.
+                let (src_color, src_text) = match product.source {
+                    SecurityProductSource::SecurityCenter => {
+                        (Color32::from_rgb(120, 200, 255), "SecurityCenter")
+                    }
+                    SecurityProductSource::Registry => {
+                        (Color32::from_rgb(199, 202, 245), "Registry")
+                    }
+                    SecurityProductSource::Heuristic => {
+                        (Color32::from_rgb(180, 180, 180), "Heuristic")
+                    }
+                };
+                ui.label(RichText::new(src_text).small().color(src_color));
+
+                ui.end_row();
+            }
+        });
 }

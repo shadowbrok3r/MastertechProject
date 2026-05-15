@@ -148,17 +148,29 @@ pub fn display_software_page(ui: &mut Ui, computer: &mut ComputerData, avail_siz
                     .show(ui, |ui| 
                 {
                     ui.colored_label(Color32::LIGHT_RED, "Program Name");
-                    ui.label("");
+                    ui.colored_label(Color32::LIGHT_RED, "Status");
                     ui.end_row();
 
-                    for antivirus in computer.current_antivirus.iter() {
-                        ui.label(antivirus);
-                        ui.label("");
+                    // `current_antivirus` is now `Vec<InstalledSecurityProduct>`
+                    // instead of `Vec<String>`. Each row shows the
+                    // name + an "Active" / "Disabled" / "—" badge so
+                    // operators can tell at a glance whether an
+                    // installed AV is actually monitoring.
+                    for product in computer.current_antivirus.iter() {
+                        let line = match (product.version.as_deref(), product.vendor.as_deref()) {
+                            (Some(v), Some(vendor)) => format!("{} {}  ({vendor})", product.name, v),
+                            (Some(v), None) => format!("{} {}", product.name, v),
+                            (None, Some(vendor)) => format!("{}  ({vendor})", product.name),
+                            (None, None) => product.name.clone(),
+                        };
+                        ui.label(line);
+                        let (status_color, status_text) = match product.active {
+                            Some(true) => (Color32::from_rgb(100, 200, 100), "Active"),
+                            Some(false) => (Color32::from_rgb(255, 150, 80), "Disabled"),
+                            None => (Color32::GRAY, "—"),
+                        };
+                        ui.colored_label(status_color, status_text);
                         ui.end_row();
-
-                        // ui.colored_label(Color32::LIGHT_RED, "Installed Programs");
-                        // ui.label("");
-                        // ui.end_row();
                     }
                 });
             });

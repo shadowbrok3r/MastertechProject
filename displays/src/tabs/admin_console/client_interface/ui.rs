@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, Color32, Id, Layout, RichText, Ui, Widget};
+use eframe::egui::{Align, Color32, Id, Layout, RichText, Ui};
 use crate::{Cmd, EGUI_INPUT_TAG};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::plugins::remote::EguiInputEvent;
@@ -19,6 +19,8 @@ pub enum WsDisplayState {
     Registry,
     StartupApps,
     Scripts,
+    /// Slice 3: Installed Programs viewer (egui_data_table).
+    InstalledPrograms,
 }
 
 impl WebSocketClient {
@@ -26,207 +28,178 @@ impl WebSocketClient {
         self.receive(ui.ctx());
         ui.set_min_height(600.);
 
+        // ── Unified menu-button toolbar ──────────────────────────────────
+        //
+        // The old layout exposed ~15 inline buttons split across two rows
+        // (View tabs on top, System Inspection + Transfer on the bottom)
+        // plus a right-aligned cluster of OS power actions. With a wide
+        // enough window it crowded out the connection status; on narrower
+        // windows buttons wrapped messily. Now each functional group is
+        // its own MenuButton on a single row:
+        //
+        //   [View ▾] [Inspect ▾] [Transfer ▾] [Power ▾]   <current state>
+        //                                          (right-aligned status)
+        //
+        // The currently-active page is shown as a small badge after the
+        // menus so the operator can see what they're looking at without
+        // having to remember which tab they last clicked.
         eframe::egui::Panel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
-        .exact_size(60.)
-        .show_inside(ui, |ui| 
-        {
-            ui.add_space(2.);
-            // Row 1: existing tabs
+        .exact_size(38.)
+        .show_inside(ui, |ui| {
+            ui.add_space(4.);
             ui.horizontal(|ui| {
                 let btn_color = ui.style().visuals.error_fg_color;
-                if Button::new(RichText::new("My Tools").color(btn_color)).ui(ui).clicked(){
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
-                    let _ = self.toolbox.request_contents("/");
-                }
+                let sys_color = Color32::from_rgb(160, 200, 180);
+                let os_btn_color = Color32::from_rgb(180, 180, 200);
 
-                if Button::new(RichText::new("Explorer").color(btn_color)).ui(ui).clicked(){
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
-                    self.notifications = 0;
-                    if !self.interactive {
-                        let path = if self.remote_explorer.current_path.is_empty() {
-                            "current".to_string()
-                        } else {
-                            self.remote_explorer.current_path.clone()
-                        };
-                        let _ = self.send_cmd_tx.try_send(Cmd::ListDirectory(path));
-                        self.remote_explorer.loading = true;
-                        
-                        if self.remote_explorer.drives.is_empty() {
-                            let _ = self.send_cmd_tx.try_send(Cmd::GetDrives);
+                // ── View ─────────────────────────────────────────────
+                // The remote-rendered "live" views (Charts, Viewer) are
+                // stateful — they emit start/stop commands the operator
+                // needs to be able to toggle from this menu, not just
+                // open. The Stop variant only appears when the relevant
+                // stream is already running.
+                ui.menu_button(RichText::new("View ▾").color(btn_color).strong(), |ui| {
+                    if ui.button("My Tools").clicked() {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
+                        let _ = self.toolbox.request_contents("/");
+                        ui.close();
+                    }
+                    if ui.button("Explorer").clicked() {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
+                        self.notifications = 0;
+                        if !self.interactive {
+                            let path = if self.remote_explorer.current_path.is_empty() {
+                                "current".to_string()
+                            } else {
+                                self.remote_explorer.current_path.clone()
+                            };
+                            let _ = self.send_cmd_tx.try_send(Cmd::ListDirectory(path));
+                            self.remote_explorer.loading = true;
+                            if self.remote_explorer.drives.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::GetDrives);
+                            }
                         }
+                        ui.close();
                     }
-                }
-
-                if self.live_stats_active {
-                    if Button::new(RichText::new("■ Stop Charts").color(Color32::RED)).ui(ui).clicked(){
-                        let _ = self.send_cmd_tx.try_send(Cmd::Quit);
-                        self.live_stats_active = false;
+                    let notifs = if matches!(self.state, WsDisplayState::Shell) {
+                        "Shell".to_string()
+                    } else if self.notifications > 0 {
+                        format!("Shell  ({})", self.notifications)
+                    } else {
+                        "Shell".to_string()
+                    };
+                    if ui.button(notifs).clicked() {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
+                        ui.close();
                     }
-                } else {
-                    if Button::new(RichText::new("Charts").color(btn_color)).ui(ui).clicked(){
+                    ui.separator();
+                    if self.live_stats_active {
+                        if ui.button(RichText::new("■ Stop Charts").color(Color32::RED)).clicked() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::Quit);
+                            self.live_stats_active = false;
+                            ui.close();
+                        }
+                    } else if ui.button("Charts").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::LiveStats);
                         let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
                         self.live_stats_active = true;
+                        ui.close();
                     }
-                }
-
-                if self.egui_viewer_active {
-                    if Button::new(RichText::new("■ Stop Viewer").color(Color32::RED)).ui(ui).clicked(){
-                        self.egui_viewer_active = false;
-                        let cmd = Cmd::SetFrameCapture { enabled: false };
-                        let _ = self.send_cmd_tx.try_send(cmd);
-                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
-                    }
-                } else {
-                    if Button::new(RichText::new("▶ Start Viewer").color(btn_color)).ui(ui).clicked(){
+                    if self.egui_viewer_active {
+                        if ui.button(RichText::new("■ Stop Viewer").color(Color32::RED)).clicked() {
+                            self.egui_viewer_active = false;
+                            let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: false });
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
+                            ui.close();
+                        }
+                    } else if ui.button("▶ Start Viewer").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
                         self.egui_viewer_active = true;
-                        let cmd = Cmd::SetFrameCapture { enabled: true };
-                        let _ = self.send_cmd_tx.try_send(cmd);
+                        let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: true });
+                        ui.close();
                     }
-                }
-
-                let notifs = if let WsDisplayState::Shell = self.state {
-                    format!("Shell")
-                } else {
-                    if self.notifications > 0 {
-                        format!("Shell   {}", self.notifications)
-                    } else {
-                        format!("Shell")
-                    }
-                };
-
-                if Button::new(RichText::new(notifs).color(btn_color)).ui(ui).clicked(){
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
-                }
-
-                if self.interactive {
-                    if Button::new(RichText::new("Quit").color(Color32::RED)).ui(ui).clicked(){
-                        let _ = self.send_cmd_tx.try_send(Cmd::Quit);
-                    }
-                }
-
-                ui.add_space(10.);
-                
-                let (status_color, status_text, status_tooltip) = if !self.client.connected {
-                    (Color32::RED, "✖", "Disconnected")
-                } else if let Some(last_activity) = &self.client.last_update {
-                    let now = chrono::Utc::now();
-                    let activity_time = last_activity.to_utc();
-                    let elapsed_secs = (now - activity_time).num_seconds();
-                    
-                    if elapsed_secs < 30 {
-                        (Color32::GREEN, "✔", "Active")
-                    } else if elapsed_secs < 120 {
-                        (Color32::YELLOW, "⚠", "Stale")
-                    } else {
-                        (Color32::LIGHT_RED, "⏳", "Inactive")
-                    }
-                } else if self.is_connected {
-                    (Color32::from_rgb(100, 200, 100), "◯", "Connected (awaiting activity)")
-                } else {
-                    (Color32::RED, "✖", "Disconnected")
-                };
-                
-                ui.colored_label(status_color, status_text).on_hover_text(status_tooltip);
-                
-                ui.add_space(10.);
-                
-                if self.persistent_shell_mode {
-                    ui.colored_label(Color32::YELLOW, "🖳 Persistent Shell");
-                }
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let os_btn_color = Color32::from_rgb(180, 180, 200);
-                    
-                    if Button::new(RichText::new("Shutdown").color(os_btn_color).small())
-                        .ui(ui).clicked() 
-                    {
-                        let _ = self.send_cmd_tx.try_send(Cmd::ShutdownSystem);
-                    }
-                    
-                    if Button::new(RichText::new("🔄 Reboot in Terminal Mode").color(os_btn_color).small())
-                        .ui(ui).clicked() 
-                    {
-                        let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem { persist_mastertech: true, terminal_mode: true });
-                    }
-
-                    if Button::new(RichText::new("🔄 Reboot").color(os_btn_color).small())
-                        .ui(ui).clicked() 
-                    {
-                        let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem { persist_mastertech: true, terminal_mode: false });
-                    }
-                    
-                    if Button::new(RichText::new("🚪 Log Off").color(os_btn_color).small())
-                        .ui(ui).clicked() 
-                    {
-                        let _ = self.send_cmd_tx.try_send(Cmd::LogOffUser);
-                    }
-                    
-                    if Button::new(RichText::new("🔒 Lock").color(os_btn_color).small())
-                        .ui(ui).clicked() 
-                    {
-                        let _ = self.send_cmd_tx.try_send(Cmd::LockWorkstation);
+                    if self.interactive {
+                        ui.separator();
+                        if ui.button(RichText::new("Quit interactive shell").color(Color32::RED)).clicked() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::Quit);
+                            ui.close();
+                        }
                     }
                 });
-            });
 
-            // Row 2: system management tabs
-            ui.horizontal(|ui| {
-                let sys_color = Color32::from_rgb(160, 200, 180);
+                // ── Inspect ──────────────────────────────────────────
+                // Read-only system surfaces: every entry kicks off the
+                // initial list-fetch if it hasn't been loaded yet,
+                // matching the old per-button behavior.
+                ui.menu_button(
+                    RichText::new("Inspect ▾").color(sys_color).strong(),
+                    |ui| {
+                        if ui.button("Event Log").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::EventLog);
+                            if self.event_log_viewer.entries.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::ReadEventLog {
+                                    log_name: self.event_log_viewer.selected_log.clone(),
+                                    max_entries: self.event_log_viewer.max_entries,
+                                    level_filter: None,
+                                });
+                                self.event_log_viewer.loading = true;
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Services").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Services);
+                            if self.services_viewer.entries.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::ListServices);
+                                self.services_viewer.loading = true;
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Task Scheduler").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::TaskScheduler);
+                            if self.task_scheduler_viewer.entries.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::ListScheduledTasks { folder: None });
+                                self.task_scheduler_viewer.loading = true;
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Registry").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Registry);
+                            ui.close();
+                        }
+                        if ui.button("Startup Apps").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::StartupApps);
+                            if self.startup_apps_viewer.entries.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::ListStartupApps);
+                                self.startup_apps_viewer.loading = true;
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Scripts").clicked() {
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Scripts);
+                            if !(self.remote_scripts_viewer.loading || self.remote_scripts_viewer.running) {
+                                self.remote_scripts_viewer.loading = true;
+                                let _ = self.send_cmd_tx.try_send(Cmd::GetRemoteScriptList);
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Installed Programs").clicked() {
+                            // Slice 3: opens the registry-walk
+                            // viewer. Lazy-load on first open
+                            // (matches the other Inspect entries).
+                            let _ = self.display_state_channel.0.try_send(WsDisplayState::InstalledPrograms);
+                            if self.installed_programs_viewer.entries.is_empty() {
+                                self.installed_programs_viewer.loading = true;
+                                let _ = self.send_cmd_tx.try_send(Cmd::ListInstalledPrograms);
+                            }
+                            ui.close();
+                        }
+                    },
+                );
 
-                if Button::new(RichText::new("Event Log").color(sys_color).small()).ui(ui).clicked() {
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::EventLog);
-                    if self.event_log_viewer.entries.is_empty() {
-                        let _ = self.send_cmd_tx.try_send(Cmd::ReadEventLog {
-                            log_name: self.event_log_viewer.selected_log.clone(),
-                            max_entries: self.event_log_viewer.max_entries,
-                            level_filter: None,
-                        });
-                        self.event_log_viewer.loading = true;
-                    }
-                }
-
-                if Button::new(RichText::new("Services").color(sys_color).small()).ui(ui).clicked() {
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Services);
-                    if self.services_viewer.entries.is_empty() {
-                        let _ = self.send_cmd_tx.try_send(Cmd::ListServices);
-                        self.services_viewer.loading = true;
-                    }
-                }
-
-                if Button::new(RichText::new("Task Scheduler").color(sys_color).small()).ui(ui).clicked() {
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::TaskScheduler);
-                    if self.task_scheduler_viewer.entries.is_empty() {
-                        let _ = self.send_cmd_tx.try_send(Cmd::ListScheduledTasks { folder: None });
-                        self.task_scheduler_viewer.loading = true;
-                    }
-                }
-
-                if Button::new(RichText::new("Registry").color(sys_color).small()).ui(ui).clicked() {
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Registry);
-                }
-
-                if Button::new(RichText::new("Startup Apps").color(sys_color).small()).ui(ui).clicked() {
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::StartupApps);
-                    if self.startup_apps_viewer.entries.is_empty() {
-                        let _ = self.send_cmd_tx.try_send(Cmd::ListStartupApps);
-                        self.startup_apps_viewer.loading = true;
-                    }
-                }
-
-                if Button::new(RichText::new("Scripts").color(sys_color).small()).ui(ui).clicked() {
-                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Scripts);
-                    if self.remote_scripts_viewer.loading || self.remote_scripts_viewer.running {
-                        // already loading or running
-                    } else {
-                        self.remote_scripts_viewer.loading = true;
-                        let _ = self.send_cmd_tx.try_send(Cmd::GetRemoteScriptList);
-                    }
-                }
-
-                ui.add_space(10.0);
-
+                // ── Transfer ─────────────────────────────────────────
+                // While a transfer is in flight we replace the menu with
+                // a progress label so the operator can see the chunk
+                // counter without having to open the menu first.
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some((ref name, sent, total)) = self.file_transfer_progress {
                     let short = name.rsplit(['/', '\\']).next().unwrap_or(name);
@@ -235,47 +208,153 @@ impl WebSocketClient {
                         format!("Sending {short}  {sent}/{total}"),
                     );
                 } else {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if Button::new(RichText::new("Send File").color(sys_color).small()).ui(ui).clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            let path_str = path.display().to_string();
-                            let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
-                            self.file_transfer_rx = Some(rx);
-                            std::thread::spawn(move || {
-                                Self::chunk_and_send_file(&path_str, tx);
-                            });
-                        }
-                    }
-
-                    // Deploy a new MasterTech.exe to the connected remote client.
-                    // The remote will apply self_replace + relaunch automatically.
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if Button::new(
-                        RichText::new("⬆ Deploy Update")
-                            .color(Color32::from_rgb(80, 200, 255))
-                            .small(),
-                    )
-                    .ui(ui)
-                    .on_hover_text("Push a new MasterTech.exe to this remote client.\nIt will replace itself and relaunch automatically.")
-                    .clicked()
-                    {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Executable", &["exe"])
-                            .set_title("Select new MasterTech.exe to deploy")
-                            .pick_file()
-                        {
-                            let path_str = path.display().to_string();
-                            let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
-                            self.self_update_rx = Some(rx);
-                            // Reuse file_transfer_progress with a fixed label
-                            std::thread::spawn(move || {
-                                Self::chunk_and_send_self_update(&path_str, tx);
-                            });
-                        }
-                    }
+                    ui.menu_button(
+                        RichText::new("Transfer ▾").color(sys_color).strong(),
+                        |ui| {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                if ui.button("Send File…").clicked() {
+                                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                        let path_str = path.display().to_string();
+                                        let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
+                                        self.file_transfer_rx = Some(rx);
+                                        std::thread::spawn(move || {
+                                            Self::chunk_and_send_file(&path_str, tx);
+                                        });
+                                    }
+                                    ui.close();
+                                }
+                                if ui
+                                    .button(
+                                        RichText::new("⬆ Deploy MasterTech Update…")
+                                            .color(Color32::from_rgb(80, 200, 255)),
+                                    )
+                                    .on_hover_text(
+                                        "Push a new MasterTech.exe to this remote client.\nIt will replace itself and relaunch automatically.",
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("Executable", &["exe"])
+                                        .set_title("Select new MasterTech.exe to deploy")
+                                        .pick_file()
+                                    {
+                                        let path_str = path.display().to_string();
+                                        let (tx, rx) = crossbeam::channel::bounded::<Cmd>(8);
+                                        self.self_update_rx = Some(rx);
+                                        std::thread::spawn(move || {
+                                            Self::chunk_and_send_self_update(&path_str, tx);
+                                        });
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        },
+                    );
                 }
+
+                // ── Power ────────────────────────────────────────────
+                // Destructive OS-level operations. Lock is the only
+                // non-destructive entry; the others either log the user
+                // out, reboot, or shut down — order them from least to
+                // most disruptive so the destructive ones don't sit at
+                // the top of the menu.
+                ui.menu_button(
+                    RichText::new("Power ▾").color(os_btn_color).strong(),
+                    |ui| {
+                        if ui.button(RichText::new("🔒 Lock workstation").color(os_btn_color)).clicked() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::LockWorkstation);
+                            ui.close();
+                        }
+                        if ui.button(RichText::new("🚪 Log off user").color(os_btn_color)).clicked() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::LogOffUser);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button(RichText::new("🔄 Reboot").color(os_btn_color)).clicked() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem {
+                                persist_mastertech: true,
+                                terminal_mode: false,
+                            });
+                            ui.close();
+                        }
+                        if ui
+                            .button(RichText::new("🔄 Reboot into Terminal Mode").color(os_btn_color))
+                            .clicked()
+                        {
+                            let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem {
+                                persist_mastertech: true,
+                                terminal_mode: true,
+                            });
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button(RichText::new("Shutdown").color(Color32::LIGHT_RED)).clicked() {
+                            let _ = self.send_cmd_tx.try_send(Cmd::ShutdownSystem);
+                            ui.close();
+                        }
+                    },
+                );
+
+                ui.separator();
+
+                // Show which sub-page is currently active. Operators
+                // arriving back at the window after switching tabs lose
+                // their place otherwise.
+                let current_view = match self.state {
+                    WsDisplayState::LiveStats     => "Charts",
+                    WsDisplayState::Explorer      => "Explorer",
+                    WsDisplayState::Shell         => "Shell",
+                    WsDisplayState::ToolBox       => "My Tools",
+                    WsDisplayState::Terminal      => "Remote Viewer",
+                    WsDisplayState::EventLog      => "Event Log",
+                    WsDisplayState::Services      => "Services",
+                    WsDisplayState::TaskScheduler => "Task Scheduler",
+                    WsDisplayState::Registry      => "Registry",
+                    WsDisplayState::StartupApps   => "Startup Apps",
+                    WsDisplayState::Scripts       => "Scripts",
+                    WsDisplayState::InstalledPrograms => "Installed Programs",
+                };
+                ui.label(
+                    RichText::new(current_view)
+                        .color(Color32::from_rgb(200, 200, 220))
+                        .small(),
+                );
+
+                if self.persistent_shell_mode {
+                    ui.separator();
+                    ui.colored_label(Color32::YELLOW, "🖳 Persistent Shell");
+                }
+
+                // ── Right-aligned status indicator ───────────────────
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (status_color, status_text, status_tooltip) = if !self.client.connected {
+                        (Color32::RED, "✖", "Disconnected")
+                    } else if let Some(last_activity) = &self.client.last_update {
+                        let now = chrono::Utc::now();
+                        let activity_time = last_activity.to_utc();
+                        let elapsed_secs = (now - activity_time).num_seconds();
+                        if elapsed_secs < 30 {
+                            (Color32::GREEN, "✔", "Active")
+                        } else if elapsed_secs < 120 {
+                            (Color32::YELLOW, "⚠", "Stale")
+                        } else {
+                            (Color32::LIGHT_RED, "⏳", "Inactive")
+                        }
+                    } else if self.is_connected {
+                        (
+                            Color32::from_rgb(100, 200, 100),
+                            "◯",
+                            "Connected (awaiting activity)",
+                        )
+                    } else {
+                        (Color32::RED, "✖", "Disconnected")
+                    };
+
+                    ui.colored_label(status_color, status_text)
+                        .on_hover_text(status_tooltip);
+                });
             });
-            ui.add_space(2.);
         });
 
         match self.state {
@@ -409,6 +488,10 @@ impl WebSocketClient {
             WsDisplayState::Scripts => {
                 let cmd_tx = self.send_cmd_tx.clone();
                 self.remote_scripts_viewer.display(ui, &cmd_tx);
+            },
+            WsDisplayState::InstalledPrograms => {
+                let cmd_tx = self.send_cmd_tx.clone();
+                self.installed_programs_viewer.display(ui, &cmd_tx);
             },
         };
     }

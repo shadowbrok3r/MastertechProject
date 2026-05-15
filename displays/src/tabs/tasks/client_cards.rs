@@ -34,8 +34,31 @@ fn last_update_within_secs(client: &ConnectedClient, max_age_secs: i64) -> bool 
     }
 }
 
-/// Whether this client should appear in My Tasks “Connected Clients” and the
+/// Whether this client should appear in My Tasks "Connected Clients" and the
 /// Admin Console client list. Live TCP/WebSocket admin sessions always qualify.
+///
+/// **Reachability gate.** Beyond the freshness check, we now also
+/// require the client to have advertised both `local_ip` and `tcp_port`
+/// before showing it. This is the closest proxy to "we can connect"
+/// that exists in the schema today — when the remote agent successfully
+/// binds its TCP listener (firewall rule was accepted, port wasn't
+/// taken, etc.) it publishes its coordinates; failing any of that, the
+/// fields stay `None`. So a client without coords is one we *cannot*
+/// reliably reach from the Admin Console, and showing it there only
+/// produces the "TCP connect timed out (retrying…)" loop the operator
+/// has already seen too many times.
+///
+/// Caveat: this isn't proof — a misconfigured firewall could still
+/// block us even after coords are published. A true "100% certain
+/// reachable" gate needs a real handshake (admin pokes the client's
+/// TCP port, client responds; only then mark the row as reachable).
+/// That's a separate protocol change. This filter is the best
+/// approximation available today and removes the bulk of the false
+/// positives the user was hitting.
+///
+/// Once an admin session is live (`is_live_admin_transport`) the gate
+/// is bypassed unconditionally — we obviously can reach a machine
+/// we're currently connected to.
 #[must_use]
 pub fn should_show_connected_client_in_summaries(
     client: &ConnectedClient,
@@ -44,7 +67,16 @@ pub fn should_show_connected_client_in_summaries(
     if is_live_admin_transport {
         return true;
     }
-    last_update_within_secs(client, CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS)
+    if !last_update_within_secs(client, CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS) {
+        return false;
+    }
+    // Reachability proxy — see doc comment above.
+    let has_tcp_coords = client
+        .local_ip
+        .as_deref()
+        .is_some_and(|ip| !ip.is_empty())
+        && client.tcp_port.is_some();
+    has_tcp_coords
 }
 
 fn recently_active(client: &ConnectedClient) -> bool {

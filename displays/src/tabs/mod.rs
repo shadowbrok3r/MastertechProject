@@ -301,15 +301,7 @@ impl egui_dock::TabViewer for SharedContext {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {
-        // Gate sensitive tabs behind role checks before dispatching.
-        if tab == "Query Editor" {
-            let allowed = self.current_user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
-            if !allowed { return; }
-        }
-        if tab == "Fleet Dashboard" {
-            self.fleet_dashboard(ui);
-            return;
-        }
+        let is_admin = self.current_user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
         match tab.as_str() {
             "My Tasks" => self.render_layout(ui, "My Tasks"),
             "Store Tasks" => self.render_layout(ui, "Store Tasks"),
@@ -320,6 +312,7 @@ impl egui_dock::TabViewer for SharedContext {
             "Threads" => self.user_chat.ui(ui),
             "Bug Report" => self.github(ui),
             "My Tools" => self.filesystem.display(ui),
+            "Fleet Dashboard" => if is_admin { self.fleet_dashboard(ui) },
             "Logs" => crate::ui_tools::egui_logger::logger_ui()
                 .warn_color(Color32::from_rgb(94, 215, 221)) 
                 .error_color(Color32::from_rgb(255, 55, 102)) 
@@ -333,15 +326,7 @@ impl egui_dock::TabViewer for SharedContext {
             "Admin Console" => self.admin_console(ui),
             "Web Console" => self.web_console.ui(ui),
             "Database Editor" => self.database_viewer.ui(ui, self.current_user.clone()),
-            "Query Editor" => if let Some(usr) = &self.current_user {
-                if usr.is_admin() {
-                    self.query_editor.ui(ui)
-                } else {
-                    return;
-                }
-            } else {
-                return;
-            },
+            "Query Editor" => if is_admin { self.query_editor.ui(ui) },
             "KOTH" => self.koth.ui(ui),
             "Create Prestashop Order" => self.prestashop_order_form.ui(ui),
             #[cfg(not(target_arch = "wasm32"))]
@@ -377,9 +362,7 @@ impl egui_dock::TabViewer for SharedContext {
         }
     }
 
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText { tab.as_str().into() }
 
     fn on_close(&mut self, tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
         self.open_tabs.remove(tab.as_str());

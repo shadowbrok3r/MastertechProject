@@ -11,7 +11,12 @@ pub enum ClientUiAction {
     ToggleClientFloat(String),
     /// Make the given connection string the focused client (receives commands).
     FocusClient(String),
-    DeleteClient(ConnectedClient),
+    /// Close this admin's local session to the client and drop it from the
+    /// visible list. The `connected_client` row stays in the database — only
+    /// its `connected` flag flips to `false`, so the client can be re-opened
+    /// later. Renamed from the misleading `DeleteClient`: this button has
+    /// never hard-deleted the DB row, despite the old name and toast text.
+    DisconnectClient(ConnectedClient),
     ConnectClient(ConnectedClient),
     ExportHistory(ConnectedClient),
     /// Open the re-link customer popup for this client (the
@@ -38,17 +43,26 @@ impl AdminConsole {
                     self.focused_client = Some(connection_string);
                 }
             }
-            ClientUiAction::DeleteClient(mut client) => {
+            ClientUiAction::DisconnectClient(mut client) => {
+                // Drop focus first so any UI that reads `focused_client` next
+                // frame doesn't dereference a connection_string we're about
+                // to tear down.
                 if self.focused_client.as_deref() == Some(client.connection_string.as_str()) {
                     self.focused_client = None;
                 }
+                // Soft-disconnect: mark the row `connected = false` in the DB
+                // so the live-data feed filters this client out of the
+                // connected list on its next tick. The `connected_client`
+                // record itself is preserved for future reconnects — use the
+                // database-level `delete_client()` path explicitly if you
+                // really want the row gone.
                 client.disconnect_client();
                 if let Some(mut ws_client) = self.ws_clients.remove(&client.connection_string) {
                     ws_client.transport.close();
                     drop(ws_client);
                 }
                 self.session_layout.remove(&client.connection_string);
-                self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
+                self.error = format!("WebConsole -> Disconnected from {}", client.connection_string.clone());
             },
             ClientUiAction::ConnectClient(mut client) => {
                 self.open_menu = false;
@@ -136,6 +150,16 @@ impl AdminConsole {
                 // manually click the "Charts" button.
                 let _ = ws_client.send_cmd_tx.try_send(Cmd::LiveData);
                 ws_client.live_stats_active = true;
+
+                // Slice 2 trigger: kick off a one-shot security
+                // inventory gather. The client will WMI-enumerate
+                // SecurityCenter2 + walk the registry uninstall keys
+                // and reply with `Cmd::SecurityInventoryResponse`.
+                // The receive handler pushes through the global
+                // channel, where `AdminConsole::receive` caches it
+                // by connection_string AND upserts it onto the
+                // linked `computer` row.
+                let _ = ws_client.send_cmd_tx.try_send(Cmd::GatherSecurityInventory);
 
                 self.ws_clients
                     .entry(client.connection_string.clone())
