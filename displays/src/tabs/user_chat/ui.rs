@@ -51,7 +51,7 @@ impl UserChat {
             });
 
         eframe::egui::Panel::left("ChatHistoryPanel")
-            .exact_width(120.)
+            .exact_size(120.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
                     ui.add_space(10.);
@@ -111,8 +111,8 @@ impl UserChat {
 
         eframe::egui::Panel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .default_height(150.)
-            .max_height(300.)
+            .default_size(150.)
+            .max_size(300.)
             .show_inside(ui, |ui| self.chat_input(ui) );
 
         CentralPanel::default()
@@ -135,7 +135,7 @@ impl UserChat {
             |ui| {
                 ScrollArea::vertical()
                     .animated(true)
-                    .max_height(ui.available_height())
+                    .max_width(ui.available_height())
                     .max_width(f32::INFINITY)
                     .auto_shrink(false)
                     .stick_to_bottom(true)
@@ -165,7 +165,7 @@ impl UserChat {
                 ui.vertical_centered(|ui| {
                     if Button::new(RichText::new(" 🖻 ").heading())
                     .min_size(Vec2::new(ui.available_width(), 25.))
-                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                    .stroke(Stroke::new(0.8_f32, Color32::from_rgb(150, 12, 150)))
                     .ui(ui)
                     .clicked() {
                         let tx = self.chat_action_tx.clone();
@@ -181,7 +181,7 @@ impl UserChat {
 
                     if Button::new(RichText::new(" ⮫ ").heading())
                         .min_size(Vec2::new(ui.available_width(), 25.))
-                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                        .stroke(Stroke::new(0.8_f32, Color32::from_rgb(150, 12, 150)))
                         .ui(ui)
                         .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"))
                         .clicked() {
@@ -214,9 +214,9 @@ impl UserChat {
         };
 
         let msg_color = if is_message_from_myself {
-            ui.style().visuals.widgets.inactive.bg_fill
+            ui.global_style().visuals.widgets.inactive.bg_fill
         } else {
-            ui.style().visuals.widgets.active.weak_bg_fill
+            ui.global_style().visuals.widgets.active.weak_bg_fill
         };
 
         ui.with_layout(layout, |ui| {
@@ -232,7 +232,7 @@ impl UserChat {
                 sw: rounding as u8,
             };
 
-            let style = ui.style().clone();
+            let style = ui.global_style().clone();
 
             let outer_f = &mut Frame::new()
             .corner_radius(rnding)
@@ -256,8 +256,8 @@ impl UserChat {
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
                     if is_message_from_myself {
                         ui.horizontal(|ui| {
-                            let btn_txt_color = ui.style().visuals.error_fg_color;
-                            let username_txt_color = ui.style().visuals.hyperlink_color;
+                            let btn_txt_color = ui.global_style().visuals.error_fg_color;
+                            let username_txt_color = ui.global_style().visuals.hyperlink_color;
                             let from = RichText::new(self.current_user.get_username())
                                 .strong()
                                 .monospace()
@@ -328,8 +328,8 @@ impl UserChat {
                         });
                     } else {
                         ui.horizontal(|ui| {
-                            let btn_txt_color = ui.style().visuals.error_fg_color;
-                            let username_txt_color = ui.style().visuals.hyperlink_color;
+                            let btn_txt_color = ui.global_style().visuals.error_fg_color;
+                            let username_txt_color = ui.global_style().visuals.hyperlink_color;
                             let from = RichText::new(usr.get_username())
                                 .strong()
                                 .monospace()

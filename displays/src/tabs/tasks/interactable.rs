@@ -35,7 +35,7 @@ impl Interaction for LiveTaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
         ui.style_mut().override_font_id = Some(FontId::monospace(12.0));
-        // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
+        // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5_f32, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
             .desired_width(320.)
             .margin(Margin::symmetric(6, 3))
@@ -56,7 +56,7 @@ impl Interaction for LiveTaskPayload {
 
     fn interact_task_description(&mut self, ui: &mut Ui) -> Response {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-        // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+        // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0_f32, Color32::from_additive_luminance(80));
 
         let text_edit = TextEdit::multiline(&mut self.task_description)
             .desired_rows(6)
@@ -78,7 +78,7 @@ impl Interaction for LiveTaskPayload {
 
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response {
         let frame_color = date_colors(ui, self.due_date.clone().into(), self.completed);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5_f32, frame_color);
         let id = self.id.key_string();
         let mut due_date = to_jiff_date(&self.due_date);
         let date_picker = DatePickerButton::new(&mut due_date)
@@ -106,7 +106,7 @@ impl Interaction for LiveTaskPayload {
         if self.completed {
             let hover_txt = "✔";
             let color_complete = Color32::from_rgba_premultiplied(51, 255, 189, 200);
-            let stroke = Stroke::new(0.7, color_complete);
+            let stroke = Stroke::new(0.7_f32, color_complete);
             return Button::new(hover_txt)
                 .stroke(stroke)
                 .min_size(Vec2::new(25.0, 20.0))
@@ -114,7 +114,7 @@ impl Interaction for LiveTaskPayload {
         } else {
             let hover_txt = "✖";
             let color_incomplete = Color32::from_rgba_premultiplied(255, 51, 153, 200);
-            let stroke = Stroke::new(0.7, color_incomplete);
+            let stroke = Stroke::new(0.7_f32, color_incomplete);
             return Button::new(hover_txt)
                 .stroke(stroke)
                 .min_size(Vec2::new(25.0, 20.0))

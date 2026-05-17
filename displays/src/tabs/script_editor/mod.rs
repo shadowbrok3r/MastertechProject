@@ -165,7 +165,7 @@ async fn ai_generate_script_streaming(
     tx: crossbeam::channel::Sender<AiGenResult>,
 ) -> anyhow::Result<()> {
     use crate::ai::oa_client::new_oa_client;
-    use crate::openai::types::{
+    use crate::openai::types::chat::{
         CreateChatCompletionRequestArgs, ChatCompletionRequestUserMessageArgs,
         ChatCompletionRequestSystemMessageArgs,
     };

@@ -1,6 +1,6 @@
 [package]
 name = "displays"
-version = "4.7.7"
+version = "4.7.8"
 edition = "2024"
 
 [features]
@@ -8,6 +8,7 @@ default = [ "wasm" ]
 tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen-futures", "dep:web-time"]
 wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:wat"]
+puffin = []
 
 [dependencies]
 structdiff = { version = "0.7", features = ["rustc_hash"] }
@@ -37,6 +38,7 @@ surrealdb.workspace = true
 egui_dock.workspace = true
 once_cell.workspace = true
 database = { workspace=true, features = ["desktop"] }
+tcp_protocol = { workspace = true }
 web-time.workspace = true
 futures.workspace = true
 bincode.workspace = true 
@@ -49,6 +51,7 @@ serde.workspace = true
 bytes.workspace = true
 regex.workspace = true
 rfd = { workspace = true }
+async-openai = { workspace = true }
 log.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
@@ -57,7 +60,6 @@ workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tokio", "tls", "rustls_ring"]}
 tokio = { workspace = true, optional = true }
-async-openai = { workspace = true }
 ratatui = { workspace = true }
 dotenv = { version = "0.15" }
 rusty-s3 = { workspace = true }
@@ -66,13 +68,17 @@ axum = { workspace = true }
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
+# Builder-worker wire types. Only used on desktop where the admin/MCP
+# layer dispatches remote `cargo build` jobs. The plugin_builder crate
+# pulls tokio + tungstenite which don't fit a wasm bundle, so it's
+# scoped to non-wasm targets.
+plugin_builder = { path = "../plugin_builder" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", version = "0.9.3", features = ["tls", "rustls_ring"]}
 rusty-s3 = { workspace = true, features = ["wasm_bindgen"]}
 wasm-bindgen-futures = { workspace=true, optional = true }
 web-time = { workspace=true, optional = true }
-async-openai-wasm = { workspace = true }
 wasm-cookies = { workspace = true}
 web-sys = { version = "0.3", features = [
 	"Storage",

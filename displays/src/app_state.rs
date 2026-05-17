@@ -119,7 +119,7 @@ pub struct SharedContext {
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
-    pub ai_thread_channel: (Sender<crate::openai::types::ThreadObject>, Receiver<crate::openai::types::ThreadObject>),
+    pub ai_thread_channel: (Sender<crate::openai::types::assistants::ThreadObject>, Receiver<crate::openai::types::assistants::ThreadObject>),
     #[serde(skip)]
     pub seb_channel: (Sender<Vec<CarboniteResponse>>, Receiver<Vec<CarboniteResponse>>),
     #[serde(skip)]
@@ -341,6 +341,31 @@ pub struct SharedContext {
     /// Base URL of the fleet orchestrator used by the Fleet Dashboard.
     /// Persisted so the setting survives app restarts.
     pub orchestrator_url: String,
+    /// `true` once `load_data` has spawned its 5 live-query tasks. Without
+    /// this guard a second login or `load_data` call would stack another
+    /// 5 streams on top of the still-running first set — the documented
+    /// fan-out problem in `SurrealCrashes.md`.
+    ///
+    /// SurrealDB 3.1's Rust SDK auto-fires `KILL` when a live-query
+    /// `Stream` is dropped (`method/live.rs::Drop`), so explicit
+    /// cancellation tokens would be redundant here. If a future SDK
+    /// change makes that automatic cleanup unreliable, add a
+    /// `Vec<tokio::sync::oneshot::Sender<()>>` cancellation list and
+    /// have each spawned task `select!` between the stream and its
+    /// receiver — the streams' `Drop` will then send `KILL` on every
+    /// shutdown path.
+    #[serde(skip)]
+    pub live_queries_active: bool,
+    /// In-memory snapshot of the connected-client list shared with the
+    /// reachability prober. The prober was previously running its own
+    /// `SELECT * FROM connected_client WHERE connected == true LIMIT 200`
+    /// each round (every 30 s × N admins → meaningful ambient DB load
+    /// per the `SurrealCrashes.md` audit). It now reads this Mutex
+    /// instead. The UI thread refreshes the snapshot inside
+    /// `receive_client` whenever the live-clients channel pushes an
+    /// update, so the prober sees the same fresh data the UI does.
+    #[serde(skip)]
+    pub clients_for_prober: Arc<std::sync::Mutex<Vec<ConnectedClient>>>,
 }
 
 impl SharedContext {
@@ -369,7 +394,7 @@ impl SharedContext {
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
+        let ai_thread_channel = <crate::openai::types::assistants::ThreadObject>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<Style>(1);
         let seb_channel = <Vec<CarboniteResponse>>::create_unbounded_channel();
         let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
@@ -491,6 +516,8 @@ impl SharedContext {
             reachability_rx,
             fleet_agents: None,
             orchestrator_url: String::new(),
+            live_queries_active: false,
+            clients_for_prober: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 

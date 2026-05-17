@@ -229,21 +229,21 @@ impl InlineEguiViewer {
                         5.0,
                         Color32::from_rgba_unmultiplied(255, 200, 0, 200),
                     );
-                    painter.circle_stroke(local, 9.0, Stroke::new(1.2, Color32::WHITE));
+                    painter.circle_stroke(local, 9.0, Stroke::new(1.2_f32, Color32::WHITE));
                     let arm = 12.0f32;
                     painter.line_segment(
                         [
                             local - egui::vec2(arm, 0.0),
                             local + egui::vec2(arm, 0.0),
                         ],
-                        Stroke::new(1.0, Color32::YELLOW),
+                        Stroke::new(1.0_f32, Color32::YELLOW),
                     );
                     painter.line_segment(
                         [
                             local - egui::vec2(0.0, arm),
                             local + egui::vec2(0.0, arm),
                         ],
-                        Stroke::new(1.0, Color32::YELLOW),
+                        Stroke::new(1.0_f32, Color32::YELLOW),
                     );
                 }
             }

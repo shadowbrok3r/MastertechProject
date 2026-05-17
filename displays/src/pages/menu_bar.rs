@@ -1,4 +1,5 @@
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, tabs_for_role, TABS}, PlatformSpawner, Spawner, TaskUiActions};
+#![allow(deprecated)]
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, tabs_for_role}, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -14,7 +15,7 @@ impl SharedContext {
                     let mut inputs = std::collections::BTreeSet::new();
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
-                        ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
+                        ui.menu_button(RichText::new("View").color(ui.global_style().visuals.error_fg_color).heading().underline(), |ui| {
                             let is_warehouse = user.is_warehouse();
                             let visible_tabs = tabs_for_role(is_warehouse);
                             for tab in visible_tabs {
@@ -42,7 +43,7 @@ impl SharedContext {
                             inputs.insert(format!("{}", task.service_number.clone().unwrap_or_default()));
                         }
 
-                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
 
                         let result = TextEdit::singleline(&mut self.search_input).desired_width(165.0).hint_text(" Search Tasks").ui(ui);
@@ -139,7 +140,7 @@ impl SharedContext {
 
                     let selected = &mut self.store_selection;
                     let current = selected.clone();
-                    let user_store = user.get_store();
+                    let _user_store = user.get_store();
                     let selected_text = Store::from_presta_store_id(&selected.to_string());
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -184,7 +185,7 @@ impl SharedContext {
                             ui.add_space(4.0);
                         }
                         
-                        let txt = RichText::new(format!(" {} ", user.get_name())).color(ui.style().visuals.error_fg_color).strong().underline();
+                        let txt = RichText::new(format!(" {} ", user.get_name())).color(ui.global_style().visuals.error_fg_color).strong().underline();
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(800.);
@@ -238,7 +239,7 @@ impl SharedContext {
                                     ui.horizontal(|ui| {
                                         ui.add_space(40.);
                                         TextEdit::singleline(&mut self.admin_notification_text)
-                                            .background_color(ui.style().visuals.code_bg_color)
+                                            .background_color(ui.global_style().visuals.code_bg_color)
                                             .vertical_align(Align::Center)
                                             .hint_text("Admin Notification")
                                             .desired_rows(2)
@@ -246,7 +247,7 @@ impl SharedContext {
                                             .ui(ui);
 
                                         ui.add_space(10.);
-                                        if Button::new("⬈").min_size(vec2(30., 30.)).stroke(Stroke::new(0.5, ui.style().visuals.error_fg_color)).ui(ui).clicked() {
+                                        if Button::new("⬈").min_size(vec2(30., 30.)).stroke(Stroke::new(0.5_f32, ui.global_style().visuals.error_fg_color)).ui(ui).clicked() {
                                             let txt = self.admin_notification_text.clone();
                                             PlatformSpawner::spawn(async move {
                                                 let res = Notification::default()
@@ -263,7 +264,7 @@ impl SharedContext {
                                 ui.add_space(10.0);
                                 Separator::default().shrink(20.0).ui(ui);
 
-                                if ui.add(Button::new(RichText::new("Logout").color(ui.style().visuals.error_fg_color))).clicked() {
+                                if ui.add(Button::new(RichText::new("Logout").color(ui.global_style().visuals.error_fg_color))).clicked() {
                                     #[cfg(target_arch = "wasm32")]
                                     {
                                         wasm_cookies::delete("user");
@@ -351,10 +352,10 @@ impl SharedContext {
                         ui.label("Welcome, ");
                         ui.add_space(20.);
 
-                        ui.menu_button(RichText::new("Ui Layout").color(ui.style().visuals.error_fg_color).strong().underline(), |ui| {
+                        ui.menu_button(RichText::new("Ui Layout").color(ui.global_style().visuals.error_fg_color).strong().underline(), |ui| {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);    
-                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
+                                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, Color32::from_additive_luminance(60));
                                 ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
                                 let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
                                 ui.add_space(5.0);
@@ -469,7 +470,7 @@ impl SharedContext {
 
                         ui.add_space(20.);
 
-                        Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
+                        Frame::default().stroke(ui.global_style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5)).show(ui, |ui| {
                             ComboBox::new("Store_Selection", "")                    
                             .width(60.)
                             .selected_text(selected_text.as_str())

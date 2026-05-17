@@ -469,7 +469,7 @@ impl RegistryEditor {
 
         ui.add_space(4.);
 
-        let stroke = Stroke::new(1., Color32::from_rgb(40, 40, 48));
+        let stroke = Stroke::new(1.0_f32, Color32::from_rgb(40, 40, 48));
         let radius = CornerRadius::same(4);
 
         // Left: tree, Right: values

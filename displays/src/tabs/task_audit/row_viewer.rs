@@ -1,10 +1,10 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, Spawner};
-use eframe::egui::{Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Label, Widget};
+use eframe::egui::{Color32, ComboBox, Hyperlink, Id, Label, Widget};
 use database::schema::{Store, TaskNotePayload, User, helper_traits::parse_email_user, prestashop::{Prestashop, OrderState}, prestashop_schema::{MissedCallOrder, PrestashopPayload}};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::xidax_order_url;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use egui_data_table::{viewer::{RowCodec, UiActionContext}, RowViewer, UiAction};
+use egui_data_table::{viewer::RowCodec, RowViewer};
 use crate::PlatformSpawner;
 use crossbeam::channel::{Receiver, Sender};
 use egui_extras::Column;

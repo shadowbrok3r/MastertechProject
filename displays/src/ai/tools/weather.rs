@@ -1,6 +1,6 @@
 
 use rpc_router::{router_builder, RouterBuilder, RpcParams};
-use crate::{ai::{chat, tools::tasks::get_task_summary}, openai::types::ChatCompletionTool};
+use crate::{ai::{chat, tools::tasks::get_task_summary}, openai::types::chat::ChatCompletionTool};
 use serde::{Deserialize, Serialize};
 use anyhow::{Error, Result};
 

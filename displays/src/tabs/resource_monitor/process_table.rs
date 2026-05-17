@@ -152,7 +152,7 @@ impl ProcessTableViewer {
         });
 
         eframe::egui::Panel::bottom(Id::new("Task Audit Hot Keys"))
-            .max_height(240.)
+            .max_size(240.)
             .show_animated_inside(ui, self.process_viewer.open_hotkeys, |ui| 
         {
             ui.vertical_centered(|ui| ui.heading("Hotkeys"));
@@ -168,7 +168,7 @@ impl ProcessTableViewer {
                         .shortcut_text(
                             RichText::new(ui.ctx().format_shortcut(k))
                             .code()
-                            .color(ui.style().visuals.warn_fg_color)
+                            .color(ui.global_style().visuals.warn_fg_color)
                         )
                         .ui(ui);
                     
@@ -189,7 +189,7 @@ impl ProcessTableViewer {
                 if self.loading {
                     ui.ctx().request_repaint();
                     ui.add_space(10.);
-                    Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
+                    Spinner::new().color(ui.global_style().visuals.error_fg_color).ui(ui);
                 }
 
             });
@@ -294,7 +294,7 @@ impl RowViewer<Process> for ProcessRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &Process, column: usize) {
         let _ = match column {
-            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.id.clone()))).inner,
+            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.global_style().visuals.warn_fg_color, format!(" {}", row.id.clone()))).inner,
             1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.name.clone()))).inner,
             2 => ui.horizontal_centered(|ui| ui.label(format!(" {:.2}%", row.cpu_usage.clone()))).inner,
             3 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb", row.memory.clone()))).inner,

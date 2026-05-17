@@ -1,6 +1,9 @@
-use eframe::egui::{collapsing_header::CollapsingState, Align, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 #[allow(deprecated)]
-use eframe::egui::popup_below_widget;
+use eframe::egui::{
+    collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32,
+    Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside,
+    ProgressBar, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget,
+};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use crate::{channel_manager::ChannelManager, file_viewer::{FileViewer, ColorTheme, Syntax}, FileSystemAction, Spawner};
 use database::schema::{Node, User, buckets::{list_buckets, normalize_prefix}, file_storage}; 
@@ -8,7 +11,6 @@ use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
 use futures::{StreamExt, Future};
-use zstd::zstd_safe::WriteBuf;
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
 use mime_guess::from_path;
@@ -556,7 +558,7 @@ impl FileSystem {
             .fill(Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6))
             .corner_radius(eframe::egui::CornerRadius::same(10))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+            .stroke(Stroke::new(1.0_f32, Color32::from_additive_luminance(50)));
         
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 
@@ -708,7 +710,7 @@ impl FileSystem {
             ScrollArea::vertical()
                 .id_salt(self.scroll_id)
                 .max_width(size.x)
-                .max_height(size.y)
+                .max_width(size.y)
                 .auto_shrink(false)
                 .show(ui, |ui| 
             {
@@ -790,6 +792,7 @@ impl FileSystem {
                             }
 
                             if selectable_label.secondary_clicked(){
+                                #[allow(deprecated)]
                                 ui.memory_mut(|mem| mem.open_popup(
                                     ui.make_persistent_id(format!("sub_menu-{:?}", full_path))
                                 ));
@@ -837,7 +840,8 @@ impl FileSystem {
                         }
 
                         if res.0.secondary_clicked(){
-                            ui.memory_mut(|mem| mem.open_popup(
+                            #[allow(deprecated)]
+                                ui.memory_mut(|mem| mem.open_popup(
                                 ui.make_persistent_id(format!("upload_file_menu"))
                             ));
                         }
@@ -876,7 +880,8 @@ impl FileSystem {
                         }
 
                         if selectable_label.secondary_clicked(){
-                            ui.memory_mut(|mem| mem.open_popup(
+                            #[allow(deprecated)]
+                                ui.memory_mut(|mem| mem.open_popup(
                                 ui.make_persistent_id(format!("sub_menu-{:?}", full_path))
                             ));
                         }
@@ -1743,7 +1748,7 @@ impl FileSystem {
             let chunk = item?;
             // _bytes = _bytes + chunk.clone();
             downloaded_bytes += chunk.len() as u64;
-            byte_vec.extend_from_slice(&chunk.as_slice());
+            byte_vec.extend_from_slice(chunk.as_ref());
             let _ = tx.send((downloaded_bytes, content_length));
             #[cfg(feature="tokio")]
             tokio::time::sleep(web_time::Duration::from_millis(500)).await; // 100ms delay between chunks

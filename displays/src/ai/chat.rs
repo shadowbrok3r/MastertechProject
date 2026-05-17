@@ -1,8 +1,8 @@
-use crate::openai::types::{
-    ChatChoice, ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessageArgs,
+use crate::openai::types::chat::{
+    ChatChoice, ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
     ChatCompletionRequestMessage, ChatCompletionRequestToolMessageArgs,
-    ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionToolArgs,
-    CreateChatCompletionResponse, FunctionObject,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionTool, CreateChatCompletionResponse,
+    FunctionObject,
 };
 use schemars::JsonSchema;
 use serde_json::Value;
@@ -29,7 +29,7 @@ pub fn tool_response_msg(
 }
 
 pub fn tool_calls_msg(
-    tool_calls: Vec<ChatCompletionMessageToolCall>,
+    tool_calls: Vec<ChatCompletionMessageToolCalls>,
 ) -> Result<ChatCompletionRequestMessage> {
     let msg = ChatCompletionRequestAssistantMessageArgs::default()
         .tool_calls(tool_calls)
@@ -48,15 +48,16 @@ pub fn tool_fn(
     description: impl Into<String>,
     parameters: Value,
 ) -> Result<ChatCompletionTool> {
-    let tool = ChatCompletionToolArgs::default()
-        .function(FunctionObject {
+    // 0.38 dropped the `ChatCompletionToolArgs` builder; `ChatCompletionTool` is just
+    // a thin wrapper around a `FunctionObject` now.
+    Ok(ChatCompletionTool {
+        function: FunctionObject {
             name: name.into(),
             description: Some(description.into()),
             parameters: Some(parameters),
             ..Default::default()
-        })
-        .build()?;
-    Ok(tool)
+        },
+    })
 }
 
 pub fn first_choice(chat_response: CreateChatCompletionResponse) -> Result<ChatChoice> {

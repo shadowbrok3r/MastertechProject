@@ -48,9 +48,9 @@ impl ClientCard {
         };
 
         let stroke = if is_selected {
-            Stroke::new(2.0, Color32::from_rgb(100, 149, 237)) // Cornflower blue
+            Stroke::new(2.0_f32, Color32::from_rgb(100, 149, 237)) // Cornflower blue
         } else {
-            Stroke::new(1.0, Color32::from_rgb(50, 55, 65))
+            Stroke::new(1.0_f32, Color32::from_rgb(50, 55, 65))
         };
 
         Frame::NONE

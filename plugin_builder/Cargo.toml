@@ -1,0 +1,33 @@
+[package]
+name = "plugin_builder"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "plugin_builder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plugin_builder"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
+futures = { workspace = true }
+url = "2"
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = "0.11"
+uuid = { workspace = true }
+hostname = "0.4"
+# Slice 4: DB-backed transport (default at runtime, falls back to the
+# WS mode above if `MASTERTECH_DB_MODE=0` or the connection fails).
+# `desktop` feature is OFF — we only need the SurrealDB client surface,
+# not rfd.
+database = { workspace = true }
+crossbeam = { workspace = true }
+chrono = { workspace = true }

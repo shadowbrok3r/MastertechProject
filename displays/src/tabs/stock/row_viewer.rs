@@ -185,14 +185,15 @@ impl RowViewer<SerialsData> for SerialsViewer {
             3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
             2 => {
                 ui.vertical_centered_justified(|ui| {
-                    let color = if &row.2 == "Not Attached" || &row.2 == "S/N Info ⮫"{
+                    let is_clickable = &row.2 != "Not Attached" && &row.2 != "S/N Info ⮫";
+                    let color = if !is_clickable {
                         Color32::from_rgb(191, 33, 101)
                     } else {
                         Color32::from_rgb(51, 255, 189)
                     };
                     let res = Button::new(RichText::new(&row.2).color(color)).ui(ui);
-                    if &row.2 != "Not Attached" || &row.2 != "S/N Info ⮫" && res.clicked() {
-                        OpenUrl::new_tab(xidax_order_url(&row.2));
+                    if is_clickable && res.clicked() {
+                        ui.ctx().open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.2, 7))));
                     }
                     res
                 })
@@ -238,14 +239,14 @@ impl RowViewer<SerialsData> for SerialsViewer {
     ) -> Option<Box<SerialsData>> {
         match column {
             2 => {
-                if resp.clicked() {
+                if resp.clicked() && &row.2 != "Not Attached" && &row.2 != "S/N Info ⮫" {
                     log::info!("Clicked on order: {}", row.2);
-                    OpenUrl::new_tab(xidax_order_url(&row.2));
-                    None
-                } else { None }
+                    resp.ctx.open_url(OpenUrl::new_tab(xidax_order_url(last_n(&row.2, 7))));
+                }
+                None
             },
-            _ => { 
-                None 
+            _ => {
+                None
             }
         }
     }

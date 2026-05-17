@@ -39,18 +39,19 @@
 //! mess with its session bookkeeping. A bare connect-and-close
 //! is enough to prove reachability.
 
-use crossbeam::channel::Sender;
 use std::time::Duration;
 
 /// How long we wait for a TCP connect before declaring the
 /// endpoint unreachable. Short enough that one slow client
 /// doesn't hold up the whole probe round; long enough to absorb
 /// a sluggish network.
+#[cfg(not(target_arch = "wasm32"))]
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often we run a full probe round. Steady-state cadence —
 /// every connected client is re-probed at least this often even
 /// if it was already known reachable.
+#[cfg(not(target_arch = "wasm32"))]
 const PROBE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Reachability snapshot for one client. Held in
@@ -151,12 +152,18 @@ pub fn pending_probe_count(
 /// The prober uses `database::DATABASE` directly to fetch the
 /// live client list each round — that's the source of truth
 /// and avoids racing with the UI thread's in-memory snapshot.
-pub fn spawn_prober(tx: Sender<ReachabilityEvent>) {
+///
+/// Not compiled for WASM — browsers have no raw TCP socket API.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_prober(
+    tx: crossbeam::channel::Sender<ReachabilityEvent>,
+    clients: std::sync::Arc<std::sync::Mutex<Vec<database::schema::ConnectedClient>>>,
+) {
     use crate::{PlatformSpawner, Spawner};
 
     PlatformSpawner::spawn(async move {
         loop {
-            if let Err(e) = run_probe_round(&tx).await {
+            if let Err(e) = run_probe_round(&tx, &clients).await {
                 log::warn!("reachability prober: round failed: {e:?}");
             }
 
@@ -175,29 +182,28 @@ pub fn spawn_prober(tx: Sender<ReachabilityEvent>) {
     });
 }
 
-/// One pass: load the current client list, fan probes out to
+/// One pass: snapshot the current client list, fan probes out to
 /// every eligible row, ship results back through `tx`.
 ///
-/// Eligible rows have `local_ip` set to a non-empty string and
-/// `tcp_port` set to `Some(_)`. Clients without coords can't be
-/// TCP-probed — we don't know where to connect — so they're
-/// skipped here (and the visibility filter will continue to
-/// hide them).
-async fn run_probe_round(tx: &Sender<ReachabilityEvent>) -> anyhow::Result<()> {
-    // Fetch directly here rather than reusing
-    // `get_connected_clients` — that helper streams its result
-    // through a `Sender<Vec<…>>` channel, which is right for the
-    // UI live-data path but awkward when we just want a one-shot
-    // Vec back. Filtering on `connected == true` mirrors what
-    // `get_connected_clients` does for the UI; we skip the
-    // role-based scoping because the prober is a per-process
-    // local job — there's no leakage to worry about, and we want
-    // to know which clients an admin *could* reach even if they
-    // wouldn't normally be assigned them.
-    let clients: Vec<database::schema::ConnectedClient> = database::DATABASE
-        .query("SELECT * FROM connected_client WHERE connected == true ORDER BY last_update DESC LIMIT 200")
-        .await?
-        .take(0)?;
+/// Not compiled for WASM — raw TCP connections aren't available in browsers.
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_probe_round(
+    tx: &crossbeam::channel::Sender<ReachabilityEvent>,
+    clients_arc: &std::sync::Arc<std::sync::Mutex<Vec<database::schema::ConnectedClient>>>,
+) -> anyhow::Result<()> {
+    // Snapshot under lock then release before any await — we never
+    // hold the mutex across an await point.
+    let clients: Vec<database::schema::ConnectedClient> = match clients_arc.lock() {
+        Ok(guard) => guard
+            .iter()
+            .filter(|c| c.connected)
+            .cloned()
+            .collect(),
+        Err(e) => {
+            log::warn!("reachability prober: clients mutex poisoned ({e}); skipping round");
+            return Ok(());
+        }
+    };
 
     let mut handles = Vec::new();
     for client in clients {
@@ -239,6 +245,9 @@ async fn run_probe_round(tx: &Sender<ReachabilityEvent>) -> anyhow::Result<()> {
 /// [`ReachabilityStatus`] — failures are converted to
 /// `reachable: false` with the OS error in `error`, so the cache
 /// gets updated even on the negative path.
+///
+/// Not compiled for WASM — `tokio::net::TcpStream` is unavailable there.
+#[cfg(not(target_arch = "wasm32"))]
 async fn probe_endpoint(endpoint: &str) -> ReachabilityStatus {
     let now = web_time::Instant::now();
     let result = tokio::time::timeout(

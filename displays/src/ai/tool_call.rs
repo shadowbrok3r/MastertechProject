@@ -1,8 +1,19 @@
+#[allow(deprecated)]
 use crate::openai::{
     config::OpenAIConfig,
     types::{
-        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, DeltaStepDetails, MessageContent, MessageDeltaContent, MessageRole, RunObject, RunStepDeltaStepDetailsToolCalls, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
-    }, Client, Threads,
+        assistants::{
+            AssistantStreamEvent, CreateMessageRequestArgs, CreateRunRequestArgs,
+            CreateThreadRequestArgs, DeltaStepDetails, MessageContent, MessageDeltaContent,
+            MessageRole, RunObject, RunStepDeltaStepDetailsToolCalls,
+            SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs,
+        },
+        chat::{
+            ChatChoice, ChatCompletionMessageToolCalls, ChatCompletionToolChoiceOption,
+            ChatCompletionTools, CreateChatCompletionRequest, ToolChoiceOptions,
+        },
+    },
+    Client, Threads,
 };
 use crate::{ai::{conv, tools::AiTools}, tabs::ai_playground::{ChatMessage, ChatMessageType, SentFrom}, PlatformSpawner, Spawner};
 use rpc_router::{router_builder, RpcParams};
@@ -54,22 +65,23 @@ pub async fn call() -> Result<(), Error> {
             "required": ["location", "country", "unit"],
         }),
     )?;
-    let tools = Some(vec![tool_weather]);
+    let tools = Some(vec![ChatCompletionTools::Function(tool_weather)]);
 
     // -- Exec Chat Request
     let msg_req = CreateChatCompletionRequest {
         model,
         messages,
         tools,
-        tool_choice: Some(ChatCompletionToolChoiceOption::Auto),
+        tool_choice: Some(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto)),
         ..Default::default()
     };
     let chat_response = chat_client.create(msg_req).await?;
     let first_choice = chat::first_choice(chat_response)?;
 
-    // -- Extract and print the tool calls
+    // -- Extract and print the tool calls (only function tools are interesting here)
     if let Some(tool_calls) = first_choice.message.tool_calls {
         for tool in tool_calls {
+            let ChatCompletionMessageToolCalls::Function(tool) = tool else { continue };
             info!(
                 r#"
     ===   function: '{}'
@@ -149,8 +161,8 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
         }),
     )?;
 
-    // Add both tools to the list
-    let tools = Some(vec![tool_task_summary]);
+    // Add both tools to the list (0.38 wraps each tool in the ChatCompletionTools enum).
+    let tools = Some(vec![ChatCompletionTools::Function(tool_task_summary)]);
 
     // -- Init rpc_router
     let rpc_router = router_builder![get_task_summary].build();
@@ -160,7 +172,7 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
         model: model.to_string(),
         messages: messages.clone(),
         tools: tools.clone(),
-        tool_choice: Some(ChatCompletionToolChoiceOption::Auto),
+        tool_choice: Some(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto)),
         ..Default::default()
     };
     let chat_response = chat_client.create(msg_req).await.unwrap();
@@ -180,9 +192,10 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
     }
     let mut tool_responses: Vec<ToolResponse> = Vec::new();
 
-    // For each tool_call, rpc_router call
+    // For each tool_call, rpc_router call (only handle function-tool calls)
     let tool_calls = first_choice.message.tool_calls;
     for tool_call in tool_calls.iter().flatten() {
+        let ChatCompletionMessageToolCalls::Function(tool_call) = tool_call else { continue };
         let tool_call_id = tool_call.id.clone();
         let fn_name = tool_call.function.name.clone();
         let params: Value = serde_json::from_str(&tool_call.function.arguments).unwrap();
@@ -224,7 +237,7 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
         model: model.to_string(),
         messages,
         tools,
-        tool_choice: Some(ChatCompletionToolChoiceOption::Auto),
+        tool_choice: Some(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto)),
         ..Default::default()
     };
     let chat_response = chat_client.create(msg_req).await.unwrap();
@@ -359,7 +372,7 @@ pub async fn assistant_call_with_response_ai_tools(
         id: user_msg.id,
         from: SentFrom::Me,
         thread_id: thread_id.clone(),
-        ts: user_msg.created_at,
+        ts: user_msg.created_at as i32,
         content: ChatMessageType::Text(input.to_string())
     };
 

@@ -5,6 +5,37 @@ use std::cmp::Reverse;
 
 use super::{random_record_id, Datetime, RecordId, SurrealValue};
 
+/// Whether this `connected_client` row represents a customer machine
+/// under service or a Rust-toolchain `plugin_builder` worker. The
+/// admin/MCP `list_build_workers` tool filters on this; the default
+/// Web Console view hides workers so they don't clutter the technician
+/// surface. The `Machine` variant is the default for back-compat with
+/// pre-existing rows that have no `client_kind` field.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Difference, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum ClientKind {
+    #[surreal(value = "machine")]
+    Machine,
+    #[surreal(value = "build_worker")]
+    BuildWorker,
+}
+
+impl Default for ClientKind {
+    fn default() -> Self {
+        Self::Machine
+    }
+}
+
+impl ClientKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Machine => "machine",
+            Self::BuildWorker => "build_worker",
+        }
+    }
+}
+
 #[derive(serde::Serialize, Debug, Clone, serde::Deserialize, PartialEq, Difference, SurrealValue)]
 pub struct ConnectedClient {
     pub id: RecordId,
@@ -38,6 +69,11 @@ pub struct ConnectedClient {
     /// clear the flag to opt back into auto-detection.
     #[serde(default)]
     pub customer_locked: bool,
+    /// Distinguishes a customer-machine client from a Rust-toolchain
+    /// `plugin_builder` worker. Default `Machine` so pre-existing rows
+    /// deserialize cleanly without a migration backfill.
+    #[serde(default)]
+    pub client_kind: ClientKind,
 }
 
 impl Default for ConnectedClient {
@@ -57,6 +93,7 @@ impl Default for ConnectedClient {
             local_ip: None,
             tcp_port: None,
             customer_locked: false,
+            client_kind: ClientKind::Machine,
         }
     }
 }

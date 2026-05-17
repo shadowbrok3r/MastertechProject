@@ -81,7 +81,6 @@ impl SharedContext {
                 Action::Delete => {
                     self.notification_center.apply_delete(notification.clone());
                 }
-                _ => (),
             };
         }
 

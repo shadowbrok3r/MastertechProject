@@ -16,8 +16,18 @@ use eframe::egui::{
     Button, Color32, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2, Widget,
 };
 
-/// Yellow-dot “recent heartbeat” threshold in the card header (unchanged).
-const STALE_THRESHOLD_SECS: i64 = 300;
+/// Heartbeat-freshness threshold for the header dot.
+///
+/// The agent's heartbeat writer (`Mastertech4.0/src/tcp_listener.rs`,
+/// task spawned alongside `accept_loop`) bumps `last_update = time::now()`
+/// every 60 s. A heartbeat older than this window means we've missed
+/// **three** consecutive writes — strong evidence the agent process is
+/// stuck or the network path to SurrealDB is broken — so we surface the
+/// client as "stale" even when its DB row still says `connected = true`.
+/// The database-side sweep (axum_server cron, ~every minute) will flip
+/// the flag to `false` shortly after; this threshold is the UI showing
+/// the same conclusion a few seconds earlier.
+const STALE_THRESHOLD_SECS: i64 = 180;
 
 /// Include a client in My Tasks / Admin Console summaries only if the DB
 /// `last_update` is newer than this **or** an admin transport session is live.
@@ -109,7 +119,7 @@ impl ClientCardData {
     pub fn display_client_card(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
         let card_frame = Frame::default()
             .fill(ui.style().visuals.faint_bg_color)
-            .stroke(Stroke::new(0.7, ui.style().visuals.weak_text_color()))
+            .stroke(Stroke::new(0.7_f32, ui.style().visuals.weak_text_color()))
             .inner_margin(Margin::same(8))
             .corner_radius(CornerRadius::same(6));
 
@@ -131,17 +141,37 @@ impl ClientCardData {
 
     fn header_row(&self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            // Status dot: green = active admin session, yellow = recently online,
-            // gray = disconnected or stale (>5 min since last heartbeat).
-            let dot_color = if self.is_ws_connected {
-                Color32::from_rgb(50, 205, 50)
-            } else if self.client.connected && recently_active(&self.client) {
-                Color32::from_rgb(255, 200, 0)
+            // Heartbeat-driven three-state dot. The dot reflects whether
+            // the *agent process* is alive — independent of whether the
+            // operator currently has a session open to it. (For the
+            // "session open" signal we render a separate SESSION chip
+            // alongside, so a live session never masks a dying heartbeat.)
+            //
+            // - green  : `connected = true` AND `last_update` within
+            //            STALE_THRESHOLD_SECS (3 min) — agent is heart-
+            //            beating and the DB hasn't swept us yet.
+            // - yellow : `connected = true` but heartbeat is stale —
+            //            the sweep cron will soon flip us to `false`;
+            //            the UI shouldn't lie about "online" in the
+            //            meantime.
+            // - gray   : `connected = false` (or no row) — offline.
+            let fresh = recently_active(&self.client);
+            let (dot_color, dot_tip) = if self.client.connected && fresh {
+                (Color32::from_rgb(50, 205, 50), "Online (heartbeat fresh)")
+            } else if self.client.connected && !fresh {
+                (
+                    Color32::from_rgb(255, 200, 0),
+                    "Stale — no heartbeat for over 3 minutes",
+                )
             } else {
-                Color32::from_rgb(110, 110, 118)
+                (Color32::from_rgb(110, 110, 118), "Offline")
             };
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), eframe::egui::Sense::hover());
+            let (rect, resp) = ui.allocate_exact_size(
+                Vec2::splat(10.0),
+                eframe::egui::Sense::hover(),
+            );
             ui.painter().circle_filled(rect.center(), 5.0, dot_color);
+            resp.on_hover_text(dot_tip);
 
             let title = self
                 .client
@@ -149,6 +179,23 @@ impl ClientCardData {
                 .clone()
                 .unwrap_or_else(|| self.client.connection_string.clone());
             ui.label(RichText::new(title).strong());
+
+            // Separate "live admin session" indicator. Distinct from the
+            // dot above because we want operators to see at a glance both
+            // (a) is the agent alive (dot), and (b) am I already wired in
+            // to it (chip). Conflating the two would hide a dying
+            // heartbeat behind a green dot just because we happen to have
+            // a TCP session open from before the heartbeat went stale.
+            if self.is_ws_connected {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("• SESSION")
+                        .color(Color32::from_rgb(120, 220, 140))
+                        .strong()
+                        .small(),
+                )
+                .on_hover_text("Admin transport session is currently open to this client");
+            }
 
             if self.ai_active {
                 ui.add_space(6.0);

@@ -1,4 +1,4 @@
-use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User, CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE, USER_TABLE}};
+use database::{live_data::listen_data_filtered, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::Style;
@@ -82,76 +82,137 @@ impl crate::app_state::SharedContext {
             });
         }
 
-        // Clone error channel for each live query
-        let error_tx_notes = self.live_query_error_tx.clone();
-        let error_tx_users = self.live_query_error_tx.clone();
-        let error_tx_tasks = self.live_query_error_tx.clone();
-        let error_tx_notifs = self.live_query_error_tx.clone();
-        let error_tx_clients = self.live_query_error_tx.clone();
-        
-        PlatformSpawner::spawn(async move {
-            let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
-            log::info!("listen_task_notes: {listen_data:?}");
-            if let Err(e) = listen_data {
-                let error_msg = e.to_string();
-                log::error!("Live query error (notes): {}", error_msg);
-                let _ = error_tx_notes.try_send(error_msg);
-            }
-        });
+        // Live-query fan-out used to crash the SurrealDB pod (see
+        // `SurrealCrashes.md`): 40-50 users × 5 unfiltered streams =
+        // 200-250 concurrent `LIVE SELECT *` subscriptions. Two
+        // changes here:
+        //
+        //   1. `live_queries_active` gates the whole block. If
+        //      `load_data` runs again (re-login, reconnect, etc.),
+        //      we don't stack a second set of streams on top of the
+        //      still-running first set.
+        //   2. Every stream is filtered through
+        //      `listen_data_filtered` with a `WHERE` clause scoped to
+        //      the user's store, and each stream's UUID is shipped
+        //      back through `live_query_uuid_tx` so the
+        //      `receive_shared_logic` drain can call `KILL` on
+        //      shutdown / re-spawn instead of leaking the streams.
+        if !self.live_queries_active {
+            self.live_queries_active = true;
 
-        PlatformSpawner::spawn(async move {
-            let listen_data = listen_data(live_user_tx, USER_TABLE).await;
-            log::info!("listen_user: {listen_data:?}");
-            if let Err(e) = listen_data {
-                let error_msg = e.to_string();
-                log::error!("Live query error (users): {}", error_msg);
-                let _ = error_tx_users.try_send(error_msg);
-            }
-        });
+            // The whole spawn block needs the store id (for the
+            // WHERE bindings) and the user id (for notification
+            // scoping). Capture once so each spawn just clones a
+            // ready-to-go pair instead of re-running `get_store()`.
+            let store_id_str = user.get_store().as_str().to_string();
 
-        PlatformSpawner::spawn(async move {
-            let listen_data = listen_data(live_tasks_tx, TASK_TABLE).await;
-            log::info!("listen_tasks: {listen_data:?}");
-            if let Err(e) = listen_data {
-                let error_msg = e.to_string();
-                log::error!("Live query error (tasks): {}", error_msg);
-                let _ = error_tx_tasks.try_send(error_msg);
-            }
-        });
+            // Clone error channel for each live query
+            let error_tx_notes = self.live_query_error_tx.clone();
+            let error_tx_users = self.live_query_error_tx.clone();
+            let error_tx_tasks = self.live_query_error_tx.clone();
+            let error_tx_notifs = self.live_query_error_tx.clone();
+            let error_tx_clients = self.live_query_error_tx.clone();
 
-        PlatformSpawner::spawn(async move {
-            let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
-            log::info!("listen_notifications: {listen_data:?}");
-            if let Err(e) = listen_data {
-                let error_msg = e.to_string();
-                log::error!("Live query error (notifications): {}", error_msg);
-                let _ = error_tx_notifs.try_send(error_msg);
-            }
-        });
+            // task_note → joined through task.assignee.store so a note's
+            // visibility tracks the task it's attached to. Matches the
+            // pattern used by `TaskNotePayload::get_all_notes_in_my_store`.
+            let store = store_id_str.clone();
+            PlatformSpawner::spawn(async move {
+                let res = listen_data_filtered::<TaskNotePayload>(
+                    notes_tx,
+                    "LIVE SELECT * FROM task_note WHERE task_id.assignee.store == $store".to_string(),
+                    vec![("store", serde_json::Value::String(store))],
+                ).await;
+                log::info!("listen_task_notes: {res:?}");
+                if let Err(e) = res {
+                    let _ = error_tx_notes.try_send(e.to_string());
+                }
+            });
 
-        PlatformSpawner::spawn(async move {
-            let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
-            log::info!("listen_connected_clients: {listen_data:?}");
-            if let Err(e) = listen_data {
-                let error_msg = e.to_string();
-                log::error!("Live query error (connected_clients): {}", error_msg);
-                let _ = error_tx_clients.try_send(error_msg);
-            }
-        });
+            // user → other users in the same store (admin presence /
+            // settings updates). Unfiltered before; now store-scoped.
+            let store = store_id_str.clone();
+            PlatformSpawner::spawn(async move {
+                let res = listen_data_filtered::<User>(
+                    live_user_tx,
+                    "LIVE SELECT * FROM user WHERE store == $store".to_string(),
+                    vec![("store", serde_json::Value::String(store))],
+                ).await;
+                log::info!("listen_user: {res:?}");
+                if let Err(e) = res {
+                    let _ = error_tx_users.try_send(e.to_string());
+                }
+            });
+
+            // task → assignee on this store. Matches the initial-fetch
+            // shape from `get_tasks_for_store` (assignee.store == $store).
+            let store = store_id_str.clone();
+            PlatformSpawner::spawn(async move {
+                let res = listen_data_filtered::<database::schema::LiveTaskPayload>(
+                    live_tasks_tx,
+                    "LIVE SELECT * FROM task WHERE assignee.store == $store".to_string(),
+                    vec![("store", serde_json::Value::String(store))],
+                ).await;
+                log::info!("listen_tasks: {res:?}");
+                if let Err(e) = res {
+                    let _ = error_tx_tasks.try_send(e.to_string());
+                }
+            });
+
+            // notification → only this user's notifications. Notifications
+            // are addressed via the `user` field, so this is the tightest
+            // possible scope. Reduces server fan-out from "every
+            // notification table change" to "only mine".
+            let user_id = user.get_id();
+            PlatformSpawner::spawn(async move {
+                let res = listen_data_filtered::<database::schema::Notification>(
+                    live_notif_tx,
+                    "LIVE SELECT * FROM notification WHERE user == $user".to_string(),
+                    vec![("user", serde_json::to_value(&user_id).unwrap_or(serde_json::Value::Null))],
+                ).await;
+                log::info!("listen_notifications: {res:?}");
+                if let Err(e) = res {
+                    let _ = error_tx_notifs.try_send(e.to_string());
+                }
+            });
+
+            // connected_client → only this store's clients. Earlier
+            // iterations also gated on `connected == true`, but the
+            // admin UI needs to see disconnected rows (to show them as
+            // offline in the list); only store-scoping is applied here.
+            let store = store_id_str.clone();
+            PlatformSpawner::spawn(async move {
+                let res = listen_data_filtered::<database::schema::ConnectedClient>(
+                    live_clients_tx,
+                    "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $store".to_string(),
+                    vec![("store", serde_json::Value::String(store))],
+                ).await;
+                log::info!("listen_connected_clients: {res:?}");
+                if let Err(e) = res {
+                    let _ = error_tx_clients.try_send(e.to_string());
+                }
+            });
+        } else {
+            log::info!("load_data: live queries already active; skipping re-spawn");
+        }
 
         // Slice 5: kick off the per-admin TCP reachability prober.
         // The prober loops forever until `wait_for_shutdown` fires,
-        // pulling the current `connected_client` rows from
-        // SurrealDB every PROBE_INTERVAL and ship-back results via
-        // `reachability_tx`. The UI thread drains them in
-        // `receive_shared_ui::drain_reachability_events` so the
-        // visibility filter has up-to-date data each frame.
-        reachability::spawn_prober(self.reachability_tx.clone());
+        // reading the current client list from the in-memory snapshot
+        // updated by `receive_client` (no per-round DB query) and
+        // shipping probe results back via `reachability_tx`. The UI
+        // drains them in `receive_shared_ui::drain_reachability_events`.
+        // Not available in WASM — raw TCP sockets don't exist in browsers.
+        #[cfg(not(target_arch = "wasm32"))]
+        reachability::spawn_prober(
+            self.reachability_tx.clone(),
+            self.clients_for_prober.clone(),
+        );
 
         self.stock_tables.first_run();
         match decode_style(&user.get_color_scheme()) {
             Ok(color_settings) => {
-                ctx.set_style(color_settings);
+                ctx.set_global_style(color_settings);
                 ctx.request_repaint();
             },
             Err(e) => {
@@ -159,7 +220,7 @@ impl crate::app_state::SharedContext {
                 match serde_json::from_str::<Style>(crate::STYLE) {
                     Ok(theme) => {
                         let style = Arc::new(theme);
-                        ctx.set_style(style);
+                        ctx.set_global_style(style);
                     }
                     Err(e) => log::error!("Error setting theme: {e:?}")
                 };
@@ -307,7 +368,7 @@ impl crate::app_state::SharedContext {
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
-            ctx.set_style(settings);
+            ctx.set_global_style(settings);
         }
 
         if let Ok(thread_obj) = self.ai_thread_channel.1.try_recv() {

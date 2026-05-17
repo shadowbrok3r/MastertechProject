@@ -17,7 +17,7 @@ impl ScriptEditor {
             .frame(
                 Frame::default()
                 .fill(ui.style().visuals.extreme_bg_color)
-                .stroke(Stroke::new(1., Color32::from_additive_luminance(150)))
+                .stroke(Stroke::new(1.0_f32, Color32::from_additive_luminance(150)))
                 .outer_margin(Margin::symmetric(0, 2))
             )
             .show_inside(ui, |ui|

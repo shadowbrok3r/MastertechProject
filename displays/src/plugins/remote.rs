@@ -665,7 +665,7 @@ impl MastertechPlugin for EguiFrameCapture {
         self.frame_count += 1;
 
         let ppp = ctx.pixels_per_point();
-        let screen_rect = ctx.screen_rect();
+        let screen_rect = ctx.content_rect();
 
         // Tessellate synchronously — requires `ctx` and happens quickly.
         let shapes = output.shapes.clone();

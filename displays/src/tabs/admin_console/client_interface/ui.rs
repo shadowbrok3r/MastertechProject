@@ -1,9 +1,10 @@
 use eframe::egui::{Align, Color32, Id, Layout, RichText, Ui};
-use crate::{Cmd, EGUI_INPUT_TAG};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::plugins::remote::EguiInputEvent;
+use crate::Cmd;
+use crate::EGUI_INPUT_TAG;
 use bincode::config::standard;
 use ewebsock::WsMessage;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::plugins::remote::EguiInputEvent;
 use super::WebSocketClient;
 
 

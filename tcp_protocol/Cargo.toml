@@ -1,0 +1,12 @@
+[package]
+name = "tcp_protocol"
+version = "0.1.0"
+edition = "2024"
+description = "Shared wire-protocol constants and TCP socket configuration for the MasterTech admin↔client direct TCP path."
+
+[dependencies]
+log = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+socket2 = "0.6"

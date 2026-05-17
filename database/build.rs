@@ -18,10 +18,10 @@ const REQUIRED_NO_DEFAULT: &[&str] = &[
     "STORAGE_URL",
     "REGION",
     "DB_URL_DEV",
-    "DB_URL_LOCAL",
+    // DB_URL_LOCAL, WS_CLIENT_URL_LOCAL, WS_MASTER_URL_LOCAL are local-dev only —
+    // CI and production builds never select them at runtime. They get sensible
+    // defaults below so the build works without those secrets.
     "DB_URL_BETA",
-    "WS_CLIENT_URL_LOCAL",
-    "WS_MASTER_URL_LOCAL",
     "WS_CLIENT_URL",
     "WS_MASTER_URL",
     "ODOO_API_KEY",
@@ -76,6 +76,18 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
     }
     if map.get("BUCKET_URL").map_or(true, |s| s.is_empty()) {
         map.insert("BUCKET_URL".into(), "/SurrealBuckets".into());
+    }
+    // Local-dev URLs: only meaningful on the developer's own machine.
+    // CI and production builds never select the Local DB environment at
+    // runtime, so placeholder loopback values are safe to embed.
+    if map.get("DB_URL_LOCAL").map_or(true, |s| s.is_empty()) {
+        map.insert("DB_URL_LOCAL".into(), "127.0.0.1:8000".into());
+    }
+    if map.get("WS_CLIENT_URL_LOCAL").map_or(true, |s| s.is_empty()) {
+        map.insert("WS_CLIENT_URL_LOCAL".into(), "ws://127.0.0.1:8081".into());
+    }
+    if map.get("WS_MASTER_URL_LOCAL").map_or(true, |s| s.is_empty()) {
+        map.insert("WS_MASTER_URL_LOCAL".into(), "ws://127.0.0.1:8080".into());
     }
 }
 

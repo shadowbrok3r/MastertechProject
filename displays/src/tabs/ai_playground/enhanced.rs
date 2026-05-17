@@ -126,7 +126,7 @@ impl EnhancedAiPlayground {
         // Left sidebar - mode-specific panels
         eframe::egui::Panel::left("enhanced_ai_sidebar")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_width(220.)
+            .exact_size(220.)
             .show_inside(ui, |ui| {
                 match self.current_mode {
                     AiMode::Chat => self.show_chat_sidebar(ui),
@@ -250,7 +250,7 @@ impl EnhancedAiPlayground {
             ui.separator();
 
             ui.label("Recent Commands:");
-            ScrollArea::vertical().max_height(200.).show(ui, |ui| {
+            ScrollArea::vertical().max_width(200.).show(ui, |ui| {
                 for suggestion in &self.completion_suggestions {
                     if ui.button(suggestion).clicked() {
                         // Use this suggestion

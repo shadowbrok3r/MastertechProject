@@ -188,13 +188,13 @@ fn format_from_style(egui_style: &Style, emark_style: &parser::Style) -> text::T
     };
 
     let underline = if emark_style.underline {
-        Stroke::new(1.0, color)
+        Stroke::new(1.0_f32, color)
     } else {
         Stroke::NONE
     };
 
     let strikethrough = if emark_style.strikethrough {
-        Stroke::new(1.0, color)
+        Stroke::new(1.0_f32, color)
     } else {
         Stroke::NONE
     };

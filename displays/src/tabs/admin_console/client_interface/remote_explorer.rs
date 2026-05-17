@@ -59,7 +59,7 @@ fn sidebar_row(
     let label = label.into();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
 
-    let visuals = ui.style().interact_selectable(&response, selected);
+    let visuals = ui.global_style().interact_selectable(&response, selected);
 
     // Only paint a background when there's something to indicate — keeps
     // the resting state of the panel clean.
@@ -666,7 +666,7 @@ impl RemoteExplorer {
     /// Display the explorer UI
     pub fn display(&mut self, ui: &mut Ui, cmd_tx: &Sender<Cmd>) {
         let inner_margin = Margin::same(4);
-        let stroke = Stroke::new(0.7, Color32::from_additive_luminance(100));
+        let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(100));
         let radius = CornerRadius::same(5);
         
         // Poll for My Tools updates
@@ -906,8 +906,8 @@ impl RemoteExplorer {
             .frame(sidebar_frame)
             .resizable(true)
             .default_size(280.)
-            .min_width(200.)
-            .max_width(450.)
+            .min_size(200.)
+            .max_size(450.)
             .show_inside(ui, |ui| {
                 // Calculate available height to split between tools list and preview
                 let total_height = ui.available_height();
@@ -961,7 +961,7 @@ impl RemoteExplorer {
 
                             ScrollArea::vertical()
                                 .id_salt("my_tools_scroll")
-                                .max_height(tools_height - 40.)
+                                .max_width(tools_height - 40.)
                                 .show(ui, |ui| {
                                 let entry_w = ui.available_width();
                                 for (idx, tool) in self.my_tools.iter().enumerate() {
@@ -1075,7 +1075,7 @@ impl RemoteExplorer {
             // Text preview with editing
             ScrollArea::both()
                 .id_salt("preview_text_scroll")
-                .max_height(max_height - 30.)
+                .max_width(max_height - 30.)
                 .show(ui, |ui| {
                 let response = ui.add(
                     TextEdit::multiline(&mut content.clone())
@@ -1097,7 +1097,7 @@ impl RemoteExplorer {
             // Image preview - show at original size, scrollable
             ScrollArea::both()
                 .id_salt("preview_image_scroll")
-                .max_height(max_height - 30.)
+                .max_width(max_height - 30.)
                 .show(ui, |ui| {
                     let tex_size = texture.size_vec2();
                     // Show at original size by default

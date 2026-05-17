@@ -1,5 +1,5 @@
-use eframe::egui::{Button, Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::schema::{random_record_id, ComputerData, RecordId, RecordIdExt, TicketData, COMPUTER_TABLE};
+use eframe::egui::{Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, Ui, Vec2, Vec2b, Widget};
+use database::schema::{random_record_id, ComputerData, RecordIdExt, TicketData, COMPUTER_TABLE};
 
 use crate::{PlatformSpawner, Spawner};
 
@@ -61,7 +61,7 @@ pub fn display_computer_page_with_search(
     {
         ui.vertical_centered(|ui| {
             // Computer search/selection section (if search data is provided)
-            if let Some(mut search) = search_data {
+            if let Some(search) = search_data {
                 if !search.customer_computers.is_empty() {
                     // Build a label-per-computer list; the index maps back to the Vec.
                     let labels: Vec<String> = search.customer_computers.iter()

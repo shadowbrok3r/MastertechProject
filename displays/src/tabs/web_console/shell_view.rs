@@ -6,9 +6,13 @@
 //! - Command history
 //! - Interactive shell mode
 
-use crate::{Cmd, PlatformSpawner, Spawner};
+use crate::Cmd;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::mcp::McpService;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{PlatformSpawner, Spawner};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::ConnectedClient;
 use eframe::egui::{
@@ -16,7 +20,6 @@ use eframe::egui::{
     ScrollArea, TextEdit, Ui, Vec2,
 };
 use serde::{Deserialize, Serialize};
-use web_time::Instant;
 
 /// Shell type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
