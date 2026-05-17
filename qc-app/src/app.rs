@@ -16,6 +16,17 @@ use crate::reporting::ReportSink;
 use crate::stress_panel::{StressPanel, StressPanelConfig};
 use crate::telemetry::{Heartbeat, HwSnapshot, QcReport};
 
+/// Stable `computer:<machine_id>` record for stress runs originating on this
+/// machine.  The record itself may or may not already exist in the database —
+/// SurrealDB doesn't enforce FK existence, so the run row carries the link
+/// either way.  If the customer's computer record gets created or re-keyed
+/// later, the `connected_client`-style hostname re-link query can repair the
+/// reference.
+fn local_computer_record() -> database::schema::RecordId {
+    let id = crate::reporting::machine_id();
+    database::schema::RecordId::new(database::schema::COMPUTER_TABLE, id)
+}
+
 fn init_arc_mutex_string() -> Arc<Mutex<String>> {
     Arc::new(Mutex::new(String::new()))
 }
@@ -379,9 +390,31 @@ impl eframe::App for QcApp {
                 4 => self.ui_settings(ui),
                 _ => {
                     let mut open_hw = false;
-                    self.stress_panel.ui(ui, &mut self.stress_cfg, &mut open_hw);
-                    if open_hw {
-                        self.show_hw_monitor.store(true, Ordering::Relaxed);
+                    // The stress panel now persists runs through stress-runner
+                    // → SurrealDB.  It needs the shared TelemetryAgent (so the
+                    // run picks up the same hardware snapshots the HW monitor
+                    // shows) and a `computer` RecordId to attach the run to.
+                    let telemetry = self
+                        .hw_sampler
+                        .as_ref()
+                        .map(|s| s.agent());
+                    if let Some(telemetry) = telemetry {
+                        let computer = local_computer_record();
+                        self.stress_panel.ui(
+                            ui,
+                            &mut self.stress_cfg,
+                            &mut open_hw,
+                            telemetry,
+                            computer,
+                        );
+                        if open_hw {
+                            self.show_hw_monitor.store(true, Ordering::Relaxed);
+                        }
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(180, 140, 50),
+                            "Telemetry sampler not initialized — open the Hardware Monitor first.",
+                        );
                     }
                 }
             }

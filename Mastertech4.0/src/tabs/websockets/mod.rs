@@ -894,6 +894,102 @@ impl WebConsoleFrontend {
                     }
                 });
             }
+            Cmd::RunWindowsUpdate { reboot_when_done } => {
+                // Slice 4: admin batch action fired a Windows
+                // Update scan + install. The existing
+                // `install_windows_updates` is COM-heavy +
+                // sync-blocking + streams progress via a crossbeam
+                // channel. We run everything inside
+                // `spawn_blocking` so we don't park a tokio runtime
+                // worker on `ev_rx.recv()`.
+                log::info!("websockets -> RunWindowsUpdate reboot_when_done={reboot_when_done}");
+                let tx = self.command_tx.clone();
+                spawn(async move {
+                    #[cfg(target_os = "windows")]
+                    let (success, summary) = tokio::task::spawn_blocking(|| {
+                        let (ev_tx, ev_rx) = crossbeam::channel::unbounded();
+                        // Dedicated worker thread for the COM
+                        // flow. When this thread returns, `ev_tx`
+                        // is dropped and the drain loop below
+                        // exits cleanly via `recv() -> Err`.
+                        let worker = std::thread::spawn(move || {
+                            crate::utilities::windows::windows_update::install_windows_updates(
+                                ev_tx, /* shutdown = */ false, /* install = */ true,
+                            )
+                        });
+
+                        // Drain events for logging + final-tally
+                        // bookkeeping. We don't stream progress to
+                        // the admin this slice — the admin gets a
+                        // single summary line. A future iteration
+                        // could ship `WindowsUpdateProgress`
+                        // intermediates back through `tx`.
+                        let mut found = 0usize;
+                        let mut last_log = String::new();
+                        while let Ok(ev) = ev_rx.recv() {
+                            use crate::utilities::windows::windows_update::WindowsUpdateEvent as E;
+                            match ev {
+                                E::UpdateLogs(s) => {
+                                    log::info!("windows_update: {s}");
+                                    last_log = s;
+                                }
+                                E::ReturnedUpdates(updates) => {
+                                    found = updates.updates.len();
+                                    log::info!("windows_update: {found} update(s) returned");
+                                }
+                                E::DownloadPercentage(p) => log::debug!("windows_update dl {p}%"),
+                                E::InstallPercentage(p) => log::debug!("windows_update inst {p}%"),
+                            }
+                        }
+
+                        match worker.join() {
+                            Ok(Ok(())) => {
+                                let summary = if found == 0 {
+                                    "No applicable updates were found.".to_string()
+                                } else {
+                                    format!("Processed {found} update(s). {last_log}")
+                                        .trim()
+                                        .to_string()
+                                };
+                                (true, summary)
+                            }
+                            Ok(Err(e)) => (false, format!("Windows Update failed: {e}")),
+                            Err(_) => (false, "Windows Update worker panicked".to_string()),
+                        }
+                    })
+                    .await
+                    .unwrap_or((false, "spawn_blocking failed".to_string()));
+
+                    #[cfg(not(target_os = "windows"))]
+                    let (success, summary): (bool, String) =
+                        (false, "Windows Update is Windows-only".to_string());
+
+                    let response = Cmd::WindowsUpdateResult { success, summary };
+                    if let Ok(payload) = encode_to_vec(&response, standard()) {
+                        let _ = tx.try_send(payload);
+                    }
+
+                    // If the admin asked us to reboot after the
+                    // install and the run succeeded, kick the
+                    // reboot off here so the result message has
+                    // already been delivered. The reboot uses the
+                    // same persist_mastertech flag the Power menu
+                    // sets — Mastertech reattaches after the
+                    // restart and the admin's session reconnects.
+                    if success && reboot_when_done {
+                        log::info!(
+                            "RunWindowsUpdate done; rebooting because reboot_when_done=true"
+                        );
+                        let reboot = Cmd::RebootSystem {
+                            persist_mastertech: true,
+                            terminal_mode: false,
+                        };
+                        if let Ok(payload) = encode_to_vec(&reboot, standard()) {
+                            let _ = tx.try_send(payload);
+                        }
+                    }
+                });
+            }
             Cmd::ListInstalledPrograms => {
                 // Slice 3: registry walk across HKLM / WOW6432Node /
                 // HKCU, returning one InstalledProgram per row.

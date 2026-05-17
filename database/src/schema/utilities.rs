@@ -426,16 +426,16 @@ pub async fn create_full_task_payload(
             log::info!("Updated Customer {record:?}");
             // Always ensure computer has the customer linked
             if let Some(record_id) = record {
-                computer_data.customer = record_id.id;
+                computer_data.customer = Some(record_id.id);
             } else {
-                computer_data.customer = customer_id.clone();
+                computer_data.customer = Some(customer_id.clone());
             }
         },
         Err(e) => {
             log::warn!("Error updating Customer {e:?}");
-            // Even if customer update failed (e.g., duplicate email), 
+            // Even if customer update failed (e.g., duplicate email),
             // we still need to link the computer to the customer
-            computer_data.customer = customer_id.clone();
+            computer_data.customer = Some(customer_id.clone());
         }
     }
 

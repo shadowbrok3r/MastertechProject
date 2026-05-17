@@ -12,6 +12,8 @@ resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 [dependencies]
 eframe = { version = "0.34", features = ["persistence", "serde", "default_fonts", "glow"], default-features = false }
 stress-kit.workspace = true
+stress-runner.workspace = true
+database.workspace = true
 egui-data-table.workspace = true
 egui_extras.workspace = true
 sysinfo = { version = "0.39", features = ["serde", "multithread"] }

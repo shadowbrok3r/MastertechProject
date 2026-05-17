@@ -305,7 +305,7 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     }).inner,
                     10 => ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
                         ui.add_space(2.);
-                        ui.label(RichText::new(computer.customer.key_string()))
+                        ui.label(RichText::new(computer.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string())))
                     }).inner,
                     _ => ui.label(""),
                 };
@@ -681,7 +681,8 @@ impl RowViewer<DatabaseTable> for DatabaseRowViewer {
                     7 => computer_l.gpu.cmp(&computer_r.gpu),
                     8 => computer_l.ram.cmp(&computer_r.ram),
                     9 => computer_l.operating_system.cmp(&computer_r.operating_system),
-                    10 => computer_l.customer.key_string().cmp(&computer_r.customer.key_string()),
+                    10 => computer_l.customer.as_ref().map_or_else(String::new, |id| id.key_string())
+                              .cmp(&computer_r.customer.as_ref().map_or_else(String::new, |id| id.key_string())),
                     _ => Ordering::Equal, // Default for invalid columns
                 }
             },

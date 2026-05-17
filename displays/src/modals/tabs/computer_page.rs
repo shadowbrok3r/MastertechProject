@@ -161,7 +161,7 @@ pub fn display_computer_page_with_search(
                     ui.end_row();
                     
                     ui.colored_label(Color32::LIGHT_RED, "Linked Customer");
-                    ui.label(computer.customer.key_string());
+                    ui.label(computer.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string()));
                     ui.end_row();
 
                     ui.colored_label(Color32::LIGHT_RED, "Hostname");

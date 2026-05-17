@@ -1,0 +1,1365 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "kind": "event",
+      "scope": "connected_client",
+      "name": "`update`",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "806914288d06a5775b73ea88d1ef6a298516a4cc76ea02b73cbe7053627a6a58",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "event",
+      "scope": "connected_client",
+      "name": "uid_event",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "aa86773d659e0e52ba1df5688e0b537112f87678bf9c7bd5262526e6e855ee6a",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "event",
+      "scope": "service_order",
+      "name": "created",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "581a68b894f811536d2f5f097ba7e5f907e9599b2e4a737f28c537f6bcf7c369",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "event",
+      "scope": "task",
+      "name": "created",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "a27d6ccbb10eee130afed6b8ac06786fae77965167b8145c1a72bab22fc6ad54",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "event",
+      "scope": "task",
+      "name": "updated",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "1245226ee564a93e64dc90eaa533b506f81208a7a5e8c979608dfe7728e3fde2",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "cpu",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "1b9c1f8e4c5aee7124118d6600c7bb8d67f8cbc0addd3ad6aa7fc3f60060de41",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "current_antivirus",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "035e8aee458c837064af9e018e5f6ff7246ae2afe6eb482bc18baac2809a34d2",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "current_antivirus.*",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "ba6c0ae43265e214fdfea6452ad9b5e329b47d9ad5a4b65fc6220fa60f9a604d",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "customer",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "7e09961c2412633168e2e9eca7050bd16878c96718a647bdaf70e83b8b0e7465",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "device_mfg",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "94090cdc3dd52be11f1dad1e0d3f61f101c3e5196748075cbf0e61f62719714b",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "device_model",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "e09944bc86653a7834ba7a92dcdac7e5e219e339b0aa2afb82b48dc147834f12",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "device_name",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "7b6f50eaa531567dfce7ac500483c0c061f81931c813a4885483f333b43ad84e",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "device_serial",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "e0bec20f59ce756ed7db86baa7829c2019c6b351a4cfdc6cfdbe04f168faf9db",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "drives",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "6d0f63ee74d84546133d9f61d878c54e27f46e258ec97a12756a92c1a956e0f2",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "drives.*",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "77ec868d63ce43530af00e5c3a87308ec619dc191eb81f2cdd4af76c35ecaaa6",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "gpu",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "6f7aea6470c46721758dbc67d07e83bb5fe9f655e6f15a6b727ac6da3c676ed8",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "hostname",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "7da44de70d77db25eb45c594ff4a7b8dc5ad90c40fcd0f52296263f350111ef1",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "installed_programs",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "1f566e67d70bf9a190e6b32bd18b246172cf3bdb9b6760899b69b28aefd13c37",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "installed_programs.*",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "9937bfd56aae029748a808256c015a29b8d61141dfe6bfea4d07f97542c3a72c",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "motherboard_asset_tag",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "4d8ebdc81dc8ba0810166909c13cb506c09f1e04a0adce3ebb7e84dbe4bfdf58",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "motherboard_name",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "c763715c9c08441dcfbbdda8254440cfbb516f9a61550939cec260f3dc1c856d",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "motherboard_serial",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "8e7d48a7e8fbb9c38a34f1db71aa129dd29771fcf7bad7acfdf1b2cdd7564bae",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "motherboard_vendor",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "d5ccd3e0335628a3a5cbf7298365e68018483d091f173ce92fb1eb0bdb6de60e",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "operating_system",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "530b5a6242208b51b4df09ccfffee9ea47d94b657be1c8fc8c526a4ed33c5c0c",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "order_service",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "e9eef57576de81c006801a82014e95ae526359cdcbdb2d7e5bd81bdb000d4e42",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "product_name",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "f43c46ec1a7f07cc3aed23ea1f0554e04e822e09f2f0f0edc765e20464909e2d",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "product_serial",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "dea90197a3f67005e8ff1e1a36270c63491c9c44e2f0462d43a155d7988e96ec",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "product_sku",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "eeb098a9c9a2e83c074dc640bb1942d87ac330a817e99641216105834a795c0f",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "product_vendor",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "c389e764d9781280f547209372c134da285e7b9239a46a0eae9522bdd78490b9",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "ram",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "61aaefccfa90f4e3d33b6fd56ce1eadb2dd6204bc05ce928a8ed6a58348e99b1",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "seb_info",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "6aa079c231b691c3b4dd20b784b2218fb4b8bdf059925f62a688eae8ceb62605",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "computer",
+      "name": "windows_active",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "f5fdde839be79c22cf60af27ec2814a6fcdf75cddb87ca0294b390ba98fcbf28",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "assigned_user",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "d1ead5c5837830a0ad44ff09933187fda8a08db9e401a2683407aedc7bb353a4",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "command_history",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "93fa7d3aa7d09967c15be77d7ff8ab6f42cdfd192c96e0a37329b131cb0bd987",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "command_history.*",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "97a084f31aad9e1a4eefb7751bcd26728a00775449179a2ac29854efc38c0c9b",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "computer",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "69efb97893c8b488c4f12308c8e4699a10085e3c14381e78b2b7cde1cb16560e",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "created_at",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "05022c2671871f9ec295db10593c231304a7b9d67997d33e2b145e34fd8aacc2",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "customer",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "c0ba73ea873a2768c48952b590076ce17e5b80e4c280e048ec9d84b3b7fa6a1c",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "customer_locked",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "8c241697581dfc62100eecec99d0a00127d02f4c78d44a1b38c4bb5bbc47d7b1",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "friendly_name",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "74aa684bc1e8bcab78acabb63a362a7699e9bcbd29b9515755a8e0621edb84cf",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "last_update",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "b3c011acbd5c4943726d85b3b0e11974c03f57c7b56286b8873e8fc7ee568907",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "local_ip",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "b54f86f20830eb15b45c3cc62c636616d1510af3570f1ae7d534a4a4f17761e0",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "connected_client",
+      "name": "tcp_port",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "62c5415a1789d7e9840d57f4df439a8bcf985b8b345d0796b7982b6bb94fda6a",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "display_name",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "4e628c08fd477a0fb1f03c126b0657dcbaa04a572e2dd92c44a212593e0c089a",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "first_seen",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "263a0e3916867ca716bf71a4f05826d5151685a1364ee0bd42f07954ff810163",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "kind",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "b06cff437e92a4bd4971818f4839b68c98d09630425d0a5db24bd788a00c51c4",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "last_seen",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "cd2bd8817498818b9f7d3bc32dca8aa0174fd94587a3e7e10f3b8161710cc517",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "model",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "d7e1577d9255b9b62120b1751d642b64df18c13b7b499cb2fbd365275ab34790",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "occurrence_count",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "e76be0b0f785a9297888f96737cee613f7fa59a5d773e1dde26f46ae26853f58",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "sku",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "f033d9304346e4ada914521d59cd04493a5b579a6392e8a9a66b543e2d1637cb",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "specs",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "87c428cf7505eb5a56ce023aa9919345c90ab26e43bebd5285aeaf7cbf177949",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "hardware_component",
+      "name": "vendor",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "5e8427fddc90655f4e53bcb3bca872df6b365b23b61f0027439cf889679048b7",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "checkin_notes",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "fb8530f1420eb837e61ebc7795df29d092f7a4519f71c0a80d08f2917c1b1bf4",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "checkin_rep",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "945c39aa8ae10b66c9af243c5ae98ee2737253f92d6f8671a6b35d24c5e1c9dd",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "computer",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "6147aac459ad704dc959b18686972e25ccfce4f28bc1d70b9931a88388266248",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "created_at",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "1e4c486a1d526209113e08171408049c3de971e628dab1c5664ee9ddf5233331",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "current_antivirus",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "604abda8096ad32f7c190d9d76fcff7b9d8fbb6a6b9ef82cda6e5dc146686afb",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "current_antivirus.*",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "1b5c1c2130ff5f910b757fdef587469507796278bd70c8dcf2bb624738181d63",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "customer",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "eb248418b885deb146013885744a82f62a92ddccf511b47c906917898927df0c",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "doc_alias",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "445e53f33a175e0da1813bd30390b59adc39b9e1adca349aaab1aa8665cec8ec",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "hardware_test_results",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "12d40127b6f1973ac6750dc8e43a44c88ea0deed1880e28aaa7f56dbd781d3f9",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "sales_rep",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "a1f1eb37ac5d955765d1704aa0d37c69f4b16a19af26b0f778592dbb73f4183e",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "service_number",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "42049cc97af8f59bc1e52bf7efe91b063918bfde64c82136036d74cb125e6d36",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "tech",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "3e3f757d11aed84e07c10be18ac88f9ba54089d694f5d45215f692be5b09f777",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "terms",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "e13759b887bf7c4a10a9a25a5701e316f2feb91b285de6be606fe76152d783fc",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "service_order",
+      "name": "ticket_total",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "9ada21190c4b35f909dbda6f57ba66aef0b019211d6ee3ac86bfa12d2dbda9e0",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "at",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "864e1d393b3fe5aaa788bf292a796e4a031ab33b77cc11e9e44611b38a442963",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "code",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "417645e61ec7fdc31f9e8fcf2ffcb57353b4b4e97aa17156c4f2dcdba1cbd16d",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "data",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "cefa7d0cc3b346496cdcc42ec82abe0db2de4d92b95e43f2888c225f5adc8fb1",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "detail",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "3c3d48e0e5f475d1d404c6cc6ca5b71a3feaa70a35c803c9aa1d7515e3439cdf",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "kind",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "c388d7be9f48991094ed5bcf542bb33d444d6fe291c6b09fef3878ed8b125856",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "run_ref",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "cc03b5b512732880904cc047535d08912b17f85161f268066d6e930dc40b5d78",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_event",
+      "name": "source",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "1e812fc82d983fe762172661a8c864624c30859b2a15a7dd4014c91595ff0e65",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "captured_at",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "b9556ba49245958e0919fab8c4a690a0fbba45abd10a3a2accedf4b0045fae69",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "cores",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "4d7b4b202698a44cf8868ef61918fcab28c4affa86d633a01235a3e0d477dc86",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "cores.*",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "00fa9616eecf803ecfe72d36e68ca6d28ae995b4e6d03f4e3b2e75d6673be2d3",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "disks",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "fcc269fc61d8de1665854c3d1edd34e7d30e75b6081d6b2f275fb11ce815aa74",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "disks.*",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "6443da0cf9be881315d098fb23efcd23948c401f508aba2b0fae50a3b1e21b6a",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "last_error",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "4582642b010dcdf9a8cb2bfcf6ec6f9c0100613f3274f0d1d3731b19ee02c260",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "memory_used_mb",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "9da7aed85e4a383a49a702cf3088d00bfa8b8f1b32cd222e0326ddcf27834bcd",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "memory_used_pct",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "779ebe17a1f0d22a509feabc53def61b7323c6fbac4632801001692d82d0a0a2",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "networks",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "5d269c81d132135ecd9e33ca3d73cda8e0470c878d089b67a4da6a97926e2a04",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "networks.*",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "89cf1cdd05e8c0629cc0692ffdba14d8f189000619aa74052cf10596aefee43e",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "page_file_used_pct",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "db7b87f9e46a8a7ce9c4c50d33df9df5d7e299660211b7932bd03ac0b2af1ce3",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "run_ref",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "5530da109097466de73857a419a718303a504181423db5897bb2a36036154bd0",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "stage_index",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "5562a1554c50e7683e13de132cc505c1afbaef00a21cc45ff48b796c9f2f5f05",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "stage_label",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "a23c1b0b7dc5c256f70da20600ff9996a2b881a61328d8414913f4d90ffa7fcb",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "throughput",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "e3c378b7ecf52315b81184abbfa1859a1ed3386ec429850501a36b9c2d20d58c",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "throughput_unit",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "c6a991542a9b732bdad5889297aa3f886593fabdac67869674a715ad6b0cacba",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_metric",
+      "name": "whea_delta_count",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "1af2cfb8a0239580a1cd663044c0868c8c990ae7cfea7757b8d22c5b7ed644b3",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "ai_assessment",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "e9775da910621066b8aff0a21539c1d88c8037139072b1b021fbca4c3eeb4f27",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "ambient_temp_c",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "eef9912597e5b14bcce4972fe0362b8b18b5bb9e8bfc831659521b0dbb8195aa",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "bios_settings",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "410ee6b989f90e9be1f8ea54363854d45204c6cd1a908a2b5b0126961dff331c",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "computer",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "5500f17ceee30b02fd6ef96d86257c233e1edd5eefb78170b0019d165c415e50",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "driver_versions",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "461113fef2590ce0c31c09c7d046c5113cbd1b1039702ac70cd70edbc1bc0ecb",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "duration_actual_secs",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "7ba196fdf050a30821921b441979071f6001c67629289ab339173ea072c46e91",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "duration_planned_secs",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "fe110e0eb585fab2f33cbb460aa1a91fef38ee0eee1868c0a6d961c40a41b405",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "ended_at",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "b9d324d9c42ade7cf5a8cdd81022fd5d179dfc831fd328a74fffe331b8ae6ceb",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "environment_notes",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "f96950c3d77dd444ca04521d797eb695921a5bba1978fb5b8960746b18f2bbf8",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "failure_kind",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "3bc0b02e41c7f21a67ce6a0d737b894a74b1b124f2fc154f5fed6aaf6646b5cd",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "failure_mode",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "e95398c89625de39be8fa58592b47d6c6d8ac2117cceb38ecf9cd94c58c083fd",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "finish_reason",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "77b49d403e4ff3754e60c8dc88fa6dfaf28b19359a3ae49ef48cae13edebf43b",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "hostname",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "cd34a796f998343d5495f6113ce034c7cf9484317afc94f6d0be5e2a48179bfe",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "machine_id",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "8b680059c5912f73d77ed955d33deb5c15b6a2f0a9952aad6cdb418315f28a72",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "notes",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "7dc57755fdd7ee885a3b7eeabf80025dedc5e3329d9c573719eb0ec7ff658b0b",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "preset_label",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "0a2b9e2926befc6ef68d5ff1fa465f73b4ebe8a777251da266f79491914d28e7",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "raw_log_refs",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "3eb8f53752ce1aff011437dea8cf2a191d985d54b9e3f24b970eb98e70c6e47f",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "raw_log_refs.*",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "794eaa5e8cf75b0beca5edd11922c2cd568554a4331b8d27ef904bafedae0244",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "result",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "34a9db90514f34c28be8b102eb7962a3d583d001f7d875e74ebf9206b6c5ec62",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "scenario_stages",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "8fe929f940f50fbf46de0548764ac04ec1aeff7607a13a2c794bfe02ebe4e719",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "scenario_stages.*",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "e351220fbdc0c8adf4bb072ff91228e7ecbba4f5861f77c98df7c82c6d213363",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "screenshot_refs",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "0797675a7b689bc87fd6f74af34fb7edfeb0a112f79742830335b36243f0654b",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "screenshot_refs.*",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "8584d1167bb0b1d7e2f741b69394e8e704b936b3c26c2e0bfde50d9c90d3f668",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "service_order",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "22b0d7f9baaa9a86f1830d04d2886fbe61684d4733f37561bcf108be5fcb9f46",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "session_ref",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "65d29b9e8c533f25c5223010ee7430265b91ae49790738d3920b2cf82c28f494",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "started_at",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "d4bd6ae3150da9be6e2937a5732c49a45f6fa15c99acacb21db4bd4333566a47",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "summary",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "19ac7c2d3843001e956c1f48370ddf9918db9fc9051520342b34db243e402fa4",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "tags",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "234a6bd3c0525330778a22406892684891af9420adc27578b2874ec961370258",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "tags.*",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "7e4ae9e185f1bc5d525a11985e1d615803397462ae29393261d1cb0c6936eda6",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "target_component",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "b2fe6e1289120301e5a11cb723be9a3f8f4a715f8e8509c14cc810dbafad3caf",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "target_kind",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "4566ef71e5ffd5ba34926571e9bdd51ee70abfe5b1782f5ac490a833b9c88ff9",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "task_ref",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "8b7d54f303ea0a23614577eaa46415c4ddea09fda8d2fb0bfb82f0d0d6a5de7a",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "tech",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "dc000417a5fb576a0dc24297c490b70371be3fc6702f4302f07fa4b72fa2ca1a",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "tool",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "0044c47e936387e81485e4e588814c2971892b4238a2b924746b6ba7488e2e9c",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "tool_label",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "dc2bb71058978a44abf612711c4d4719b18e0ba15b38a538768215105509cd5b",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "tool_version",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "20d42b1758b30d82a4e750073ed7a8bf435be0c4b2512f74de42d9e4d1d764a1",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "touched_components",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "2a462e5e05c1eba0b0fc31b2f31d3d8290fe62d9de13a5eba2956c4ca95f6559",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "stress_test_run",
+      "name": "touched_components.*",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "a1a49329d30d13e60808698bace3d4fc03b189838e6e83cef71ad55df574bbde",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "assignee",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "022f420bd265deea04bbc1bc844a292875aecd93d020cfab4b4667b66325ea80",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "completed",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "46227646d7a1a9ad4ca70a7fb59dc9725fb9e5cdaf4ecdc54422cdf8e2a8f1f5",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "created_at",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "e7913ff64c61c3a308fcd315a0803c7a37f6f0532871802c4938149e4fa79379",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "due_date",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "869c8235874cbf5dc6aa3aa4067594782561dd4d8ddf79c22b62a7ddea8c764d",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "jobs",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "cd78e64774b05e30e21bdf80256908f93dcddd51504b562b132404f9a121670f",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "jobs.*",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "50ba54958537ce609b1344f135ad34ac5e20849b14f1487d84156d53f118341d",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "priority",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "7ee9fde8158ea0c1c44124be6497d84f8deeff53ddfbf4b0acb9153af3ed7007",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "service_number",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "1634629140d261d2e6ca8117e63f05766c684343f944c6268c6e582273700c7b",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "service_ticket",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "17a9bf585fe04d49e662f61402216d0f771fb547bf1b9b83a7bcc77ccc302c49",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "status",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "3c74300ebc30a4105f3e3bc73756b048f7b2ff66ad668f8546ecf64ad2b1fc23",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "task_description",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "2e045f6e7b67b0b17aee14c2773309f430ee869ed78e658ede3bcf74381ffef2",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "field",
+      "scope": "task",
+      "name": "task_name",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "a52f1cfc703b526e0f0825a7caa2bf573cf8585a14465690008c3d07906d23c0",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "index",
+      "scope": "hardware_component",
+      "name": "hw_component_display",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "4101df8a992c536f436da13f5f90c7b7876c7f30f8abb8252d6c14d585896929",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "index",
+      "scope": "hardware_component",
+      "name": "hw_component_identity",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "024df737597b919e5df92b925dd38d35dfdcc06f14cb19c4d4592a7a0ee7bf61",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "index",
+      "scope": "hardware_component",
+      "name": "hw_component_kind",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "b1df4a7f1e41770ca3b189accd6d46a7bdb7daf3e1e929ee265d81018d248e29",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "index",
+      "scope": "service_order",
+      "name": "service_idx",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "f071bdb7d9a9ac4354b6d255b14dba1dd8420b930962ee424e9b11cb0da5ee3f",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "index",
+      "scope": "service_order",
+      "name": "service_number_idx",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "ff62e52059a81e4a2fbe950d188093a843549cd5187c4a38745aa25aec8d5a60",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_event",
+      "name": "stevt_kind",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "8f87adc0fd7accb4acef7011810cf192a9642f4e5ca3ca4c218277b1981f10ab",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_event",
+      "name": "stevt_run_time",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "b77430ef44768dd696bafd9762b7f48abd4400b130905dfc30c4340cbacce852",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_metric",
+      "name": "stmetric_run_time",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "e99b3b93b1f273df48dd54fb6ed6fcdd9f7ad7c96d2a09efc446b6938082577f",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_computer",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "e179dabe2b4146a8a15911e32b902a0188b460aba46119f7c36ef7dfeb00559d",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_failure_kind",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "8bcb8663e041b6198a814abb4a7ef05b7647f285dcf88c2d0a351965f28e879d",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_result",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "81b992ab0d6083daa67fed398b6094ef8566d5bfa6b87b3ef0a5cfbef65d7585",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_service_order",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "d2bb9a3a5a26b0787f260aa1fffa8b1c7f957f00218f9cc51ef44fa068d2eb49",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_session",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "e5a02e4aba0606150f485bd657b1ac4d7db6ae51d55698c43133b69b8135d05e",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_started_at",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "4fc7d0bb7500e96a393086d4df1c681133275cb9048394f3fbb5aa5b44f4c22f",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_tags",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "d057d9c6b29f62f30b755510b448695d7cc9c6513890635a370e4a6558693121",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_target_component",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "5cb7dfb45ae71dc02b9293bde922e410ca95817b58d19c906571da0e3ef89fae",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_target_kind",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "733e31d4e30a1d92e0745d6b5970053dde47017c984cc4e270c36e849c0c8823",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_task",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "6c3605fe2c34c85df9a7fb6d913ce21b8052d22836cd96d14ccf096df41a87d5",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "stress_test_run",
+      "name": "strun_tool_label",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "1edf0206accfa8b336a000b7252021136abecfc632291423c0150d698aef60a5",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "index",
+      "scope": "task",
+      "name": "task_idx",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "7f8d51b80e21f9ac1a5724c1b782e6c57518efdd92e5dd664d2b75fd7d4f3eda",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "computer",
+      "source_path": "database/schema/computer.surql",
+      "statement_hash": "71e25e5d536333ebd7f7d26eb2d67dae325916ae47684057a9e301c18c338a0d",
+      "file_hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "connected_client",
+      "source_path": "database/schema/connected_client.surql",
+      "statement_hash": "078821e76605d78f0c73ad1a7b1495b2af081a20239b8382b5b75ea0d14d9507",
+      "file_hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "hardware_component",
+      "source_path": "database/schema/hardware_component.surql",
+      "statement_hash": "48e81b49b397b90a79b1e17f3b42028c1bab3efc6486540d68a4ad52e1902cdc",
+      "file_hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "hardware_test_baseline",
+      "source_path": "database/schema/hardware_test_baseline.surql",
+      "statement_hash": "946e34ecdec7c0e5ed28ecbc481481af2777b0649832776c07799dec3dafe6ab",
+      "file_hash": "93ebdcfc1ab1457ceb606f9a4c1ccba9cca6a2354e25f7e2f7351582c131931a"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "service_order",
+      "source_path": "database/schema/service_order.surql",
+      "statement_hash": "f100ee771d2add449c2ace08e71df5a67e94d2080565b8210d52dce0125e3003",
+      "file_hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "stress_test_event",
+      "source_path": "database/schema/stress_test_event.surql",
+      "statement_hash": "ca2554dff185363dafaa7cac07c7622316d52fdb5a2aaec35d6c220c0b35be86",
+      "file_hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "stress_test_metric",
+      "source_path": "database/schema/stress_test_metric.surql",
+      "statement_hash": "128778df99c6c2a0cd5c1d2ae0df4236b7ce3a927d037c99f81cd6d70df8bba8",
+      "file_hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "stress_test_run",
+      "source_path": "database/schema/hardware_test_baseline.surql",
+      "statement_hash": "1879fe55ac75945c6b472cf2104c5f4fadfd18e680fa0e291707008bcd45980f",
+      "file_hash": "93ebdcfc1ab1457ceb606f9a4c1ccba9cca6a2354e25f7e2f7351582c131931a"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "stress_test_run",
+      "source_path": "database/schema/stress_test_run.surql",
+      "statement_hash": "1879fe55ac75945c6b472cf2104c5f4fadfd18e680fa0e291707008bcd45980f",
+      "file_hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "kind": "table",
+      "scope": null,
+      "name": "task",
+      "source_path": "database/schema/task.surql",
+      "statement_hash": "6c705e4709e3aff0495f16852723723ca93fde898a052ad4be80976af983c6b4",
+      "file_hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    }
+  ]
+}

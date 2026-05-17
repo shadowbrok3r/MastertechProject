@@ -21,9 +21,9 @@ use crate::schema::{NOTIFICATION_TABLE, Notification, file_storage};
 
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
-const USER_SCOPE: &str = env!("USER_SCOPE");
-const DB: &str = env!("DB");
-const NS: &str = env!("NS");
+pub const USER_SCOPE: &str = env!("USER_SCOPE");
+pub const DB: &str = env!("DB");
+pub const NS: &str = env!("NS");
 pub const SCAFFOLD_URL: &str = env!("SCAFFOLD_URL");
 pub const SCAFFOLD_USER: &str = env!("SCAFFOLD_USER");
 pub const SCAFFOLD_PASS: &str = env!("SCAFFOLD_PASS");

@@ -1,0 +1,94 @@
+-- ============================================================
+-- TABLE: stress_test_run           last changed: Stress-test tranche (2026-05-16)
+-- Managed by surrealkit. Edit here, then `rollout plan`.
+-- ============================================================
+-- One execution of one stress tool against one computer. Carries
+-- run metadata, the tool config, BIOS/driver context, an outcome
+-- verdict, and a summary rollup of telemetry observed during the
+-- run. Telemetry samples themselves live in `stress_test_metric`
+-- (linked via `run_ref`); discrete events in `stress_test_event`.
+-- Rust source of truth: `database::schema::stress_test::StressTestRun`.
+
+DEFINE TABLE stress_test_run TYPE ANY SCHEMALESS CHANGEFEED 30d PERMISSIONS FULL;
+
+-- "History of this machine" — primary AI lookup path.
+DEFINE INDEX strun_computer         ON stress_test_run FIELDS computer;
+
+-- "Every run that exercised this canonical chip" — drives the
+-- cross-shop analytics ("for every RTX 4070 SUPER ever, what shows up?").
+DEFINE INDEX strun_target_component ON stress_test_run FIELDS target_component;
+
+-- Pull every run for a ticket / diagnostic session / task.
+DEFINE INDEX strun_service_order    ON stress_test_run FIELDS service_order;
+DEFINE INDEX strun_session          ON stress_test_run FIELDS session_ref;
+DEFINE INDEX strun_task             ON stress_test_run FIELDS task_ref;
+
+-- `tool_label` is the lowercase snake_case discriminant maintained by
+-- `TestTool::label()` ("prime95", "occt", "stresskit:cpu", "memtest86", …).
+-- Lets analytic queries filter on tool family without destructuring the
+-- structured `tool` object.
+DEFINE INDEX strun_tool_label       ON stress_test_run FIELDS tool_label;
+DEFINE INDEX strun_target_kind      ON stress_test_run FIELDS target_kind;
+DEFINE INDEX strun_result           ON stress_test_run FIELDS result;
+DEFINE INDEX strun_failure_kind     ON stress_test_run FIELDS failure_kind;
+DEFINE INDEX strun_started_at       ON stress_test_run FIELDS started_at;
+DEFINE INDEX strun_tags             ON stress_test_run FIELDS tags;
+
+-- --- Links ---
+DEFINE FIELD computer            ON stress_test_run TYPE record<computer>                           PERMISSIONS FULL;
+DEFINE FIELD service_order       ON stress_test_run TYPE none | record<service_order>              PERMISSIONS FULL;
+DEFINE FIELD session_ref         ON stress_test_run TYPE none | record<diagnostic_session>         PERMISSIONS FULL;
+DEFINE FIELD task_ref            ON stress_test_run TYPE none | record<task>                       PERMISSIONS FULL;
+
+-- --- What was tested ---
+DEFINE FIELD target_kind         ON stress_test_run TYPE string                                     PERMISSIONS FULL;
+DEFINE FIELD target_component    ON stress_test_run TYPE none | record<hardware_component>         PERMISSIONS FULL;
+DEFINE FIELD touched_components  ON stress_test_run TYPE array<record<hardware_component>> DEFAULT [] PERMISSIONS FULL;
+DEFINE FIELD touched_components.* ON stress_test_run TYPE record<hardware_component>               PERMISSIONS FULL;
+
+-- --- Tool & run config ---
+DEFINE FIELD tool                ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+DEFINE FIELD tool_label          ON stress_test_run TYPE string                                     PERMISSIONS FULL;
+DEFINE FIELD tool_version        ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD preset_label        ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD scenario_stages    ON stress_test_run TYPE array<object> DEFAULT []                   PERMISSIONS FULL;
+DEFINE FIELD scenario_stages.*  ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+
+-- --- Timing ---
+DEFINE FIELD started_at          ON stress_test_run TYPE datetime DEFAULT time::now()              PERMISSIONS FULL;
+DEFINE FIELD ended_at            ON stress_test_run TYPE none | datetime                            PERMISSIONS FULL;
+DEFINE FIELD duration_planned_secs ON stress_test_run TYPE none | number                            PERMISSIONS FULL;
+DEFINE FIELD duration_actual_secs  ON stress_test_run TYPE none | number                            PERMISSIONS FULL;
+
+-- --- Environment ---
+DEFINE FIELD tech                ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD hostname            ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD machine_id          ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD ambient_temp_c      ON stress_test_run TYPE none | number                              PERMISSIONS FULL;
+DEFINE FIELD environment_notes   ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD bios_settings       ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+DEFINE FIELD driver_versions     ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+
+-- --- Verdict ---
+-- `result` is one of: 'pass' | 'fail' | 'aborted' | 'inconclusive' | 'in_progress'.
+-- `failure_mode` is the structured FailureMode enum (externally tagged object);
+-- `failure_kind` is its lowercase tag mirrored for fast filtering.
+DEFINE FIELD result              ON stress_test_run TYPE string DEFAULT 'in_progress'              PERMISSIONS FULL;
+DEFINE FIELD finish_reason       ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD failure_mode        ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+DEFINE FIELD failure_kind        ON stress_test_run TYPE string DEFAULT 'none'                     PERMISSIONS FULL;
+
+-- --- Aggregates rolled up from the metric stream ---
+DEFINE FIELD summary             ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+
+-- --- Artifacts (bucket paths) ---
+DEFINE FIELD raw_log_refs        ON stress_test_run TYPE array<string> DEFAULT []                  PERMISSIONS FULL;
+DEFINE FIELD raw_log_refs.*      ON stress_test_run TYPE string                                     PERMISSIONS FULL;
+DEFINE FIELD screenshot_refs     ON stress_test_run TYPE array<string> DEFAULT []                  PERMISSIONS FULL;
+DEFINE FIELD screenshot_refs.*   ON stress_test_run TYPE string                                     PERMISSIONS FULL;
+
+-- --- Annotations ---
+DEFINE FIELD notes               ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
+DEFINE FIELD ai_assessment       ON stress_test_run TYPE none | object                              PERMISSIONS FULL;
+DEFINE FIELD tags                ON stress_test_run TYPE array<string> DEFAULT []                  PERMISSIONS FULL;
+DEFINE FIELD tags.*              ON stress_test_run TYPE string                                     PERMISSIONS FULL;

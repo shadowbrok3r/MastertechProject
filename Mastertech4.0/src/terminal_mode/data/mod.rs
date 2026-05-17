@@ -140,7 +140,7 @@ impl ServiceData {
             device_mfg: Some(device.device_mfg),
             device_model: Some(device.device_model),
             device_serial: Some(device.device_serial),
-            customer: customer.id.clone(),
+            customer: Some(customer.id.clone()),
             ..computer.clone()
         };
 

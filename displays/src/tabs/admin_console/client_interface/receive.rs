@@ -477,6 +477,30 @@ impl WebSocketClient {
                         if success && !self.registry_editor.selected_key.is_empty() {
                             let _ = self.send_cmd_tx.try_send(Cmd::ListRegistryKeys(self.registry_editor.selected_key.clone()));
                         }
+                    } else if let Cmd::WindowsUpdateResult { success, summary } = cmd {
+                        // Slice 4: batch Windows Update finished
+                        // on this client. Surface the per-client
+                        // outcome as a toast (success/error)
+                        // tagged with the connection_string so the
+                        // operator can tell which client just
+                        // reported back from a batch fan-out.
+                        log::info!(
+                            "Windows Update result on {}: success={success} {summary}",
+                            self.client.connection_string,
+                        );
+                        let cs = &self.client.connection_string;
+                        let prefix = self
+                            .client
+                            .friendly_name
+                            .clone()
+                            .unwrap_or_else(|| cs.clone());
+                        let toast_text = format!("{prefix} — {summary}");
+                        let toast = if success {
+                            crate::ToastMessage::Success(toast_text)
+                        } else {
+                            crate::ToastMessage::Error(toast_text)
+                        };
+                        let _ = crate::get_toast_sender().try_send(toast);
                     } else if let Cmd::InstalledProgramsResponse(programs) = cmd {
                         // Slice 3: client finished its registry
                         // walk and shipped the list. Drop it into

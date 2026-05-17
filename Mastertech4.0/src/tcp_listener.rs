@@ -142,7 +142,7 @@ pub async fn accept_loop(listener: TcpListener) {
                     log::info!("tcp_listener -> admin connected from {peer}");
                     tokio::spawn(async move {
                         if let Err(e) = handle_session(stream, peer).await {
-                            log::warn!("tcp_listener -> session {peer} ended: {e}");
+                            log::warn!("tcp_listener -> session {peer} ended: {e:#}");
                         } else {
                             log::info!("tcp_listener -> session {peer} closed cleanly");
                         }
@@ -524,25 +524,32 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     );
 
     // Publish IP+port to the client's row so admins can dial directly.
+    // Also re-publish `connection_string` so it can never drift from what
+    // `get_client_hash()` computes at runtime — otherwise a stale row would
+    // cause every direct-TCP handshake to fail with an ID mismatch.
     // Retries with exponential back-off in case the DB row hasn't been
     // created yet (first-run race between the WS sender and this task).
     let publish_uuid = client_uuid.clone();
     let port = addr.port();
+    let connection_string = get_client_hash().connection_string;
     tokio::spawn(async move {
         let ip_string = local_ip.to_string();
         for attempt in 0..5u32 {
             let res = DATABASE
                 .query(
-                    "UPDATE $client SET local_ip = $ip, tcp_port = $port, last_update = time::now()",
+                    "UPDATE $client SET local_ip = $ip, tcp_port = $port, \
+                     connection_string = $cs, last_update = time::now()",
                 )
                 .bind(("client", publish_uuid.clone()))
                 .bind(("ip", ip_string.clone()))
                 .bind(("port", port))
+                .bind(("cs", connection_string.clone()))
                 .await;
             match res {
                 Ok(_) => {
                     log::info!(
-                        "spawn_direct_tcp_listener -> published {ip_string}:{port} to {:?}",
+                        "spawn_direct_tcp_listener -> published {ip_string}:{port} \
+                         (cs={connection_string}) to {:?}",
                         publish_uuid
                     );
                     return;

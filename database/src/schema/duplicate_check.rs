@@ -218,9 +218,9 @@ impl FieldDisplay for TicketData {
         }
         // Customer link (as display only - usually shouldn't differ)
         if self.customer != other.customer {
-            fields.push(("customer".to_string(), 
-                self.customer.key_string(), 
-                other.customer.key_string()));
+            let self_cust = self.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string());
+            let other_cust = other.customer.as_ref().map_or_else(|| "—".to_string(), |id| id.key_string());
+            fields.push(("customer".to_string(), self_cust, other_cust));
         }
         // Computer link
         let self_computer = self.computer.as_ref().map(|c| c.key_string()).unwrap_or_default();

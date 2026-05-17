@@ -13,6 +13,7 @@ pub mod receive_client;
 pub mod receive_users;
 pub mod receive_read_state;
 pub mod admin_notification;
+pub mod reachability;
 // pub mod receive_database;
 
 impl crate::app_state::SharedContext {
@@ -137,6 +138,15 @@ impl crate::app_state::SharedContext {
                 let _ = error_tx_clients.try_send(error_msg);
             }
         });
+
+        // Slice 5: kick off the per-admin TCP reachability prober.
+        // The prober loops forever until `wait_for_shutdown` fires,
+        // pulling the current `connected_client` rows from
+        // SurrealDB every PROBE_INTERVAL and ship-back results via
+        // `reachability_tx`. The UI thread drains them in
+        // `receive_shared_ui::drain_reachability_events` so the
+        // visibility filter has up-to-date data each frame.
+        reachability::spawn_prober(self.reachability_tx.clone());
 
         self.stock_tables.first_run();
         match decode_style(&user.get_color_scheme()) {
@@ -321,7 +331,18 @@ impl crate::app_state::SharedContext {
         self.handle_viewports(ctx);
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);
+        self.drain_reachability_events();
         self.toasts.show(ctx);
+    }
+
+    /// Slice 5: drain the background prober's results into the
+    /// per-admin `reachability_cache`. Cheap — typically zero or
+    /// a handful of events per frame, only the round-completion
+    /// burst sees more.
+    fn drain_reachability_events(&mut self) {
+        while let Ok(event) = self.reachability_rx.try_recv() {
+            self.reachability_cache.insert(event.connection_string, event.status);
+        }
     }
 
     /// Per-frame pump + renderer for the connected-client diagnostics

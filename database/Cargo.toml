@@ -31,6 +31,8 @@ log.workspace = true
 fuzzy-matcher.workspace = true
 uuid = { workspace = true }
 surrealdb-types = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
 
 [build-dependencies]
 dotenvy.workspace = true

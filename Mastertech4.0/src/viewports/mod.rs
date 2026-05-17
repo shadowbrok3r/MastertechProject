@@ -110,6 +110,12 @@ impl MasterTechApp{
                         .security_inventory
                         .get(&client.connection_string)
                         .map(|v| v.as_slice());
+                    // Floating-viewport renderer has no access to
+                    // the SharedContext-side reachability cache.
+                    // Passing `None` is correct here — the
+                    // detached window doesn't need to show the
+                    // probe state (operators look at that in the
+                    // main admin console row).
                     ui.horizontal(|ui| {
                         AdminConsole::client_header(
                             ui,
@@ -119,6 +125,7 @@ impl MasterTechApp{
                             layout.focused_client.as_deref(),
                             is_ws_connected,
                             inventory,
+                            None,
                         );
                     });
                     if let Some(ws_client) = layout.ws_clients.get_mut(&client.connection_string) {

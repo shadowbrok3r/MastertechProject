@@ -32,6 +32,7 @@ pub mod duplicate_check;
 pub mod file_storage;
 pub mod plugin_registry;
 pub mod diagnostic;
+pub mod stress_test;
 
 pub use task::*;
 pub use task_note::*;
@@ -49,6 +50,7 @@ pub use duplicate_check::*;
 pub use file_storage::*;
 pub use plugin_registry::*;
 pub use diagnostic::*;
+pub use stress_test::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -71,6 +73,11 @@ pub const SALES_NOTE_TABLE: &str = "sales_note";
 pub const PLUGIN_REGISTRY_TABLE: &str = "plugin_registry";
 pub const DIAGNOSTIC_SESSION_TABLE: &str = "diagnostic_session";
 pub const DIAGNOSTIC_ENTRY_TABLE: &str = "diagnostic_entry";
+pub const HARDWARE_COMPONENT_TABLE: &str = "hardware_component";
+pub const STRESS_TEST_RUN_TABLE: &str = "stress_test_run";
+pub const STRESS_TEST_METRIC_TABLE: &str = "stress_test_metric";
+pub const STRESS_TEST_EVENT_TABLE: &str = "stress_test_event";
+pub const HARDWARE_TEST_BASELINE_TABLE: &str = "hardware_test_baseline";
 
 pub use prestashop as prestashop_schema;
 

@@ -1,5 +1,5 @@
-use crate::{PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
-use eframe::egui::{self, Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, ScrollArea, Stroke, Ui, Vec2, Widget};
+use crate::{Cmd, PlatformSpawner, Spawner, channel_manager::ChannelManager, tabs::{ai_playground::enhanced::EnhancedAiPlayground, tasks::task_layout::{SortField, SortOptions}}, ui_tools::toasts::{Toast, ToastOptions, ToastStyle}, virtual_filesystem::FileSystem};
+use eframe::egui::{self, Align, Button, CentralPanel, Color32, Context, Frame, Layout, Margin, RichText, ScrollArea, Stroke, Ui, Vec2, Widget};
 use database::schema::{utilities::get_connected_clients, ConnectedClient, RecordIdExt, Sortable};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
@@ -33,6 +33,42 @@ pub enum SessionLayout {
     Docked,
     /// Render in a separate OS viewport (native) or egui Window (WASM).
     Floating,
+}
+
+/// Multi-client batch action awaiting operator confirmation. The
+/// Batch ▾ menu picks one of these; the confirm dialog reads it +
+/// the current set of open `ws_clients`, and on Confirm fans the
+/// underlying Cmd out to every client.
+///
+/// Each variant maps to a single `Cmd` (see
+/// `dispatch_batch_action`). The mapping is one place so it's
+/// easy to add new actions without rewriting the menu + dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchAction {
+    Reboot,
+    RebootIntoTerminalMode,
+    Lock,
+    LogOff,
+    Shutdown,
+    /// Windows Update — installs and **does not** reboot. A
+    /// future iteration can add a `RunWindowsUpdateAndReboot`
+    /// variant if you want a "patch and bounce" all-in-one.
+    RunWindowsUpdate,
+}
+
+impl BatchAction {
+    /// Operator-facing label used in the Batch menu and the
+    /// confirm dialog header.
+    pub fn label(self) -> &'static str {
+        match self {
+            BatchAction::Reboot => "Reboot",
+            BatchAction::RebootIntoTerminalMode => "Reboot into Terminal Mode",
+            BatchAction::Lock => "Lock workstation",
+            BatchAction::LogOff => "Log off user",
+            BatchAction::Shutdown => "Shutdown",
+            BatchAction::RunWindowsUpdate => "Run Windows Update",
+        }
+    }
 }
 
 #[derive(Serialize, Default)]
@@ -87,6 +123,13 @@ pub struct AdminConsole {
     /// round trip per frame.
     #[serde(skip)]
     pub security_inventory: HashMap<String, Vec<database::schema::InstalledSecurityProduct>>,
+    /// Pending batch action awaiting operator confirmation
+    /// (slice 4). The Batch ▾ menu fires items into this slot;
+    /// the confirm dialog reads it, and on Confirm the dispatcher
+    /// fans the underlying Cmd out to every entry in
+    /// `ws_clients`. Cleared on confirm or cancel.
+    #[serde(skip)]
+    pub pending_batch_action: Option<BatchAction>,
     pub error: String,
     script_editor: ScriptEditor,
     pub ai_playground: EnhancedAiPlayground,
@@ -115,6 +158,7 @@ impl AdminConsole {
             ws_clients: Default::default(),
             active_diagnostic_sessions: Default::default(),
             security_inventory: Default::default(),
+            pending_batch_action: None,
             ui_actions_channel,
             error: Default::default(),
             state: Default::default(),
@@ -214,6 +258,75 @@ impl AdminConsole {
                 ctx.request_repaint();
             }
         }
+    }
+
+    /// Translate a `BatchAction` into a single `Cmd` value, ready
+    /// to fan out to every connected client.
+    ///
+    /// Kept on `AdminConsole` (not free-standing) so the mapping
+    /// lives next to where it's consumed; lowers the friction of
+    /// adding a new variant later (one place to edit instead of
+    /// two).
+    fn batch_action_cmd(action: BatchAction) -> Cmd {
+        match action {
+            BatchAction::Reboot => Cmd::RebootSystem {
+                persist_mastertech: true,
+                terminal_mode: false,
+            },
+            BatchAction::RebootIntoTerminalMode => Cmd::RebootSystem {
+                persist_mastertech: true,
+                terminal_mode: true,
+            },
+            BatchAction::Lock => Cmd::LockWorkstation,
+            BatchAction::LogOff => Cmd::LogOffUser,
+            BatchAction::Shutdown => Cmd::ShutdownSystem,
+            BatchAction::RunWindowsUpdate => Cmd::RunWindowsUpdate {
+                reboot_when_done: false,
+            },
+        }
+    }
+
+    /// Fan a confirmed batch action out across every entry in
+    /// `ws_clients`. Returns `(succeeded, failed)` counts; the
+    /// caller surfaces them in a status toast.
+    pub fn dispatch_batch_action(&mut self, action: BatchAction) -> (usize, usize) {
+        let cmd_template = Self::batch_action_cmd(action);
+        // `Cmd` doesn't implement Clone, so we round-trip through
+        // serialize/deserialize per recipient. The serialized
+        // bytes are small for these admin actions (~10-40 bytes
+        // each), so the cost is negligible compared to the
+        // network round-trip we're about to do.
+        let template_bytes = match bincode::serde::encode_to_vec(&cmd_template, bincode::config::standard()) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("dispatch_batch_action: encode template failed: {e}");
+                return (0, self.ws_clients.len());
+            }
+        };
+
+        let mut ok = 0usize;
+        let mut err = 0usize;
+        for (cs, ws) in self.ws_clients.iter() {
+            let cmd: Cmd = match bincode::serde::decode_from_slice(&template_bytes, bincode::config::standard()) {
+                Ok((c, _)) => c,
+                Err(e) => {
+                    log::error!("dispatch_batch_action: decode for {cs} failed: {e}");
+                    err += 1;
+                    continue;
+                }
+            };
+            if ws.send_cmd_tx.try_send(cmd).is_ok() {
+                ok += 1;
+            } else {
+                err += 1;
+                log::warn!("dispatch_batch_action: try_send failed for {cs}");
+            }
+        }
+        log::info!(
+            "Batch '{}': dispatched ok={ok} err={err}",
+            action.label()
+        );
+        (ok, err)
     }
 }
 
@@ -315,6 +428,87 @@ impl SharedContext {
                     self.web_console_layout.state = WebConsolePageState::AiPlayground;
                 }
 
+                ui.add_space(5.);
+
+                // ── Batch menu (slice 4) ─────────────────────────────────
+                //
+                // Fires destructive actions across every currently-open
+                // session. The count next to the label shows the
+                // operator how many clients the action will hit; the
+                // button is disabled when nothing is connected so it
+                // can't be mis-clicked into a no-op.
+                //
+                // Each menu item just stashes the chosen action in
+                // `pending_batch_action`; the confirm dialog
+                // (rendered later in this top panel) is the only
+                // place that actually dispatches.
+                let open_count = self.web_console_layout.ws_clients.len();
+                let batch_label = format!("Batch ({open_count}) ▾");
+                ui.add_enabled_ui(open_count > 0, |ui| {
+                    ui.menu_button(
+                        RichText::new(batch_label)
+                            .color(if open_count > 0 {
+                                Color32::from_rgb(255, 200, 50)
+                            } else {
+                                Color32::DARK_GRAY
+                            })
+                            .strong(),
+                        |ui| {
+                            // Header that previews the affected
+                            // clients — operators get blindsided
+                            // when "Reboot all" turns out to mean
+                            // "the one I forgot I had open in a
+                            // floating window too."
+                            ui.label(
+                                RichText::new(format!("Acts on {open_count} open client(s):"))
+                                    .small()
+                                    .color(Color32::GRAY),
+                            );
+                            let names: Vec<String> = self
+                                .web_console_layout
+                                .ws_clients
+                                .values()
+                                .map(|w| {
+                                    w.client
+                                        .friendly_name
+                                        .clone()
+                                        .unwrap_or_else(|| w.client.connection_string.clone())
+                                })
+                                .collect();
+                            for name in &names {
+                                ui.label(RichText::new(format!("  • {name}")).small());
+                            }
+                            ui.separator();
+
+                            // Action items. Each one *stages*; the
+                            // confirm dialog is the firing point.
+                            for action in [
+                                BatchAction::Reboot,
+                                BatchAction::RebootIntoTerminalMode,
+                                BatchAction::Lock,
+                                BatchAction::LogOff,
+                                BatchAction::Shutdown,
+                                BatchAction::RunWindowsUpdate,
+                            ] {
+                                let color = match action {
+                                    BatchAction::Shutdown => Color32::LIGHT_RED,
+                                    BatchAction::Reboot | BatchAction::RebootIntoTerminalMode => {
+                                        Color32::from_rgb(180, 180, 200)
+                                    }
+                                    BatchAction::RunWindowsUpdate => {
+                                        Color32::from_rgb(80, 200, 255)
+                                    }
+                                    _ => Color32::from_rgb(180, 180, 200),
+                                };
+                                if ui.button(RichText::new(action.label()).color(color)).clicked() {
+                                    self.web_console_layout.pending_batch_action = Some(action);
+                                    ui.close();
+                                }
+                            }
+                        },
+                    );
+                });
+
                 // ── Active-client breadcrumb ────────────────────────────
                 //
                 // Until now operators had to remember which client they
@@ -392,6 +586,25 @@ impl SharedContext {
             .show_animated_inside(ui, self.web_console_layout.open_menu, |ui |
         {
             ui.vertical_centered(|ui| {
+
+                // Snapshot the per-connection reachability lookup
+                // *before* the mut borrow on `web_console_layout`
+                // below so the row renderer below can pass it down
+                // to `client_details_grid`. Cloning the
+                // `ReachabilityStatus` (a small struct of bools +
+                // an Instant + an optional String) is cheap; doing
+                // this each frame is OK for fleets up to a few
+                // hundred clients.
+                let reachability_snapshot: HashMap<String, crate::ui_data::reachability::ReachabilityStatus> =
+                    self.web_console_layout
+                        .clients
+                        .iter()
+                        .filter_map(|c| {
+                            self.reachability_cache
+                                .get(&c.connection_string)
+                                .map(|s| (c.connection_string.clone(), s.clone()))
+                        })
+                        .collect();
 
                 let ws_client = &mut self.web_console_layout;
                 let clients = &mut ws_client.clients;
@@ -475,6 +688,8 @@ impl SharedContext {
                                 .security_inventory
                                 .get(&client.connection_string)
                                 .map(|v| v.as_slice());
+                            let reachability = reachability_snapshot
+                                .get(&client.connection_string);
                             AdminConsole::client_header(
                                 ui,
                                 ws_client.ui_actions_channel.0.clone(),
@@ -483,6 +698,7 @@ impl SharedContext {
                                 ws_client.focused_client.as_deref(),
                                 is_ws_connected,
                                 inventory,
+                                reachability,
                             );
                         }
                     }
@@ -507,6 +723,132 @@ impl SharedContext {
             }
             ws_layout.ui(ui);
         });
+
+        // ── Batch-action confirm dialog (slice 4) ─────────────────────
+        //
+        // Rendered at the end so it overlays everything else on this
+        // tab. The Batch menu sets `pending_batch_action`; this
+        // dialog is the only place the action actually fires. On
+        // Confirm we call `dispatch_batch_action` and clear the
+        // pending slot regardless of outcome.
+        if let Some(action) = self.web_console_layout.pending_batch_action {
+            let target_names: Vec<String> = self
+                .web_console_layout
+                .ws_clients
+                .values()
+                .map(|w| {
+                    w.client
+                        .friendly_name
+                        .clone()
+                        .unwrap_or_else(|| w.client.connection_string.clone())
+                })
+                .collect();
+            let count = target_names.len();
+
+            // Center the window so it can't be missed behind the
+            // client list — destructive ops shouldn't be easy to
+            // mis-click around.
+            let mut still_open = true;
+            egui::Window::new(format!("Confirm: {}", action.label()))
+                .id(egui::Id::new("admin_batch_confirm"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .open(&mut still_open)
+                .show(ui.ctx(), |ui| {
+                    ui.set_min_width(360.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} on {count} open client(s)?",
+                            action.label()
+                        ))
+                        .strong(),
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            for name in &target_names {
+                                ui.label(
+                                    RichText::new(format!("• {name}"))
+                                        .small()
+                                        .color(Color32::from_rgb(199, 202, 245)),
+                                );
+                            }
+                        });
+                    ui.add_space(8.0);
+
+                    // Special-case the destructive-looking
+                    // warning copy so the operator pauses on
+                    // Shutdown / Reboot.
+                    let warning = match action {
+                        BatchAction::Shutdown => Some(
+                            "These machines will power off immediately. \
+                             Mastertech will reconnect on next boot only \
+                             if the client is set to auto-start.",
+                        ),
+                        BatchAction::Reboot
+                        | BatchAction::RebootIntoTerminalMode => Some(
+                            "Sessions will drop while the clients reboot. \
+                             Mastertech reattaches automatically after \
+                             restart.",
+                        ),
+                        BatchAction::LogOff => Some(
+                            "User sessions will end immediately on each \
+                             client. Unsaved work may be lost.",
+                        ),
+                        BatchAction::RunWindowsUpdate => Some(
+                            "This kicks off a Windows Update scan + install \
+                             on each client. The operation can take many \
+                             minutes; results land in toasts as each client \
+                             finishes.",
+                        ),
+                        BatchAction::Lock => None,
+                    };
+                    if let Some(text) = warning {
+                        ui.label(
+                            RichText::new(text)
+                                .small()
+                                .italics()
+                                .color(Color32::from_rgb(255, 200, 120)),
+                        );
+                        ui.add_space(8.0);
+                    }
+
+                    ui.horizontal(|ui| {
+                        let confirm_label = format!("{} all", action.label());
+                        if ui
+                            .button(
+                                RichText::new(confirm_label)
+                                    .color(Color32::from_rgb(255, 150, 80)),
+                            )
+                            .clicked()
+                        {
+                            let (ok, err) = self.web_console_layout.dispatch_batch_action(action);
+                            let toast = if err == 0 {
+                                crate::ToastMessage::Success(format!(
+                                    "Batch '{}' sent to {ok} client(s).",
+                                    action.label()
+                                ))
+                            } else {
+                                crate::ToastMessage::Warning(format!(
+                                    "Batch '{}' sent to {ok} client(s); {err} failed to dispatch.",
+                                    action.label()
+                                ))
+                            };
+                            let _ = crate::get_toast_sender().try_send(toast);
+                            self.web_console_layout.pending_batch_action = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.web_console_layout.pending_batch_action = None;
+                        }
+                    });
+                });
+            // X-button on the window closes via `open` too.
+            if !still_open {
+                self.web_console_layout.pending_batch_action = None;
+            }
+        }
     }
 
     pub fn refresh_client_list(&mut self) {

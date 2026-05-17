@@ -25,6 +25,25 @@ async fn main() -> eframe::Result<()> {
 
     env_logger::init();
 
+    // Establish the SurrealDB connection + guest signin once at startup so
+    // stress-runner can persist `stress_test_run` / metric / event rows.  The
+    // guest access has just enough permission to write to the stress test
+    // tables (which are `PERMISSIONS FULL` at the table level).  If this
+    // fails, the app still runs but stress runs won't be persisted — the
+    // worker thread logs a clear "Connection uninitialised" error.
+    match database::init_database().await {
+        Ok(()) => log::info!("qc-app: SurrealDB connected + guest signin OK"),
+        Err(e) => log::error!(
+            "qc-app: failed to initialize SurrealDB ({e:?}) — stress runs won't persist"
+        ),
+    }
+
+    // Hand stress-runner this tokio runtime so its DB writes run on the same
+    // runtime that owns the SurrealDB WebSocket connection.  Without this,
+    // stress-runner would fall back to its own runtime and the cross-runtime
+    // futures might never see WS responses.
+    stress_runner::set_runtime_handle(tokio::runtime::Handle::current());
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(format!("Mastertech QC - v{}", env!("CARGO_PKG_VERSION")))

@@ -24,6 +24,7 @@ pub enum Reporter {
     JunkwareRemoval,
     UserScript,
     Robocopy,
+    StressTest,
     Unknown
 }
 
@@ -617,8 +618,9 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let right_half = main_chunks[1];
 
         const SCRIPT_BUTTONS_ROW_HEIGHT: u16 = 3;
-        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 11;
-        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = SCRIPT_BUTTONS_SLOT_COUNT * SCRIPT_BUTTONS_ROW_HEIGHT; // 33
+        // 12 slots: 11 existing + 1 stress_test_btn appended at slot 11 (below run_btn).
+        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 12;
+        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = SCRIPT_BUTTONS_SLOT_COUNT * SCRIPT_BUTTONS_ROW_HEIGHT; // 36
 
         let left_side_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -860,6 +862,17 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         self.run_btn.set_disabled(self.run_button_should_be_disabled());
         if slot_rects[10].height > 0 {
             f.render_widget(&self.run_btn, shrink_slot(slot_rects[10], 4, 1));
+        }
+
+        // ---- Slot 11: stress test button (stress-runner integration) ----
+        // The button label is updated on right-click in `cycle_stress_choice`.
+        // If a run is active, render a small "Running" indicator alongside the
+        // button so the operator sees live progress without having to scroll
+        // to the reports panel.
+        if slot_rects[11].height > 0 {
+            // Disable the button while a run is in flight to avoid double-starts.
+            self.stress_test_btn.set_disabled(self.stress_run.borrow().is_some());
+            f.render_widget(&self.stress_test_btn, shrink_slot(slot_rects[11], 4, 1));
         }
 
         // Script buttons column scrollbar — only when content overflows
@@ -1264,6 +1277,30 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     self.informational_btn.handle_mouse_event(&mouse_event);
                     self.run_btn.handle_mouse_event(&mouse_event);
                     self.user_scripts_btn.handle_mouse_event(&mouse_event);
+
+                    // Stress-test button: left-click starts a run, right-click
+                    // cycles the selected stressor.  We dispatch by hit-testing
+                    // against the button's last rendered area instead of going
+                    // through the button's own callback (the existing buttons
+                    // use ActionHandler, but stress runs need direct calls into
+                    // `start_stress_run` / `cycle_stress_choice`).
+                    if let Some(btn_area) = self.stress_test_btn.get_area() {
+                        if btn_area.contains(mouse_position) {
+                            match mouse_event.kind {
+                                MouseEventKind::Down(MouseButton::Left) => {
+                                    if self.stress_run.borrow().is_some() {
+                                        self.stop_stress_run();
+                                    } else {
+                                        self.start_stress_run();
+                                    }
+                                }
+                                MouseEventKind::Down(MouseButton::Right) => {
+                                    self.cycle_stress_choice();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 } else {
                     self.custom_path_field.handle_mouse_event(&mouse_event);
                     for btn in self.data_path_buttons.iter() {

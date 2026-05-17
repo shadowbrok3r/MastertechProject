@@ -312,6 +312,27 @@ pub struct SharedContext {
     /// `display_diagnostics_page` expects).
     #[serde(skip)]
     pub client_diagnostics_selected: Option<RecordId>,
+    /// Slice 5 — per-client TCP reachability cache populated by
+    /// the background prober (`spawn_reachability_prober` in
+    /// `ui_data/reachability.rs`). Keyed by `connection_string`.
+    /// Consulted by `should_show_connected_client_in_summaries`
+    /// to decide whether to surface a client in the My Tasks and
+    /// Admin Console lists.
+    ///
+    /// Why **local** state instead of a SurrealDB field: TCP
+    /// reachability is *per-admin-network* — an admin VPN'd into
+    /// the office can reach clients an admin at home can't. Each
+    /// admin instance probes from its own network, so the
+    /// result is only meaningful for that admin's filter view.
+    #[serde(skip)]
+    pub reachability_cache: HashMap<String, crate::ui_data::reachability::ReachabilityStatus>,
+    /// Sender / Receiver the prober uses to ship probe results
+    /// back to the UI thread. Drained per-frame in
+    /// `receive_shared_ui`.
+    #[serde(skip)]
+    pub reachability_tx: Sender<crate::ui_data::reachability::ReachabilityEvent>,
+    #[serde(skip)]
+    pub reachability_rx: Receiver<crate::ui_data::reachability::ReachabilityEvent>,
     /// Cached fleet agent list from the orchestrator, displayed in the
     /// Fleet Dashboard tab for warehouse employees.  Updated by a background
     /// HTTP poller; `None` until the orchestrator URL is configured.
@@ -338,6 +359,8 @@ impl SharedContext {
         let (read_state_tx, read_state_rx) = channel::unbounded::<Vec<TaskNoteRead>>();
         let (client_diagnostics_tx, client_diagnostics_rx) =
             channel::unbounded::<crate::modals::tabs::DiagnosticSessionView>();
+        let (reachability_tx, reachability_rx) =
+            channel::unbounded::<crate::ui_data::reachability::ReachabilityEvent>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
@@ -463,6 +486,9 @@ impl SharedContext {
             client_diagnostics_tx,
             client_diagnostics_rx,
             client_diagnostics_selected: None,
+            reachability_cache: HashMap::new(),
+            reachability_tx,
+            reachability_rx,
             fleet_agents: None,
             orchestrator_url: String::new(),
         }
