@@ -139,12 +139,16 @@ pub async fn accept_loop(listener: TcpListener) {
             }
             res = listener.accept() => match res {
                 Ok((stream, peer)) => {
-                    log::info!("tcp_listener -> admin connected from {peer}");
+                    // Debug only: a reachability probe fires this every 30s
+                    // per admin and would otherwise spam INFO.  The
+                    // post-handshake info log inside handle_session marks
+                    // real admin connections.
+                    log::debug!("tcp_listener -> inbound TCP from {peer}");
                     tokio::spawn(async move {
                         if let Err(e) = handle_session(stream, peer).await {
                             log::warn!("tcp_listener -> session {peer} ended: {e:#}");
                         } else {
-                            log::info!("tcp_listener -> session {peer} closed cleanly");
+                            log::debug!("tcp_listener -> session {peer} closed cleanly");
                         }
                     });
                 }
@@ -176,10 +180,24 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
 
     // 1) Handshake
     let expected_id = get_client_hash().connection_string;
-    perform_handshake(&mut read_half, &expected_id, peer)
+    let outcome = perform_handshake(&mut read_half, &expected_id, peer)
         .await
         .with_context(|| format!("handshake with {peer}"))?;
-    log::info!("tcp_listener -> handshake OK for {peer} (id={expected_id})");
+    match outcome {
+        HandshakeOutcome::Authenticated => {
+            log::info!(
+                "tcp_listener -> admin session established with {peer} (id={expected_id})"
+            );
+        }
+        HandshakeOutcome::Probe => {
+            // Reachability probe (see displays/src/ui_data/reachability.rs):
+            // peer connected, sent no bytes, and closed.  Don't spawn the
+            // full session machinery — just return cleanly so the accept
+            // loop logs a quiet "closed cleanly" instead of a WARN.
+            log::debug!("tcp_listener -> reachability probe from {peer}");
+            return Ok(());
+        }
+    }
 
     // 2) Spawn writer task
     let (write_tx, write_rx) = unbounded_channel::<TcpFrame>();
@@ -198,18 +216,46 @@ async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
     result
 }
 
+/// Outcome of [`perform_handshake`].
+///
+/// We distinguish a real authenticated handshake from a bare TCP
+/// connect-and-close so the accept loop can stay quiet for the
+/// reachability prober (see `displays/src/ui_data/reachability.rs`),
+/// which deliberately opens a socket without sending the handshake.
+enum HandshakeOutcome {
+    Authenticated,
+    Probe,
+}
+
 /// Read and validate the handshake preamble from the admin side.
 async fn perform_handshake(
     read_half: &mut tokio::net::tcp::OwnedReadHalf,
     expected_id: &str,
     peer: SocketAddr,
-) -> Result<()> {
+) -> Result<HandshakeOutcome> {
     // Magic
     let mut magic = [0u8; 4];
-    tokio::time::timeout(Duration::from_secs(5), read_half.read_exact(&mut magic))
-        .await
-        .map_err(|_| anyhow!("handshake timeout reading magic from {peer}"))?
-        .map_err(|e| anyhow!("handshake read magic: {e}"))?;
+    match tokio::time::timeout(Duration::from_secs(5), read_half.read_exact(&mut magic)).await {
+        Ok(Ok(_)) => {}
+        // Peer closed before sending any bytes — this is the reachability
+        // prober (see displays/src/ui_data/reachability.rs), not a
+        // malformed admin.  On Linux the drop produces a clean FIN
+        // (`UnexpectedEof`); on Windows the drop frequently RSTs
+        // (`ConnectionReset`, os error 10054) or shows up as a generic
+        // `ConnectionAborted`.  Treat all three as a clean probe.
+        Ok(Err(e))
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+            ) =>
+        {
+            return Ok(HandshakeOutcome::Probe);
+        }
+        Ok(Err(e)) => return Err(anyhow!("handshake read magic: {e}")),
+        Err(_) => return Err(anyhow!("handshake timeout reading magic from {peer}")),
+    }
     if &magic != HANDSHAKE_MAGIC {
         return Err(anyhow!(
             "bad handshake magic from {peer}: got {magic:?}, expected MTRX"
@@ -247,7 +293,7 @@ async fn perform_handshake(
             "handshake id mismatch from {peer}: got {claimed_id:?}, expected {expected_id:?}"
         ));
     }
-    Ok(())
+    Ok(HandshakeOutcome::Authenticated)
 }
 
 /// Inbound-frame + outbound-channel multiplexer for a single session.

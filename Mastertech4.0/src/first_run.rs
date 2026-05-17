@@ -301,9 +301,32 @@ impl MasterTechApp {
             #[cfg(target_os = "windows")]
             if self.context.client_friendly_name.is_empty() {
                 let fname_tx = self.context.friendly_name_tx.clone();
+                let client_uuid = self.context.client_uuid.clone();
                 spawn(async move {
                     use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
                     use crate::filesystem::customer_lookup::lookup_customer_by_serial;
+                    use database::schema::utilities::query_id;
+                    use database::schema::client::ConnectedClient;
+
+                    // Skip the PrestaShop/Everest network roundtrip when
+                    // the DB already has a cached friendly_name for this
+                    // OA3 — the product key is hardware-derived and won't
+                    // change between sessions, so a prior successful
+                    // lookup is authoritative until an admin clears it.
+                    if let Ok(Some(cached)) =
+                        query_id::<ConnectedClient>(CONNECTED_CLIENT_TABLE.to_string(), client_uuid)
+                            .await
+                    {
+                        if let Some(name) = cached.friendly_name.filter(|s| !s.is_empty()) {
+                            log::info!(
+                                "first_run -> friendly_name cached in DB ({name}); \
+                                 skipping OA-serial customer lookup"
+                            );
+                            let _ = fname_tx.try_send(name);
+                            return;
+                        }
+                    }
+
                     if let Ok(raw) = get_oa_style_serial() {
                         if let Ok(serial13) = to_oa3_13digit(&raw) {
                             if let Ok(name) = lookup_customer_by_serial(&serial13).await {
@@ -311,7 +334,7 @@ impl MasterTechApp {
                             }
                         }
                     }
-                    
+
                 });
             }
         }

@@ -96,6 +96,17 @@ impl MastertechContext{
             None
         };
 
+        // Stamp `last_update` at row creation time.  The Admin Console
+        // visibility filter in `client_cards::should_show_connected_client_in_summaries`
+        // hides any client whose `last_update` is more than two hours old (or
+        // `None`), so a freshly created row without this field would be
+        // invisible until some other UPDATE bumps the column.  Without it
+        // there's a race where the row gets created, but neither the
+        // `make_ws_connection` UPDATE (already fired and a no-op against a
+        // non-existent row) nor `spawn_direct_tcp_listener` (which UPDATEs,
+        // also a no-op if its publish loses the create race) successfully
+        // stamps the heartbeat, and the client never appears in the admin UI.
+        let now: database::schema::Datetime = chrono::Utc::now().into();
         let connected_client = ConnectedClient {
             id: self.client_uuid.clone(),
             client_hash,
@@ -107,6 +118,8 @@ impl MastertechContext{
             connection_string: self.client_title.clone(),
             customer: cust_id,
             computer: Some(computer_id.clone()),
+            last_update: Some(now.clone()),
+            created_at: Some(now),
             ..Default::default()
         };
 

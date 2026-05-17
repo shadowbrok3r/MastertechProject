@@ -2814,19 +2814,41 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
 
     // Carry the lock + admin-set linkage forward across the upsert so we
     // never accidentally reset them when the local client builds a
-    // fresh `ConnectedClient` from scratch on startup.
+    // fresh `ConnectedClient` from scratch on startup.  Also carry the
+    // cached friendly_name/customer forward whenever they're already
+    // populated, so we don't refetch them from PrestaShop/Everest on
+    // every reconnect — the OA3 product key is hardware-derived and
+    // won't change between sessions, so a prior successful lookup is
+    // authoritative until an admin clears it.
+    let cached_friendly = existing
+        .as_ref()
+        .and_then(|c| c.friendly_name.clone())
+        .filter(|s| !s.is_empty());
     if let Some(prev) = existing.as_ref() {
         client.customer_locked = prev.customer_locked;
-        if locked {
+        if locked || cached_friendly.is_some() {
             client.friendly_name = prev.friendly_name.clone();
             client.customer = prev.customer.clone();
         }
     }
 
     // Attempt to lookup customer by OA3 serial number (Windows only).
-    // Skipped entirely when `customer_locked` is true.
+    // Skipped when `customer_locked` is true (admin override) or when
+    // the DB row already has a cached `friendly_name` from a prior
+    // successful lookup.
     #[cfg(target_os = "windows")]
-    if !locked {
+    if locked {
+        log::info!(
+            "websockets -> create_client: customer_locked is true; \
+             skipping OA-serial customer lookup"
+        );
+    } else if cached_friendly.is_some() {
+        log::info!(
+            "websockets -> create_client: friendly_name already cached in DB ({:?}); \
+             skipping OA-serial customer lookup",
+            cached_friendly
+        );
+    } else {
         use crate::filesystem::oa_serial::{get_oa_style_serial, to_oa3_13digit};
         use crate::filesystem::customer_lookup::lookup_customer_by_serial;
 
@@ -2857,11 +2879,6 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
                 log::warn!("websockets -> Failed to get OA serial: {:?}", e);
             }
         }
-    } else {
-        log::info!(
-            "websockets -> create_client: customer_locked is true; \
-             skipping OA-serial customer lookup"
-        );
     }
 
     let check_id_existence = check_id_existence(
