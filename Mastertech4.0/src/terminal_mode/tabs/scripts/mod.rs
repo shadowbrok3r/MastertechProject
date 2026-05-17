@@ -1,4 +1,5 @@
-use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, fx::{EffectStage, UniqueEffectId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK}, widgets::{button::Button, input_field::InputField}}};
+use crate::{tabs::file_browser::command::{RobocopyMessage, RobocopyProgress}, utilities::scripts::ScheduledTask, terminal_mode::{context::TerminalContext, events::action_handler::{get_update_sender, ActionHandler, WidgetId}, fx::{EffectStage, UniqueEffectId}, styling::{CATPPUCCINTHEME, CYAN, DEEPPINK, SPRINGGREEN}, widgets::{button::Button, input_field::InputField}}};
+use stress_runner::{RunController, RunUpdate, RunVerdict, Stressor, TelemetryAgent};
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::{Arc, Mutex}};
 use ratatui::{layout::{Position, Rect}, widgets::{ListState, ScrollbarState}};
 use checklist::{Category, Status, TodoItem, TodoList};
@@ -32,6 +33,10 @@ pub struct ScriptsTab<'a> {
     user_scripts_btn: Button<'a>,
     informational_btn: Button<'a>,
     run_btn: Button<'a>,
+    /// Launches a stress run via `stress_runner::RunController`.  Left-click
+    /// starts a single-stressor run for the currently-selected stressor;
+    /// right-click cycles through the 8 stress-kit stressors.
+    pub stress_test_btn: Button<'a>,
     data_path_buttons: Vec<Button<'a>>,
 
     reports: RefCell<Vec<Report>>, 
@@ -126,6 +131,42 @@ pub struct ScriptsTab<'a> {
     /// channel and is resolved either by a matching `checklist_completion_rx`
     /// signal or by timeout. See `process_mcp_requests` / `process_mcp_completions`.
     pending_mcp_runs: Vec<TerminalMcpPendingRun>,
+
+    // ---- stress-runner integration (Phase 3) ----
+    /// Active stress run, if any.  Polled from `receive()` each frame; the
+    /// resulting `RunUpdate`s are appended to the reports log.
+    pub stress_run: RefCell<Option<RunController>>,
+    /// Shared telemetry agent, lazily created on first stress run.  The same
+    /// agent is reused across runs to avoid re-spinning the sysinfo thread.
+    pub stress_telemetry: RefCell<Option<Arc<TelemetryAgent>>>,
+    /// Currently-selected stressor for the next run.  Right-clicking the
+    /// stress button cycles through the 8 stress-kit stressors.
+    pub stress_choice: RefCell<Stressor>,
+    /// Duration (seconds) for the next single-stressor run.
+    pub stress_duration_secs: RefCell<u64>,
+    /// Latest throughput sample from the active run, for the live UI.
+    pub stress_latest_throughput: RefCell<Option<(f64, &'static str)>>,
+    /// `Some(verdict)` after a run finishes, cleared when the next run starts.
+    pub stress_last_verdict: RefCell<Option<RunVerdict>>,
+}
+
+/// Compute a stable `computer:<machine_id>` record for the local machine.
+/// Mastertech4.0 runs on technician workstations and customer machines alike;
+/// this gives every stress run a stable per-host identity so subsequent
+/// AI-driven analysis can correlate runs without needing a service number.
+/// When the operator enters a service number, follow-up code can re-link the
+/// run record to the customer's actual computer.
+fn local_computer_record() -> database::schema::RecordId {
+    // Avoid a new dep on `hostname` — fall back through env vars.  On
+    // Windows `COMPUTERNAME` is always set; on Linux `HOSTNAME` is set in
+    // most shells.  Worst case we use an empty string and the run still gets
+    // a stable record (just less informative).
+    let hostname = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default();
+    let cpu_brand = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default();
+    let id = stress_runner::compute_machine_id(&hostname, &cpu_brand);
+    database::schema::RecordId::new(database::schema::COMPUTER_TABLE, id)
 }
 
 /// Tracks one in-flight MCP-initiated script run inside the terminal `ScriptsTab`.
@@ -263,6 +304,11 @@ impl<'a> ScriptsTab<'a> {
             user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
             informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
             run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(DEEPPINK),
+            stress_test_btn: Button::new(
+                "Stress Test (RC=cycle)",
+                WidgetId("StressTest".to_owned()),
+            )
+            .theme(SPRINGGREEN),
             #[cfg(target_os="windows")]
             antivirus_products: Vec::new(),
             #[cfg(target_os="windows")]
@@ -329,6 +375,12 @@ impl<'a> ScriptsTab<'a> {
             effect_stage: RefCell::new(EffectStage::default()),
             effects_init: RefCell::new(false),
             pending_mcp_runs: Vec::new(),
+            stress_run: RefCell::new(None),
+            stress_telemetry: RefCell::new(None),
+            stress_choice: RefCell::new(Stressor::Cpu),
+            stress_duration_secs: RefCell::new(60),
+            stress_latest_throughput: RefCell::new(None),
+            stress_last_verdict: RefCell::new(None),
         }
     }
 
@@ -474,6 +526,145 @@ impl<'a> ScriptsTab<'a> {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Stress-runner integration (Phase 3)
+    // -----------------------------------------------------------------
+
+    /// Start a single-stressor run with the currently-selected stressor and
+    /// the configured duration.  Idempotent: if a run is already in flight,
+    /// this is a no-op and the existing run continues.
+    pub fn start_stress_run(&self) {
+        if self.stress_run.borrow().is_some() {
+            self.log_message("Stress run already in progress — ignoring start request");
+            return;
+        }
+
+        // Lazy telemetry agent: one per process, reused across runs.  100 ms
+        // is the minimum the agent honours (it clamps below that).
+        let telemetry = {
+            let mut guard = self.stress_telemetry.borrow_mut();
+            if guard.is_none() {
+                *guard = Some(Arc::new(TelemetryAgent::start(1000)));
+            }
+            guard.as_ref().unwrap().clone()
+        };
+
+        let stressor = *self.stress_choice.borrow();
+        let duration = *self.stress_duration_secs.borrow();
+
+        let computer = local_computer_record();
+        let spec = stress_runner::RunSpec::single_stresskit(computer, stressor, Some(duration));
+        let controller = RunController::start(spec, telemetry);
+
+        *self.current_reporter.borrow_mut() = Reporter::StressTest;
+        self.log_message(format!(
+            "Stress run starting: {} for {}s (target stresskit:{})",
+            stressor.label(),
+            duration,
+            stressor.label().to_lowercase()
+        ));
+        *self.stress_latest_throughput.borrow_mut() = None;
+        *self.stress_last_verdict.borrow_mut() = None;
+        *self.stress_run.borrow_mut() = Some(controller);
+    }
+
+    /// Stop the active stress run, if any.  The worker thread will roll up
+    /// an `Aborted` verdict and emit a final `Finished` update.
+    pub fn stop_stress_run(&self) {
+        if let Some(c) = self.stress_run.borrow().as_ref() {
+            c.stop();
+            self.log_message("Stress run cancel requested");
+        }
+    }
+
+    /// Cycle through stress-kit's 8 stressors.  Bound to right-click on the
+    /// stress button.  Takes `&self` (uses RefCell internally) so the mouse
+    /// handler — which is `&self` — can call it directly.  The button label
+    /// stays generic; the current stressor is reported in the log.
+    pub fn cycle_stress_choice(&self) {
+        let next = match *self.stress_choice.borrow() {
+            Stressor::Cpu => Stressor::Memory,
+            Stressor::Memory => Stressor::Disk,
+            Stressor::Disk => Stressor::Matrix,
+            Stressor::Matrix => Stressor::Memcpy,
+            Stressor::Memcpy => Stressor::Bitops,
+            Stressor::Bitops => Stressor::Cache,
+            Stressor::Cache => Stressor::Vm,
+            Stressor::Vm => Stressor::Cpu,
+        };
+        *self.stress_choice.borrow_mut() = next;
+        self.log_message(format!(
+            "Stress test stressor → {} ({}s)",
+            next.label(),
+            *self.stress_duration_secs.borrow()
+        ));
+    }
+
+    /// Drain controller updates and translate them into reports + UI state.
+    /// Called from `receive()` each frame.
+    fn poll_stress_run(&mut self) {
+        let updates_and_done = {
+            let guard = self.stress_run.borrow();
+            let Some(controller) = guard.as_ref() else {
+                return;
+            };
+            let running = controller.is_running();
+            (controller.poll(), !running)
+        };
+        let (updates, done) = updates_and_done;
+
+        for update in updates {
+            match update {
+                RunUpdate::Started { run_id } => {
+                    use database::schema::RecordIdExt;
+                    self.log_message(format!("Stress run id: {}", run_id.key_string()));
+                }
+                RunUpdate::StageStarted { index, label, stage_count } => {
+                    if stage_count > 1 {
+                        self.log_message(format!("Stage {}/{}: {}", index + 1, stage_count, label));
+                    }
+                }
+                RunUpdate::Tick { metrics, throughput_unit, .. } => {
+                    *self.stress_latest_throughput.borrow_mut() =
+                        Some((metrics.throughput, throughput_unit));
+                }
+                RunUpdate::StageFinished { .. } => {}
+                RunUpdate::Finished(verdict) => {
+                    let result_str = match verdict.result {
+                        stress_runner::RunResult::Pass => "PASS",
+                        stress_runner::RunResult::Fail => "FAIL",
+                        stress_runner::RunResult::Aborted => "ABORTED",
+                        stress_runner::RunResult::Inconclusive => "INCONCLUSIVE",
+                        stress_runner::RunResult::InProgress => "IN_PROGRESS",
+                    };
+                    self.log_message(format!(
+                        "Stress run {} — {:.1} s — peak {} {} — max temp {}°C",
+                        result_str,
+                        verdict.duration_secs,
+                        verdict.summary.peak_throughput
+                            .map(|p| format!("{:.2}", p))
+                            .unwrap_or_else(|| "—".to_string()),
+                        verdict.summary.throughput_unit.as_deref().unwrap_or("ops/s"),
+                        verdict.summary.max_temp_c
+                            .map(|t| format!("{:.1}", t))
+                            .unwrap_or_else(|| "—".to_string()),
+                    ));
+                    *self.stress_last_verdict.borrow_mut() = Some(verdict);
+                }
+                RunUpdate::Warning { message } => {
+                    self.log_message(format!("Stress warning: {message}"));
+                }
+                RunUpdate::Error { message } => {
+                    self.log_message(format!("Stress error: {message}"));
+                }
+            }
+        }
+
+        if done {
+            *self.stress_run.borrow_mut() = None;
+        }
+    }
+
     /// Logs a message under the current `Reporter`
     pub fn log_message(&self, msg: impl Display) {
         let reporter = self.current_reporter.borrow().clone();
@@ -505,6 +696,10 @@ impl<'a> ScriptsTab<'a> {
     }
 
     pub fn receive(&mut self) {
+        // Drain any in-flight stress run before the rest of the channel work
+        // so the latest throughput/verdict shows up in the same frame.
+        self.poll_stress_run();
+
         let preview = self.filesystem.previewed_file.clone();
         if let Some(file_contents) = preview {
             self.log_message(file_contents.clone());

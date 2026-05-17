@@ -1,0 +1,13 @@
+# SurrealKit project config — run surrealkit from this workspace root.
+# Schema files:   database/schema/*.surql
+# Rollout files:  database/rollouts/*.toml  (commit these)
+# Snapshots:      database/snapshots/       (commit these)
+#
+# Connection is supplied via .env (see .env.example) or CLI flags.
+# Switch between localhost and production by swapping the env file or
+# overriding with --host / --ns / --db on the command line.
+
+[variables]
+# Shared substitution variables available inside .surql files as {{ var }}.
+# Add any environment-specific tokens here.
+db_name = "MastertechDB"

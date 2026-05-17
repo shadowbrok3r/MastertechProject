@@ -1,0 +1,1174 @@
+//! Schema for stress-test telemetry. Companion to migration
+//! `database/migrations/002_stress_test.surql`.
+//!
+//! Five tables work together:
+//! - [`HardwareComponent`] is the normalized catalog (one row per
+//!   canonical CPU/GPU/RAM/SSD/PSU/mobo/cooler model). Lets cross-machine
+//!   queries collapse "RTX 4070 SUPER" no matter how the host reports it.
+//! - [`StressTestRun`] is one execution of one tool against one
+//!   computer, with summary stats + verdict.
+//! - [`StressTestMetric`] is a 1 Hz telemetry sample tied to a run.
+//! - [`StressTestEvent`] is a discrete event (stage transitions, WHEA
+//!   hits, BSODs, throttle crossings).
+//! - `hardware_test_baseline` is a SurrealDB materialized view
+//!   aggregating runs per `(target_component, tool_label)` — read-only
+//!   from Rust via [`HardwareTestBaseline`].
+//!
+//! Designed to back AI analysis: given a single computer's symptom,
+//! pull its run history, then compare against the per-component
+//! population baselines to decide if the observed temps / errors /
+//! throughput are normal or anomalous.
+
+use crate::DATABASE;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use super::{
+    random_record_id, Datetime, RecordId, SurrealValue, HARDWARE_COMPONENT_TABLE,
+    STRESS_TEST_EVENT_TABLE, STRESS_TEST_METRIC_TABLE, STRESS_TEST_RUN_TABLE,
+};
+
+// ============================================================
+// Hardware catalog
+// ============================================================
+
+/// SurrealValue ignores `#[serde(rename_all)]`, so unit enums get an
+/// explicit `#[surreal(value = "...")]` per variant to lock in the
+/// snake_case string that the DB stores and that `WHERE kind = '...'`
+/// queries match against. The Rust `as_str()` helper returns the same
+/// string for code paths (like ID hashing) that need it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum HardwareKind {
+    #[surreal(value = "cpu")]
+    Cpu,
+    #[surreal(value = "gpu")]
+    Gpu,
+    /// A populated RAM slot's module (one record per stick).
+    #[surreal(value = "ram_module")]
+    RamModule,
+    /// A complete labeled RAM kit (e.g. "G.Skill Trident Z5 2x32GB DDR5-6400").
+    /// Lets us record kit-level test results without re-keying per stick.
+    #[surreal(value = "ram_kit")]
+    RamKit,
+    #[surreal(value = "ssd")]
+    Ssd,
+    #[surreal(value = "hdd")]
+    Hdd,
+    #[surreal(value = "motherboard")]
+    Motherboard,
+    #[surreal(value = "psu")]
+    Psu,
+    #[surreal(value = "cooler")]
+    Cooler,
+}
+
+impl HardwareKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+            Self::RamModule => "ram_module",
+            Self::RamKit => "ram_kit",
+            Self::Ssd => "ssd",
+            Self::Hdd => "hdd",
+            Self::Motherboard => "motherboard",
+            Self::Psu => "psu",
+            Self::Cooler => "cooler",
+        }
+    }
+}
+
+/// One row per canonical hardware part. Strings are normalized
+/// (lowercase, trimmed, single-spaced) before hashing into the ID.
+/// `specs` is intentionally a free-form JSON object — fields differ
+/// wildly across kinds (cores/threads for CPUs, vram_gb for GPUs,
+/// timings for RAM, tbw for SSDs, wattage/cert for PSUs).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct HardwareComponent {
+    pub id: RecordId,
+    pub kind: HardwareKind,
+    pub vendor: String,
+    pub model: String,
+    /// Vendor SKU / part number if known (e.g. "100-100000910WOF" for a
+    /// Ryzen 7 9700X). Optional; many lookups will only have vendor+model.
+    pub sku: Option<String>,
+    pub display_name: String,
+    pub specs: Option<serde_json::Value>,
+    pub first_seen: Datetime,
+    pub last_seen: Datetime,
+    /// How many `computer` records reference this component. Bumped by
+    /// the normalizer when it links a new machine.
+    pub occurrence_count: u64,
+}
+
+impl HardwareComponent {
+    /// Stable canonical ID so identical parts collapse to one row
+    /// regardless of where they were discovered. The hash inputs are
+    /// trimmed + lowercased so trivial casing differences don't fork.
+    pub fn canonical_id(kind: HardwareKind, vendor: &str, model: &str) -> RecordId {
+        let mut hasher = Sha256::new();
+        hasher.update(kind.as_str().as_bytes());
+        hasher.update(b"|");
+        hasher.update(vendor.trim().to_ascii_lowercase().as_bytes());
+        hasher.update(b"|");
+        hasher.update(model.trim().to_ascii_lowercase().as_bytes());
+        let digest = hasher.finalize();
+        // First 16 bytes = 128 bits = plenty of collision resistance for a
+        // hardware catalog. Hex-encode to keep the key SQL-safe.
+        let key = hex::encode(&digest[..16]);
+        RecordId::new(HARDWARE_COMPONENT_TABLE, key)
+    }
+
+    /// Build a new catalog entry with the canonical ID and `first_seen` /
+    /// `last_seen` set to now. Caller is responsible for upserting (so
+    /// existing rows have their `occurrence_count` / `last_seen` bumped
+    /// rather than overwritten).
+    pub fn new(
+        kind: HardwareKind,
+        vendor: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        let vendor = vendor.into();
+        let model = model.into();
+        let display_name = format!("{vendor} {model}").trim().to_string();
+        let id = Self::canonical_id(kind, &vendor, &model);
+        let now: Datetime = chrono::Utc::now().into();
+        Self {
+            id,
+            kind,
+            vendor,
+            model,
+            sku: None,
+            display_name,
+            specs: None,
+            first_seen: now.clone(),
+            last_seen: now,
+            occurrence_count: 0,
+        }
+    }
+
+    /// Upsert + bump occurrence_count + refresh last_seen in one round-trip.
+    pub async fn upsert_seen(component: &Self) -> anyhow::Result<RecordId> {
+        let sql = "UPSERT $id MERGE { \
+                kind: $kind, vendor: $vendor, model: $model, \
+                sku: $sku, display_name: $display, specs: $specs, \
+                first_seen: time::now(), last_seen: time::now(), \
+                occurrence_count: (occurrence_count ?? 0) + 1 \
+            } RETURN id";
+        let mut response = DATABASE
+            .query(sql)
+            .bind(("id", component.id.clone()))
+            .bind(("kind", component.kind.as_str().to_string()))
+            .bind(("vendor", component.vendor.clone()))
+            .bind(("model", component.model.clone()))
+            .bind(("sku", component.sku.clone()))
+            .bind(("display", component.display_name.clone()))
+            .bind(("specs", component.specs.clone()))
+            .await?;
+        let ids: Vec<RecordId> = response.take(0)?;
+        Ok(ids.into_iter().next().unwrap_or_else(|| component.id.clone()))
+    }
+
+    pub async fn list_by_kind(kind: HardwareKind) -> anyhow::Result<Vec<Self>> {
+        let rows: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM hardware_component \
+                 WHERE kind == $k ORDER BY display_name LIMIT 500",
+            )
+            .bind(("k", kind.as_str().to_string()))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+}
+
+// ============================================================
+// Test catalog
+// ============================================================
+
+/// What's being stressed. Drives the failure-mode rubric we apply to a
+/// run (a CPU run is failing if WHEA delta > 0; a disk run is failing
+/// if any `Metrics.last_error` populated; etc.).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum TargetKind {
+    #[surreal(value = "cpu")]
+    Cpu,
+    #[surreal(value = "gpu")]
+    Gpu,
+    #[surreal(value = "memory")]
+    Memory,
+    #[surreal(value = "storage")]
+    Storage,
+    #[surreal(value = "psu")]
+    Psu,
+    #[surreal(value = "motherboard")]
+    Motherboard,
+    /// Whole-system run (Combined Prime95+FurMark, OCCT Power, etc.).
+    #[surreal(value = "system")]
+    System,
+    /// Multi-component stage run that touches more than one subsystem;
+    /// the participants are listed in `StressTestRun.touched_components`.
+    #[surreal(value = "mixed")]
+    Mixed,
+}
+
+impl TargetKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+            Self::Memory => "memory",
+            Self::Storage => "storage",
+            Self::Psu => "psu",
+            Self::Motherboard => "motherboard",
+            Self::System => "system",
+            Self::Mixed => "mixed",
+        }
+    }
+}
+
+/// Prime95 workloads — see https://www.mersenne.org/download/.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum Prime95Workload {
+    #[surreal(value = "smallest")]
+    Smallest,
+    #[surreal(value = "small")]
+    Small,
+    #[surreal(value = "large")]
+    Large,
+    #[surreal(value = "blend")]
+    Blend,
+    /// "Just Stress Testing" — the canonical option that runs Small FFTs
+    /// indefinitely with maximum heat.
+    #[surreal(value = "stress_testing")]
+    StressTesting,
+}
+
+/// OCCT profile. Matches the dropdown choices in the OCCT GUI.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum OcctProfile {
+    #[surreal(value = "cpu_occt")]
+    CpuOcct,
+    #[surreal(value = "cpu_avx2")]
+    CpuAvx2,
+    #[surreal(value = "cpu_linpack")]
+    CpuLinpack,
+    #[surreal(value = "memory")]
+    Memory,
+    #[surreal(value = "power_supply")]
+    PowerSupply,
+    #[surreal(value = "gpu_3d")]
+    GpuThreeD,
+    #[surreal(value = "gpu_memtest")]
+    GpuMemtest,
+}
+
+/// Stress-kit's own stressor catalog, mirrored here so the database
+/// type system stays decoupled from the stress-kit crate (databases
+/// outlive in-process libs).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum StressKitStressor {
+    #[surreal(value = "cpu")]
+    Cpu,
+    #[surreal(value = "memory")]
+    Memory,
+    #[surreal(value = "disk")]
+    Disk,
+    #[surreal(value = "matrix")]
+    Matrix,
+    #[surreal(value = "memcpy")]
+    Memcpy,
+    #[surreal(value = "bitops")]
+    Bitops,
+    #[surreal(value = "cache")]
+    Cache,
+    #[surreal(value = "vm")]
+    Vm,
+}
+
+impl StressKitStressor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+            Self::Matrix => "matrix",
+            Self::Memcpy => "memcpy",
+            Self::Bitops => "bitops",
+            Self::Cache => "cache",
+            Self::Vm => "vm",
+        }
+    }
+}
+
+/// All the stress tools we know how to record. Internal (stress-kit)
+/// runs share two variants; everything else maps to a recognized
+/// industry tool so cross-shop comparisons are possible.
+///
+/// Add new variants here when a new tool gets bench-approved. Don't
+/// abuse `Other(_)` for tools you control — give them a first-class
+/// variant so `tool_label()` stays stable.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub enum TestTool {
+    /// One of stress-kit's single stressors.
+    StressKit {
+        stressor: StressKitStressor,
+    },
+    /// A stress-kit `ScenarioDefinition` (multi-stage).
+    StressKitScenario {
+        /// Optional human label for the saved scenario, e.g. "burn-in v1".
+        name: Option<String>,
+    },
+
+    // ---- CPU ----
+    Prime95 {
+        workload: Prime95Workload,
+    },
+    Occt {
+        profile: OcctProfile,
+    },
+    CinebenchR23,
+    CinebenchR24,
+    Aida64Stability {
+        /// Checked components ("CPU", "FPU", "Cache", "RAM", "GPU", "Disk").
+        components: Vec<String>,
+    },
+    Linpack,
+
+    // ---- GPU ----
+    FurMark {
+        resolution: String,
+        msaa: u32,
+    },
+    OcctGpu,
+    ThreeDMarkStress {
+        /// "Steel Nomad", "Speed Way", "Solar Bay Extreme", "Wild Life", …
+        test: String,
+    },
+    HeavenBenchmark,
+    Superposition,
+    MsiKombustor,
+
+    // ---- Memory ----
+    MemTest86 {
+        passes: u32,
+    },
+    /// Windows Memory Diagnostic (`mdsched.exe`).
+    MdSched,
+    HciMemTest {
+        coverage_pct: u32,
+    },
+    Karhu {
+        coverage_pct: u32,
+    },
+    Tm5 {
+        /// Config preset — "anta777", "1usmus_v3", "extreme1", "absolut", …
+        config: String,
+    },
+
+    // ---- Storage ----
+    SmartShort,
+    SmartExtended,
+    ChkDsk {
+        drive: String,
+        switches: Vec<String>,
+    },
+    HdTune,
+    CrystalDiskMark,
+    HddScan,
+
+    // ---- Whole-system / PSU ----
+    OcctPower,
+    /// User-built combination (e.g. Prime95 + FurMark in parallel).
+    Combined {
+        tools: Vec<String>,
+    },
+
+    /// Escape hatch — DO NOT use for tools you control. Reserved for
+    /// one-off vendor utilities we don't expect to see twice.
+    Other(String),
+}
+
+impl TestTool {
+    /// Lowercase, indexable label written to `StressTestRun.tool_label`
+    /// so SurrealDB queries can filter without destructuring the enum.
+    /// Keep stable — these strings index every materialized view row.
+    pub fn label(&self) -> String {
+        match self {
+            Self::StressKit { stressor } => format!("stresskit:{}", stressor.as_str()),
+            Self::StressKitScenario { .. } => "stresskit:scenario".to_string(),
+            Self::Prime95 { .. } => "prime95".to_string(),
+            Self::Occt { .. } => "occt".to_string(),
+            Self::CinebenchR23 => "cinebench_r23".to_string(),
+            Self::CinebenchR24 => "cinebench_r24".to_string(),
+            Self::Aida64Stability { .. } => "aida64_stability".to_string(),
+            Self::Linpack => "linpack".to_string(),
+            Self::FurMark { .. } => "furmark".to_string(),
+            Self::OcctGpu => "occt_gpu".to_string(),
+            Self::ThreeDMarkStress { .. } => "3dmark_stress".to_string(),
+            Self::HeavenBenchmark => "heaven".to_string(),
+            Self::Superposition => "superposition".to_string(),
+            Self::MsiKombustor => "kombustor".to_string(),
+            Self::MemTest86 { .. } => "memtest86".to_string(),
+            Self::MdSched => "mdsched".to_string(),
+            Self::HciMemTest { .. } => "hci_memtest".to_string(),
+            Self::Karhu { .. } => "karhu".to_string(),
+            Self::Tm5 { .. } => "tm5".to_string(),
+            Self::SmartShort => "smart_short".to_string(),
+            Self::SmartExtended => "smart_extended".to_string(),
+            Self::ChkDsk { .. } => "chkdsk".to_string(),
+            Self::HdTune => "hd_tune".to_string(),
+            Self::CrystalDiskMark => "crystaldiskmark".to_string(),
+            Self::HddScan => "hddscan".to_string(),
+            Self::OcctPower => "occt_power".to_string(),
+            Self::Combined { .. } => "combined".to_string(),
+            Self::Other(s) => format!("other:{}", s.to_ascii_lowercase()),
+        }
+    }
+}
+
+// ============================================================
+// Run verdict + failure rubric
+// ============================================================
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum RunResult {
+    /// Tool finished cleanly with no failure signals (no WHEA delta, no
+    /// disk I/O errors, no BSOD, no operator override). Note: a "pass"
+    /// from a stress test isn't proof of health — it's the absence of
+    /// observed faults during this run.
+    #[surreal(value = "pass")]
+    Pass,
+    /// At least one objective failure signal fired (WHEA, BSOD, disk I/O
+    /// error, throttle past threshold, value mismatch, …).
+    #[surreal(value = "fail")]
+    Fail,
+    /// Run did not complete (cancelled by operator, hung, timeout).
+    #[surreal(value = "aborted")]
+    Aborted,
+    /// Run completed but the result is ambiguous (e.g. monitoring tools
+    /// crashed but the stress ran). Operator review required.
+    #[surreal(value = "inconclusive")]
+    Inconclusive,
+    /// Set when the run record is created and cleared when finalized.
+    #[surreal(value = "in_progress")]
+    InProgress,
+}
+
+impl RunResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Aborted => "aborted",
+            Self::Inconclusive => "inconclusive",
+            Self::InProgress => "in_progress",
+        }
+    }
+}
+
+/// The dominant failure signal observed in a run, if any. Used by the
+/// AI as the first cut at root cause.
+///
+/// Serializes via SurrealValue's default external tagging, so the DB
+/// shape is `{"Bsod": {"code": "...", ...}}`. For AI-friendly lowercase
+/// filtering see `StressTestRun.failure_kind` (`"bsod"`, `"tdr"`, …).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub enum FailureMode {
+    None,
+    /// Application or worker thread exited with non-zero status without
+    /// a BSOD. Possible OS-level fault, driver kill, or app bug.
+    AppError {
+        exit_code: Option<i32>,
+        message: String,
+    },
+    /// Windows kernel bugcheck observed during or shortly after the run.
+    Bsod {
+        code: Option<String>,
+        bugcheck_args: Option<Vec<String>>,
+    },
+    /// Display driver reset / Timeout Detection and Recovery (nvlddmkm
+    /// event 4101 et al).
+    Tdr {
+        count: u32,
+    },
+    /// WHEA-Logger event count exceeded baseline during the run.
+    WheaError {
+        count: u32,
+    },
+    /// CPU/GPU temperature crossed the throttle threshold for the
+    /// component being tested.
+    ThermalThrottle {
+        peak_temp_c: f32,
+    },
+    /// Stress-kit `Metrics.last_error` populated (only the disk
+    /// stressor sets this today).
+    DiskIoError {
+        message: String,
+    },
+    /// Memory test reported a value mismatch (HCI / TM5 / Karhu / MemTest86).
+    DataMismatch {
+        addresses: Option<Vec<String>>,
+    },
+    /// Whole system rebooted or hard-hung during the run (Kernel-Power
+    /// event 41, unexpected shutdown).
+    Reboot,
+    /// Wall-clock timeout hit before the planned duration finished and
+    /// without a verdict from the tool.
+    Timeout,
+    /// Operator marked the run failed without a tool-level signal.
+    OperatorOverride {
+        reason: String,
+    },
+}
+
+impl FailureMode {
+    /// Lowercase tag for `StressTestRun.failure_kind`. Stable across
+    /// variant restructures — when adding a variant, add a `kind` here.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::AppError { .. } => "app_error",
+            Self::Bsod { .. } => "bsod",
+            Self::Tdr { .. } => "tdr",
+            Self::WheaError { .. } => "whea_error",
+            Self::ThermalThrottle { .. } => "thermal_throttle",
+            Self::DiskIoError { .. } => "disk_io_error",
+            Self::DataMismatch { .. } => "data_mismatch",
+            Self::Reboot => "reboot",
+            Self::Timeout => "timeout",
+            Self::OperatorOverride { .. } => "operator_override",
+        }
+    }
+}
+
+/// Mirrors stress-kit's `scenario::FinishReason` so the database stores
+/// why the run ended without coupling to the stress-kit crate.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum FinishReason {
+    #[surreal(value = "completed")]
+    Completed,
+    #[surreal(value = "cancelled")]
+    Cancelled,
+    #[surreal(value = "total_time")]
+    TotalTime,
+    /// Timeout hit (only meaningful for single-stressor runs with
+    /// `StressConfig.timeout`).
+    #[surreal(value = "timeout")]
+    Timeout,
+    /// Run crashed before reaching a normal finish (e.g. supervisor
+    /// thread panicked).
+    #[surreal(value = "crashed")]
+    Crashed,
+}
+
+// ============================================================
+// Run-scoped sub-structures
+// ============================================================
+
+/// Snapshot of BIOS/firmware settings relevant to stress-test outcomes.
+/// Almost everything is `Option` because operators rarely fill all of
+/// these in — record what's available, leave the rest `None`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, SurrealValue)]
+pub struct BiosSettings {
+    /// "auto", "xmp1", "xmp2", "expo1", "expo2", "manual_<speed>" …
+    pub memory_profile: Option<String>,
+    pub xmp_expo_enabled: Option<bool>,
+    pub cpu_undervolt_mv: Option<i32>,
+    pub cpu_overclock_mhz: Option<u32>,
+    pub gpu_overclock_mhz: Option<u32>,
+    pub power_limit_w: Option<u32>,
+    pub pbo_enabled: Option<bool>,
+    pub resizable_bar: Option<bool>,
+    pub virtualization_enabled: Option<bool>,
+    pub bios_version: Option<String>,
+    /// Catch-all for site-specific notes — "RAM kit reseated 5/14",
+    /// "running with 1 stick only", etc.
+    pub notes: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, SurrealValue)]
+pub struct DriverVersions {
+    pub gpu: Option<String>,
+    pub chipset: Option<String>,
+    pub storage_controller: Option<String>,
+    pub network: Option<String>,
+}
+
+/// Per-stage summary inside a scenario run. Matches the shape that
+/// stress-kit's `ScenarioRunner` already emits, plus a label/duration
+/// so the run row is self-contained without joining metrics.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct ScenarioStageSummary {
+    pub index: u32,
+    pub label: String,
+    /// Stress-kit `StressorKind` discriminant (lowercase snake_case) so
+    /// we can filter scenario runs by what they actually exercised.
+    pub stressor: String,
+    pub threads: u32,
+    pub duration_planned_secs: u64,
+    pub duration_actual_secs: f64,
+    pub peak_throughput: Option<f64>,
+    pub avg_throughput: Option<f64>,
+    pub throughput_unit: String,
+    pub had_error: bool,
+    pub last_error: Option<String>,
+}
+
+/// Rolled-up metrics for the run. Populated by the qc-app supervisor
+/// from the telemetry stream when the run finalizes. The AI almost
+/// always reads from here rather than scanning the metric series.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, SurrealValue)]
+pub struct RunSummary {
+    pub max_temp_c: Option<f32>,
+    pub avg_temp_c: Option<f32>,
+    pub max_clock_mhz: Option<u32>,
+    pub avg_clock_mhz: Option<u32>,
+    pub max_cpu_usage_pct: Option<f32>,
+    pub avg_cpu_usage_pct: Option<f32>,
+    pub max_power_w: Option<u32>,
+    pub max_fan_rpm: Option<u32>,
+    pub peak_throughput: Option<f64>,
+    pub avg_throughput: Option<f64>,
+    pub throughput_unit: Option<String>,
+    pub thermal_throttle_detected: bool,
+    pub vrm_throttle_detected: bool,
+    /// `WheaCounters.delta_since_program_start` at run end.
+    pub whea_delta_count: u32,
+    /// Count of `stress_test_event` rows with `kind == "tdr"`.
+    pub tdr_count: u32,
+    pub bsod_detected: bool,
+    pub bsod_code: Option<String>,
+    /// Count of `stress_test_event` rows with `kind == "disk_io_error"`.
+    pub disk_io_errors: u32,
+    /// Count of memory data-mismatch events from HCI / TM5 / Karhu.
+    pub memory_errors: u32,
+}
+
+// ============================================================
+// Top-level run
+// ============================================================
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct StressTestRun {
+    pub id: RecordId,
+
+    // --- Links (per design choices) ---
+    /// The machine being tested. Required.
+    pub computer: RecordId,
+    /// Optional link to the work order this run belongs to.
+    pub service_order: Option<RecordId>,
+    /// Optional link to the diagnostic session that triggered this run.
+    pub session_ref: Option<RecordId>,
+    /// Optional link to the in-house task.
+    pub task_ref: Option<RecordId>,
+
+    // --- What was tested ---
+    pub target_kind: TargetKind,
+    /// Primary component under test. NONE for `System` / `Mixed` runs.
+    /// Indexed; the materialized baseline view groups on this.
+    pub target_component: Option<RecordId>,
+    /// Every component the run touched (for Mixed/System runs). Lets
+    /// the AI find "every run that exercised this RAM kit" even when
+    /// it wasn't the primary target.
+    pub touched_components: Vec<RecordId>,
+
+    // --- The tool & how it ran ---
+    pub tool: TestTool,
+    /// Denormalized lowercase tool tag (see `TestTool::label`). Maintained
+    /// by `StressTestRun::set_tool` so it never drifts from `tool`.
+    pub tool_label: String,
+    pub tool_version: Option<String>,
+    /// Free-form human label for the preset/profile ("Small FFTs",
+    /// "Burn-in v1", "8 thread", …). The structured params live inside
+    /// the `tool` variant.
+    pub preset_label: Option<String>,
+    /// For stress-kit scenario runs — the stage breakdown. Empty for
+    /// single-stressor or non-stress-kit tools.
+    pub scenario_stages: Vec<ScenarioStageSummary>,
+
+    // --- Timing ---
+    pub started_at: Datetime,
+    pub ended_at: Option<Datetime>,
+    pub duration_planned_secs: Option<u64>,
+    pub duration_actual_secs: Option<f64>,
+
+    // --- Environment ---
+    /// Operator / tech email or initials.
+    pub tech: Option<String>,
+    /// Convenience copy of `computer.hostname` at run-time.
+    pub hostname: Option<String>,
+    /// Convenience copy of qc-app's persisted `machine_id` (sha256 hash
+    /// of hostname+CPU brand). Lets us correlate runs across DB resets.
+    pub machine_id: Option<String>,
+    pub ambient_temp_c: Option<f32>,
+    pub environment_notes: Option<String>,
+    pub bios_settings: BiosSettings,
+    pub driver_versions: DriverVersions,
+
+    // --- Verdict ---
+    pub result: RunResult,
+    pub finish_reason: Option<FinishReason>,
+    pub failure_mode: FailureMode,
+    /// Denormalized lowercase tag of `failure_mode` (see [`FailureMode::kind`]).
+    /// Kept in sync by [`StressTestRun::set_failure_mode`] and
+    /// [`StressTestRun::finalize`] so AI queries can filter
+    /// `WHERE failure_kind = 'bsod'` without destructuring the object.
+    pub failure_kind: String,
+
+    // --- Aggregates (rolled-up from the metric stream) ---
+    pub summary: RunSummary,
+
+    // --- Artifacts ---
+    /// Bucket paths to raw tool logs (e.g. Prime95 results.txt).
+    pub raw_log_refs: Vec<String>,
+    /// Bucket paths to screenshots (HWiNFO panel, OCCT result page, etc.).
+    pub screenshot_refs: Vec<String>,
+
+    // --- Annotations ---
+    pub notes: Option<String>,
+    /// Reserved for AI-generated analysis (root-cause hypothesis, plain-
+    /// English summary, comparison to baseline). Schema-free so we can
+    /// iterate on the prompt without migrations.
+    pub ai_assessment: Option<serde_json::Value>,
+    pub tags: Vec<String>,
+}
+
+impl StressTestRun {
+    /// Build a new run record in the `InProgress` state. Caller is
+    /// expected to fill in the typed fields, persist with `create`,
+    /// and finalize with `finalize` once the supervisor reports a
+    /// finish reason.
+    pub fn new_for(computer: RecordId, tool: TestTool, target_kind: TargetKind) -> Self {
+        let now: Datetime = chrono::Utc::now().into();
+        let tool_label = tool.label();
+        Self {
+            id: random_record_id(STRESS_TEST_RUN_TABLE),
+            computer,
+            service_order: None,
+            session_ref: None,
+            task_ref: None,
+            target_kind,
+            target_component: None,
+            touched_components: Vec::new(),
+            tool,
+            tool_label,
+            tool_version: None,
+            preset_label: None,
+            scenario_stages: Vec::new(),
+            started_at: now,
+            ended_at: None,
+            duration_planned_secs: None,
+            duration_actual_secs: None,
+            tech: None,
+            hostname: None,
+            machine_id: None,
+            ambient_temp_c: None,
+            environment_notes: None,
+            bios_settings: BiosSettings::default(),
+            driver_versions: DriverVersions::default(),
+            result: RunResult::InProgress,
+            finish_reason: None,
+            failure_mode: FailureMode::None,
+            failure_kind: FailureMode::None.kind().to_string(),
+            summary: RunSummary::default(),
+            raw_log_refs: Vec::new(),
+            screenshot_refs: Vec::new(),
+            notes: None,
+            ai_assessment: None,
+            tags: Vec::new(),
+        }
+    }
+
+    /// Swap the tool variant and keep `tool_label` in sync.
+    pub fn set_tool(&mut self, tool: TestTool) {
+        self.tool_label = tool.label();
+        self.tool = tool;
+    }
+
+    /// Swap the failure mode and keep `failure_kind` in sync.
+    pub fn set_failure_mode(&mut self, failure_mode: FailureMode) {
+        self.failure_kind = failure_mode.kind().to_string();
+        self.failure_mode = failure_mode;
+    }
+
+    pub async fn create(run: &Self) -> anyhow::Result<RecordId> {
+        let created: Option<Self> = DATABASE
+            .create(run.id.clone())
+            .content(run.clone())
+            .await?;
+        Ok(created.map(|c| c.id).unwrap_or_else(|| run.id.clone()))
+    }
+
+    /// Finalize: write summary, verdict, finish reason, and ended_at in
+    /// one transaction. `failure_mode == None` + `result == Pass` is the
+    /// "clean run" path.
+    pub async fn finalize(
+        run_id: &RecordId,
+        result: RunResult,
+        finish_reason: FinishReason,
+        failure_mode: FailureMode,
+        summary: RunSummary,
+        ended_at: Option<Datetime>,
+    ) -> anyhow::Result<()> {
+        let sql = "UPDATE $id SET \
+                result = $result, \
+                finish_reason = $finish, \
+                failure_mode = $failure, \
+                failure_kind = $failure_kind, \
+                summary = $summary, \
+                ended_at = $ended_at, \
+                duration_actual_secs = duration::secs(($ended_at ?? time::now()) - started_at)";
+        let failure_kind = failure_mode.kind().to_string();
+        DATABASE
+            .query(sql)
+            .bind(("id", run_id.clone()))
+            .bind(("result", result.as_str().to_string()))
+            .bind(("finish", finish_reason))
+            .bind(("failure", failure_mode))
+            .bind(("failure_kind", failure_kind))
+            .bind(("summary", summary))
+            .bind(("ended_at", ended_at.unwrap_or_else(|| chrono::Utc::now().into())))
+            .await?;
+        Ok(())
+    }
+
+    /// History for one machine, newest first.
+    pub async fn list_for_computer(computer: &RecordId) -> anyhow::Result<Vec<Self>> {
+        let runs: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM stress_test_run \
+                 WHERE computer = $c ORDER BY started_at DESC LIMIT 200",
+            )
+            .bind(("c", computer.clone()))
+            .await?
+            .take(0)?;
+        Ok(runs)
+    }
+
+    /// Every run that exercised this component (primary or touched).
+    /// Drives "across all RTX 4070 SUPER tests, what shows up?".
+    pub async fn list_for_component(component: &RecordId) -> anyhow::Result<Vec<Self>> {
+        let runs: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM stress_test_run \
+                 WHERE target_component = $c OR touched_components CONTAINS $c \
+                 ORDER BY started_at DESC LIMIT 500",
+            )
+            .bind(("c", component.clone()))
+            .await?
+            .take(0)?;
+        Ok(runs)
+    }
+
+    pub async fn list_for_session(session: &RecordId) -> anyhow::Result<Vec<Self>> {
+        let runs: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM stress_test_run \
+                 WHERE session_ref = $s ORDER BY started_at ASC",
+            )
+            .bind(("s", session.clone()))
+            .await?
+            .take(0)?;
+        Ok(runs)
+    }
+}
+
+// ============================================================
+// Telemetry samples
+// ============================================================
+
+/// Per-core sample shape (matches stress-kit's `telemetry::core::CoreSample`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct CoreSampleRow {
+    pub index: u32,
+    pub brand: String,
+    pub usage_pct: f32,
+    pub freq_mhz: u64,
+    pub temp_c: Option<f32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct DiskRateRow {
+    pub name: String,
+    pub read_mb_per_s: f64,
+    pub write_mb_per_s: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct NetworkRateRow {
+    pub name: String,
+    pub rx_mbps: f64,
+    pub tx_mbps: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct StressTestMetric {
+    pub id: RecordId,
+    pub run_ref: RecordId,
+    pub captured_at: Datetime,
+    /// Stage index for scenario runs (0-based). NONE for single-tool runs.
+    pub stage_index: Option<u32>,
+    pub stage_label: Option<String>,
+    pub cores: Vec<CoreSampleRow>,
+    pub memory_used_pct: Option<f32>,
+    pub memory_used_mb: Option<u64>,
+    pub page_file_used_pct: Option<f32>,
+    pub disks: Vec<DiskRateRow>,
+    pub networks: Vec<NetworkRateRow>,
+    /// Stress-kit `Metrics.throughput` at this tick.
+    pub throughput: Option<f64>,
+    pub throughput_unit: Option<String>,
+    /// WHEA delta from the most recent 5 s scan (refreshed every ~5 ticks).
+    pub whea_delta_count: Option<u32>,
+    /// Stress-kit `Metrics.last_error` from this tick.
+    pub last_error: Option<String>,
+}
+
+impl StressTestMetric {
+    pub fn new(run_ref: RecordId, captured_at: Datetime) -> Self {
+        Self {
+            id: random_record_id(STRESS_TEST_METRIC_TABLE),
+            run_ref,
+            captured_at,
+            stage_index: None,
+            stage_label: None,
+            cores: Vec::new(),
+            memory_used_pct: None,
+            memory_used_mb: None,
+            page_file_used_pct: None,
+            disks: Vec::new(),
+            networks: Vec::new(),
+            throughput: None,
+            throughput_unit: None,
+            whea_delta_count: None,
+            last_error: None,
+        }
+    }
+
+    pub async fn create(metric: &Self) -> anyhow::Result<RecordId> {
+        let created: Option<Self> = DATABASE
+            .create(metric.id.clone())
+            .content(metric.clone())
+            .await?;
+        Ok(created.map(|c| c.id).unwrap_or_else(|| metric.id.clone()))
+    }
+
+    /// Time-range scan for one run. Uses the (run_ref, captured_at) index.
+    pub async fn list_for_run(
+        run_ref: &RecordId,
+        start: Option<Datetime>,
+        end: Option<Datetime>,
+    ) -> anyhow::Result<Vec<Self>> {
+        let sql = "SELECT * FROM stress_test_metric \
+                   WHERE run_ref = $r \
+                     AND captured_at >= ($start ?? d'1970-01-01T00:00:00Z') \
+                     AND captured_at <= ($end ?? time::now()) \
+                   ORDER BY captured_at ASC";
+        let rows: Vec<Self> = DATABASE
+            .query(sql)
+            .bind(("r", run_ref.clone()))
+            .bind(("start", start))
+            .bind(("end", end))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+}
+
+// ============================================================
+// Discrete events
+// ============================================================
+
+/// Discriminant for `StressTestEvent.kind`. Kept as a small enum so the
+/// AI can filter on stable strings.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+#[surreal(untagged)]
+pub enum EventKind {
+    /// Stress-kit `ScenarioEvent::StageStarted`.
+    #[surreal(value = "stage_started")]
+    StageStarted,
+    /// Stress-kit `ScenarioEvent::StageFinished`.
+    #[surreal(value = "stage_finished")]
+    StageFinished,
+    /// Stress-kit `Metrics.last_error` populated (disk I/O fault).
+    #[surreal(value = "disk_io_error")]
+    DiskIoError,
+    /// WHEA-Logger event observed since last tick.
+    #[surreal(value = "whea_hit")]
+    WheaHit,
+    /// Display driver TDR (nvlddmkm event 4101 or similar).
+    #[surreal(value = "tdr")]
+    Tdr,
+    /// Thermal throttle threshold crossed.
+    #[surreal(value = "thermal_throttle")]
+    ThermalThrottle,
+    /// VRM / power-limit throttle observed.
+    #[surreal(value = "vrm_throttle")]
+    VrmThrottle,
+    /// Memory test reported a value mismatch.
+    #[surreal(value = "memory_error")]
+    MemoryError,
+    /// Windows kernel bugcheck observed during or shortly after the run.
+    #[surreal(value = "bsod")]
+    Bsod,
+    /// Kernel-Power event 41 (unexpected shutdown / hard hang).
+    #[surreal(value = "unexpected_shutdown")]
+    UnexpectedShutdown,
+    /// Operator-entered note attached to the run timeline.
+    #[surreal(value = "operator_note")]
+    OperatorNote,
+    /// Free-form event with no dedicated variant.
+    #[surreal(value = "custom")]
+    Custom,
+}
+
+impl EventKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::StageStarted => "stage_started",
+            Self::StageFinished => "stage_finished",
+            Self::DiskIoError => "disk_io_error",
+            Self::WheaHit => "whea_hit",
+            Self::Tdr => "tdr",
+            Self::ThermalThrottle => "thermal_throttle",
+            Self::VrmThrottle => "vrm_throttle",
+            Self::MemoryError => "memory_error",
+            Self::Bsod => "bsod",
+            Self::UnexpectedShutdown => "unexpected_shutdown",
+            Self::OperatorNote => "operator_note",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct StressTestEvent {
+    pub id: RecordId,
+    pub run_ref: RecordId,
+    pub at: Datetime,
+    pub kind: EventKind,
+    /// Origin (e.g. "stress-kit", "hwsampler", "windows-event-log",
+    /// "operator"). Lets us trust some sources more than others when
+    /// reconciling conflicts.
+    pub source: String,
+    /// Optional vendor-specific code (BSOD bugcheck, WHEA error code,
+    /// disk SMART error, etc.).
+    pub code: Option<String>,
+    pub detail: String,
+    pub data: Option<serde_json::Value>,
+}
+
+impl StressTestEvent {
+    pub fn new(run_ref: RecordId, kind: EventKind, source: impl Into<String>) -> Self {
+        Self {
+            id: random_record_id(STRESS_TEST_EVENT_TABLE),
+            run_ref,
+            at: chrono::Utc::now().into(),
+            kind,
+            source: source.into(),
+            code: None,
+            detail: String::new(),
+            data: None,
+        }
+    }
+
+    pub async fn create(event: &Self) -> anyhow::Result<RecordId> {
+        let created: Option<Self> = DATABASE
+            .create(event.id.clone())
+            .content(event.clone())
+            .await?;
+        Ok(created.map(|c| c.id).unwrap_or_else(|| event.id.clone()))
+    }
+
+    pub async fn list_for_run(run_ref: &RecordId) -> anyhow::Result<Vec<Self>> {
+        let rows: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM stress_test_event \
+                 WHERE run_ref = $r ORDER BY at ASC",
+            )
+            .bind(("r", run_ref.clone()))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+}
+
+// ============================================================
+// Materialized baseline (read-only)
+// ============================================================
+
+/// One row of the `hardware_test_baseline` materialized view. SurrealDB
+/// keeps this up to date automatically when `stress_test_run` rows are
+/// written, so we only ever read from it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
+pub struct HardwareTestBaseline {
+    pub component: RecordId,
+    pub tool: String,
+    pub run_count: u64,
+    pub pass_count: u64,
+    pub fail_count: u64,
+    pub abort_count: u64,
+    pub avg_max_temp_c: Option<f32>,
+    pub peak_max_temp_c: Option<f32>,
+    pub avg_temp_c: Option<f32>,
+    pub avg_max_clock_mhz: Option<f64>,
+    pub avg_clock_mhz: Option<f64>,
+    pub avg_max_power_w: Option<f64>,
+    pub avg_peak_throughput: Option<f64>,
+    pub avg_whea_delta: Option<f64>,
+    pub total_whea_delta: Option<u64>,
+    pub total_disk_io_errors: Option<u64>,
+    pub throttle_count: Option<u64>,
+}
+
+impl HardwareTestBaseline {
+    /// Population stats for one component across every tool we've run
+    /// against it. Useful for "how does this CPU model usually behave?".
+    pub async fn for_component(
+        component: &RecordId,
+    ) -> anyhow::Result<Vec<Self>> {
+        let rows: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM hardware_test_baseline \
+                 WHERE component = $c",
+            )
+            .bind(("c", component.clone()))
+            .await?
+            .take(0)?;
+        Ok(rows)
+    }
+
+    /// Population stats for one (component, tool) pair — the most
+    /// precise comparison for an in-progress run.
+    pub async fn for_component_tool(
+        component: &RecordId,
+        tool_label: &str,
+    ) -> anyhow::Result<Option<Self>> {
+        let rows: Vec<Self> = DATABASE
+            .query(
+                "SELECT * FROM hardware_test_baseline \
+                 WHERE component = $c AND tool = $t LIMIT 1",
+            )
+            .bind(("c", component.clone()))
+            .bind(("t", tool_label.to_string()))
+            .await?
+            .take(0)?;
+        Ok(rows.into_iter().next())
+    }
+}

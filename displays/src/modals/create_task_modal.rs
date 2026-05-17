@@ -424,7 +424,7 @@ impl CreateTaskModal {
                                 payload.ticket_data.salesman = email_split_rep;
                                 payload.ticket_data.sales_rep = email.clone();
                                 payload.ticket_data.tech = email.clone();
-                                payload.ticket_data.customer = payload.customer_data.id.clone();
+                                payload.ticket_data.customer = Some(payload.customer_data.id.clone());
                                 payload.ticket_data.checkin_rep = email;
                                 payload.ticket_data.terms = presta_data.order.payment.clone();
                                 payload.ticket_data.ticket_total = presta_data.order.total_products_wt.clone();

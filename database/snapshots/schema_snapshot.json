@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "database/schema/computer.surql",
+      "hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
+    },
+    {
+      "path": "database/schema/connected_client.surql",
+      "hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+    },
+    {
+      "path": "database/schema/hardware_component.surql",
+      "hash": "a175d4b2576acfc98a56c58ac404e83225679d527f64d0c2c9be2a5d41df296b"
+    },
+    {
+      "path": "database/schema/hardware_test_baseline.surql",
+      "hash": "93ebdcfc1ab1457ceb606f9a4c1ccba9cca6a2354e25f7e2f7351582c131931a"
+    },
+    {
+      "path": "database/schema/service_order.surql",
+      "hash": "effe0e99a05cd15e1793723113dac098867f66ea7c9831a235ca629fc832e1c9"
+    },
+    {
+      "path": "database/schema/stress_test_event.surql",
+      "hash": "18bde5df5b647bb2c40809c519fb8088179d7335f33786cdc3b7f8376a47ebb3"
+    },
+    {
+      "path": "database/schema/stress_test_metric.surql",
+      "hash": "7db706d486310287dd24b1373acc299512b7ef9e882871cbf701c8a2a0137b97"
+    },
+    {
+      "path": "database/schema/stress_test_run.surql",
+      "hash": "783d5e892bf78cd1a2fdd491fda7053c2ab261c54a8e8fc9799ff5b84cc3d0ff"
+    },
+    {
+      "path": "database/schema/task.surql",
+      "hash": "814faebf577c6666d4aaa4968b3a3b6971ef613c468f173fa479e9bcf368eaff"
+    }
+  ]
+}

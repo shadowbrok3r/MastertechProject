@@ -451,6 +451,26 @@ pub enum Cmd {
         message: String,
     },
 
+    // --- Windows Update (slice 4 of the connected-client refactor) ---
+    /// Trigger a Windows Update scan + install on the remote
+    /// client. Uses the existing
+    /// `utilities::windows::windows_update::install_windows_updates`
+    /// COM flow under the hood; this Cmd is just the
+    /// admin-trigger entry. When `reboot_when_done` is true the
+    /// client follows up with a reboot if any update requested
+    /// one (the admin still gets the result message first).
+    ///
+    /// Used by the slice-4 "Batch ▾" menu to fan out an update
+    /// across every connected client in a single click.
+    RunWindowsUpdate { reboot_when_done: bool },
+    /// Result of a `RunWindowsUpdate`. `summary` captures the
+    /// number of updates found / installed; the message is a
+    /// human-readable one-liner suitable for a toast.
+    WindowsUpdateResult {
+        success: bool,
+        summary: String,
+    },
+
     // --- Startup Apps ---
     ListStartupApps,
     StartupAppsResponse(Vec<StartupApp>),

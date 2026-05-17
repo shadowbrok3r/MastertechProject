@@ -1,9 +1,10 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "displays", "Mastertech4.0", "qc-app", "stress-kit"]
+members = [ "database" , "database-tools", "displays", "Mastertech4.0", "qc-app", "stress-kit", "stress-runner"]
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }
+stress-runner = { path = "stress-runner" }
 database = { path = "database" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}

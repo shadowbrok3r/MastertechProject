@@ -1,4 +1,4 @@
-use crate::{DATABASE, schema::{COMPUTER_TABLE, CUSTOMER_TABLE}};
+use crate::{DATABASE, schema::COMPUTER_TABLE};
 use structdiff::{Difference, StructDiff};
 use serde_json::Value;
 
@@ -134,7 +134,10 @@ where
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Difference, SurrealValue)]
 pub struct ComputerData {
     pub id: RecordId,
-    pub customer: RecordId,
+    /// Customer this computer belongs to. `None` for scratch / unlinked
+    /// records — the schema was relaxed to `none | record<customer>` in
+    /// migration 001 so writes with NONE no longer fail.
+    pub customer: Option<RecordId>,
     pub seb_info: Option<LocalSebData>,
     pub hostname: String,
     pub operating_system: String,
@@ -170,7 +173,7 @@ impl Default for ComputerData {
     fn default() -> Self {
         Self {
             id: random_record_id(COMPUTER_TABLE),
-            customer: random_record_id(CUSTOMER_TABLE),
+            customer: None,
             seb_info: Default::default(),
             hostname: Default::default(),
             operating_system: Default::default(),

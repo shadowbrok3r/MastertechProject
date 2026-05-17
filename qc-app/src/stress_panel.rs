@@ -1,14 +1,20 @@
-//! Stress panel: single stressor (optional timeout) or multi-stage scenario (per-stage
-//! stressor, threads, duration; optional total wall time and repeat-until-total).
+//! Stress panel: single stressor (optional timeout) or multi-stage scenario.
+//!
+//! As of the stress-runner integration, all stress runs go through
+//! [`stress_runner::RunController`] which owns the stress-kit session, samples
+//! the shared `TelemetryAgent`, and persists `stress_test_run` /
+//! `stress_test_metric` / `stress_test_event` rows.  The panel just renders
+//! and forwards user intent.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use eframe::egui;
-use stress_kit::{
-    Metrics, StressConfig, StressSession, Stressor,
-    scenario::{
-        FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage,
-    },
+use stress_runner::{
+    RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, Stressor, TelemetryAgent,
+    TestTool,
 };
-use std::time::Duration;
+use stress_runner::{RecordId, StressKitStressor};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub enum PanelMode {
@@ -22,7 +28,7 @@ impl Default for PanelMode {
     }
 }
 
-/// Persisted stress tab state (mode + single/scenario fields).
+/// Persisted stress tab state.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 pub struct StressPanelConfig {
     pub mode: PanelMode,
@@ -30,7 +36,6 @@ pub struct StressPanelConfig {
     pub scenario: ScenarioConfig,
 }
 
-/// Single-mode fields.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct SingleConfig {
     pub stressor: StressorChoice,
@@ -54,34 +59,64 @@ impl Default for SingleConfig {
     }
 }
 
-/// Serde-friendly mirror of [`Stressor`].
+/// Serde-friendly mirror of stress-kit's [`Stressor`].  All 8 stress-kit stressors
+/// are now exposed; the panel picks sensible defaults per kind.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StressorChoice {
     Cpu,
     Memory,
     Disk,
+    Matrix,
+    Memcpy,
+    Bitops,
+    Cache,
+    Vm,
 }
 
 impl StressorChoice {
+    pub const ALL: [Self; 8] = [
+        Self::Cpu,
+        Self::Memory,
+        Self::Disk,
+        Self::Matrix,
+        Self::Memcpy,
+        Self::Bitops,
+        Self::Cache,
+        Self::Vm,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Cpu => "CPU",
             Self::Memory => "Memory",
             Self::Disk => "Disk I/O",
+            Self::Matrix => "Matrix",
+            Self::Memcpy => "Memcpy",
+            Self::Bitops => "Bitops",
+            Self::Cache => "Cache",
+            Self::Vm => "VM",
         }
     }
+
     pub fn to_stressor(self) -> Stressor {
         match self {
             Self::Cpu => Stressor::Cpu,
             Self::Memory => Stressor::Memory,
             Self::Disk => Stressor::Disk,
+            Self::Matrix => Stressor::Matrix,
+            Self::Memcpy => Stressor::Memcpy,
+            Self::Bitops => Stressor::Bitops,
+            Self::Cache => Stressor::Cache,
+            Self::Vm => Stressor::Vm,
         }
     }
+
+    pub fn to_db(self) -> StressKitStressor {
+        stress_runner::stressor_to_db(self.to_stressor())
+    }
+
     pub fn throughput_unit(self) -> &'static str {
-        match self {
-            Self::Cpu => "Mop/s",
-            Self::Memory | Self::Disk => "MiB/s",
-        }
+        self.to_stressor().throughput_unit()
     }
 }
 
@@ -89,7 +124,6 @@ impl StressorChoice {
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ScenarioConfig {
     pub stages: Vec<ScenarioStageConfig>,
-    /// 0 means no limit.
     pub total_wall_secs: u64,
     pub use_total: bool,
     pub repeat_until_total: bool,
@@ -109,7 +143,6 @@ impl Default for ScenarioConfig {
     }
 }
 
-/// One scenario stage in the editor list.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ScenarioStageConfig {
     pub label: String,
@@ -152,49 +185,50 @@ impl ScenarioStageConfig {
         }
     }
 
-    fn to_stage(&self) -> ScenarioStage {
-        ScenarioStage {
+    fn to_run_stage(&self) -> RunStage {
+        RunStage {
             label: self.label.clone(),
-            config: StressConfig {
-                stressor: self.stressor.to_stressor(),
-                threads: self.threads,
-                timeout: None, // `ScenarioRunner` owns per-stage duration
-                memory_cap_mb: self.memory_cap_mb,
-                disk_file_mb: self.disk_file_mb,
-            },
+            stressor: self.stressor.to_stressor(),
+            threads: self.threads,
             duration_secs: self.duration_secs,
+            memory_cap_mb: self.memory_cap_mb,
+            disk_file_mb: self.disk_file_mb,
         }
     }
 }
 
-enum ActiveRun {
-    Single(StressSession),
-    Scenario(ScenarioRunner),
+/// Latest stress-kit throughput tick (mirrors `stress_kit::Metrics` but stored
+/// flat so the UI doesn't need to keep an Option around).
+#[derive(Default, Clone)]
+struct LatestMetrics {
+    elapsed_secs: f64,
+    throughput: f64,
+    last_error: Option<String>,
+    throughput_unit: &'static str,
 }
 
-/// Scenario run progress (stage index, labels, elapsed).
+/// Scenario run progress.
 #[derive(Default)]
 struct ScenarioState {
     current_stage_index: usize,
     current_stage_label: String,
     stage_count: usize,
-    stage_started_at_elapsed: f64, // total elapsed when this stage began
+    stage_started_at_elapsed: f64,
     finished: bool,
-    finish_reason: Option<FinishReason>,
+    finish_label: Option<String>,
     total_elapsed_secs: f64,
 }
 
-/// Non-persisted panel state.
 pub struct StressPanel {
-    run: Option<ActiveRun>,
-    /// Last `Metrics` from the active run.
-    latest: Option<Metrics>,
-    /// Scenario progress (current stage, counts).
+    run: Option<RunController>,
+    latest: Option<LatestMetrics>,
     scenario_state: ScenarioState,
-    /// Throughput samples for the sparkline.
     history: Vec<f32>,
-    /// Which scenario row has the detail block open (`None` if collapsed).
     editing_stage: Option<usize>,
+    last_run_id: Option<RecordId>,
+    last_verdict: Option<RunVerdict>,
+    /// True until the user dismisses the last verdict banner.
+    show_verdict: bool,
 }
 
 impl Default for StressPanel {
@@ -205,119 +239,138 @@ impl Default for StressPanel {
             scenario_state: ScenarioState::default(),
             history: Vec::new(),
             editing_stage: None,
+            last_run_id: None,
+            last_verdict: None,
+            show_verdict: false,
         }
     }
 }
 
 impl StressPanel {
-    /// Poll active run; call from app `logic` each frame.
+    /// Drain controller updates.  Call from the host `update` loop each frame.
     pub fn tick(&mut self, ctx: &egui::Context) {
-        // Read run state here so `push_metrics` / `handle_scenario_event` can take `&mut self`.
-        let update = match &self.run {
-            None => return,
-            Some(ActiveRun::Single(s)) => {
-                let m = s.try_recv();
-                let stopping = s.is_stopping();
-                (m, vec![], stopping)
-            }
-            Some(ActiveRun::Scenario(runner)) => {
-                let events = runner.try_recv_all();
-                let stopping = runner.is_stopping();
-                (None, events, stopping)
-            }
+        let Some(controller) = self.run.as_ref() else {
+            return;
         };
+        let running = controller.is_running();
+        let updates = controller.poll();
 
-        let (metrics, events, stopping) = update;
-        if let Some(m) = metrics {
-            self.push_metrics(m);
+        for update in updates {
+            self.handle_update(update);
         }
-        for event in events {
-            self.handle_scenario_event(event);
-        }
-        if !stopping {
+
+        if !running {
+            // Controller marked itself done — drop it so `is_running` reads false.
+            // The verdict was already captured on the `Finished` update above.
+            self.run = None;
+        } else {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 
-    fn push_metrics(&mut self, m: Metrics) {
-        self.history.push(m.throughput as f32);
-        if self.history.len() > 120 {
-            self.history.remove(0);
-        }
-        self.latest = Some(m);
-    }
-
-    fn handle_scenario_event(&mut self, event: ScenarioEvent) {
-        match event {
-            ScenarioEvent::StageStarted { index, label, stage_count } => {
-                let elapsed = self.run.as_ref().map_or(0.0, |r| {
-                    if let ActiveRun::Scenario(r) = r {
-                        r.elapsed().as_secs_f64()
-                    } else {
-                        0.0
-                    }
-                });
+    fn handle_update(&mut self, update: RunUpdate) {
+        match update {
+            RunUpdate::Started { run_id } => {
+                self.last_run_id = Some(run_id);
+                self.history.clear();
+                self.latest = None;
+                self.scenario_state = ScenarioState::default();
+            }
+            RunUpdate::StageStarted { index, label, stage_count } => {
+                let elapsed = self.latest.as_ref().map_or(0.0, |m| m.elapsed_secs);
                 self.scenario_state = ScenarioState {
                     current_stage_index: index,
                     current_stage_label: label,
                     stage_count,
                     stage_started_at_elapsed: elapsed,
                     finished: false,
-                    finish_reason: None,
+                    finish_label: None,
                     total_elapsed_secs: elapsed,
                 };
                 self.history.clear();
-                self.latest = None;
             }
-            ScenarioEvent::Tick { metrics, .. } => {
+            RunUpdate::Tick {
+                stage_index: _,
+                stage_label: _,
+                metrics,
+                telemetry: _,
+                throughput_unit,
+            } => {
+                self.history.push(metrics.throughput as f32);
+                if self.history.len() > 120 {
+                    self.history.remove(0);
+                }
                 self.scenario_state.total_elapsed_secs = metrics.elapsed_secs;
-                self.push_metrics(metrics);
+                self.latest = Some(LatestMetrics {
+                    elapsed_secs: metrics.elapsed_secs,
+                    throughput: metrics.throughput,
+                    last_error: metrics.last_error,
+                    throughput_unit,
+                });
             }
-            ScenarioEvent::StageFinished { .. } => {}
-            ScenarioEvent::Finished { reason, total_elapsed_secs } => {
+            RunUpdate::StageFinished { .. } => {}
+            RunUpdate::Finished(verdict) => {
                 self.scenario_state.finished = true;
-                self.scenario_state.finish_reason = Some(reason);
-                self.scenario_state.total_elapsed_secs = total_elapsed_secs;
+                self.scenario_state.finish_label = Some(verdict_label(&verdict));
+                self.scenario_state.total_elapsed_secs = verdict.duration_secs;
+                self.last_verdict = Some(verdict);
+                self.show_verdict = true;
+            }
+            RunUpdate::Warning { message } => {
+                log::warn!("stress-runner: {message}");
+            }
+            RunUpdate::Error { message } => {
+                log::error!("stress-runner: {message}");
             }
         }
     }
 
     pub fn is_running(&self) -> bool {
-        match &self.run {
-            None => false,
-            Some(ActiveRun::Single(s)) => !s.is_stopping(),
-            Some(ActiveRun::Scenario(r)) => !r.is_stopping(),
-        }
+        self.run.as_ref().map(|c| c.is_running()).unwrap_or(false)
     }
 
     pub fn has_run(&self) -> bool {
-        self.run.is_some()
+        self.run.is_some() || self.last_verdict.is_some()
     }
 
-    fn start_single(&mut self, cfg: &SingleConfig) {
-        self.history.clear();
-        self.latest = None;
-        self.scenario_state = ScenarioState::default();
-        let config = StressConfig {
-            stressor: cfg.stressor.to_stressor(),
+    fn start_single(
+        &mut self,
+        cfg: &SingleConfig,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
+        let stressor = cfg.stressor.to_stressor();
+        let plan = RunPlan::Single {
+            stressor,
             threads: cfg.threads,
-            timeout: if cfg.use_timeout && cfg.timeout_secs > 0 {
-                Some(Duration::from_secs(cfg.timeout_secs))
+            duration_secs: if cfg.use_timeout && cfg.timeout_secs > 0 {
+                Some(cfg.timeout_secs)
             } else {
                 None
             },
             memory_cap_mb: cfg.memory_cap_mb,
             disk_file_mb: cfg.disk_file_mb,
         };
-        self.run = Some(ActiveRun::Single(StressSession::start(config)));
-    }
-
-    fn start_scenario(&mut self, cfg: &ScenarioConfig) {
+        let mut spec = RunSpec::single_stresskit(computer, stressor, None);
+        spec.plan = plan;
+        spec.tool = TestTool::StressKit { stressor: cfg.stressor.to_db() };
+        spec.preset_label = Some(format!("qc-app:single:{}", cfg.stressor.label()));
         self.history.clear();
         self.latest = None;
         self.scenario_state = ScenarioState::default();
-        let def = ScenarioDefinition {
-            stages: cfg.stages.iter().map(|s| s.to_stage()).collect(),
+        self.show_verdict = false;
+        self.run = Some(RunController::start(spec, telemetry));
+    }
+
+    fn start_scenario(
+        &mut self,
+        cfg: &ScenarioConfig,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
+        let stages: Vec<RunStage> = cfg.stages.iter().map(|s| s.to_run_stage()).collect();
+        let plan = RunPlan::Scenario {
+            stages: stages.clone(),
             total_wall_secs: if cfg.use_total && cfg.total_wall_secs > 0 {
                 Some(cfg.total_wall_secs)
             } else {
@@ -325,23 +378,41 @@ impl StressPanel {
             },
             repeat_until_total: cfg.repeat_until_total,
         };
-        self.run = Some(ActiveRun::Scenario(ScenarioRunner::start(def)));
+        let mut spec = RunSpec::single_stresskit(
+            computer,
+            stages.first().map(|s| s.stressor).unwrap_or(Stressor::Cpu),
+            None,
+        );
+        spec.plan = plan;
+        spec.tool = TestTool::StressKitScenario {
+            name: Some("qc-app:scenario".to_string()),
+        };
+        spec.preset_label = Some("qc-app:scenario".to_string());
+        self.history.clear();
+        self.latest = None;
+        self.scenario_state = ScenarioState::default();
+        self.show_verdict = false;
+        self.run = Some(RunController::start(spec, telemetry));
     }
 
     fn stop(&mut self) {
-        match &self.run {
-            Some(ActiveRun::Single(s)) => s.stop(),
-            Some(ActiveRun::Scenario(r)) => r.stop(),
-            None => {}
+        if let Some(c) = self.run.as_ref() {
+            c.stop();
         }
     }
 
-    /// Stress tab UI; sets `open_hw_monitor` if the user opens the monitor.
+    /// Stress tab UI.
+    ///
+    /// `telemetry` is the shared `TelemetryAgent` (typically from `HwSampler::agent()`).
+    /// `computer` is the `RecordId` the run will be persisted against — qc-app
+    /// computes this from `reporting::machine_id()`.
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
         cfg: &mut StressPanelConfig,
         open_hw_monitor: &mut bool,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
     ) {
         let running = self.is_running();
 
@@ -350,6 +421,15 @@ impl StressPanel {
             ui.add_space(8.0);
             if ui.button("Hardware Monitor").clicked() {
                 *open_hw_monitor = true;
+            }
+            if let Some(id) = &self.last_run_id {
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(format!("run: {}", id.key_string_pretty()))
+                        .weak()
+                        .small()
+                        .monospace(),
+                );
             }
         });
         ui.add_space(6.0);
@@ -363,18 +443,31 @@ impl StressPanel {
         ui.separator();
 
         match cfg.mode {
-            PanelMode::Single => self.ui_single(ui, cfg, running),
-            PanelMode::Scenario => self.ui_scenario(ui, cfg, running),
+            PanelMode::Single => self.ui_single(ui, cfg, running, telemetry.clone(), computer.clone()),
+            PanelMode::Scenario => self.ui_scenario(ui, cfg, running, telemetry, computer),
+        }
+
+        if self.show_verdict {
+            if let Some(v) = self.last_verdict.clone() {
+                self.ui_verdict_banner(ui, &v);
+            }
         }
     }
 
-    fn ui_single(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
+    fn ui_single(
+        &mut self,
+        ui: &mut egui::Ui,
+        cfg: &mut StressPanelConfig,
+        running: bool,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
         let s = &mut cfg.single;
 
         ui.group(|ui| {
             ui.label("Stressor");
-            ui.horizontal(|ui| {
-                for choice in [StressorChoice::Cpu, StressorChoice::Memory, StressorChoice::Disk] {
+            ui.horizontal_wrapped(|ui| {
+                for choice in StressorChoice::ALL {
                     ui.add_enabled_ui(!running, |ui| {
                         ui.selectable_value(&mut s.stressor, choice, choice.label());
                     });
@@ -394,7 +487,7 @@ impl StressPanel {
             });
 
             match s.stressor {
-                StressorChoice::Memory => {
+                StressorChoice::Memory | StressorChoice::Memcpy | StressorChoice::Vm => {
                     ui.horizontal(|ui| {
                         ui.label("Memory cap (MiB)");
                         ui.add_enabled(
@@ -412,7 +505,10 @@ impl StressPanel {
                         );
                     });
                 }
-                StressorChoice::Cpu => {}
+                StressorChoice::Cpu
+                | StressorChoice::Matrix
+                | StressorChoice::Bitops
+                | StressorChoice::Cache => {}
             }
 
             ui.horizontal(|ui| {
@@ -428,14 +524,25 @@ impl StressPanel {
             });
         });
 
-        self.ui_start_stop(ui, running, |panel| {
-            panel.start_single(&cfg.single);
+        // Clone before moving into the start closure so we can still use
+        // `cfg` afterwards for the metric header label.
+        let single_clone = cfg.single.clone();
+        let computer_clone = computer.clone();
+        self.ui_start_stop(ui, running, move |panel| {
+            panel.start_single(&single_clone, telemetry, computer_clone);
         });
 
         self.ui_metrics(ui, cfg.single.stressor.throughput_unit());
     }
 
-    fn ui_scenario(&mut self, ui: &mut egui::Ui, cfg: &mut StressPanelConfig, running: bool) {
+    fn ui_scenario(
+        &mut self,
+        ui: &mut egui::Ui,
+        cfg: &mut StressPanelConfig,
+        running: bool,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
         ui.group(|ui| {
             ui.label(egui::RichText::new("Stages (run in order)").strong());
             ui.add_space(4.0);
@@ -447,7 +554,6 @@ impl StressPanel {
             for i in 0..n {
                 let is_editing = self.editing_stage == Some(i);
                 ui.horizontal(|ui| {
-                    // Reorder
                     ui.add_enabled_ui(!running && i > 0, |ui| {
                         if ui.small_button("▲").clicked() {
                             swap = Some((i - 1, i));
@@ -461,18 +567,13 @@ impl StressPanel {
 
                     ui.add_space(4.0);
 
-                    // Stressor combo (index into `cfg.scenario.stages`)
                     ui.add_enabled_ui(!running, |ui| {
                         let selected = cfg.scenario.stages[i].stressor.label();
                         egui::ComboBox::from_id_salt(format!("stage_stressor_{i}"))
                             .selected_text(selected)
                             .width(90.0)
                             .show_ui(ui, |ui| {
-                                for choice in [
-                                    StressorChoice::Cpu,
-                                    StressorChoice::Memory,
-                                    StressorChoice::Disk,
-                                ] {
+                                for choice in StressorChoice::ALL {
                                     ui.selectable_value(
                                         &mut cfg.scenario.stages[i].stressor,
                                         choice,
@@ -508,7 +609,6 @@ impl StressPanel {
                     });
                 });
 
-                // Per-stage threads / caps when expanded
                 if is_editing {
                     ui.indent(format!("stage_opts_{i}"), |ui| {
                         ui.horizontal(|ui| {
@@ -522,7 +622,7 @@ impl StressPanel {
                             );
                         });
                         match cfg.scenario.stages[i].stressor {
-                            StressorChoice::Memory => {
+                            StressorChoice::Memory | StressorChoice::Memcpy | StressorChoice::Vm => {
                                 ui.horizontal(|ui| {
                                     ui.label("Memory cap (MiB)");
                                     ui.add_enabled(
@@ -546,7 +646,7 @@ impl StressPanel {
                                     );
                                 });
                             }
-                            StressorChoice::Cpu => {}
+                            _ => {}
                         }
                     });
                 }
@@ -564,15 +664,24 @@ impl StressPanel {
 
             ui.add_space(4.0);
             if !running {
-                ui.horizontal(|ui| {
-                    if ui.small_button("+ CPU stage").clicked() {
-                        cfg.scenario.stages.push(ScenarioStageConfig::default_cpu());
-                    }
-                    if ui.small_button("+ Memory stage").clicked() {
-                        cfg.scenario.stages.push(ScenarioStageConfig::default_memory());
-                    }
-                    if ui.small_button("+ Disk stage").clicked() {
-                        cfg.scenario.stages.push(ScenarioStageConfig::default_disk());
+                ui.horizontal_wrapped(|ui| {
+                    for choice in StressorChoice::ALL {
+                        if ui.small_button(format!("+ {}", choice.label())).clicked() {
+                            let stage = match choice {
+                                StressorChoice::Cpu => ScenarioStageConfig::default_cpu(),
+                                StressorChoice::Memory => ScenarioStageConfig::default_memory(),
+                                StressorChoice::Disk => ScenarioStageConfig::default_disk(),
+                                other => ScenarioStageConfig {
+                                    label: other.label().into(),
+                                    stressor: other,
+                                    threads: 0,
+                                    duration_secs: 60,
+                                    memory_cap_mb: 256,
+                                    disk_file_mb: 16,
+                                },
+                            };
+                            cfg.scenario.stages.push(stage);
+                        }
                     }
                 });
             }
@@ -598,8 +707,12 @@ impl StressPanel {
             });
         });
 
-        self.ui_start_stop(ui, running, |panel| {
-            panel.start_scenario(&cfg.scenario);
+        // Clone before moving into the start closure so we can still read
+        // `cfg` afterwards for the progress + metrics rendering.
+        let scenario_clone = cfg.scenario.clone();
+        let computer_clone = computer.clone();
+        self.ui_start_stop(ui, running, move |panel| {
+            panel.start_scenario(&scenario_clone, telemetry, computer_clone);
         });
 
         if running || (self.has_run() && cfg.mode == PanelMode::Scenario) {
@@ -607,7 +720,8 @@ impl StressPanel {
         }
 
         let stage_idx = self.scenario_state.current_stage_index;
-        let unit = cfg.scenario
+        let unit = cfg
+            .scenario
             .stages
             .get(stage_idx)
             .map(|s| s.stressor.throughput_unit())
@@ -618,10 +732,10 @@ impl StressPanel {
     fn ui_scenario_progress(&self, ui: &mut egui::Ui, cfg: &StressPanelConfig) {
         let ss = &self.scenario_state;
         if ss.finished {
-            let reason = ss.finish_reason.map(|r| r.label()).unwrap_or("done");
+            let label = ss.finish_label.clone().unwrap_or_else(|| "done".to_string());
             ui.label(
                 egui::RichText::new(format!(
-                    "{reason}  —  {:.1} s total",
+                    "{label}  —  {:.1} s total",
                     ss.total_elapsed_secs
                 ))
                 .strong(),
@@ -633,7 +747,6 @@ impl StressPanel {
             return;
         }
 
-        // Elapsed in current stage vs `duration_secs`
         let stage_elapsed = ss.total_elapsed_secs - ss.stage_started_at_elapsed;
         let stage_dur = cfg
             .scenario
@@ -659,13 +772,15 @@ impl StressPanel {
                 .animate(true),
         );
 
-        // Optional overall bar when `use_total` is set
         if cfg.scenario.use_total && cfg.scenario.total_wall_secs > 0 {
             let overall = (ss.total_elapsed_secs / cfg.scenario.total_wall_secs as f64)
                 .clamp(0.0, 1.0) as f32;
             ui.add(
                 egui::ProgressBar::new(overall)
-                    .text(format!("Overall  {:.0}/{} s", ss.total_elapsed_secs, cfg.scenario.total_wall_secs))
+                    .text(format!(
+                        "Overall  {:.0}/{} s",
+                        ss.total_elapsed_secs, cfg.scenario.total_wall_secs
+                    ))
                     .desired_width(ui.available_width()),
             );
         }
@@ -711,7 +826,7 @@ impl StressPanel {
 
                 ui.label("Throughput");
                 ui.label(
-                    egui::RichText::new(format!("{:.2} {unit}", m.throughput))
+                    egui::RichText::new(format!("{:.2} {}", m.throughput, m.throughput_unit))
                         .monospace()
                         .strong(),
                 );
@@ -763,6 +878,96 @@ impl StressPanel {
                     .small()
                     .weak(),
             );
+        }
+    }
+
+    fn ui_verdict_banner(&mut self, ui: &mut egui::Ui, v: &RunVerdict) {
+        ui.add_space(8.0);
+        let (text, color) = match v.result {
+            stress_runner::RunResult::Pass => (
+                format!("PASS  —  {:.1} s", v.duration_secs),
+                egui::Color32::from_rgb(50, 160, 90),
+            ),
+            stress_runner::RunResult::Fail => (
+                format!("FAIL  ({})  —  {:.1} s", v.failure_mode_label(), v.duration_secs),
+                egui::Color32::from_rgb(200, 60, 60),
+            ),
+            stress_runner::RunResult::Aborted => (
+                format!("ABORTED  —  {:.1} s", v.duration_secs),
+                egui::Color32::from_rgb(180, 140, 50),
+            ),
+            stress_runner::RunResult::Inconclusive => (
+                format!("INCONCLUSIVE  —  {:.1} s", v.duration_secs),
+                egui::Color32::from_rgb(160, 160, 160),
+            ),
+            stress_runner::RunResult::InProgress => (
+                "IN PROGRESS".to_string(),
+                egui::Color32::from_rgb(120, 160, 220),
+            ),
+        };
+        ui.horizontal(|ui| {
+            ui.colored_label(color, egui::RichText::new(text).strong());
+            if ui.small_button("Dismiss").clicked() {
+                self.show_verdict = false;
+            }
+        });
+    }
+}
+
+fn verdict_label(v: &RunVerdict) -> String {
+    match v.result {
+        stress_runner::RunResult::Pass => "Pass".to_string(),
+        stress_runner::RunResult::Fail => format!("Fail ({})", v.failure_mode_label()),
+        stress_runner::RunResult::Aborted => "Aborted".to_string(),
+        stress_runner::RunResult::Inconclusive => "Inconclusive".to_string(),
+        stress_runner::RunResult::InProgress => "In progress".to_string(),
+    }
+}
+
+/// Small helper trait so we can pretty-print RecordIds for the header label.
+trait RecordIdPretty {
+    fn key_string_pretty(&self) -> String;
+}
+
+impl RecordIdPretty for RecordId {
+    fn key_string_pretty(&self) -> String {
+        // We don't have a `Display` impl on `RecordId` to extract the table
+        // prefix, but every run id is on the `stress_test_run` table — just
+        // shorten the key portion.
+        use database::schema::RecordIdExt;
+        short(&self.key_string(), 12)
+    }
+}
+
+fn short(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
+}
+
+/// Tiny extension on RunVerdict so the panel can ask "what's the failure mode?"
+/// without owning the FailureMode enum directly.
+trait VerdictPretty {
+    fn failure_mode_label(&self) -> &'static str;
+}
+
+impl VerdictPretty for RunVerdict {
+    fn failure_mode_label(&self) -> &'static str {
+        use stress_runner::FailureMode;
+        match &self.failure_mode {
+            FailureMode::None => "none",
+            FailureMode::AppError { .. } => "app error",
+            FailureMode::Bsod { .. } => "BSOD",
+            FailureMode::Tdr { .. } => "TDR",
+            FailureMode::WheaError { .. } => "WHEA",
+            FailureMode::ThermalThrottle { .. } => "thermal throttle",
+            FailureMode::DiskIoError { .. } => "disk I/O",
+            FailureMode::DataMismatch { .. } => "data mismatch",
+            FailureMode::Reboot => "reboot",
+            FailureMode::Timeout => "timeout",
+            FailureMode::OperatorOverride { .. } => "operator override",
         }
     }
 }

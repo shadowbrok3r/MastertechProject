@@ -133,6 +133,11 @@ impl AdminConsole {
         // client, or `None` if none has arrived (yet) this session.
         // Rendered as an extra section in the expanded body.
         security_inventory: Option<&[database::schema::InstalledSecurityProduct]>,
+        // Slice 5 (post-bugfix): last reachability probe result
+        // for this client, or `None` if the prober hasn't gotten
+        // to it yet. Surfaced as informational metadata in the
+        // details grid — does *not* gate visibility.
+        reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
     ) {
         let style = ui.style().clone();
         let row_id = ui.make_persistent_id((
@@ -289,6 +294,7 @@ impl AdminConsole {
                         &formatted_date,
                         &assigned_user_text,
                         is_ws_connected,
+                        reachability,
                     );
 
                     // Slice 2: security inventory section. Renders
@@ -441,6 +447,7 @@ fn client_details_grid(
     formatted_date: &str,
     assigned_user: &str,
     is_ws_connected: bool,
+    reachability: Option<&crate::ui_data::reachability::ReachabilityStatus>,
 ) {
     if let Some(fname) = client.friendly_name.as_deref() {
         ui.horizontal(|ui| {
@@ -485,9 +492,34 @@ fn client_details_grid(
             );
             row(ui, "Assigned to", assigned_user);
 
+            // Direct TCP row — surfaces both what the client
+            // *advertised* (its `local_ip:tcp_port`) and what the
+            // per-admin probe *found* when it actually tried to
+            // connect there. The two can disagree (advertised but
+            // unreachable from this admin's network) and that
+            // mismatch is exactly what slice 5 tracks.
             match (client.local_ip.as_deref(), client.tcp_port) {
                 (Some(ip), Some(port)) if !ip.is_empty() => {
-                    row(ui, "Direct TCP", &format!("{ip}:{port}"));
+                    let endpoint = format!("{ip}:{port}");
+                    let detail = match reachability {
+                        Some(r) if r.reachable => {
+                            format!("{endpoint}  ✓ reachable")
+                        }
+                        Some(r) => {
+                            // Truncate the error so a chatty OS
+                            // message doesn't blow up the grid row.
+                            let err = r
+                                .error
+                                .as_deref()
+                                .unwrap_or("unreachable")
+                                .chars()
+                                .take(80)
+                                .collect::<String>();
+                            format!("{endpoint}  ✗ {err} (relay still works)")
+                        }
+                        None => format!("{endpoint}  (probing…)"),
+                    };
+                    row(ui, "Direct TCP", &detail);
                 }
                 _ => {
                     row(ui, "Direct TCP", "(not advertised — relay only)");

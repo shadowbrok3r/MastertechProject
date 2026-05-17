@@ -1,0 +1,25 @@
+id = "20260516120000__tranche1_relax_fks"
+name = "tranche1_relax_fks"
+state = "planned"
+
+# Source: pre-Tranche-1 baseline (from database/snapshots/schema_snapshot.json)
+source_schema_hash = "9684edbb3e7180e53cda217fe5707a561942c8173e68322f1470d7f041ca93f8"
+# Target: hash of post-Tranche-1 schema files (verified via lint mismatch error)
+target_schema_hash = "1462d467a9e18bd0596c265bb29e0e13b20673c0c6fdb6ee77955a01407e59dc"
+compatibility = "none"
+
+# start phase: nothing truly additive here — all 5 changes modify existing
+# field definitions so they belong in the complete phase per surrealkit's model.
+[start]
+ddl = ""
+
+# complete phase: field type modifications (relaxing required → optional, and
+# antivirus element type string → object).  Applied after app cutover.
+[complete]
+ddl = """
+DEFINE FIELD OVERWRITE customer            ON computer        TYPE none | record<customer>   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE current_antivirus   ON computer        TYPE none | array<object>      PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE current_antivirus.* ON computer        TYPE object                    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE customer            ON service_order   TYPE none | record<customer>   PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE assigned_user       ON connected_client TYPE none | record<user>      PERMISSIONS FULL;
+"""
