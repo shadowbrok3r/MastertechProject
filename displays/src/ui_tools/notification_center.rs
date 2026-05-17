@@ -68,7 +68,7 @@ impl NotificationCenter {
             if ui.add(
                 Button::new(RichText::new("All").color(all_color).small())
                     .stroke(if all_selected { 
-                        Stroke::new(1.0, Color32::from_rgb(42, 222, 192)) 
+                        Stroke::new(1.0_f32, Color32::from_rgb(42, 222, 192)) 
                     } else { 
                         ui.style().visuals.noninteractive().fg_stroke 
                     })
@@ -101,7 +101,7 @@ impl NotificationCenter {
                 if ui.add(
                     Button::new(RichText::new(label).color(cat_color).small())
                         .stroke(if is_selected { 
-                            Stroke::new(1.0, cat_color) 
+                            Stroke::new(1.0_f32, cat_color) 
                         } else { 
                             ui.style().visuals.noninteractive().fg_stroke 
                         })

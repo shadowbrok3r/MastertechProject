@@ -1,6 +1,6 @@
 use serde::{de::{self, Deserializer, MapAccess, Visitor}, Deserialize, Serialize, Serializer};
 use std::fmt;
-use surrealdb_types::{Kind, Value, SurrealValue as SurrealValueTrait};
+use surrealdb_types::Value;
 
 use crate::schema::{prestashop::{Associations, Order}, Qc, RecordId, RecordIdExt};
 

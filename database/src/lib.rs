@@ -94,6 +94,48 @@ pub static CURRENT_USER_INFO: Lazy<std::sync::Mutex<Option<User>>> = Lazy::new(|
     std::sync::Mutex::new(None) // Initialize with no user logged in
 });
 
+/// In-memory cache of the credentials we used for the most recent
+/// successful sign-in, so [`ensure_db_connected`] can transparently re-auth
+/// after a SurrealDB hiccup instead of dropping the operator to guest.
+///
+/// Prefer the `jwt` path on replay — it's the same token SurrealDB itself
+/// issued, and using it avoids putting a cleartext password on the wire a
+/// second time. The `email` / `password` pair is a fallback used only when
+/// the JWT has expired (default ~1 h in SurrealDB).
+///
+/// **Security note:** this is *memory-only*, never persisted to disk. The
+/// admin process already holds the operator's password in its login flow;
+/// this static doesn't widen the attack surface beyond what's already in
+/// the process address space. We deliberately do not log it.
+#[derive(Clone)]
+pub struct CachedAuth {
+    pub jwt: Option<String>,
+    pub email: Option<String>,
+    pub password: Option<String>,
+}
+
+pub static CACHED_AUTH: Lazy<std::sync::Mutex<Option<CachedAuth>>> = Lazy::new(|| {
+    std::sync::Mutex::new(None)
+});
+
+/// Helper for the signin sites. Writes any field that's `Some` and leaves
+/// the others untouched, so a JWT-only path doesn't blow away a previously-
+/// cached password.
+pub fn cache_auth(jwt: Option<String>, email: Option<String>, password: Option<String>) {
+    if let Ok(mut g) = CACHED_AUTH.try_lock() {
+        let cur = g.clone().unwrap_or(CachedAuth {
+            jwt: None,
+            email: None,
+            password: None,
+        });
+        *g = Some(CachedAuth {
+            jwt: jwt.or(cur.jwt),
+            email: email.or(cur.email),
+            password: password.or(cur.password),
+        });
+    }
+}
+
 pub static STORE_USERS: Lazy<std::sync::Mutex<Vec<User>>> = Lazy::new(|| {
     std::sync::Mutex::new(vec![]) 
 });
@@ -207,6 +249,9 @@ impl Database {
             Some(jwt) => {
                 info!("Have a JWT, attempting token auth");
                 DATABASE.authenticate(jwt.clone()).await?;
+                // Cache the JWT so `ensure_db_connected` can replay it
+                // after a DB blip without dropping the operator to guest.
+                cache_auth(Some(jwt.clone()), None, None);
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
                 // let sess = DATABASE.query("RETURN <string>$session").await?.take::<Option<String>>(0)?;
@@ -235,7 +280,7 @@ impl Database {
                     namespace: NS.to_string(),
                     database: DB.to_string(),
                     access: USER_SCOPE.to_string(),
-                    params: Auth { email: full_email.clone(), password },
+                    params: Auth { email: full_email.clone(), password: password.clone() },
                 };
 
                 info!("No JWT, sigining in: {:?}\n{:?}\n{:?}\n{:?}\n", full_email, creds.namespace, creds.database, creds.access);
@@ -244,6 +289,12 @@ impl Database {
                 let jwt = DATABASE
                     .signin(creds)
                     .await?;
+
+                // Cache everything we need to fully re-auth after a DB
+                // reconnect. JWT is preferred; email/password is the
+                // fallback when the JWT has expired.
+                let jwt_str = jwt.access.as_insecure_token().to_string();
+                cache_auth(Some(jwt_str.clone()), Some(full_email.clone()), Some(password));
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
                 let users: Vec<User> = DATABASE.query("SELECT * FROM user WHERE active == true").await?.take(0)?;
@@ -281,7 +332,7 @@ impl Database {
                     }
                 }
 
-                Ok( Self { jwt: Some(jwt.access.as_insecure_token().to_string()), user } )
+                Ok( Self { jwt: Some(jwt_str), user } )
             }
         }
     }
@@ -434,24 +485,129 @@ pub async fn ensure_db_connected() -> anyhow::Result<(), anyhow::Error> {
     
     // Check if we had a user (don't hold MutexGuard across await)
     let had_user = CURRENT_USER_INFO.try_lock().map(|g| g.is_some()).unwrap_or(false);
-    
+
     if had_user {
-        // We had a user, need to re-authenticate
-        // For now, sign in as guest - the actual re-auth should happen through the app's login flow
-        log::warn!("Re-authenticating as guest after reconnect. User should re-login for full access.");
-        DATABASE.signin(SurrealRec {
-            namespace: NS.to_string(),
-            database: DB.to_string(),
-            access: "guest".to_string(),
-            params: Credentials {
-                username: "guest".to_string(),
-                password: SURREAL_GUEST_PASSWORD.to_string()
+        // Try to restore the *same* identity the user logged in with so
+        // perms (e.g. record-scope `assigned_user == $auth.id` filters in
+        // `connected_client`) don't silently become unsatisfiable after a
+        // hiccup. Three-way fallback:
+        //   1. Replay the cached JWT (cheap, no creds re-sent).
+        //   2. If the JWT is expired/invalid, replay email+password
+        //      against the user scope.
+        //   3. Last-ditch: guest, with a clear warning so the operator
+        //      knows to log in again.
+        let cached: Option<CachedAuth> =
+            CACHED_AUTH.try_lock().ok().and_then(|g| g.clone());
+
+        let mut restored = false;
+        if let Some(CachedAuth { jwt: Some(token), .. }) = cached.as_ref() {
+            match DATABASE.authenticate(token.clone()).await {
+                Ok(_) => {
+                    log::info!("Replayed cached JWT after reconnect");
+                    restored = true;
+                }
+                Err(e) => {
+                    log::info!("Cached JWT replay failed ({e}); will try password");
+                }
             }
-        }).await?;
+        }
+
+        if !restored {
+            if let Some(CachedAuth {
+                email: Some(em),
+                password: Some(pw),
+                ..
+            }) = cached.as_ref()
+            {
+                let creds = SurrealRec {
+                    namespace: NS.to_string(),
+                    database: DB.to_string(),
+                    access: USER_SCOPE.to_string(),
+                    params: Auth {
+                        email: em.clone(),
+                        password: pw.clone(),
+                    },
+                };
+                match DATABASE.signin(creds).await {
+                    Ok(jwt) => {
+                        // Refresh the cached JWT so the next reconnect
+                        // takes the cheap path.
+                        cache_auth(
+                            Some(jwt.access.as_insecure_token().to_string()),
+                            None,
+                            None,
+                        );
+                        log::info!("Re-authenticated via cached credentials");
+                        restored = true;
+                    }
+                    Err(e) => {
+                        log::warn!("Cached credential replay failed: {e}");
+                    }
+                }
+            }
+        }
+
+        if !restored {
+            log::warn!(
+                "No usable cached auth; falling back to guest. \
+                 User must re-login for full access."
+            );
+            DATABASE.signin(SurrealRec {
+                namespace: NS.to_string(),
+                database: DB.to_string(),
+                access: "guest".to_string(),
+                params: Credentials {
+                    username: "guest".to_string(),
+                    password: SURREAL_GUEST_PASSWORD.to_string()
+                }
+            }).await?;
+        }
     }
-    
+
     log::info!("Database reconnection successful");
     Ok(())
+}
+
+/// Retry a DB operation across a transient connection blip.
+///
+/// Use this for calls that run during a live admin↔agent TCP session
+/// (anything reached from `Mastertech4.0/src/terminal_mode/websockets.rs`
+/// `TerminalWebsocketClient::handle_command`, or
+/// `Mastertech4.0/src/tabs/websockets/mod.rs` handlers): they must not
+/// kill the session on a single 30-second DB blip. Read-side calls
+/// (idempotent) and append-style writes are safe to wrap; non-idempotent
+/// updates that *don't* check current state via `WHERE` should be wrapped
+/// only after their callers tolerate at-least-once semantics.
+///
+/// Walks the standard 250 ms → 500 ms → 1 s back-off, calling
+/// [`ensure_db_connected`] between attempts so a dropped websocket gets
+/// re-established before the next query runs. After three connection
+/// errors in a row the final attempt is forwarded as-is, so callers see
+/// the real underlying error if the DB truly never comes back.
+///
+/// Only available on native targets — uses `tokio::time::sleep` for
+/// the back-off, which is not available in the WASM build.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn db_call_with_retry<F, Fut, T>(mut f: F) -> anyhow::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    for attempt in 0..3u32 {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(e) if is_connection_error(&e) => {
+                log::warn!(
+                    "db_call_with_retry -> attempt {} failed with connection error ({e}); reconnecting",
+                    attempt + 1
+                );
+                let _ = ensure_db_connected().await;
+                tokio::time::sleep(std::time::Duration::from_millis(250u64 << attempt)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    f().await
 }
 
 /// Check if an error is a connection-related error

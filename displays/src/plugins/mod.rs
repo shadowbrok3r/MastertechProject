@@ -5,6 +5,8 @@ pub mod remote_script_notify;
 pub mod mcp_bridge;
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 pub mod remote_egui_control;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod builder_transport;
 pub mod remote;
 #[cfg(feature = "wasm-plugins")]
 pub mod wasm;

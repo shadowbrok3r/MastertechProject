@@ -38,6 +38,30 @@ async fn main() -> anyhow::Result<()> {
 
     let app_state = AppState::new();
 
+    // Bring up the SurrealDB connection so DB-backed routes (e.g. the
+    // `/api/build/*` work queue) can land queries. We don't refuse to
+    // start the HTTP server on a DB failure: the in-memory routes
+    // (qc_fleet, orders) still work, and the build routes return a
+    // 500 with the underlying error in the body until DB is reachable.
+    match database::init_database().await {
+        Ok(()) => tracing::info!("axum_server: SurrealDB connected + signin OK"),
+        Err(e) => tracing::error!("axum_server: SurrealDB init failed: {e:?}"),
+    }
+
+    // Start the shared cron scheduler. We keep the returned handle alive
+    // for the whole process lifetime — dropping it would silently cancel
+    // every registered job. New periodic chores should be added inside
+    // `scheduled::spawn_cron_scheduler` rather than spawning their own.
+    let _cron = match routes::api::scheduled::spawn_cron_scheduler().await {
+        Ok(sched) => Some(sched),
+        Err(e) => {
+            // Don't refuse to start the HTTP server over a cron failure;
+            // the heartbeat sweep is best-effort.
+            tracing::error!("Failed to start cron scheduler: {e:?}");
+            None
+        }
+    };
+
     let app = Router::new()
         .merge(routes(app_state.clone()))
         .layer(map_response(middleware_logger))

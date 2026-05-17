@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use crate::{app_state::SharedContext, modals::{task_modal::ModalAction, ModalType, ModalWindow}};
 use crate::tabs::admin_console::SessionLayout;
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId, Window};

@@ -1,4 +1,4 @@
-use crate::{ai::{chat::tool_fn, model::ModelManager}, openai::types::ChatCompletionTool};
+use crate::{ai::{chat::tool_fn, model::ModelManager}, openai::types::chat::ChatCompletionTool};
 use serde::{Deserialize, Serialize};
 use anyhow::{Error, Result};
 use rpc_router::RpcParams;

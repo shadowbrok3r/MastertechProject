@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CentralPanel, CollapsingHeader, ComboBox, Id, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, ComboBox, Id, Layout, RichText, ScrollArea, Separator, Spinner, TextEdit, Ui, Widget};
 use eframe::egui::{Color32, Grid, Style, scroll_area};
 use database::schema::prestashop::OrderState;
 use crate::{PlatformSpawner, TaskUiActions};
@@ -38,7 +38,7 @@ impl TaskAuditViewer {
 
             eframe::egui::Panel::right(Id::new("Task Audit Side Panel"))
                 .default_size(280.)
-                .max_width(900.)
+                .max_size(900.)
                 .resizable(true)
                 .show_separator_line(true)
                 .show_animated_inside(ui, self.services_viewer.selected.is_some(), |ui|
@@ -59,7 +59,7 @@ impl TaskAuditViewer {
 
                             ui.add_space(10.);
                             ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                if ui.button(RichText::new("Create Task").code().color(ui.style().visuals.error_fg_color)).clicked() {
+                                if ui.button(RichText::new("Create Task").code().color(ui.global_style().visuals.error_fg_color)).clicked() {
                                     let tx = self.services_viewer.tur_channel.0.clone();
                                     let order_num = order.order.id.clone();
                                     PlatformSpawner::spawn(async move {
@@ -260,7 +260,7 @@ impl TaskAuditViewer {
 
                 if self.loading {
                     ui.ctx().request_repaint();
-                    Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
+                    Spinner::new().color(ui.global_style().visuals.error_fg_color).ui(ui);
                 }
             });
         });

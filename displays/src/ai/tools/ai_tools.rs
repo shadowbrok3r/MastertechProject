@@ -1,4 +1,4 @@
-use crate::openai::types::ChatCompletionTool;
+use crate::openai::types::chat::{ChatCompletionTool, ChatCompletionTools};
 use rpc_router::Router;
 use std::sync::Arc;
 
@@ -22,7 +22,14 @@ impl AiTools {
 		&self.router
 	}
 
-	pub fn chat_tools_clone(&self) -> Vec<ChatCompletionTool> {
-		self.chat_tools.as_ref().clone()
+	/// async-openai 0.38 split chat tools into the `ChatCompletionTools` enum
+	/// (Function / Custom). We only ship function tools, so wrap each on the way out.
+	pub fn chat_tools_clone(&self) -> Vec<ChatCompletionTools> {
+		self.chat_tools
+			.as_ref()
+			.iter()
+			.cloned()
+			.map(ChatCompletionTools::Function)
+			.collect()
 	}
 }

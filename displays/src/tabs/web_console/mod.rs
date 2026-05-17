@@ -606,7 +606,7 @@ impl WebConsole {
 
         // Main layout
         let inner_margin = Margin::same(3);
-        let stroke = Stroke::new(0.7, Color32::from_additive_luminance(150));
+        let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(150));
         let radius = CornerRadius::same(5);
 
         // Top panel with title
@@ -618,7 +618,7 @@ impl WebConsole {
                     .stroke(stroke)
                     .corner_radius(radius),
             )
-            .exact_size(40.0)
+            .exact_size(40.0_f32)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(
@@ -646,8 +646,8 @@ impl WebConsole {
         // Side panel with shell/explorer views for selected client
         if self.show_side_panel {
             eframe::egui::Panel::right("web_console_detail")
-                .min_width(400.0)
-                .max_width(600.0)
+                .min_size(400.0_f32)
+                .max_size(600.0_f32)
                 .frame(
                     Frame::default()
                         .fill(Color32::from_rgb(15, 17, 22))

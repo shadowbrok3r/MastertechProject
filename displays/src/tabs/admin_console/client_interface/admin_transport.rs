@@ -24,20 +24,18 @@
 //!     tag = `0x01` (binary) or `0x02` (text) and total_len includes the
 //!     tag byte.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::Spawner;
-use crossbeam::channel::{unbounded, Receiver as XReceiver, Sender as XSender, TryRecvError};
+use crossbeam::channel::{Receiver as XReceiver, Sender as XSender, TryRecvError};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use std::time::Duration;
-
-/// Frame tag bytes — must match `Mastertech4.0/src/transport.rs`.
-const FRAME_TAG_BINARY: u8 = 0x01;
-const FRAME_TAG_TEXT: u8 = 0x02;
-const HANDSHAKE_MAGIC: &[u8; 4] = b"MTRX";
-const HANDSHAKE_VERSION: u8 = 1;
-
-/// Hard cap on a single frame so a wedged client can't OOM the admin
-/// process. Mirrors the client's `MAX_FRAME_BYTES`.
-const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
+use web_time::Duration;
+// Wire-protocol constants live in the shared `tcp_protocol` crate so this
+// file and `Mastertech4.0/src/{transport,tcp_listener}.rs` cannot drift.
+pub use tcp_protocol::{
+    FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_TEXT, HANDSHAKE_MAGIC,
+    HANDSHAKE_VERSION_CURRENT as HANDSHAKE_VERSION, MAX_FRAME_BYTES,
+};
 
 /// Tag describing which transport an [`AdminTransport`] is using. Cheap
 /// to copy; the `WebSocketClient` exposes this so UI code can show the
@@ -98,6 +96,8 @@ impl AdminTransport {
     /// connection_string field — we send it back verbatim.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_tcp(target_addr: String, connection_string: String) -> Self {
+        use crossbeam::channel::unbounded;
+
         let (out_tx, out_rx) = unbounded::<TcpFrame>();
         let (in_tx, in_rx) = unbounded::<WsEvent>();
 
@@ -199,12 +199,25 @@ async fn run_tcp_session(
     out_rx: XReceiver<TcpFrame>,
     in_tx: XSender<WsEvent>,
 ) {
-    use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
     const RETRY_INTERVAL: Duration = Duration::from_secs(3);
+    /// How often the master probes the agent's liveness.
+    const PING_INTERVAL: Duration = Duration::from_secs(15);
+    /// Deadline from "ping sent" to "pong received" before we declare the
+    /// session dead. 30 s = 2× the ping interval, so a single dropped
+    /// packet doesn't yank a healthy session.
+    const PONG_DEADLINE_MS: u64 = 30_000;
+    /// Per-frame read idle timeout. With pings at 15 s, a healthy session
+    /// always sees a pong inside this window. If 45 s elapses with nothing
+    /// inbound, treat the socket as dead and let the outer loop redial.
+    const READ_IDLE: Duration = Duration::from_secs(45);
 
     // Wrap the receiver so the writer task can borrow it each session
     // without taking ownership, allowing reconnect on drop+redial.
@@ -248,7 +261,9 @@ async fn run_tcp_session(
                 continue;
             }
         };
-        let _ = stream.set_nodelay(true);
+        if let Err(e) = tcp_protocol::apply_tcp_options(&stream) {
+            log::warn!("admin_transport -> apply_tcp_options failed: {e}");
+        }
 
         let (mut read_half, mut write_half) = stream.into_split();
 
@@ -270,48 +285,133 @@ async fn run_tcp_session(
         log::info!("admin_transport -> connected + handshake sent to {target_addr}");
         let _ = in_tx.send(WsEvent::Opened);
 
+        // Liveness state shared between the reader (stamps on every Pong)
+        // and the ping ticker (checks deadline). Initialized to `now` so
+        // the first 30 s after a fresh dial don't immediately trip.
+        let last_pong_at = Arc::new(AtomicU64::new(now_millis()));
+
+        // ---- Ping ticker → writer channel ----
+        //
+        // A *separate* mpsc keeps pings from being starved by a slow
+        // command stream filling `out_rx`. Capacity 4 is plenty: a healthy
+        // writer drains it instantly; if we ever queue 4 unsent pings the
+        // socket is already dead and the deadline check is about to fire.
+        let (ping_tx, mut ping_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
+        {
+            let last_pong_at = last_pong_at.clone();
+            let in_tx_pinger = in_tx.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(PING_INTERVAL);
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                // Skip the immediate tick — first ping fires PING_INTERVAL
+                // after handshake so we don't race the writer-task spawn.
+                tick.tick().await;
+                let mut seq: u64 = 0;
+                loop {
+                    tick.tick().await;
+                    seq += 1;
+                    let payload = tcp_protocol::encode_ping_payload(seq, now_millis());
+                    if ping_tx.send(payload.to_vec()).await.is_err() {
+                        // Writer is gone — session is tearing down.
+                        break;
+                    }
+                    // After the second ping, enforce the pong deadline.
+                    // Skipping the first one means a fresh session always
+                    // gets at least one round-trip before we'd time it out.
+                    if seq >= 2 {
+                        let last = last_pong_at.load(Ordering::Relaxed);
+                        if now_millis().saturating_sub(last) > PONG_DEADLINE_MS {
+                            log::warn!(
+                                "admin_transport -> pong deadline exceeded \
+                                 (last pong {}ms ago); declaring dead",
+                                now_millis().saturating_sub(last)
+                            );
+                            let _ = in_tx_pinger.send(WsEvent::Error(
+                                "ping timeout (no pong in 30s, retrying…)".to_string(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
         // ---- Spawn writer task ----
         let shutdown_writer = shutdown.clone();
         let in_tx_writer = in_tx.clone();
         let out_rx_writer = out_rx.clone();
         let writer_handle = tokio::spawn(async move {
+            // We can't await `out_rx.recv()` directly (crossbeam = blocking).
+            // Persist a single in-flight `spawn_blocking` JoinHandle across
+            // select! iterations so we don't churn worker threads — and so a
+            // ping branch firing doesn't drop a partially-consumed user
+            // frame on the floor. (Dropping the &mut JoinHandle does NOT
+            // drop the JoinHandle itself; it stays in `pending` and resumes
+            // next iteration.)
+            let mut pending: Option<
+                tokio::task::JoinHandle<Result<TcpFrame, crossbeam::channel::RecvError>>,
+            > = None;
             loop {
-                let frame = match tokio::task::spawn_blocking({
+                if pending.is_none() {
                     let rx = out_rx_writer.clone();
-                    move || rx.lock().unwrap_or_else(|e| e.into_inner()).recv()
-                })
-                .await
-                {
-                    Ok(Ok(f)) => f,
-                    Ok(Err(_)) => {
-                        // out_tx dropped — treat as intentional shutdown
-                        shutdown_writer.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    Err(e) => {
-                        log::warn!("admin_transport -> writer recv join error: {e}");
-                        break;
-                    }
-                };
+                    pending = Some(tokio::task::spawn_blocking(move || {
+                        rx.lock().unwrap_or_else(|e| e.into_inner()).recv()
+                    }));
+                }
+                let pending_ref = pending.as_mut().expect("just set above");
 
-                match frame {
-                    TcpFrame::Shutdown => {
-                        shutdown_writer.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    TcpFrame::Binary(payload) => {
-                        if let Err(e) = write_frame(&mut write_half, FRAME_TAG_BINARY, &payload).await {
-                            log::info!("admin_transport -> writer error: {e}");
-                            let _ = in_tx_writer.send(WsEvent::Error(format!("write: {e}")));
+                tokio::select! {
+                    // Bias pings so a saturated user-frame stream still
+                    // gets keepalive traffic out the door.
+                    biased;
+
+                    ping = ping_rx.recv() => {
+                        let Some(payload) = ping else {
+                            // Pinger task exited — either pong timeout or
+                            // handshake-time bail. Drop the session so the
+                            // outer loop redials.
+                            log::info!("admin_transport -> ping channel closed; ending writer");
+                            break;
+                        };
+                        if let Err(e) = write_frame(&mut write_half, FRAME_TAG_PING, &payload).await {
+                            log::info!("admin_transport -> ping write error: {e}");
+                            let _ = in_tx_writer.send(WsEvent::Error(format!("write ping: {e}")));
                             break;
                         }
                     }
-                    TcpFrame::Text(s) => {
-                        if let Err(e) = write_frame(&mut write_half, FRAME_TAG_TEXT, s.as_bytes()).await
-                        {
-                            log::info!("admin_transport -> writer error: {e}");
-                            let _ = in_tx_writer.send(WsEvent::Error(format!("write: {e}")));
-                            break;
+
+                    user_result = pending_ref => {
+                        pending = None;
+                        let frame = match user_result {
+                            Ok(Ok(f)) => f,
+                            Ok(Err(_)) => {
+                                shutdown_writer.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                            Err(e) => {
+                                log::warn!("admin_transport -> writer recv join error: {e}");
+                                break;
+                            }
+                        };
+                        match frame {
+                            TcpFrame::Shutdown => {
+                                shutdown_writer.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                            TcpFrame::Binary(payload) => {
+                                if let Err(e) = write_frame(&mut write_half, FRAME_TAG_BINARY, &payload).await {
+                                    log::info!("admin_transport -> writer error: {e}");
+                                    let _ = in_tx_writer.send(WsEvent::Error(format!("write: {e}")));
+                                    break;
+                                }
+                            }
+                            TcpFrame::Text(s) => {
+                                if let Err(e) = write_frame(&mut write_half, FRAME_TAG_TEXT, s.as_bytes()).await {
+                                    log::info!("admin_transport -> writer error: {e}");
+                                    let _ = in_tx_writer.send(WsEvent::Error(format!("write: {e}")));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -321,15 +421,29 @@ async fn run_tcp_session(
 
         // ---- Reader loop (this task) ----
         loop {
-            let total_len = match read_half.read_u32_le().await {
-                Ok(n) => n,
-                Err(e) => {
+            // 45 s idle timeout: in a healthy session a pong arrives every
+            // 15 s, so this only trips when the socket is truly silent
+            // (peer crashed without a FIN, NAT path fell over without RST,
+            // etc.). The TCP keepalive set in `apply_tcp_options` is the
+            // belt; this is the suspenders.
+            let total_len = match tokio::time::timeout(READ_IDLE, read_half.read_u32_le()).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => {
                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
                         log::info!("admin_transport -> peer closed connection; will retry");
                     } else {
                         log::warn!("admin_transport -> reader error: {e}; will retry");
                         let _ = in_tx.send(WsEvent::Error(format!("read: {e} (retrying…)")));
                     }
+                    break;
+                }
+                Err(_) => {
+                    log::warn!(
+                        "admin_transport -> read idle {READ_IDLE:?} with no traffic; declaring dead"
+                    );
+                    let _ = in_tx.send(WsEvent::Error(
+                        "read idle timeout (retrying…)".to_string(),
+                    ));
                     break;
                 }
             };
@@ -365,6 +479,29 @@ async fn run_tcp_session(
                         }
                     }
                 }
+                FRAME_TAG_PONG => {
+                    // Agent's reply to our ping. Stamp `last_pong_at` —
+                    // do NOT forward to `in_tx`; pongs are not application
+                    // data. We don't currently use the sequence number,
+                    // but `decode_ping_payload` validates the 16-byte
+                    // shape so a malformed pong is dropped instead of
+                    // resetting our deadline counter.
+                    if tcp_protocol::decode_ping_payload(&payload).is_some() {
+                        last_pong_at.store(now_millis(), Ordering::Relaxed);
+                    } else {
+                        log::warn!(
+                            "admin_transport -> malformed pong payload ({} bytes); ignoring",
+                            payload.len()
+                        );
+                    }
+                }
+                FRAME_TAG_PING => {
+                    // In v2 the master is the ping initiator; the agent
+                    // never sends pings. Log and drop — this is a future
+                    // role-reversal hook, not a current path.
+                    log::debug!("admin_transport -> unexpected ping from agent; ignoring");
+                    let _ = payload;
+                }
                 other => {
                     log::warn!("admin_transport -> unknown frame tag: 0x{other:02x}");
                 }
@@ -383,6 +520,20 @@ async fn run_tcp_session(
         tokio::time::sleep(RETRY_INTERVAL).await;
     }
 }
+
+/// Wall-clock epoch milliseconds. Wraps `SystemTime` so callers don't have
+/// to spell out the unwrap chain. Returns 0 on the (impossible) clock-rewind
+/// case rather than panicking; a stuck `last_pong_at` is preferable to
+/// crashing the transport.
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn write_frame(

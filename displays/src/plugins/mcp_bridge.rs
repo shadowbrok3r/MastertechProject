@@ -875,6 +875,31 @@ fn remote_egui_apply_step(
     }
 }
 
+// ─── Remote build worker param types ──────────────────────────────────────────
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ListBuildWorkersParams {}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginCompileRemoteParams {
+    #[schemars(description = "Plugin ID (source must already exist via plugin_source)")]
+    pub plugin_id: String,
+    #[schemars(description = "Optional: connection_string of a specific build worker. Defaults to the first online worker that advertises the requested target.")]
+    pub worker_connection_string: Option<String>,
+    #[schemars(description = "Rustc target triple (default: wasm32-wasip1)")]
+    pub target: Option<String>,
+    #[schemars(description = "Cargo profile (default: release)")]
+    pub profile: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct PluginCompileStatusParams {
+    #[schemars(description = "Job ID returned by plugin_compile_remote")]
+    pub job_id: String,
+    #[schemars(description = "If true and the job succeeded, remove it from the in-memory pending table after returning (default: false). The compiled bytes have already been stored in the ArtifactStore so plugin_deploy / plugin_deploy_remote still work.")]
+    pub forget_on_done: Option<bool>,
+}
+
 // ─── Tool implementations ──────────────────────────────────────────────────────
 
 #[tool_router]
@@ -2451,6 +2476,198 @@ impl PluginToolProvider {
         }))
         .map_err(to_internal)?]))
     }
+
+    // ── Remote build workers (no local Rust toolchain required) ────────
+    //
+    // Slice 4: these three tools are now backed by the SurrealDB
+    // `build_job` table. Workers subscribe via `LIVE SELECT` and write
+    // results back, which means jobs survive Mastertech4.0 restarts and
+    // are observable straight from the database. The WS-based
+    // `builder_transport` module is retained in the codebase as a
+    // fallback path; see `axum_server/src/routes/api/build/` for the
+    // matching public HTTP surface.
+
+    #[tool(
+        name = "list_build_workers",
+        description = "List `plugin_builder` workers currently visible in the SurrealDB `connected_client` table (rows with `client_kind = 'build_worker'` whose `last_update` is within the last 90 s — workers heartbeat every 30 s). Use these `connection_string`s as the optional `worker_connection_string` for `plugin_compile_remote`."
+    )]
+    async fn list_build_workers(
+        &self,
+        Parameters(_): Parameters<ListBuildWorkersParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut response = database::DATABASE
+            .query(
+                "SELECT * FROM connected_client \
+                 WHERE client_kind = 'build_worker' \
+                   AND last_update > time::now() - 90s \
+                 ORDER BY last_update DESC",
+            )
+            .await
+            .map_err(|e| to_internal(format!("list workers query: {e}")))?;
+        let workers: Vec<database::schema::ConnectedClient> = response
+            .take(0)
+            .map_err(|e| to_internal(format!("decode workers: {e}")))?;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "count": workers.len(),
+            "workers": workers.iter().map(|w| serde_json::json!({
+                "connection_string": w.connection_string,
+                "hostname": w.friendly_name,
+                "record_id": format!("{}:{}", w.id.table, database::schema::RecordIdExt::key_string(&w.id)),
+                "last_update": w.last_update.as_ref().map(|d| d.to_string()),
+            })).collect::<Vec<_>>(),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "plugin_compile_remote",
+        description = "Dispatch a `cargo build --target <triple> --release` for a plugin to a remote `plugin_builder` worker by writing a row into the SurrealDB `build_job` table. Returns immediately with a `job_id`; poll `plugin_compile_status` to fetch the artifact bytes. Use this on hosts without Rust installed; `plugin_compile` (local) is the equivalent when Rust is available."
+    )]
+    async fn plugin_compile_remote(
+        &self,
+        Parameters(p): Parameters<PluginCompileRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let dir = plugin_dir(&p.plugin_id);
+        let lib_rs_path = dir.join("src").join("lib.rs");
+        if !lib_rs_path.exists() {
+            return Err(to_internal(format!(
+                "No source found for plugin '{}'. Use plugin_source to write source first.",
+                p.plugin_id
+            )));
+        }
+        let cargo_toml_path = dir.join("Cargo.toml");
+        if !cargo_toml_path.exists() {
+            tokio::fs::write(&cargo_toml_path, plugin_cargo_toml(&p.plugin_id))
+                .await
+                .map_err(|e| to_internal(format!("write default Cargo.toml: {e}")))?;
+        }
+
+        let lib_rs = tokio::fs::read_to_string(&lib_rs_path)
+            .await
+            .map_err(|e| to_internal(format!("read lib.rs: {e}")))?;
+        let cargo_toml = tokio::fs::read_to_string(&cargo_toml_path)
+            .await
+            .map_err(|e| to_internal(format!("read Cargo.toml: {e}")))?;
+
+        let target = p.target.unwrap_or_else(|| "wasm32-wasip1".to_string());
+        let profile = p.profile.unwrap_or_else(|| "release".to_string());
+
+        // Resolve a worker pin if the caller gave us one. Either a
+        // connection_string (we look up the matching row) or a raw
+        // record id (`connected_client:build_worker_alpha`) works.
+        let assigned_worker_id = match p.worker_connection_string.as_deref() {
+            None => None,
+            Some(s) if s.contains(':') => Some(parse_record_id(s, "connected_client")),
+            Some(cs) => {
+                let mut response = database::DATABASE
+                    .query("SELECT id FROM connected_client WHERE connection_string = $cs AND client_kind = 'build_worker' LIMIT 1")
+                    .bind(("cs", cs.to_string()))
+                    .await
+                    .map_err(|e| to_internal(format!("resolve worker: {e}")))?;
+                let rows: Vec<database::schema::ConnectedClient> = response
+                    .take(0)
+                    .map_err(|e| to_internal(format!("decode worker row: {e}")))?;
+                let row = rows.into_iter().next().ok_or_else(|| {
+                    to_internal(format!(
+                        "No build_worker row with connection_string = '{cs}'. \
+                         Run list_build_workers to see what's online."
+                    ))
+                })?;
+                Some(row.id)
+            }
+        };
+
+        let job = database::schema::BuildJob::create(
+            &p.plugin_id,
+            &cargo_toml,
+            &lib_rs,
+            &target,
+            &profile,
+            assigned_worker_id,
+        )
+        .await
+        .map_err(|e| to_internal(format!("CREATE build_job: {e}")))?;
+
+        let job_id_str = format!(
+            "{}:{}",
+            job.id.table,
+            database::schema::RecordIdExt::key_string(&job.id)
+        );
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "job_id": job_id_str,
+            "plugin_id": p.plugin_id,
+            "target": target,
+            "profile": profile,
+            "next": "poll plugin_compile_status until status != 'pending'",
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "plugin_compile_status",
+        description = "Poll a remote compile job started by `plugin_compile_remote`. Reads the SurrealDB `build_job` row by id and returns one of `pending` (queued), `claimed` (worker is building), `done` (compiled — bytes copied into the local ArtifactStore so `plugin_deploy` / `plugin_deploy_remote` work as usual), or `failed` (stderr included)."
+    )]
+    async fn plugin_compile_status(
+        &self,
+        Parameters(p): Parameters<PluginCompileStatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let rid = parse_record_id(&p.job_id, database::schema::BUILD_JOB_TABLE);
+        let job = database::schema::BuildJob::get(&rid)
+            .await
+            .map_err(|e| to_internal(format!("SELECT build_job: {e}")))?
+            .ok_or_else(|| {
+                to_internal(format!(
+                    "No build_job with id '{}'. Either the id is wrong or the job was deleted.",
+                    p.job_id
+                ))
+            })?;
+
+        let json = match job.status.as_str() {
+            "pending" | "claimed" => serde_json::json!({
+                "job_id": p.job_id,
+                "status": job.status,
+                "plugin_id": job.plugin_id,
+                "claimed_worker_id": job.claimed_worker_id.as_ref().map(|r| format!("{}:{}", r.table, database::schema::RecordIdExt::key_string(r))),
+                "elapsed_ms_since_created": (chrono::Utc::now() - chrono::DateTime::<chrono::Utc>::from(job.created_at.clone())).num_milliseconds(),
+            }),
+            "done" => {
+                let bytes = job
+                    .wasm_bytes
+                    .as_ref()
+                    .map(|b| (&b[..]).to_vec())
+                    .unwrap_or_default();
+                let size = bytes.len();
+                self.try_lock_artifacts()?.store(&job.plugin_id, bytes);
+                if p.forget_on_done.unwrap_or(false) {
+                    let _: Result<Option<database::schema::BuildJob>, _> =
+                        database::DATABASE.delete(rid.clone()).await;
+                }
+                serde_json::json!({
+                    "job_id": p.job_id,
+                    "status": "done",
+                    "plugin_id": job.plugin_id,
+                    "artifact_bytes": size,
+                    "duration_ms": job.duration_ms,
+                    "stderr_tail": tail_n_lines(&job.stderr, 40),
+                    "next": "plugin_deploy or plugin_deploy_remote with this plugin_id",
+                })
+            }
+            "failed" => serde_json::json!({
+                "job_id": p.job_id,
+                "status": "failed",
+                "plugin_id": job.plugin_id,
+                "duration_ms": job.duration_ms,
+                "stderr": job.stderr,
+            }),
+            other => serde_json::json!({
+                "job_id": p.job_id,
+                "status": other,
+                "plugin_id": job.plugin_id,
+                "note": "unrecognized status value; schema may have evolved",
+            }),
+        };
+        Ok(CallToolResult::success(vec![Content::json(json).map_err(to_internal)?]))
+    }
 }
 
 // ─── Server handler ────────────────────────────────────────────────────────────
@@ -2849,6 +3066,18 @@ impl ServerHandler for PluginToolProvider {
 
 fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
     ErrorData::new(ErrorCode::INTERNAL_ERROR, e.to_string(), None)
+}
+
+/// Last `n` lines of `s`, joined with `\n`. Used to keep
+/// `plugin_compile_status` payloads compact when a build prints
+/// kilobytes of warnings before succeeding.
+fn tail_n_lines(s: &str, n: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() <= n {
+        s.to_string()
+    } else {
+        lines[lines.len() - n..].join("\n")
+    }
 }
 
 /// Parse a Surreal record id from an MCP-supplied string. Accepts either

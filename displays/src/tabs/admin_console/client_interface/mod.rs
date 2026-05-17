@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, tabs::{admin_console::client_interface::tabs::command_shell::History, resource_monitor::ResourceMonitor}, virtual_filesystem::FileSystem, Cmd, PlatformSpawner, Spawner};
+use crate::{channel_manager::ChannelManager, tabs::{admin_console::client_interface::tabs::command_shell::History, resource_monitor::ResourceMonitor}, virtual_filesystem::FileSystem, Cmd};
 use database::schema::{ConnectedClient, SystemInformation};
 use ewebsock::WsMessage;
 use filesystem_helper::WebSocketHelperDelegate;
@@ -22,6 +22,7 @@ use {
     tabs::terminal_viewer::RemoteTerminal,
     tabs::egui_viewer::InlineEguiViewer,
     crate::mcp::{CommandCompletion, DiagnosticResponse, McpService},
+    crate::{PlatformSpawner, Spawner},
 };
 
 

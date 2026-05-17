@@ -1,7 +1,8 @@
+#![allow(non_snake_case)]
 use crate::schema::SurrealValue;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone, PartialEq, SurrealValue)]
-#[allow(non_snake_case)]
+#[allow(non_snake_case, dead_code)]
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 #[serde(rename = "xml")]
 pub struct LocalSebData {

@@ -370,7 +370,7 @@ impl SharedContext {
 
         let inner_margin = Margin::same(3);
         let outer_margin = Margin::same(0);
-        let stroke = Stroke::new(0.7, Color32::from_additive_luminance(150));
+        let stroke = Stroke::new(0.7_f32, Color32::from_additive_luminance(150));
         let radius = eframe::egui::CornerRadius::same(5);
 
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
@@ -574,15 +574,15 @@ impl SharedContext {
         eframe::egui::Panel::left("Client_Side_panel")
             .frame(
                 Frame::default()
-                    .fill(ui.style().visuals.extreme_bg_color)
+                    .fill(ui.global_style().visuals.extreme_bg_color)
                     .inner_margin(inner_margin)
                     .outer_margin(outer_margin)
                     .stroke(stroke)
                     .corner_radius(radius)
             )
             .show_separator_line(false)
-            .min_width(400.)
-            .max_width(500.)
+            .min_size(400.)
+            .max_size(500.)
             .show_animated_inside(ui, self.web_console_layout.open_menu, |ui |
         {
             ui.vertical_centered(|ui| {
@@ -662,7 +662,7 @@ impl SharedContext {
                 // visible-indices filter already trims to a handful of
                 // active clients, so a non-virtualized `show` is fine.
                 ScrollArea::vertical()
-                    .max_height(f32::INFINITY)
+                    .max_width(f32::INFINITY)
                     .max_width(f32::INFINITY)
                     .show(ui, |ui|
                 {
@@ -766,7 +766,7 @@ impl SharedContext {
                     );
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical()
-                        .max_height(220.0)
+                        .max_width(220.0)
                         .show(ui, |ui| {
                             for name in &target_names {
                                 ui.label(

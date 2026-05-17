@@ -1,11 +1,12 @@
 [workspace]
 resolver = "3"
-members = [ "database" , "database-tools", "displays", "Mastertech4.0", "qc-app", "stress-kit", "stress-runner"]
+members = [ "axum_server", "database" , "database-tools", "displays", "Mastertech4.0", "MtechServer2.0", "plugin_builder", "qc-app", "stress-kit", "stress-runner", "tcp_protocol", "websocket_server2"]
 
 [workspace.dependencies]
 stress-kit = { path = "stress-kit" }
 stress-runner = { path = "stress-runner" }
 database = { path = "database" }
+tcp_protocol = { path = "tcp_protocol" }
 eframe = { version="0.34", features=["serde",  "default_fonts", "glow"], default-features=false } 
 ratatui = { version = "0.30", default-features = true, features = [ "crossterm", "unstable", "serde" ]}
 surrealdb = { version = "3.1.0-beta.3", features = ["protocol-ws"] }
@@ -18,8 +19,7 @@ rmcp = { version = "1.7.0", features = ["server", "client", "transport-async-rw"
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }
-async-openai-wasm = { version = "0.29.5" }
-async-openai = { version = "0.29.5" } # , features = ["response-types"] }
+async-openai = { version = "0.38.2", features = ["full"] }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
 structdiff = {version = "0.7", features = ["rustc_hash"]}
 bincode = { version="2", features = ["serde", "derive"] }
@@ -80,10 +80,6 @@ opt-level = 2          # slightly faster than 3 to compile; runtime cost is negl
 strip = false          # keep symbols for legible stack traces during testing
 debug = false          # no debug info (keeps binary small)
 incremental = true     # cache unchanged crates between rebuilds
-
-
-[patch.crates-io]
-async-openai-wasm = { path = "vendor/patches/async-openai-wasm" }
 
 # [profile.wasm-release] # trunk build --release --profile wasm-release
 # inherits = "release"

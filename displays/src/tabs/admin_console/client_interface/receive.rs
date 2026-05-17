@@ -369,6 +369,45 @@ impl WebSocketClient {
         if bin.first() == Some(&crate::EGUI_FRAME_TAG) {
             return;
         }
+        // Builder traffic: workers prepend `BUILDER_WIRE_TAG` to every
+        // frame. Decode here and dispatch into builder_transport so
+        // the MCP tools see a coherent worker registry + job table.
+        // No need to feed this into the Cmd path or the terminal state.
+        #[cfg(not(target_arch = "wasm32"))]
+        if bin.first() == Some(&plugin_builder::BUILDER_WIRE_TAG) {
+            match plugin_builder::BuilderWire::decode_tagged(&bin) {
+                Ok(Some(wire)) => {
+                    use plugin_builder::BuilderWire;
+                    match &wire {
+                        BuilderWire::Hello { .. } => {
+                            crate::plugins::builder_transport::register_worker(
+                                &self.client.connection_string,
+                                wire,
+                            );
+                        }
+                        BuilderWire::CompileResult { job_id, .. } => {
+                            let job_id = job_id.clone();
+                            crate::plugins::builder_transport::resolve_job(&job_id, wire);
+                            ctx.request_repaint();
+                        }
+                        BuilderWire::CompileProgress { job_id, .. } => {
+                            let job_id = job_id.clone();
+                            crate::plugins::builder_transport::record_progress(&job_id, wire);
+                        }
+                        BuilderWire::CompileRequest { .. } => {
+                            log::warn!("admin received a CompileRequest from a worker; ignoring");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Tag byte matched but BuilderWire said no — impossible.
+                }
+                Err(e) => {
+                    log::warn!("BuilderWire decode failed ({} bytes): {e}", bin.len());
+                }
+            }
+            return;
+        }
         match self.state {
             WsDisplayState::LiveStats => {
                 // let bin = &self.handle_binary_message(bin);

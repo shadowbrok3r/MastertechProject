@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use serde::Serialize;
 use crate::{app_state::{AppState, SharedContext}, PlatformSpawner, Spawner};
 use crossbeam::channel::Sender;

@@ -38,12 +38,6 @@ pub mod remote_viewer;
 
 use crate::modals::create_task_modal::Tur;
 
-#[cfg(target_arch="wasm32")]
-pub use {
-    // rayon_wasm::prelude::{self as rayon},
-    async_openai_wasm::{self as openai}
-};
-#[cfg(not(target_arch="wasm32"))]
 pub use {
     // rayon::prelude::{self as rayon},
     async_openai::{self as openai}
@@ -552,6 +546,56 @@ pub enum Cmd {
         tool_name: String,
         success: bool,
         result_json: String,
+    },
+
+    /// Sent by a `plugin_builder` worker right after the WebSocket
+    /// handshake completes. Lets the admin/MCP side enumerate which
+    /// build targets the worker can produce without round-tripping a
+    /// no-op compile job. `capabilities` is an open-ended set of
+    /// feature tags (e.g. `"sccache"`, `"cargo-1.85"`); `target_triples`
+    /// lists the rustc targets the worker has installed (must include
+    /// `wasm32-wasip1` to be useful).
+    BuildWorkerHello {
+        hostname: String,
+        target_triples: Vec<String>,
+        capabilities: Vec<String>,
+    },
+
+    /// Admin → builder: request a `cargo build` of a single-file plugin.
+    /// `cargo_toml` and `lib_rs` are full file contents written to a
+    /// scratch directory on the worker; `target` is a rustc triple
+    /// (typically `wasm32-wasip1`); `profile` is the cargo profile
+    /// (typically `release`).
+    CompilePluginRequest {
+        job_id: String,
+        plugin_id: String,
+        cargo_toml: String,
+        lib_rs: String,
+        target: String,
+        profile: String,
+    },
+
+    /// Builder → admin: optional progress signal while a long compile
+    /// is running. The admin side may surface this in a toast; jobs
+    /// terminate only on `CompilePluginResult`.
+    CompilePluginProgress {
+        job_id: String,
+        stage: String,
+        message: String,
+    },
+
+    /// Builder → admin: terminal result for a `CompilePluginRequest`.
+    /// On success `wasm_bytes` is `Some` and the bytes are ready for
+    /// `ArtifactStore::store` / `plugin_deploy_remote`. On failure the
+    /// stderr text is the cargo output the agent needs to fix the
+    /// source.
+    CompilePluginResult {
+        job_id: String,
+        success: bool,
+        wasm_bytes: Option<Vec<u8>>,
+        stdout: String,
+        stderr: String,
+        duration_ms: u64,
     },
 
     None,

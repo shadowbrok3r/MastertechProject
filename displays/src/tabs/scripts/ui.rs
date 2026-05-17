@@ -303,7 +303,7 @@ impl ScriptsTab {
 
                 Frame::new()
                     .fill(colors::QUEUE_ITEM_BG)
-                    .stroke(Stroke::new(1.0, border_color))
+                    .stroke(Stroke::new(1.0_f32, border_color))
                     .inner_margin(8.0)
                     .outer_margin(2.0)
                     .corner_radius(4.0)

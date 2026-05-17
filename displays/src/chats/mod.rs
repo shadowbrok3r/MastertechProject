@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Popup, PopupCloseBehavior, RectAlign, Response, RichText, ScrollArea, Shadow, Style, TextEdit, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
@@ -356,8 +356,8 @@ impl ChatView {
         });
 
         eframe::egui::Panel::bottom(id)
-            .default_height(300.)
-            // .max_height(500.)
+            .default_size(300.)
+            // .max_width(500.)
             .resizable(false)
             .show_inside(ui, |ui| 
         {
@@ -439,7 +439,7 @@ impl ChatView {
         {
             
             ScrollArea::vertical()
-                .max_height(f32::INFINITY)
+                .max_width(f32::INFINITY)
                 .max_width(f32::INFINITY)
                 .auto_shrink(false)
                 .stick_to_bottom(true)
@@ -470,9 +470,9 @@ impl ChatView {
             };
 
             let msg_color = if is_message_from_myself {
-                ui.style().visuals.widgets.active.bg_fill
+                ui.global_style().visuals.widgets.active.bg_fill
             } else {
-                ui.style().visuals.widgets.active.weak_bg_fill
+                ui.global_style().visuals.widgets.active.weak_bg_fill
             };
 
             ui.with_layout(layout, |ui| {
@@ -488,7 +488,7 @@ impl ChatView {
                     sw: rounding as u8,
                 };
 
-                let style = ui.style().clone();
+                let style = ui.global_style().clone();
 
                 let (fill, stroke, shadow) = if self.hovered.contains(&item.id) {
                     (
@@ -517,8 +517,8 @@ impl ChatView {
                     ui.vertical_centered(|ui| {
                         if is_message_from_myself {
                             ui.horizontal(|ui| {
-                                let btn_txt_color = ui.style().visuals.error_fg_color;
-                                let username_txt_color = ui.style().visuals.hyperlink_color;
+                                let btn_txt_color = ui.global_style().visuals.error_fg_color;
+                                let username_txt_color = ui.global_style().visuals.hyperlink_color;
                                 let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
                                 ui.add_space(5.);
                                 if Button::new(RichText::new("🗙").color(btn_txt_color))
@@ -585,8 +585,8 @@ impl ChatView {
                             });
                         } else {
                             ui.horizontal(|ui| {
-                                let btn_txt_color = ui.style().visuals.error_fg_color;
-                                let username_txt_color = ui.style().visuals.hyperlink_color;
+                                let btn_txt_color = ui.global_style().visuals.error_fg_color;
+                                let username_txt_color = ui.global_style().visuals.hyperlink_color;
                                 let from = RichText::new(&item.username).strong().monospace().color(username_txt_color);
                                 // ui.set_max_width(max_msg_width);
                                 let id = &item.id;

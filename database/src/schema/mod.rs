@@ -31,6 +31,7 @@ pub mod everest;
 pub mod duplicate_check;
 pub mod file_storage;
 pub mod plugin_registry;
+pub mod build_job;
 pub mod diagnostic;
 pub mod stress_test;
 
@@ -49,6 +50,7 @@ pub use utilities::TaskCreationResult;
 pub use duplicate_check::*;
 pub use file_storage::*;
 pub use plugin_registry::*;
+pub use build_job::*;
 pub use diagnostic::*;
 pub use stress_test::*;
 
@@ -71,6 +73,7 @@ pub const USER_MESSAGE_TABLE: &str = "user_message";
 pub const QC_TABLE: &str = "qc";
 pub const SALES_NOTE_TABLE: &str = "sales_note";
 pub const PLUGIN_REGISTRY_TABLE: &str = "plugin_registry";
+pub const BUILD_JOB_TABLE: &str = "build_job";
 pub const DIAGNOSTIC_SESSION_TABLE: &str = "diagnostic_session";
 pub const DIAGNOSTIC_ENTRY_TABLE: &str = "diagnostic_entry";
 pub const HARDWARE_COMPONENT_TABLE: &str = "hardware_component";

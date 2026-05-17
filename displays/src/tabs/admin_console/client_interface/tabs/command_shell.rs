@@ -1,9 +1,11 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
-use crate::{tabs::admin_console::WebSocketClient, PlatformSpawner, Spawner};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use crate::tabs::admin_console::WebSocketClient;
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
 #[cfg(not(target_arch="wasm32"))]
 use crate::mcp::{DiagnosticResponse, mcp::ShellType};
+#[cfg(not(target_arch="wasm32"))]
+use crate::{PlatformSpawner, Spawner};
 use database::SurrealValue;
 use ewebsock::WsMessage;
 use core::f32;
@@ -58,7 +60,7 @@ impl WebSocketClient {
 
         let text_response = &mut None;
         eframe::egui::Panel::bottom(id)
-            .default_height(ui.available_height()/1.2) // .resizable(false)
+            .default_size(ui.available_height()/1.2) // .resizable(false)
             .show_inside(ui, |ui| 
         {
             ui.visuals_mut().extreme_bg_color= Color32::BLACK;
@@ -183,7 +185,7 @@ impl WebSocketClient {
                     ui.vertical(|ui| {
                         ui.label(RichText::new("👾 AI Command Suggestions:").strong().color(Color32::LIGHT_BLUE));
                         
-                        ScrollArea::vertical().max_height(150.).show(ui, |ui| {
+                        ScrollArea::vertical().max_width(150.).show(ui, |ui| {
                             let len = self.command_suggestions.len();
                             for idx in 0..len {
                                 let suggestion = &self.command_suggestions[idx];
@@ -357,8 +359,8 @@ impl WebSocketClient {
 
         CentralPanel::default()
         .frame(
-            Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
-            .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+            Frame::new().fill(ui.global_style().visuals.widgets.inactive.weak_bg_fill)
+            .stroke(ui.global_style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
             .inner_margin(Margin::same(6))
         )
         .show_inside(ui, |ui| {
@@ -402,7 +404,7 @@ impl WebSocketClient {
                 // Render messages with improved styling
                 for item in &display_messages {
                     let is_message_from_myself = if item.from.eq("You"){ true } else { false };
-                    let username_txt_color = ui.style().visuals.hyperlink_color;
+                    let username_txt_color = ui.global_style().visuals.hyperlink_color;
                     let from = if is_message_from_myself {
                         RichText::new("Command Sent:").strong().monospace().color(username_txt_color)
                     }else {
@@ -416,9 +418,9 @@ impl WebSocketClient {
                     };
 
                     let msg_color = if is_message_from_myself {
-                        ui.style().visuals.widgets.active.bg_fill
+                        ui.global_style().visuals.widgets.active.bg_fill
                     } else {
-                        ui.style().visuals.widgets.active.weak_bg_fill
+                        ui.global_style().visuals.widgets.active.weak_bg_fill
                     };
     
                     ui.with_layout(layout, |ui| {
@@ -434,7 +436,7 @@ impl WebSocketClient {
                             sw: rounding as u8,
                         };
 
-                        let style = ui.style().clone();
+                        let style = ui.global_style().clone();
 
                         let (fill, stroke, shadow) = if self.hovered.contains(&item.timestamp) {
                             (
@@ -462,10 +464,10 @@ impl WebSocketClient {
                             ui.set_width(max_msg_width);
                             // Use a vertical layout to stack the name and message content
                             ui.vertical_centered(|ui| {
-                                let btn_txt_color = ui.style().visuals.error_fg_color;
+                                let btn_txt_color = ui.global_style().visuals.error_fg_color;
                                 if is_message_from_myself {
                                     ui.horizontal(|ui| {
-                                        let btn_txt_color = ui.style().visuals.error_fg_color;
+                                        let btn_txt_color = ui.global_style().visuals.error_fg_color;
                                         if Button::new(RichText::new("🗐").color(btn_txt_color))
                                         .ui(ui)
                                         .on_hover_text(RichText::new("Copy Message"))

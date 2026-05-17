@@ -1,7 +1,7 @@
 use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, Interaction, PlatformSpawner, Spawner};
-use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{COMPUTER_TABLE, CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
-use database::schema::prestashop::{Prestashop, Customer, Address, OrderState};
+use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
+use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
+use database::schema::prestashop::{Prestashop, Customer, Address};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
 use database::schema::prestashop_schema::PrestashopPayload;
 use database::schema::helper_traits::parse_email_user;
@@ -602,7 +602,7 @@ impl TaskModal {
             return;
         }
 
-        let screen_rect = ui.ctx().screen_rect();
+        let screen_rect = ui.ctx().content_rect();
         ui.painter().rect_filled(
             screen_rect,
             0.0,
@@ -693,7 +693,7 @@ impl TaskModal {
                                     if !self.import_customer_results.is_empty() {
                                         ui.add_space(8.0);
                                         ui.label(RichText::new("Select customer:").strong());
-                                        ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                        ScrollArea::vertical().max_width(180.0).show(ui, |ui| {
                                             let results = self.import_customer_results.clone();
                                             for (customer, address) in &results {
                                                 let label = format!(
@@ -737,7 +737,7 @@ impl TaskModal {
                                     if !self.import_computer_results.is_empty() {
                                         ui.label(RichText::new("Select computer:").strong());
                                         ui.add_space(6.0);
-                                        ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                                        ScrollArea::vertical().max_width(220.0).show(ui, |ui| {
                                             let computers = self.import_computer_results.clone();
                                             for comp in &computers {
                                                 let label = format!(
@@ -781,7 +781,7 @@ impl TaskModal {
             return;
         }
 
-        let screen_rect = ui.ctx().screen_rect();
+        let screen_rect = ui.ctx().content_rect();
         ui.painter().rect_filled(
             screen_rect,
             0.0,
@@ -823,7 +823,7 @@ impl TaskModal {
                                 ui.colored_label(Color32::LIGHT_RED, err.clone());
                             }
 
-                            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                            ScrollArea::vertical().max_width(400.0).show(ui, |ui| {
                                 if self.service_history_tasks.is_empty() && !self.service_history_loading {
                                     ui.label("No services found.");
                                 }
@@ -869,7 +869,7 @@ impl TaskModal {
         }
 
         // Dim background
-        let screen_rect = ui.ctx().screen_rect();
+        let screen_rect = ui.ctx().content_rect();
         ui.painter().rect_filled(
             screen_rect,
             0.0,
@@ -966,7 +966,7 @@ impl TaskModal {
                                     .color(Color32::LIGHT_BLUE));
                                 
                                 ScrollArea::vertical()
-                                    .max_height(200.0)
+                                    .max_width(200.0)
                                     .show(ui, |ui| {
                                         for (customer, address) in self.customer_search_results.iter() {
                                             let name = format!("{} {}", customer.firstname, customer.lastname);

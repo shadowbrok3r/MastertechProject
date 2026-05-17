@@ -3,8 +3,8 @@ use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
-use database::schema::{Datetime, RecordId};
-use chrono::{Datelike, NaiveDate, Utc};
+use database::schema::Datetime;
+use chrono::Utc;
 use egui_extras::DatePickerButton;
 use crossbeam::channel::{Sender, Receiver};
 use std::collections::BTreeSet;
@@ -344,7 +344,7 @@ impl CreateTaskModal {
             let btn = Button::new("Submit")
                 .min_size(Vec2::new(130.0, 30.0))
                 .fill(Color32::from_rgb(30, 30, 35))
-                .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)));
+                .stroke(Stroke::new(2.0_f32, Color32::from_rgb(30, 3, 28)));
             let pulling_ticket = !self.tur.ticket_data.service_number.is_empty();
             let check = !self.task_name.is_empty() && !self.description.is_empty() && !self.assignee.is_empty();
 
@@ -563,7 +563,7 @@ impl Tur {
 
     pub fn tur_sheet(&mut self, ui: &mut Ui, prestashop_api_tx: Sender<PrestashopPayload>) {
         let check = !self.ticket_data.service_number.is_empty();
-        let stroke = Stroke::new(1.0, Color32::from_rgb(191, 33, 101));
+        let stroke = Stroke::new(1.0_f32, Color32::from_rgb(191, 33, 101));
         let txt_color = Color32::from_rgb(255, 204, 255);
         let txt = RichText::new("Pull Order").color(txt_color);
         let button_size = Vec2::new(70.0, 25.0);
@@ -583,7 +583,7 @@ impl Tur {
         
             let upload = Button::new("Upload TUR")
                 .min_size(Vec2::new(70., 25.))
-                .stroke(Stroke::new(1., ui.style().visuals.warn_fg_color))
+                .stroke(Stroke::new(1.0_f32, ui.style().visuals.warn_fg_color))
                 .ui(ui);
             
             if upload.clicked() {

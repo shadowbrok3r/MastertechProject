@@ -1,6 +1,6 @@
 
 use crate::{get_current_user_from_auth, get_database_users, Interaction};
-use database::schema::{random_record_id, ComputerData, CustomerData, DiagnosticEntry, DiagnosticSession, LiveTaskPayload, PluginRegistryEntry, RecordIdExt, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE};
+use database::schema::{ComputerData, CustomerData, DiagnosticEntry, DiagnosticSession, LiveTaskPayload, PluginRegistryEntry, RecordIdExt, TicketPayload, User};
 use eframe::egui::{Color32, Layout, Response, RichText, TextEdit};
 use egui_data_table::RowViewer;
 use serde::{Deserialize, Serialize};

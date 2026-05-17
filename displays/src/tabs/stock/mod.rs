@@ -1,13 +1,15 @@
-use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Order, RichText, Spinner, TextEdit, Ui, Widget, scroll_area};
+use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
+use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals};
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use crate::{PlatformSpawner, Spawner, TaskUiActions, get_current_user_from_auth};
-use database::schema::{Store, UserAuthorization, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
+use database::schema::{Store, prestashop::{Customer, Address, xml::{modify_xml, remove_xml_tag}}};
 use database::xidax_order_url;
 use egui_data_table::Renderer;
 use log::info;
 
+pub mod everest_lookup;
 pub mod row_viewer;
 pub mod stock_operations;
 pub mod store_inventory_viewer;
@@ -45,6 +47,19 @@ pub struct StockTable {
     pub systems_add_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
     pub systems_task_channel: (Sender<SystemInStoreData>, Receiver<SystemInStoreData>),
     store_selection: u64,
+    // Everest lookup state
+    everest_serial_input: String,
+    everest_loading: bool,
+    everest_history_loading: bool,
+    everest_order: Option<EverestOrder>,
+    everest_error: Option<String>,
+    everest_selected_serial: Option<String>,
+    everest_history: Option<OdooSerialHistory>,
+    everest_items_table: egui_data_table::DataTable<EverestItemRow>,
+    everest_items_viewer: EverestItemViewer,
+    pub everest_order_channel: (Sender<EverestLookupResult>, Receiver<EverestLookupResult>),
+    pub everest_history_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>),
+    pub everest_serial_click_channel: (Sender<String>, Receiver<String>),
     // Customer change modal state
     pub customer_change_channel: (Sender<CustomerChangeRequest>, Receiver<CustomerChangeRequest>),
     pub customer_search_results_channel: (Sender<Vec<(Customer, Address)>>, Receiver<Vec<(Customer, Address)>>),
@@ -55,6 +70,8 @@ pub struct StockTable {
     customer_search_type: CustomerSearchType,
     customer_search_results: Vec<(Customer, Address)>,
     customer_searching: bool,
+    // Shared serial-history scan input used from Company Stock / Store Inventory headers.
+    serial_history_input: String,
 }
 
 #[derive(Default, PartialEq, Clone)]
@@ -71,6 +88,7 @@ pub enum StockSelection {
     StoreInventory,
     CostBreakdown,
     SystemsInStore,
+    Everest,
 }
 
 impl StockSelection {
@@ -80,6 +98,7 @@ impl StockSelection {
             StockSelection::StoreInventory => "Store Inventory",
             StockSelection::CostBreakdown => "Cost Breakdown",
             StockSelection::SystemsInStore => "Systems In-Store",
+            StockSelection::Everest => "Everest",
         }
     }
 }
@@ -97,6 +116,10 @@ impl Default for StockTable {
         let customer_change_channel: (Sender<CustomerChangeRequest>, Receiver<CustomerChangeRequest>) = crossbeam::channel::unbounded();
         let customer_search_results_channel: (Sender<Vec<(Customer, Address)>>, Receiver<Vec<(Customer, Address)>>) = crossbeam::channel::unbounded();
 
+        let everest_order_channel: (Sender<EverestLookupResult>, Receiver<EverestLookupResult>) = crossbeam::channel::unbounded();
+        let everest_history_channel: (Sender<OdooSerialHistory>, Receiver<OdooSerialHistory>) = crossbeam::channel::unbounded();
+        let everest_serial_click_channel: (Sender<String>, Receiver<String>) = crossbeam::channel::unbounded();
+
         let mut inventory_serials_viewer = SerialsViewer::default();
         inventory_serials_viewer.stock_tx = Some(serial_channel.0.clone());
 
@@ -104,6 +127,9 @@ impl Default for StockTable {
             systems_task_channel.0.clone(),
             customer_change_channel.0.clone(),
         );
+
+        let mut everest_items_viewer = EverestItemViewer::default();
+        everest_items_viewer.serial_click_tx = Some(everest_serial_click_channel.0.clone());
 
         // Check if current user is admin
         let is_admin = get_current_user_from_auth()
@@ -147,6 +173,20 @@ impl Default for StockTable {
             customer_search_type: CustomerSearchType::default(),
             customer_search_results: Vec::new(),
             customer_searching: false,
+            // Everest
+            everest_serial_input: String::new(),
+            everest_loading: false,
+            everest_history_loading: false,
+            everest_order: None,
+            everest_error: None,
+            everest_selected_serial: None,
+            everest_history: None,
+            everest_items_table: egui_data_table::DataTable::<EverestItemRow>::default(),
+            everest_items_viewer,
+            everest_order_channel,
+            everest_history_channel,
+            everest_serial_click_channel,
+            serial_history_input: String::new(),
         }
     }
 }
@@ -174,7 +214,7 @@ impl StockTable {
                         // Only show Cost Breakdown option for admins
                         if self.is_admin {
                             ui.selectable_value(
-                                selected, 
+                                selected,
                                 StockSelection::CostBreakdown,
                                 StockSelection::CostBreakdown.as_str()
                             );
@@ -184,6 +224,11 @@ impl StockTable {
                                 StockSelection::SystemsInStore.as_str()
                             );
                         }
+                        ui.selectable_value(
+                            selected,
+                            StockSelection::Everest,
+                            StockSelection::Everest.as_str()
+                        );
                     });
 
                     ui.add_space(10.);
@@ -204,6 +249,9 @@ impl StockTable {
                                 });
                             }
                             ui.add_space(10.);
+                            ui.separator();
+                            ui.add_space(10.);
+                            self.serial_history_scan_input(ui);
                         },
                         StockSelection::StoreInventory => {
                             TextEdit::singleline(&mut self.inventory_serials_viewer.filter)
@@ -260,6 +308,10 @@ impl StockTable {
                                     }
                                 });
                             }
+                            ui.add_space(10.);
+                            ui.separator();
+                            ui.add_space(10.);
+                            self.serial_history_scan_input(ui);
                         },
                         StockSelection::CostBreakdown => {
                             TextEdit::singleline(&mut self.cost_order_id)
@@ -366,6 +418,51 @@ impl StockTable {
                                 .hint_text("Filter systems")
                                 .ui(ui);
                         },
+                        StockSelection::Everest => {
+                            let response = TextEdit::singleline(&mut self.everest_serial_input)
+                                .desired_width(220.)
+                                .hint_text("Scan / enter MFG serial")
+                                .ui(ui);
+
+                            ui.add_space(8.);
+
+                            let can_lookup = !self.everest_serial_input.trim().is_empty() && !self.everest_loading;
+                            let enter_submit = response.lost_focus()
+                                && ui.input(|i| i.key_pressed(Key::Enter))
+                                && can_lookup;
+                            if ui.add_enabled(can_lookup, Button::new("Lookup")).clicked() || enter_submit {
+                                let serial = self.everest_serial_input.trim().to_string();
+                                self.everest_loading = true;
+                                self.everest_error = None;
+                                self.everest_order = None;
+                                self.everest_selected_serial = None;
+                                self.everest_history = None;
+                                self.everest_items_table.replace(Vec::new());
+                                let tx = self.everest_order_channel.0.clone();
+                                PlatformSpawner::spawn(async move {
+                                    if let Err(e) = lookup_everest_order(serial, tx).await {
+                                        log::error!("Everest lookup error: {e:?}");
+                                    }
+                                });
+                            }
+
+                            if self.everest_loading {
+                                ui.add_space(6.);
+                                Spinner::new().size(18.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                            }
+
+                            ui.add_space(10.);
+
+                            TextEdit::singleline(&mut self.everest_items_viewer.filter)
+                                .desired_width(200.)
+                                .hint_text("Filter rows")
+                                .ui(ui);
+
+                            if let Some(err) = &self.everest_error {
+                                ui.add_space(10.);
+                                ui.colored_label(ui.global_style().visuals.error_fg_color, err);
+                            }
+                        },
                     }
                 });
             });
@@ -397,7 +494,7 @@ impl StockTable {
                                 RichText::new(self.cost_order_id.clone())
                                     .underline()
                                     .strong()
-                                    .color(ui.style().visuals.error_fg_color),
+                                    .color(ui.global_style().visuals.error_fg_color),
                                 xidax_order_url(&self.cost_order_id),
                             )
                             .open_in_new_tab(true)
@@ -415,7 +512,7 @@ impl StockTable {
                             let profit_color = if summary.profit >= 0.0 {
                                 Color32::LIGHT_GREEN
                             } else {
-                                ui.style().visuals.error_fg_color
+                                ui.global_style().visuals.error_fg_color
                             };
                             ui.colored_label(
                                 profit_color,
@@ -438,7 +535,7 @@ impl StockTable {
                                 let sel_profit_color = if sel_profit >= 0.0 {
                                     Color32::LIGHT_GREEN
                                 } else {
-                                    ui.style().visuals.error_fg_color
+                                    ui.global_style().visuals.error_fg_color
                                 };
                                 ui.colored_label(sel_profit_color, format!("Profit: ${:.2}", sel_profit));
                             }
@@ -448,6 +545,22 @@ impl StockTable {
         }
 
         CentralPanel::default().show_inside(ui, |ui| {
+            // Shared right-side history panel for Company Stock / Store Inventory tabs.
+            // (The Everest tab manages its own panels inside show_everest.)
+            let show_shared_history = matches!(
+                self.stock_selection,
+                StockSelection::CompanyStock | StockSelection::StoreInventory
+            ) && (self.everest_history.is_some() || self.everest_history_loading);
+            if show_shared_history {
+                Panel::right("shared_serial_history_panel")
+                    .resizable(true)
+                    .default_size(360.)
+                    .min_size(280.)
+                    .show_inside(ui, |ui| {
+                        self.render_serial_history_panel(ui);
+                    });
+            }
+
             match self.stock_selection {
                 StockSelection::CompanyStock => {
                     if self.stock_quantity_table.len() < 1 {
@@ -524,7 +637,7 @@ impl StockTable {
                         });
                     } else {
                         Renderer::new(
-                            &mut self.systems_in_store_table, 
+                            &mut self.systems_in_store_table,
                             &mut self.systems_in_store_viewer
                         ).with_style_modify(|s| {
                             s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
@@ -533,11 +646,361 @@ impl StockTable {
                         })
                         .ui(ui);
                     }
-                    
+
                     // Show customer change modal if open
                     self.show_customer_modal(ui);
                 },
+                StockSelection::Everest => self.show_everest(ui),
             }
+        });
+    }
+
+    /// Compact serial-history scan input shown in the Company Stock / Store Inventory
+    /// headers. Submitting fires the same Odoo lookup as the Everest tab and opens
+    /// the right-side history panel.
+    fn serial_history_scan_input(&mut self, ui: &mut Ui) {
+        let response = TextEdit::singleline(&mut self.serial_history_input)
+            .desired_width(180.)
+            .hint_text("S/N → Odoo history")
+            .ui(ui);
+
+        let can_lookup = !self.serial_history_input.trim().is_empty() && !self.everest_history_loading;
+        let enter_submit = response.lost_focus()
+            && ui.input(|i| i.key_pressed(Key::Enter))
+            && can_lookup;
+        if ui.add_enabled(can_lookup, Button::new("Lookup")).clicked() || enter_submit {
+            let serial = self.serial_history_input.trim().to_string();
+            self.everest_selected_serial = Some(serial.clone());
+            self.everest_history = None;
+            self.everest_history_loading = true;
+            let tx = self.everest_history_channel.0.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = fetch_serial_movement(serial, tx).await {
+                    log::error!("Odoo serial history error: {e:?}");
+                }
+            });
+        }
+
+        if self.everest_history_loading {
+            Spinner::new().size(16.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+        }
+    }
+
+    fn show_everest(&mut self, ui: &mut Ui) {
+        // Bottom: order totals summary (only when an order is loaded).
+        if let Some(order) = self.everest_order.as_ref() {
+            let totals = order_totals(order);
+            let kit_codes: Vec<String> = order
+                .items
+                .iter()
+                .filter_map(|i| i.kit_code.clone())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let kit_summary = {
+                let mut uniq: Vec<String> = Vec::new();
+                for k in kit_codes.iter() {
+                    if !uniq.contains(k) { uniq.push(k.clone()); }
+                }
+                uniq
+            };
+
+            Panel::bottom("EverestBottom").show_inside(ui, |ui| {
+                ui.add_space(4.);
+                ui.columns(5, |cols| {
+                    cols[0].label(format!("Items: {}", order.items.len()));
+
+                    cols[1].colored_label(
+                        Color32::from_rgb(200, 100, 100),
+                        format!("Cost: $ {:.2}", totals.cost),
+                    );
+
+                    cols[2].colored_label(
+                        cols[2].style().visuals.warn_fg_color,
+                        format!("Revenue: $ {:.2}", totals.revenue),
+                    );
+
+                    let profit_color = if totals.profit >= 0.0 {
+                        Color32::LIGHT_GREEN
+                    } else {
+                        cols[3].style().visuals.error_fg_color
+                    };
+                    cols[3].colored_label(
+                        profit_color,
+                        format!("Profit: $ {:.2} ({:.1}%)", totals.profit, totals.margin_pct()),
+                    );
+
+                    if kit_summary.is_empty() {
+                        cols[4].label("");
+                    } else {
+                        cols[4].colored_label(
+                            Color32::from_rgb(255, 180, 80),
+                            format!("Kit: {}", kit_summary.join(", ")),
+                        );
+                    }
+                });
+                ui.add_space(4.);
+            });
+        }
+
+        // Right: serial-history side panel, only when populated.
+        if self.everest_history.is_some() || self.everest_history_loading {
+            Panel::right("everest_serial_history_panel")
+                .resizable(true)
+                .default_size(360.)
+                .min_size(280.)
+                .show_inside(ui, |ui| {
+                    self.render_serial_history_panel(ui);
+                });
+        }
+
+        // Left: customer + addresses, only when an order is loaded.
+        if self.everest_order.is_some() {
+            Panel::left("everest_customer_panel")
+                .resizable(true)
+                .default_size(300.)
+                .min_size(220.)
+                .show_inside(ui, |ui| {
+                    self.render_customer_panel(ui);
+                });
+        }
+
+        // Center: items table or empty/loading hint.
+        CentralPanel::default().show_inside(ui, |ui| {
+            if self.everest_loading && self.everest_order.is_none() {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(50.);
+                    ui.label("Looking up Everest order...");
+                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                });
+            } else if self.everest_items_table.len() < 1 {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(50.);
+                    ui.label("Scan a serial number to look up the matching Everest order.");
+                });
+            } else {
+                if let Some(order) = &self.everest_order {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 18.0;
+
+                        // Invoice number — the headline value, no "DOC #" prefix.
+                        ui.label(
+                            RichText::new(&order.header.doc_no)
+                                .strong()
+                                .size(18.0)
+                                .color(Color32::from_rgb(255, 200, 80)),
+                        );
+
+                        if !order.header.doc_alias.is_empty() {
+                            ui.separator();
+                            ui.colored_label(Color32::LIGHT_BLUE, &order.header.doc_alias);
+                        }
+
+                        if let Some(date) = order.header.order_date.as_ref() {
+                            let trimmed = date.split_whitespace().next().unwrap_or(date);
+                            ui.separator();
+                            ui.label(RichText::new(trimmed).color(Color32::LIGHT_GRAY));
+                        }
+
+                        if !order.header.dep.is_empty() {
+                            ui.separator();
+                            ui.colored_label(Color32::LIGHT_GREEN, &order.header.dep);
+                        }
+
+                        if !order.header.sales_rep.is_empty() {
+                            ui.separator();
+                            ui.label(format!("Rep  {}", order.header.sales_rep));
+                        }
+
+                        if !order.header.terms.is_empty() {
+                            ui.separator();
+                            ui.label(RichText::new(&order.header.terms).color(Color32::LIGHT_GRAY));
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.separator();
+                }
+                Renderer::new(&mut self.everest_items_table, &mut self.everest_items_viewer)
+                    .with_style_modify(|s| {
+                        s.scroll_bar_visibility = scroll_area::ScrollBarVisibility::AlwaysVisible;
+                        s.single_click_edit_mode = true;
+                        s.auto_shrink = [false, false].into();
+                    })
+                    .ui(ui);
+            }
+        });
+    }
+
+    fn render_customer_panel(&mut self, ui: &mut Ui) {
+        let Some(order) = &self.everest_order else { return; };
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.heading("Customer");
+            ui.separator();
+
+            let display_name = {
+                let h = &order.header;
+                let fl = format!("{} {}", h.first_name.trim(), h.last_name.trim());
+                if !fl.trim().is_empty() { fl.trim().to_string() }
+                else if !h.name.is_empty() { h.name.clone() }
+                else if !h.acct_name.is_empty() { h.acct_name.clone() }
+                else { "Unknown".to_string() }
+            };
+            ui.label(RichText::new(&display_name).strong().color(Color32::LIGHT_BLUE));
+            if !order.header.cust_code.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Code").color(Color32::GRAY));
+                    ui.label(
+                        RichText::new(&order.header.cust_code)
+                            .strong()
+                            .color(Color32::from_rgb(255, 200, 80)),
+                    );
+                });
+            }
+            if !order.header.email.is_empty() {
+                ui.label(format!("✉ {}", order.header.email));
+            }
+            if !order.header.tel1.is_empty() {
+                ui.label(format!("📞 {}", order.header.tel1));
+            }
+            if !order.header.tel2.is_empty() && order.header.tel2 != order.header.tel1 {
+                ui.label(format!("📞 {}", order.header.tel2));
+            }
+
+            ui.add_space(8.);
+            if !order.customer.num_inv.is_empty() {
+                ui.label(
+                    RichText::new(format!("Invoices: {}", order.customer.num_inv))
+                        .color(Color32::GRAY),
+                );
+            }
+            if !order.customer.inv_life.is_empty() {
+                ui.label(
+                    RichText::new(format!("Lifetime: $ {}", order.customer.inv_life))
+                        .color(Color32::GRAY),
+                );
+            }
+
+            ui.add_space(12.);
+            ui.heading("Addresses");
+            ui.separator();
+            if order.addresses.is_empty() {
+                ui.label(RichText::new("No addresses on file.").color(Color32::GRAY));
+            } else {
+                for (idx, addr) in order.addresses.iter().enumerate() {
+                    ui.group(|ui| {
+                        if !addr.name.is_empty() {
+                            ui.label(RichText::new(&addr.name).strong());
+                        } else {
+                            ui.label(RichText::new(format!("Address {}", idx + 1)).strong());
+                        }
+                        if !addr.full_address.is_empty() {
+                            ui.label(RichText::new(&addr.full_address).color(Color32::LIGHT_GRAY));
+                        } else {
+                            if !addr.street_address.is_empty() { ui.label(&addr.street_address); }
+                            let line2 = [&addr.city, &addr.state, &addr.zip]
+                                .iter().filter(|s| !s.is_empty()).map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
+                            if !line2.is_empty() { ui.label(line2); }
+                            if !addr.country.is_empty() { ui.label(&addr.country); }
+                        }
+                        if !addr.tel1.is_empty() { ui.label(format!("📞 {}", addr.tel1)); }
+                        if !addr.mobile_phone.is_empty() { ui.label(format!("📱 {}", addr.mobile_phone)); }
+                        if !addr.email.is_empty() { ui.label(format!("✉ {}", addr.email)); }
+                    });
+                    ui.add_space(4.);
+                }
+            }
+        });
+    }
+
+    fn render_serial_history_panel(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.heading("Serial History");
+            if ui.small_button("✕").on_hover_text("Close").clicked() {
+                self.everest_history = None;
+                self.everest_selected_serial = None;
+            }
+        });
+        if let Some(serial) = &self.everest_selected_serial {
+            ui.label(RichText::new(serial).color(Color32::from_rgb(42, 195, 222)));
+        }
+        if self.everest_history_loading {
+            ui.add_space(10.);
+            ui.horizontal(|ui| {
+                Spinner::new().size(16.).ui(ui);
+                ui.label("Fetching Odoo movements...");
+            });
+            return;
+        }
+
+        let Some(history) = &self.everest_history else { return; };
+
+        if let Some(p) = &history.product_name {
+            if !p.is_empty() {
+                ui.label(RichText::new(p).color(Color32::GRAY));
+            }
+        }
+        if let Some(err) = &history.error {
+            ui.colored_label(ui.global_style().visuals.error_fg_color, err);
+            return;
+        }
+        ui.separator();
+        if history.moves.is_empty() {
+            ui.label(RichText::new("No movements found.").color(Color32::GRAY));
+            return;
+        }
+
+        ScrollArea::vertical().show(ui, |ui| {
+            use egui_extras::{TableBuilder, Column as TblCol};
+            TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .column(TblCol::auto().at_least(95.))
+                .column(TblCol::auto().at_least(75.))
+                .column(TblCol::auto().at_least(110.))
+                .column(TblCol::auto().at_least(110.))
+                .column(TblCol::remainder().at_least(120.))
+                .column(TblCol::auto().at_least(40.))
+                .header(20., |mut h| {
+                    h.col(|ui| { ui.strong("Date"); });
+                    h.col(|ui| { ui.strong("State"); });
+                    h.col(|ui| { ui.strong("From"); });
+                    h.col(|ui| { ui.strong("To"); });
+                    h.col(|ui| { ui.strong("Reference"); });
+                    h.col(|ui| { ui.strong("Qty"); });
+                })
+                .body(|mut body| {
+                    for m in history.moves.iter() {
+                        body.row(20., |mut row| {
+                            row.col(|ui| {
+                                let s = m.date.clone().unwrap_or_default();
+                                ui.label(s.split('.').next().unwrap_or(&s).to_string());
+                            });
+                            row.col(|ui| {
+                                let state = m.state.clone().unwrap_or_default();
+                                let color = match state.as_str() {
+                                    "done" => Color32::LIGHT_GREEN,
+                                    "cancel" => Color32::from_rgb(200, 100, 100),
+                                    "draft" => Color32::GRAY,
+                                    _ => Color32::LIGHT_GRAY,
+                                };
+                                ui.label(RichText::new(state).color(color));
+                            });
+                            row.col(|ui| {
+                                ui.label(m.location_name());
+                            });
+                            row.col(|ui| {
+                                ui.label(m.dest_name());
+                            });
+                            row.col(|ui| {
+                                let refn = m.reference_str();
+                                let refn = if refn.is_empty() { m.picking_name() } else { refn };
+                                ui.label(refn);
+                            });
+                            row.col(|ui| {
+                                ui.label(format!("{:.0}", m.qty_done.unwrap_or(0.)));
+                            });
+                        });
+                    }
+                });
         });
     }
 
@@ -692,6 +1155,43 @@ impl StockTable {
             self.customer_search_results = results;
             self.customer_searching = false;
         }
+
+        // Everest: order lookup result
+        if let Ok(result) = self.everest_order_channel.1.try_recv() {
+            self.everest_loading = false;
+            self.everest_error = result.error;
+            if let Some(order) = result.order {
+                let rows = order_to_rows(&order);
+                log::info!(
+                    "Everest order loaded: DOC {} with {} item rows",
+                    order.header.doc_no, rows.len()
+                );
+                self.everest_items_table.replace(rows);
+                self.everest_order = Some(order);
+            } else {
+                self.everest_order = None;
+                self.everest_items_table.replace(Vec::new());
+            }
+        }
+
+        // Everest: user clicked an MFG serial cell -> fetch Odoo history
+        if let Ok(serial) = self.everest_serial_click_channel.1.try_recv() {
+            self.everest_selected_serial = Some(serial.clone());
+            self.everest_history = None;
+            self.everest_history_loading = true;
+            let tx = self.everest_history_channel.0.clone();
+            PlatformSpawner::spawn(async move {
+                if let Err(e) = fetch_serial_movement(serial, tx).await {
+                    log::error!("Odoo serial history error: {e:?}");
+                }
+            });
+        }
+
+        // Everest: Odoo movement history arrived
+        if let Ok(history) = self.everest_history_channel.1.try_recv() {
+            self.everest_history_loading = false;
+            self.everest_history = Some(history);
+        }
     }
 
     /// Show customer change modal
@@ -701,7 +1201,7 @@ impl StockTable {
         }
 
         // Dim background
-        let screen_rect = ui.ctx().screen_rect();
+        let screen_rect = ui.ctx().content_rect();
         ui.painter().rect_filled(
             screen_rect,
             0.0,
@@ -793,7 +1293,7 @@ impl StockTable {
                                     .color(Color32::LIGHT_BLUE));
                                 
                                 eframe::egui::ScrollArea::vertical()
-                                    .max_height(200.0)
+                                    .max_width(200.0)
                                     .show(ui, |ui| {
                                         for (customer, address) in self.customer_search_results.iter() {
                                             let name = format!("{} {}", customer.firstname, customer.lastname);

@@ -245,11 +245,11 @@ pub fn update_or_insert_layout(
 
 // In SurrealDB 3.0, live queries are handled differently
 // The new API uses a different streaming approach
-pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin + SurrealValue>(tx: Sender<(Action, T)>, resource: &str) 
-    -> anyhow::Result<(), anyhow::Error> 
+pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin + SurrealValue>(tx: Sender<(Action, T)>, resource: &str)
+    -> anyhow::Result<(), anyhow::Error>
 {
     let mut data_stream = DATABASE.select(resource).live().await?;
-    
+
     while let Some(notification) = data_stream.next().await {
         match notification {
             Ok(notif) => {
@@ -266,7 +266,6 @@ pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std
                         error!("Live query received an error action");
                         return Err(anyhow::anyhow!("Live query received an error action"));
                     },
-                    _ => continue,
                 };
                 debug!("Data: {:?}", action);
                 if let Err(e) = tx.try_send((action, data)) {
@@ -280,4 +279,84 @@ pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std
         }
     }
     Ok(())
+}
+
+/// Filtered live-query alternative to [`listen_data`].
+///
+/// `listen_data` issues a bare `LIVE SELECT * FROM <table>` via the
+/// SDK's `.select().live()` shortcut, which doesn't accept a `WHERE`
+/// clause. With 40-50 users each subscribing to 5 tables that's
+/// 200-250 unfiltered streams fanning every row change to every
+/// client and saturating SurrealDB's tokio runtime
+///
+/// This version takes the full SurrealQL string so callers can write
+/// `LIVE SELECT * FROM task WHERE assignee.store == $store` and uses
+/// the v3 [`Response::stream`](surrealdb::method::Query::stream) API
+/// to consume notifications. SurrealDB's Rust SDK auto-`KILL`s a live
+/// query when its `Stream` is dropped (see surrealdb 3.1's
+/// `method/live.rs` `Drop` impl), so explicit cleanup happens whenever
+/// this function returns — no separate `kill()` call needed.
+pub async fn listen_data_filtered<T>(
+    tx: Sender<(Action, T)>,
+    query: String,
+    bindings: Vec<(&'static str, serde_json::Value)>,
+) -> anyhow::Result<()>
+where
+    T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin + SurrealValue,
+{
+    if !query.starts_with("LIVE SELECT") {
+        return Err(anyhow::anyhow!("query must start with LIVE SELECT"));
+    }
+    // 1. Issue the LIVE SELECT and apply bindings.
+    let mut q = DATABASE.query(&query);
+    for (name, value) in bindings {
+        q = q.bind((name, value));
+    }
+    let mut response = q.await?;
+
+    info!("listen_data_filtered: opened stream for `{query}`");
+
+    // 2. Stream notifications until the stream ends, errors out, or
+    //    this task is aborted. Dropping `stream` (function return,
+    //    `JoinHandle::abort()`) auto-fires the KILL.
+    let mut stream = response.stream::<surrealdb::Notification<T>>(0)?;
+    let mut clean_exit = true;
+    while let Some(notification) = stream.next().await {
+        match notification {
+            Ok(notif) => {
+                let data = notif.data;
+                let action = match notif.action {
+                    surrealdb_types::Action::Create => Action::Create,
+                    surrealdb_types::Action::Update => Action::Update,
+                    surrealdb_types::Action::Delete => Action::Delete,
+                    surrealdb_types::Action::Killed => {
+                        info!("listen_data_filtered: live query killed");
+                        return Ok(());
+                    }
+                    surrealdb_types::Action::Error => {
+                        error!("listen_data_filtered: live query received an error action");
+                        clean_exit = false;
+                        break;
+                    }
+                };
+                debug!("listen_data_filtered: {action:?}");
+                if let Err(e) = tx.try_send((action, data)) {
+                    error!("listen_data_filtered: tx.try_send: {e:?}");
+                }
+            }
+            Err(e) => {
+                error!("listen_data_filtered: stream error: {e:?}");
+                clean_exit = false;
+                break;
+            }
+        }
+    }
+
+    if clean_exit {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "listen_data_filtered: stream terminated with errors"
+        ))
+    }
 }

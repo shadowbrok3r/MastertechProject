@@ -719,6 +719,18 @@ async fn get_client(room_id: &String) -> anyhow::Result<ConnectedClient, anyhow:
     Ok(potential_client.unwrap_or_default())
 }
 
+/// Best-effort confirmation that a `connected_client` row exists for an
+/// agent that just joined the relay. **Does not** write `connected = true`
+/// any more — the agent's own `make_ws_connection` is now the sole writer
+/// of that flag, so this function is read-only.
+///
+/// Previously the helper did a `SELECT … then UPDATE … if connected==false`,
+/// which raced the agent's update under SurrealKV's snapshot isolation. Both
+/// transactions could see `$before.connected = false` and both fire the
+/// schema event in `database/schema/connected_client.surql`, producing
+/// duplicate "Client Connected" notifications. The schema-side dedup
+/// window catches that case as a safety net; removing the redundant
+/// writer here is the primary fix.
 pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error> {
     let potential_client: Option<ConnectedClient> = DATABASE
         .query("SELECT * FROM connected_client WHERE connection_string == $room_id")
@@ -726,15 +738,11 @@ pub async fn connect_client(room_id: String) -> anyhow::Result<(), anyhow::Error
         .await?
         .take(0)?;
 
-    if let Some(client) = potential_client {
-        log::info!("Found client: {client:?}");
-        if client.connected == false {
-            let _: Option<ConnectedClient> = DATABASE
-                .query("UPDATE connected_client SET connected = true WHERE connection_string == $room_id")
-                .bind(("room_id", room_id.clone()))
-                .await?
-                .take(0)?;
-        }
+    match potential_client {
+        Some(client) => log::info!("Found client (read-only confirm): {client:?}"),
+        None => log::warn!(
+            "connect_client -> no row for room_id {room_id}; agent may not have CREATEd yet"
+        ),
     }
 
     Ok(())

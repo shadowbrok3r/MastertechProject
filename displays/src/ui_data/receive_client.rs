@@ -91,7 +91,7 @@ impl SharedContext {
                     handle_live_delete_client(&mut self.clients, new_client.clone()).unwrap_or(())
                 }
             };
-            
+
             // Update the admin console's client list
             let connected: Vec<ConnectedClient> = self.clients.iter().filter(|c| c.connected).cloned().collect();
             let disconnected: Vec<ConnectedClient> = self.clients.iter().filter(|c| !c.connected).cloned().collect();
@@ -100,6 +100,13 @@ impl SharedContext {
             client_map.insert("Disconnected".to_string(), disconnected);
             self.web_console_layout.clients = connected;
             self.web_console_layout.client_map = client_map;
+
+            // Refresh the prober's shared snapshot so the next probe
+            // round (every 30 s) sees the same fresh data without
+            // re-querying SurrealDB. Lock is short and uncontended.
+            if let Ok(mut guard) = self.clients_for_prober.lock() {
+                *guard = self.clients.clone();
+            }
         }
 
         if let Ok(connected_clients) = self.connected_clients_rx.try_recv() {
@@ -112,11 +119,13 @@ impl SharedContext {
             client_map.insert("Disconnected".to_string(), disconnected);
             self.web_console_layout.clients = connected;
             self.web_console_layout.client_map = client_map;
-            // for client in self.clients.iter() {
-            //     self.web_console_layout.ws_clients
-            //         .entry(client.connection_string.clone())
-            //         .or_insert(ws_client);
-            // }
+
+            // Same snapshot refresh as above — this path runs on the
+            // one-shot `refresh_client_list` fetch and on the per-store
+            // `connected_clients_rx` push.
+            if let Ok(mut guard) = self.clients_for_prober.lock() {
+                *guard = self.clients.clone();
+            }
         }
     }
 }

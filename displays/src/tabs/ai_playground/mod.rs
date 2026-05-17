@@ -1,3 +1,4 @@
+#[allow(deprecated)]
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget
 };
@@ -144,7 +145,7 @@ impl SharedContext {
 
         eframe::egui::Panel::left("ChatHistoryPanel")
             .frame(Frame::default().inner_margin(Margin::same(8)))
-            .exact_width(175.)
+            .exact_size(175.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     let mut selected_thread = self.ai_playground.selected_thread.clone();
@@ -181,7 +182,7 @@ impl SharedContext {
                     let new_chat = Button::new("New ➕")
                         .corner_radius(eframe::egui::CornerRadius::same(25))
                         .min_size(Vec2::new(120., 24.))
-                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                        .stroke(Stroke::new(0.8_f32, Color32::from_rgb(150, 12, 150)))
                         .ui(ui);
 
                     if new_chat.clicked() {
@@ -230,7 +231,7 @@ impl AiPlayground {
             |ui| {
                 ScrollArea::vertical()
                     .animated(true)
-                    .max_height(ui.available_height())
+                    .max_width(ui.available_height())
                     .max_width(f32::INFINITY)
                     .auto_shrink(false)
                     .stick_to_bottom(true)
@@ -271,7 +272,7 @@ impl AiPlayground {
                 let add_media = Button::new(RichText::new("🖻").heading())
                     .corner_radius(eframe::egui::CornerRadius::same(25))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
-                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                    .stroke(Stroke::new(0.8_f32, Color32::from_rgb(150, 12, 150)))
                     .ui(ui);
                     // .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
 
@@ -303,7 +304,7 @@ impl AiPlayground {
                 let submit = Button::new(RichText::new("⮫").heading())
                     .corner_radius(eframe::egui::CornerRadius::same(25))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
-                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                    .stroke(Stroke::new(0.8_f32, Color32::from_rgb(150, 12, 150)))
                     .ui(ui)
                     .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
 
@@ -409,9 +410,9 @@ impl AiPlayground {
         };
 
         let msg_color = if is_message_from_myself {
-            ui.style().visuals.widgets.inactive.bg_fill
+            ui.global_style().visuals.widgets.inactive.bg_fill
         } else {
-            ui.style().visuals.widgets.active.weak_bg_fill
+            ui.global_style().visuals.widgets.active.weak_bg_fill
         };
 
         ui.with_layout(layout, |ui| {
@@ -460,7 +461,7 @@ impl AiPlayground {
                             .fill(color)
                             .shadow(shadow)
                             .stroke(
-                                ui.style().visuals.widgets.inactive.bg_stroke,
+                                ui.global_style().visuals.widgets.inactive.bg_stroke,
                             )
                             .outer_margin(b_panel_marg)
                             .inner_margin(Margin::symmetric(6, 10))
@@ -614,7 +615,7 @@ impl AiPlayground {
                                             .clicked() {
                                                 self.image_id = file_id.to_string();
                                                 self.open_modal = true;
-                                            // if Image::new(image_source.clone()).show_loading_spinner(true).max_size(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
+                                            // if Image::new(image_source.clone()).show_loading_spinner(true).max_width(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
                                             }
                                             
                                             if modal.backdrop_response.clicked() {

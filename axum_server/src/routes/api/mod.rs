@@ -2,6 +2,8 @@ pub mod surreal;
 pub mod orders;
 pub mod parts;
 pub mod qc_fleet;
+pub mod scheduled;
+pub mod build;
 
 pub use surreal::*;
 pub use orders::*;
@@ -27,5 +29,6 @@ pub fn routes(state: crate::AppState) -> axum::Router {
             axum::routing::post(surreal::handle_response)
         )
         .merge(qc_fleet::qc_fleet_routes())
+        .merge(build::build_routes())
         .with_state(state)
 }

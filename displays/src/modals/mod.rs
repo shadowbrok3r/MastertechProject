@@ -41,7 +41,7 @@ impl ModalWindow for ModalType {
         let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
         let mut modal_action = None;
         let mut close_requested = false; // Decoupled flag for modal close
-        let style= &ctx.style().visuals;
+        let style= &ctx.global_style().visuals;
         let mut shadow = Shadow::default();
         shadow.blur = 1;
         shadow.spread = 3;
@@ -66,7 +66,7 @@ impl ModalWindow for ModalType {
             )
             .drag_to_scroll(false)
             .pivot(Align2::CENTER_CENTER)
-            .max_height(750.)
+            .max_width(750.)
             .default_height(715.)
             .max_width(723.0)
             .min_width(723.0)

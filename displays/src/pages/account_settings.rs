@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use eframe::egui::{vec2, Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Id, InnerResponse, Key, Layout, PopupCloseBehavior, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder, Vec2, Widget};
 use database::{schema::{SortDirection, Status, Store, User}, DatabaseSelection, PlatformSpawner, Spawner, SurrealValue, DATABASE};
 use crate::{app_state::{AppState, MainPages, SharedContext}, tabs::tasks::task_layout::{SortField, SortOptions}};
@@ -195,9 +196,9 @@ impl SharedContext {
                                                         ui.add_space(5.0);
                                                         let password_check = acc_mod.password.eq(&acc_mod.retyped_password.clone());
                                                         let background_color = if password_check {
-                                                            ui.style().visuals.extreme_bg_color
+                                                            ui.global_style().visuals.extreme_bg_color
                                                         } else {
-                                                            ui.style().visuals.error_fg_color
+                                                            ui.global_style().visuals.error_fg_color
                                                         };
 
                                                         TextEdit::singleline(&mut acc_mod.retyped_password)
@@ -264,8 +265,8 @@ impl SharedContext {
                                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                                             let mut selected = self.account_mod.sort_by.clone();
                                                             let txt = match selected.direction {
-                                                                SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),
-                                                                SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
+                                                                SortDirection::Asc => ("↗", ui.global_style().visuals.warn_fg_color),
+                                                                SortDirection::Desc => ("↘", ui.global_style().visuals.error_fg_color),
                                                             };
                                                             let selected_text = match selected.field {
                                                                 SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
@@ -335,7 +336,7 @@ impl SharedContext {
 
                                                     ScrollArea::vertical()
                                                     .auto_shrink(false)
-                                                    .max_height(160.)
+                                                    .max_width(160.)
                                                     .show(ui, |ui| {
                                                         let clicked: &mut Option<Status> = &mut None;
                                                         for (idx, status) in self.account_mod.user.get_custom_statuses().iter().enumerate() {
@@ -374,14 +375,14 @@ impl SharedContext {
                                                 ui.group(|ui| {
                                                     ui.set_min_size(avail_size);
                                                     ui.horizontal(|ui| ui.label("Minio Access Key: "));
-                                                    ui.horizontal(|ui| ui.colored_label(ui.style().visuals.error_fg_color, self.account_mod.user.get_minio_access_key().unwrap_or_default()));
+                                                    ui.horizontal(|ui| ui.colored_label(ui.global_style().visuals.error_fg_color, self.account_mod.user.get_minio_access_key().unwrap_or_default()));
 
                                                     ui.add_space(5.0);
 
                                                     ui.horizontal(|ui| ui.label("Minio Secret Key: "));
                                                     ui.scope(|ui| {
                                                         ui.style_mut().override_font_id = Some(FontId::monospace(12.));
-                                                        ui.horizontal(|ui| ui.colored_label(ui.style().visuals.error_fg_color, self.account_mod.user.get_minio_secret_key().unwrap_or_default()));
+                                                        ui.horizontal(|ui| ui.colored_label(ui.global_style().visuals.error_fg_color, self.account_mod.user.get_minio_secret_key().unwrap_or_default()));
                                                     });
                                                     
                                                     ui.add_space(5.0);

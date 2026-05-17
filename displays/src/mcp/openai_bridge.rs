@@ -7,7 +7,7 @@ use crossbeam::channel::Sender as CrossbeamSender;
 
 use crate::{ai::{GEMINI_API_KEY, GEMINI_API_BASE}, mcp::mcp::ShellType, openai::{
     config::OpenAIConfig,
-    types::{
+    types::chat::{
         ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs,
         ChatCompletionTool,

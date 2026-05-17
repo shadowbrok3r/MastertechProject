@@ -120,14 +120,14 @@ impl Default for ThemeConfig {
 
 impl ThemeConfig {
     pub fn edit_ui(&mut self, ui: &mut Ui, ctx: &Context, tx: Sender<Style>) -> (bool, Arc<Style>) {
-        let mut ret = (false, ctx.style());
+        let mut ret = (false, ctx.global_style());
         eframe::egui::Panel::top("Theme Menu top bar")
         .exact_size(30.)
         .show_inside(ui, |ui| {
             ui.horizontal(|ui|{
                 let reset = Button::new("Reset to Default")
                     .min_size(Vec2::new(70., 25.))
-                    .stroke(Stroke::new(1., self.warn_color))
+                    .stroke(Stroke::new(1.0_f32, self.warn_color))
                     .ui(ui);
                 
                 if reset.clicked() {
@@ -209,17 +209,17 @@ impl ThemeConfig {
                     self.open_bg_stroke_color = style.visuals.widgets.open.bg_stroke.color;
                     self.open_fg_stroke_color = style.visuals.widgets.open.fg_stroke.color;
                     let s = Arc::new(style);
-                    ctx.set_style((s).clone());
+                    ctx.set_global_style((s).clone());
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let save = Button::new("Save")
                         .min_size(Vec2::new(70., 25.))
-                        .stroke(Stroke::new(1., self.warn_color))
+                        .stroke(Stroke::new(1.0_f32, self.warn_color))
                         .ui(ui);
                     
                     if save.clicked() {
-                        let color_settings = ctx.style().clone();
+                        let color_settings = ctx.global_style().clone();
                         PlatformSpawner::spawn(async move {
                             match User::update_color_scheme(
                                 encode_style(
@@ -244,11 +244,11 @@ impl ThemeConfig {
 
                     let save_local = Button::new("Save to file")
                         .min_size(Vec2::new(70., 25.))
-                        .stroke(Stroke::new(1., self.warn_color))
+                        .stroke(Stroke::new(1.0_f32, self.warn_color))
                         .ui(ui);
                     
                     if save_local.clicked() {
-                        let color_settings = ctx.style().clone();
+                        let color_settings = ctx.global_style().clone();
                         
                         PlatformSpawner::spawn(async move {
                             // Serialize the struct into JSON
@@ -274,7 +274,7 @@ impl ThemeConfig {
 
                     let upload = Button::new("Upload settings")
                         .min_size(Vec2::new(70., 25.))
-                        .stroke(Stroke::new(1., self.warn_color))
+                        .stroke(Stroke::new(1.0_f32, self.warn_color))
                         .ui(ui);
                     
                     if upload.clicked() {
@@ -305,7 +305,7 @@ impl ThemeConfig {
 
         ScrollArea::vertical()
         .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
-        .max_height(800.)
+        .max_width(800.)
         .show(ui, |ui| 
         {
             ctx.settings_ui(ui);
@@ -313,7 +313,7 @@ impl ThemeConfig {
         /*
         ScrollArea::vertical()
             .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
-            .max_height(800.)
+            .max_width(800.)
             .show(ui, |ui| 
         {
 
@@ -823,47 +823,47 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                     noninteractive: WidgetVisuals {
                         bg_fill: config.widget_bg_fill,
                         weak_bg_fill: config.widget_weak_bg_fill,
-                        bg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
+                        bg_stroke: Stroke::new(1.0_f32, config.widget_bg_stroke_color),
                         corner_radius: config.rounding,
-                        fg_stroke: Stroke::new(1.0, config.widget_fg_stroke_color),
+                        fg_stroke: Stroke::new(1.0_f32, config.widget_fg_stroke_color),
                         expansion: 0.0,
                     },
                     inactive: WidgetVisuals {
                         bg_fill: config.widget_bg_fill,
                         weak_bg_fill: Color32::from_rgb(18, 18, 20),
-                        bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
+                        bg_stroke: Stroke::new(1.0_f32, Color32::from_rgb(80, 80, 80)),
                         corner_radius: config.rounding,
-                        fg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
+                        fg_stroke: Stroke::new(1.0_f32, config.widget_bg_stroke_color),
                         expansion: 0.2,
                     },
                     hovered: WidgetVisuals {
                         bg_fill: config.hovered_bg_fill,
                         weak_bg_fill: config.hovered_weak_bg_fill,
-                        bg_stroke: Stroke::new(0.5, config.hovered_bg_stroke_color),
+                        bg_stroke: Stroke::new(0.5_f32, config.hovered_bg_stroke_color),
                         corner_radius: config.rounding,
-                        fg_stroke: Stroke::new(1.0, config.hovered_fg_stroke_color),
+                        fg_stroke: Stroke::new(1.0_f32, config.hovered_fg_stroke_color),
                         expansion: 0.2,
                     },
                     active: WidgetVisuals {
                         bg_fill: config.active_bg_fill,
                         weak_bg_fill: config.active_weak_bg_fill,
-                        bg_stroke: Stroke::new(1.0, config.active_bg_stroke_color),
+                        bg_stroke: Stroke::new(1.0_f32, config.active_bg_stroke_color),
                         corner_radius: config.rounding,
-                        fg_stroke: Stroke::new(1.0, config.active_fg_stroke_color),
+                        fg_stroke: Stroke::new(1.0_f32, config.active_fg_stroke_color),
                         expansion: 0.2,
                     },
                     open: WidgetVisuals {
                         bg_fill: config.open_bg_fill,
                         weak_bg_fill: config.open_weak_bg_fill,
-                        bg_stroke: Stroke::new(1.0, config.open_bg_stroke_color),
+                        bg_stroke: Stroke::new(1.0_f32, config.open_bg_stroke_color),
                         corner_radius: config.rounding,
-                        fg_stroke: Stroke::new(1.0, config.open_fg_stroke_color),
+                        fg_stroke: Stroke::new(1.0_f32, config.open_fg_stroke_color),
                         expansion: 0.2,
                     },
                 },
                 selection: Selection {
                     bg_fill: config.selection_bg_fill,
-                    stroke: Stroke::new(1.0, config.selection_stroke_color),
+                    stroke: Stroke::new(1.0_f32, config.selection_stroke_color),
                 },
                 hyperlink_color: config.link_color,
                 faint_bg_color: config.faint_bg_color,
@@ -872,7 +872,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 warn_fg_color: config.warn_color,
                 error_fg_color: config.error_color,
                 window_fill: config.background_color,
-                window_stroke: Stroke::new(1.0, config.window_stroke_color),
+                window_stroke: Stroke::new(1.0_f32, config.window_stroke_color),
                 window_corner_radius: config.rounding,
                 menu_corner_radius: config.rounding,
                 panel_fill: config.background_color,

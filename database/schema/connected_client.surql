@@ -41,3 +41,8 @@ DEFINE FIELD friendly_name    ON connected_client TYPE none | string          PE
 DEFINE FIELD last_update      ON connected_client TYPE none | datetime DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD local_ip         ON connected_client TYPE none | string          PERMISSIONS FULL;
 DEFINE FIELD tcp_port         ON connected_client TYPE none | number DEFAULT 9101 PERMISSIONS FULL;
+-- Distinguishes a customer-machine client from a Rust-toolchain
+-- `plugin_builder` worker. The admin/MCP `list_build_workers` tool
+-- filters on this; the Web Console default view hides workers.
+-- Rows without this field are treated as `machine` for back-compat.
+DEFINE FIELD client_kind      ON connected_client TYPE string DEFAULT 'machine' ASSERT $value IN ['machine', 'build_worker'] PERMISSIONS FULL;

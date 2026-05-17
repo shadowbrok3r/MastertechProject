@@ -248,7 +248,7 @@ impl RemoteScriptsViewer {
         let side_id = ui.id().with("scripts_side_panel");
         eframe::egui::Panel::left(side_id)
             .resizable(false)
-            .default_size(160.0)
+            .default_size(160.0_f32)
             .show_inside(ui, |ui| {
                 ui.heading("Categories");
                 ui.separator();
@@ -269,8 +269,8 @@ impl RemoteScriptsViewer {
         let log_panel_id = ui.id().with("scripts_log_panel");
         eframe::egui::Panel::bottom(log_panel_id)
             .resizable(true)
-            .default_height(200.0)
-            .min_height(80.0)
+            .default_size(200.0_f32)
+            .min_size(80.0_f32)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.strong("Script Log");

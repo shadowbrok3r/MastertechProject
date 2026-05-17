@@ -1,6 +1,6 @@
-use crate::openai::types::{
-    ChatChoice, ChatCompletionRequestMessage, ChatCompletionToolChoiceOption,
-    CreateChatCompletionRequest,
+use crate::openai::types::chat::{
+    ChatChoice, ChatCompletionMessageToolCalls, ChatCompletionRequestMessage,
+    ChatCompletionToolChoiceOption, CreateChatCompletionRequest, ToolChoiceOptions,
 };
 use super::oa_client::OaClient;
 use crate::ai::{chat, gpts};
@@ -26,7 +26,7 @@ pub async fn send_user_msg(
         model: model.to_string(),
         messages: messages.clone(),
         tools: tools.clone(),
-        tool_choice: Some(ChatCompletionToolChoiceOption::Auto),
+        tool_choice: Some(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto)),
         ..Default::default()
     };
     let chat_response = chat_client.create(msg_req).await?;
@@ -45,9 +45,11 @@ pub async fn send_user_msg(
     }
     let mut tool_responses: Vec<ToolResponse> = Vec::new();
 
-    // For each tool_call, rpc_router call
+    // For each tool_call, rpc_router call. `ChatCompletionMessageToolCalls` is now an
+    // enum (Function | Custom); we only handle function tools.
     let tool_calls = first_choice.message.tool_calls;
     for tool_call in tool_calls.iter().flatten() {
+        let ChatCompletionMessageToolCalls::Function(tool_call) = tool_call else { continue };
         let tool_call_id = tool_call.id.clone();
         let fn_name = tool_call.function.name.clone();
         let params: Value = serde_json::from_str(&tool_call.function.arguments)?;
@@ -88,7 +90,7 @@ pub async fn send_user_msg(
         model: model.to_string(),
         messages,
         tools,
-        tool_choice: Some(ChatCompletionToolChoiceOption::Auto),
+        tool_choice: Some(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto)),
         ..Default::default()
     };
     let chat_response = chat_client.create(msg_req).await?;

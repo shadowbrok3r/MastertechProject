@@ -1,5 +1,5 @@
 use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{ToastStyle, Toast, ToastKind, ToastOptions}}};
-use displays::{tabs::admin_console::AdminConsole, ui_tools::theme_config::set_custom_style};
+use displays::{tabs::admin_console::{AdminConsole, SessionLayout}, tabs::admin_console::client_interface::TransportKind, ui_tools::theme_config::set_custom_style};
 use eframe::{egui::{Color32, Context, Margin, Stroke, Style, Vec2, Window}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use std::{collections::HashMap, sync::Arc};
@@ -419,55 +419,95 @@ impl MtechServer {
         //     }
         // }
 
-        if self.shared_ctx.web_console_layout.wants_to_undock {
+        {
+            let clients_snapshot = self.shared_ctx.clients.clone();
             let layout = &mut self.shared_ctx.web_console_layout;
-            let undock_client = layout.undock_client.clone();
-            for client in self.shared_ctx.clients.clone() {
-                let should_we_undock = if let Some(undock) = undock_client.get(&client.connection_string)
-                {
-                    undock
+            let mut to_dock: Vec<String> = Vec::new();
+
+            for client in &clients_snapshot {
+                let is_floating = layout
+                    .session_layout
+                    .get(&client.connection_string)
+                    .copied()
+                    .unwrap_or_default()
+                    == SessionLayout::Floating;
+
+                if !is_floating {
+                    continue;
+                }
+
+                let is_ws_connected = layout
+                    .ws_clients
+                    .get(&client.connection_string)
+                    .map(|wsc| {
+                        if wsc.transport.kind() == TransportKind::Tcp {
+                            wsc.is_connected
+                        } else {
+                            wsc.is_connected && wsc.last_pong_time.is_some()
+                        }
+                    })
+                    .unwrap_or(false);
+
+                let color = if is_ws_connected {
+                    Color32::LIGHT_BLUE
                 } else {
-                    &false
+                    Color32::LIGHT_RED
                 };
 
-                if *should_we_undock {
-                    let is_ws_connected = layout.ws_clients
-                        .get(&client.connection_string)
-                        .map(|wsc| wsc.is_connected && wsc.last_pong_time.is_some())
-                        .unwrap_or(false);
-                    
-                    let color = if is_ws_connected {
-                        Color32::LIGHT_BLUE
-                    } else {
-                        Color32::LIGHT_RED
-                    };
+                let column_frame = eframe::egui::Frame::default()
+                    .fill(Color32::from_rgb(12, 12, 14))
+                    .inner_margin(Margin::same(4))
+                    .outer_margin(Margin::symmetric(5, 3))
+                    .corner_radius(eframe::egui::CornerRadius::same(10))
+                    .stroke(Stroke::new(1.0, color));
 
-                    let column_frame = eframe::egui::Frame::default()
-                        .fill(Color32::from_rgb(12, 12, 14))
-                        .inner_margin(Margin::same(4))
-                        .outer_margin(Margin::symmetric(5, 3))
-                        .corner_radius(eframe::egui::CornerRadius::same(10))
-                        .stroke(Stroke::new(1.0, color));
+                // Clone everything we need out of `layout` before entering the
+                // window closure so we can still call `layout.ws_clients.get_mut`
+                // inside without conflicting borrows.
+                let tx = layout.ui_actions_channel.0.clone();
+                let session_layout = layout.session_layout.clone();
+                let focused = layout.focused_client.clone();
+                let inventory = layout
+                    .security_inventory
+                    .get(&client.connection_string)
+                    .cloned();
 
-                    Window::new(&client.connection_string)
-                        .frame(column_frame)
-                        .min_size(Vec2::new(700., 400.))
-                        .max_size(Vec2::new(1500., 900.))
-                        .default_size(Vec2::new(1000., 900.))
-                        .show(ctx, |ui| {
-                            ui.vertical_centered_justified(|ui| {
-                                
-                                let tx = layout.ui_actions_channel.0.clone();
-                                
-                                ui.horizontal(|ui| AdminConsole::client_header(ui, tx, &client.clone(), undock_client.clone(), is_ws_connected));
-                                if let Some(ws_client) =
-                                    layout.ws_clients.get_mut(&client.connection_string)
-                                {
-                                    ws_client.show(ui);
-                                }
+                let mut is_open = true;
+                Window::new(&client.connection_string)
+                    .open(&mut is_open)
+                    .frame(column_frame)
+                    .min_size(Vec2::new(700., 400.))
+                    .max_size(Vec2::new(1500., 900.))
+                    .default_size(Vec2::new(1000., 900.))
+                    .show(ctx, |ui| {
+                        ui.vertical_centered_justified(|ui| {
+                            ui.horizontal(|ui| {
+                                AdminConsole::client_header(
+                                    ui,
+                                    tx,
+                                    client,
+                                    session_layout,
+                                    focused.as_deref(),
+                                    is_ws_connected,
+                                    inventory.as_deref(),
+                                    None,
+                                );
                             });
+                            if let Some(ws_client) =
+                                layout.ws_clients.get_mut(&client.connection_string)
+                            {
+                                ws_client.show(ui);
+                            }
                         });
+                    });
+
+                if !is_open {
+                    to_dock.push(client.connection_string.clone());
                 }
+            }
+
+            for cs in to_dock {
+                layout.session_layout.insert(cs, SessionLayout::Docked);
             }
         }
 

@@ -123,7 +123,7 @@ impl DuplicateMergeModal {
         }
 
         let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
-        let style = &ctx.style().visuals;
+        let style = &ctx.global_style().visuals;
         let mut shadow = Shadow::default();
         shadow.blur = 2;
         shadow.spread = 4;
@@ -177,7 +177,7 @@ impl DuplicateMergeModal {
         let available_height = ui.available_height() - 60.0;
         ScrollArea::vertical()
             .min_scrolled_height(available_height)
-            .max_height(available_height)
+            .max_width(available_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -381,7 +381,7 @@ impl DuplicateMergeModal {
                             if dup.is_identical {
                                 ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
+                                ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.task_resolution)); });
@@ -395,7 +395,7 @@ impl DuplicateMergeModal {
                             if dup.is_identical {
                                 ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
+                                ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.service_order_resolution)); });
@@ -409,7 +409,7 @@ impl DuplicateMergeModal {
                             if dup.is_identical {
                                 ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
+                                ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.customer_resolution)); });
@@ -423,7 +423,7 @@ impl DuplicateMergeModal {
                             if dup.is_identical {
                                 ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
                             } else {
-                                ui.colored_label(ui.style().visuals.warn_fg_color, "Conflict");
+                                ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
                         });
                         row.col(|ui| { ui.label(resolution_text(&self.resolution.computer_resolution)); });
@@ -594,7 +594,7 @@ fn render_field_row(
     
     // Field name header
     ui.horizontal(|ui| {
-        ui.label(RichText::new(field_name).strong().color(ui.style().visuals.warn_fg_color));
+        ui.label(RichText::new(field_name).strong().color(ui.global_style().visuals.warn_fg_color));
     });
 
     // Use a grid for proper column alignment

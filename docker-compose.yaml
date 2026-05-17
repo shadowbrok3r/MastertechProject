@@ -36,6 +36,36 @@ services:
     expose:
       - 8081
 
+  pluginbuilder:
+    image: shadowbrok3r/plugin_builder:beta
+    build:
+      context: .
+      dockerfile: ./plugin_builder/Dockerfile
+    restart: always
+    networks:
+      - web
+    depends_on:
+      - websocketserver
+    environment:
+      # Points at the websocket_server2 service on the shared `web`
+      # network. Admin Mastertech4.0 instances reach this worker the
+      # same way they reach a customer machine: open a master session
+      # to room_id = build_worker_<hostname>.
+      MASTERTECH_WS_URL: ws://websocketserver:8081/websocket
+      RUST_LOG: plugin_builder=info
+    volumes:
+      # Persisted across container restarts so:
+      #   - cargo-registry-cache: registry index + crate tarballs (huge
+      #     time saver across plugins, set via CARGO_HOME in the image).
+      #   - mtech-target-cache:   per-plugin CARGO_TARGET_DIR, keeping
+      #     incremental compilation hot for repeated rebuilds of the
+      #     same plugin during agent iteration.
+      - cargo-registry-cache:/var/cache/cargo
+      - mtech-target-cache:/var/cache/mtech-builder
+
+volumes:
+  cargo-registry-cache:
+  mtech-target-cache:
 
 networks:
   web:
