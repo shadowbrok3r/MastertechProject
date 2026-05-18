@@ -21,7 +21,7 @@
 
 use axum::extract::Path;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json};
+use axum::response::Json;
 use axum::{Router, routing};
 use base64::Engine as _;
 use database::schema::{
@@ -156,15 +156,15 @@ async fn list_workers() -> Result<Json<Vec<WorkerSummary>>, (StatusCode, String)
     // route.
     let mut response = database::DATABASE
         .query(
-            "SELECT * FROM connected_client \
-             WHERE client_kind = 'build_worker' \
-               AND last_update > time::now() - 90s \
+            "SELECT * FROM connected_client
+             WHERE client_kind = 'build_worker'
+               AND last_update > time::now() - 90s
              ORDER BY last_update DESC",
         )
         .await
         .map_err(internal)?;
     let rows: Vec<ConnectedClient> = response.take(0).map_err(internal)?;
-    let _ = ClientKind::BuildWorker; // touch enum so unused-import lint stays quiet
+    let _ = ClientKind::BuildWorker; 
     Ok(Json(
         rows.into_iter()
             .map(|c| WorkerSummary {
