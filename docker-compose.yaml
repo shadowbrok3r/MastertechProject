@@ -36,6 +36,23 @@ services:
     expose:
       - 8081
 
+  axumserver:
+    image: shadowbrok3r/axum_server:beta
+    build:
+      context: .
+      dockerfile: ./axum_server/Dockerfile
+    restart: always
+    networks:
+      - web
+    ports:
+      - 8082:8082
+    expose:
+      - 8082
+    environment:
+      SERVER_URL: "0.0.0.0"
+      SERVER_PORT: "8082"
+      RUST_LOG: "mtech_srv=info,axum_middleware=info"
+
   pluginbuilder:
     image: shadowbrok3r/plugin_builder:beta
     build:

@@ -1,0 +1,121 @@
+# Kubernetes manifests for the plugin_builder crate.
+#
+# Worker-only — no Service or Ingress. The worker outbound-connects
+# to SurrealDB (DB URL baked at build time via the `database` crate's
+# env!()) and pulls `build_job` rows via a LIVE SELECT subscription.
+# Heartbeat is by upserting its own `connected_client` row every 30 s
+# with `client_kind = build_worker`; admins find it through
+# `list_build_workers` / `/api/build/workers`.
+#
+# Persistent volumes:
+#   - cargo-registry: $CARGO_HOME (registry index + crate tarballs).
+#     Survives pod restarts so we don't re-download deps from
+#     crates.io on every new plugin.
+#   - mtech-target:   $CARGO_TARGET_DIR sub-rooted per plugin. Keeps
+#     incremental compilation hot for repeated rebuilds of the same
+#     plugin during agent iteration. Big — size accordingly.
+#
+# Replicas: 1. Each replica needs its OWN PVCs (cargo can't share a
+# target dir across concurrent invocations). If you want horizontal
+# scaling for parallel builds, convert this to a StatefulSet with
+# `volumeClaimTemplates` so each pod gets dedicated PVCs; the atomic
+# UPDATE in `BuildJob::claim` already serializes work distribution.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plugin-builder
+  namespace: rust
+spec:
+  selector:
+    matchLabels:
+      app: plugin-builder
+  # Strategy: Recreate so the old pod releases the PVCs before the
+  # new one tries to attach. Rolling here causes the new pod to wedge
+  # on Multi-Attach errors with the typical RWO storage class.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: plugin-builder
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-server
+      containers:
+      - name: plugin-builder
+        image: shadowbrok3r/plugin_builder:latest
+        imagePullPolicy: Always
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/Denver"
+        - name: RUST_LOG
+          value: "plugin_builder=info"
+        - name: MASTERTECH_DB_MODE
+          value: "1"
+        # Override the auto-detected hostname so the `connected_client`
+        # record id stays stable across pod restarts
+        - name: BUILD_WORKER_HOSTNAME
+          value: "k3s-builder-1"
+        # Compose-equivalent cache locations. The image's Dockerfile
+        # also sets CARGO_HOME=/var/cache/cargo so the volume mount
+        # below catches the registry/git index too.
+        - name: BUILD_WORKER_SCRATCH_ROOT
+          value: "/tmp/mtech-builder"
+        - name: BUILD_WORKER_TARGET_CACHE_ROOT
+          value: "/var/cache/mtech-builder"
+        volumeMounts:
+        - name: cargo-registry
+          mountPath: /var/cache/cargo
+        - name: mtech-target
+          mountPath: /var/cache/mtech-builder
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+      volumes:
+      - name: cargo-registry
+        persistentVolumeClaim:
+          claimName: plugin-builder-cargo-registry
+      - name: mtech-target
+        persistentVolumeClaim:
+          claimName: plugin-builder-target
+      imagePullSecrets:
+      - name: regcred
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plugin-builder-cargo-registry
+  namespace: rust
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: <cluster-default>
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plugin-builder-target
+  namespace: rust
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 25Gi
+  # storageClassName: <cluster-default>

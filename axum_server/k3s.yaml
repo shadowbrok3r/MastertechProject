@@ -1,0 +1,84 @@
+# Kubernetes manifests for the axum_server crate.
+#
+# Public HTTP surface for Mastertech (orders, QC fleet, scheduled
+# tasks, /api/build/* for remote plugin compiles). Mirrors the
+# mtechserver pattern: single replica pinned to `ubuntu-server`,
+# Traefik ingress with Cloudflare cert resolver. The container
+# listens on 8082 (see axum_server/src/main.rs SERVER_PORT default);
+# the Service maps that to port 80 for the ingress.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: axum-server
+  namespace: rust
+spec:
+  selector:
+    matchLabels:
+      app: axum-server
+  template:
+    metadata:
+      labels:
+        app: axum-server
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ubuntu-server
+      containers:
+      - name: axum-server
+        image: shadowbrok3r/axum_server:latest
+        imagePullPolicy: Always
+        env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: "America/Denver"
+        - name: SERVER_URL
+          value: "0.0.0.0"
+        - name: SERVER_PORT
+          value: "8082"
+        - name: RUST_LOG
+          value: "mtech_srv=info,axum_middleware=info"
+        ports:
+        - containerPort: 8082
+      imagePullSecrets:
+      - name: regcred
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: axum-server
+  namespace: rust
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web, websecure
+    traefik.ingress.kubernetes.io/router.tls.certresolver: cloudflare
+spec:
+  rules:
+    - host: axum.master-tech.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: axum-server
+                port:
+                  number: 80
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: axum-server
+  namespace: rust
+spec:
+  clusterIP: None
+  selector:
+    app: axum-server
+  ports:
+  - port: 80
+    targetPort: 8082

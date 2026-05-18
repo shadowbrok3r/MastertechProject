@@ -17,11 +17,18 @@ RUN apt-get update \
 RUN rustup target add wasm32-wasip1
 
 WORKDIR /src
-# Copy the whole workspace so `cargo build -p plugin_builder` can resolve
-# `[workspace.dependencies]` from the root Cargo.toml. The plugin_builder
-# crate itself has a tiny dep tree, so the build is fast despite the
-# big workspace.
-COPY . .
+
+# Trim the workspace to the two crates we need (matches the pattern
+# the axum_server Dockerfile uses). Without this, cargo metadata has
+# to parse every member's Cargo.toml — including UI-only crates like
+# `displays` and `Mastertech4.0` that bring in native-only deps (winit,
+# eframe, etc.) which can fail to resolve in this slim build image.
+COPY Cargo.toml .
+COPY .env .env
+RUN sed -i 's/members = \[.*\]/members = [ "database", "plugin_builder" ]/' Cargo.toml
+
+COPY database/ ./database/
+COPY plugin_builder/ ./plugin_builder/
 
 RUN cargo build -p plugin_builder --release
 

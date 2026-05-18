@@ -1,0 +1,153 @@
+replicaCount: 1
+
+image:
+  repository: surrealdb/surrealdb
+  pullPolicy: IfNotPresent
+  tag: "v3.1.0-beta.3"
+
+imagePullSecrets: []
+nameOverride: "surrealkv"
+fullnameOverride: ""
+args: [start, -A, --allow-experimental]
+
+surrealdb:
+  path: "surrealkv://MastertechDB" #memory
+  log: "info"
+  auth: true
+  # First time user setup
+  # initial_user: ""
+  # initial_pass: ""
+  port: 8001
+
+podExtraEnv:
+  - name: TZ
+    value: "America/Denver"
+  - name: SURREAL_BUCKET_FOLDER_ALLOWLIST
+    value: "/surrealbuckets/"
+  - name: SURREAL_WEBSOCKET_RESPONSE_CHANNEL_SIZE
+    value: "1000"
+  - name: SURREAL_MAX_CONCURRENT_TASKS
+    value: "512"
+  # Increase blocking thread pool for disk I/O under write pressure
+  - name: SURREAL_RUNTIME_MAX_BLOCKING_THREADS
+    value: "1024"
+  # More runtime worker threads for your beefy server
+  - name: SURREAL_RUNTIME_WORKER_THREADS
+    value: "16"
+  # Enable response batching before flush
+  - name: SURREAL_WEBSOCKET_RESPONSE_BUFFER_SIZE
+    value: "32"
+  # Larger read/write buffers for high-throughput WS connections
+  - name: SURREAL_WEBSOCKET_READ_BUFFER_SIZE
+    value: "262144"
+  - name: SURREAL_WEBSOCKET_WRITE_BUFFER_SIZE
+    value: "262144"
+  # Increase caches for better perf with many sessions/transactions
+  - name: SURREAL_TRANSACTION_CACHE_SIZE
+    value: "50000"
+  - name: SURREAL_DATASTORE_CACHE_SIZE
+    value: "10000"
+  # Batch more SurrealKV writes together for better throughput
+  - name: SURREAL_SURREALKV_GROUPED_COMMIT_MAX_BATCH_SIZE
+    value: "8192"
+  # Safety net: prevent runaway queries/transactions from freezing the server
+  - name: SURREAL_QUERY_TIMEOUT
+    value: "30s"
+  - name: SURREAL_TRANSACTION_TIMEOUT
+    value: "15s"
+  - name: SURREAL_ALLOW_ORIGIN
+    value: "https://surrealdb-dev.master-tech.app"
+  # Log slow queries for visibility when debugging future issues
+  # - name: SURREAL_SLOW_QUERY_LOG_THRESHOLD
+  #   value: "500ms"
+
+
+#serviceAccount:
+# -- Specifies whether a service account should be created
+#create: false
+# -- Annotations to add to the service account
+#annotations: {}
+# If not set and create is true, a name is generated using the fullname template
+# -- The name of the service account to use.
+# @default -- `""` (defaults to the fullname template)
+#name: ""
+
+# -- Annotations to be added to SurrealDB pods
+podAnnotations: {}
+
+# -- Toggle and define pod-level security context.
+# @default -- `{}` (See [values.yaml])
+podSecurityContext: 
+ runAsUser: 999
+ runAsGroup: 999
+ fsGroup: 999
+
+securityContext: 
+ runAsNonRoot: true
+ readOnlyRootFilesystem: false
+ allowPrivilegeEscalation: false
+
+service:
+  # -- Service annotations
+  annotations: {}
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8001
+  # -- Target container port
+  targetPort: http
+
+ingress:
+  # -- Enable an ingress resource
+  enabled: true
+  # -- Defines which ingress controller will implement the resource
+  className: "traefik"
+  # -- Additional ingress annotations
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls.certresolver: cloudflare
+    traefik.ingress.kubernetes.io/router.middlewares: surreal-beta-surreal-mw@kubernetescrd
+  # -- List of hosts to be covered by ingress record
+  # @default -- `[]` (See [values.yaml])
+  hosts:
+    - host: surrealdb-dev.master-tech.app
+      paths:
+        - path: /
+          pathType: Prefix
+        - path: /rpc
+          pathType: Prefix
+
+  # -- Create default backend
+  defaultBackend: true
+  # -- List of TLS configuration
+  # @default -- `[]` (See [values.yaml])
+  tls: []
+
+# -- Resource limits and requests
+resources: {}
+#  requests: {}
+#  limits: {}
+
+# -- [Node selector]
+nodeSelector:
+  kubernetes.io/hostname: ubuntu-server2
+# -- [Tolerations] for use with node taints
+tolerations: []
+
+# -- Assign custom [affinity] rules to the deployment
+affinity: {}
+
+# Add volumes to the pod spec
+volumes:
+  - name: surrealdb-data
+    persistentVolumeClaim:
+      claimName: surrealdb-pvc
+  - name: surrealdb-buckets
+    persistentVolumeClaim:
+      claimName: surreal-buckets-pvc
+
+volumeMounts:
+  - name: surrealdb-data
+    mountPath: "/MastertechDB"
+  - name: surrealdb-buckets
+    mountPath: "/surrealbuckets"
