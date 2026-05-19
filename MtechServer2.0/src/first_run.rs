@@ -235,12 +235,20 @@ impl MtechServer {
         
         self.shared_ctx.receive_shared(frame, ctx);
         
-        // Handle live query connection errors - reconnect if needed (WASM only)
+        // Handle live query connection errors - reconnect if needed.
+        // MtechServer2.0 is the wasm-only browser admin, so the wasm gate
+        // stays.  The equivalent handler for the native desktop admin
+        // (Mastertech4.0) lives in Mastertech4.0/src/first_run.rs and
+        // calls `load_data` directly (its DB signin lives in a different
+        // path).  Both rely on `receive_shared_logic` flipping
+        // `live_queries_active = false` + `needs_reconnect = true`
+        // when a transient-looking error appears on the live-query
+        // error channel.
         #[cfg(target_arch = "wasm32")]
         if self.shared_ctx.needs_reconnect {
             log::info!("Reconnecting due to live query connection error...");
             self.shared_ctx.needs_reconnect = false;
-            
+
             // Re-run check_authentication which will reconnect and trigger load_data
             let db_tx = self.shared_ctx.db_tx.clone();
             match check_authentication(db_tx) {

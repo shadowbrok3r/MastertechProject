@@ -22,19 +22,19 @@ use tokio::sync::mpsc::UnboundedSender;
 pub enum TcpFrame {
     Binary(Vec<u8>),
     Text(String),
+    /// Pong response echoed back to a master-sent Ping.  Carries the
+    /// original 16-byte ping payload verbatim so the master can measure
+    /// round-trip and dedup by sequence number.
+    Pong(Vec<u8>),
 }
 
-/// Frame tag bytes used on the wire. Reader and writer must agree.
-pub const FRAME_TAG_BINARY: u8 = 0x01;
-pub const FRAME_TAG_TEXT: u8 = 0x02;
-
-/// Magic preamble sent by the admin (master) right after the TCP connect
-/// completes. Lets the client cheaply reject random port-scan probes
-/// before any deserialization happens.
-pub const HANDSHAKE_MAGIC: &[u8; 4] = b"MTRX";
-
-/// Wire protocol version. Bump when the framing changes.
-pub const HANDSHAKE_VERSION: u8 = 1;
+// Wire-protocol constants are owned by the `tcp_protocol` crate so the
+// agent (this binary) and the master (`displays`) cannot drift.  Re-export
+// them under the original names so existing call sites compile unchanged.
+pub use tcp_protocol::{
+    FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_TEXT, HANDSHAKE_MAGIC,
+    HANDSHAKE_VERSION_CURRENT as HANDSHAKE_VERSION,
+};
 
 pub enum ClientTransport {
     /// The relay path. Hands `WsMessage` straight to ewebsock.

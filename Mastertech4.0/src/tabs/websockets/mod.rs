@@ -90,7 +90,19 @@ impl MastertechContext{
 
         info!("websockets -> self.client_uuid.clone(): {:?}", self.client_uuid.clone());
 
-        let cust_id = if self.customer_data.name.is_empty() {
+        // Never publish a customer reference unless we actually have a
+        // resolved one.  The old logic was inverted (it wrote the
+        // default-constructed UUID when `name.is_empty()`), which is how
+        // the orphan reference `customer:⟨183b9e94-3f86-4e6e-8862-…⟩`
+        // ended up on DESKTOP-HQAF13L's connected_client row — that
+        // UUID has no corresponding customer row, and the diagnostic AI
+        // then trusted it as authoritative and stamped it onto a
+        // diagnostic_session.  Until the admin confirms the customer
+        // binding via the relink popup / open-service-order modal
+        // (Stage 4), the client side leaves this field unset.
+        let cust_id = if !self.customer_data.name.is_empty()
+            && !self.customer_data.cust_code.is_empty()
+        {
             Some(self.customer_data.id.clone())
         } else {
             None
@@ -128,14 +140,100 @@ impl MastertechContext{
         info!("websockets -> uuid: {:?}", connected_client.id.clone());
 
         spawn(async move {
-            let query_id = query_id::<ConnectedClient>(CONNECTED_CLIENT_TABLE.to_string(), uuid.clone()).await?;
-            info!("websockets -> query_id: {query_id:?}");
-            let res: Option<Record> = DATABASE
-                .create(uuid.clone())
-                .content::<ConnectedClient>(connected_client)
-                .await?;
+            // Explicit-SET partial update rather than `.create().content()`:
+            // `content()` is a full-row replace and would wipe admin-set
+            // fields (friendly_name, customer_locked, etc.) every time the
+            // egui client reconnects.  We write only the fields this call
+            // legitimately owns.
+            //
+            // *Why not MERGE with a serde_json patch*: the connected_client
+            // schema declares typed record fields — `assigned_user:
+            // record<user>`, `computer: record<computer>`, etc.  Encoding
+            // a `RecordId` through `serde_json::Value` produces a generic
+            // object (`{"table": "...", "key": ...}`) that Surreal won't
+            // coerce back into a `record<…>` literal, so the whole MERGE
+            // fails with "Couldn't coerce value for field `assigned_user`…
+            // Expected `none | record<user>`".  Binding each field
+            // separately via `.bind((name, typed_value))` keeps the type
+            // info Surreal needs.  `UPDATE $id SET …` creates the row if
+            // it doesn't exist (SurrealDB record-id semantics), so this
+            // still doubles as the initial CREATE.
+            let existing = query_id::<ConnectedClient>(
+                CONNECTED_CLIENT_TABLE.to_string(),
+                uuid.clone(),
+            )
+            .await?;
+            info!("websockets -> query_id: {existing:?}");
 
-            info!("websockets -> Upsert: {res:?}");
+            // Always-write fields.
+            let mut sets: Vec<&'static str> = vec![
+                "client_hash = $client_hash",
+                "connection_string = $connection_string",
+                "connected = $connected",
+                "last_update = $last_update",
+            ];
+            // Record-typed fields go in conditionally; binding `None` for
+            // a typed-record field still fails coercion, so we only add
+            // the SET clause when we actually have a value to write.
+            let has_assigned = connected_client.assigned_user.is_some();
+            if has_assigned {
+                sets.push("assigned_user = $assigned_user");
+            }
+            let has_computer = connected_client.computer.is_some();
+            if has_computer {
+                sets.push("computer = $computer");
+            }
+            // First-time-only fields: only seed on a brand-new row so we
+            // never overwrite a previously-recorded created_at /
+            // admin-set customer on reconnect.
+            let seed_new_row = existing.is_none();
+            let has_customer = seed_new_row && connected_client.customer.is_some();
+            if seed_new_row {
+                sets.push("created_at = $created_at");
+            }
+            if has_customer {
+                sets.push("customer = $customer");
+            }
+
+            let query = format!("UPDATE $id SET {} RETURN AFTER", sets.join(", "));
+
+            let mut q = DATABASE
+                .query(&query)
+                .bind(("id", uuid.clone()))
+                .bind(("client_hash", connected_client.client_hash.clone()))
+                .bind(("connection_string", connected_client.connection_string.clone()))
+                .bind(("connected", connected_client.connected))
+                .bind((
+                    "last_update",
+                    connected_client
+                        .last_update
+                        .clone()
+                        .unwrap_or_else(|| chrono::Utc::now().into()),
+                ));
+            if has_assigned {
+                // SAFETY: checked is_some above.
+                q = q.bind((
+                    "assigned_user",
+                    connected_client.assigned_user.clone().unwrap(),
+                ));
+            }
+            if has_computer {
+                q = q.bind(("computer", connected_client.computer.clone().unwrap()));
+            }
+            if seed_new_row {
+                q = q.bind((
+                    "created_at",
+                    connected_client
+                        .created_at
+                        .clone()
+                        .unwrap_or_else(|| chrono::Utc::now().into()),
+                ));
+            }
+            if has_customer {
+                q = q.bind(("customer", connected_client.customer.clone().unwrap()));
+            }
+            let res = q.await?;
+            info!("websockets -> partial-merge UPDATE: {res:?}");
             Ok::<(), Error>(())
         });
 
@@ -1886,8 +1984,8 @@ if (Test-Path $path) {{
 async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool) -> Result<(), Error>{
     while connected {
         let systeminfo: SystemInformation = get_sysinfo().await?;
-        sleep(Duration::from_secs_f32(0.4)).await;
-        info!("websockets -> {systeminfo:?}");
+        sleep(Duration::from_secs_f32(0.8)).await;
+        // info!("websockets -> {systeminfo:?}");
         tx.try_send(serialize_system_info(&systeminfo))?;
     }
     #[allow(unreachable_code)]

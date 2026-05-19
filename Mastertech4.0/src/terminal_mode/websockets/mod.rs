@@ -99,6 +99,24 @@ pub struct TerminalWebsocketClient {
     pub self_update_buffer: crate::remote_self_update::SelfUpdateBuffer,
 }
 
+/// Returns `true` when `command` is one of the bare-text control-plane
+/// signals the admin sends out-of-band (terminal viewer readiness,
+/// presence beacons, status pings) rather than something the user typed
+/// into the shell.  The single source of truth so the WebSocket relay
+/// path and the direct-TCP path filter the same set; if you add a new
+/// sentinel to `start_websocket_sender`'s text branch, add it here too.
+fn is_control_plane_sentinel(command: &str) -> bool {
+    matches!(
+        command,
+        "READY"
+            | "MASTER_CONNECTED"
+            | "MASTER_DISCONNECTED"
+            | "CLIENT_CONNECTED"
+            | "CLIENT_DISCONNECTED"
+    ) || command.starts_with("MASTER_STATUS:")
+        || command.starts_with("CLIENT_STATUS:")
+}
+
 impl TerminalWebsocketClient {
     // Constructor to initialize the client
     pub fn new() -> Self {
@@ -134,8 +152,33 @@ impl TerminalWebsocketClient {
     /// `command_tx` which the TCP session loop (`run_session_loop`) drains via
     /// `client.command_rx` and forwards back to the admin as binary frames
     /// (which the admin side displays as text in the shell history panel).
+    ///
+    /// Filters out the same control-plane sentinels the WebSocket relay path
+    /// handles inline (`READY`, `MASTER_CONNECTED`, etc.) — see
+    /// [`is_control_plane_sentinel`] — so they don't get executed as shell
+    /// commands when delivered over direct TCP.
     pub async fn handle_text_command(&mut self, command: String) {
         if command.is_empty() {
+            return;
+        }
+        // Drop control-plane sentinels before they reach the shell.
+        //
+        // The admin side sends a handful of bare text frames as in-band
+        // signals: `READY` (terminal viewer ready for buffers),
+        // `MASTER_CONNECTED` / `MASTER_DISCONNECTED`,
+        // `CLIENT_CONNECTED` / `CLIENT_DISCONNECTED`, and the
+        // `MASTER_STATUS:` / `CLIENT_STATUS:` prefixed variants.  Over the
+        // WebSocket relay path these are filtered up in
+        // `start_websocket_sender` before this function is called.  Over
+        // the direct-TCP path the listener calls us directly with the
+        // raw text frame, so without this filter the literal string
+        // "READY" gets piped into PowerShell stdin and the user sees
+        // `'READY' is not recognized as the name of a cmdlet…`.
+        //
+        // Doing it here (single chokepoint) instead of in tcp_listener.rs
+        // means every future transport is protected automatically.
+        if is_control_plane_sentinel(&command) {
+            log::debug!("handle_text_command: ignoring sentinel {command:?}");
             return;
         }
         if self.persistent_shell.is_none() {
@@ -2629,6 +2672,99 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 }
             }
 
+            // ── Open-service-order auto-link (Stage 2) ────────────────────
+            //
+            // Pull-based: the admin asks for the cached PrestaShop
+            // candidates the client built at startup (and the live
+            // ComputerData snapshot it has on hand), the client replies
+            // with the bundle.  `refresh = true` forces a fresh
+            // PrestaShop fetch (the admin's "Refresh suggestions"
+            // button); otherwise we serve from the in-memory cache.
+            Cmd::RequestOpenServiceCandidates { refresh } => {
+                use crate::filesystem::customer_lookup::{
+                    get_open_service_cache, lookup_customer_and_open_orders,
+                    set_open_service_cache, CachedOpenServiceLookup,
+                };
+                use crate::filesystem::oa_serial::{
+                    get_oa_style_serial, to_oa3_13digit,
+                };
+
+                if refresh {
+                    log::info!(
+                        "Cmd::RequestOpenServiceCandidates: refresh=true \
+                         — re-running PrestaShop lookup"
+                    );
+                    let serial13 = match get_oa_style_serial()
+                        .and_then(|raw| to_oa3_13digit(&raw))
+                    {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::warn!(
+                                "Cmd::RequestOpenServiceCandidates: \
+                                 OA serial unavailable: {e:?}"
+                            );
+                            String::new()
+                        }
+                    };
+                    if !serial13.is_empty() {
+                        match lookup_customer_and_open_orders(&serial13).await {
+                            Ok((match_, candidates)) => {
+                                set_open_service_cache(CachedOpenServiceLookup {
+                                    match_: Some(match_),
+                                    candidates,
+                                    resolved_at: std::time::SystemTime::now(),
+                                });
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Cmd::RequestOpenServiceCandidates: \
+                                     refresh lookup failed: {e:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                let cached = get_open_service_cache();
+                let live_specs = get_sysinfo_no_gpu().await.ok();
+                let response = Cmd::OpenServiceCandidatesResponse {
+                    match_: cached.as_ref().and_then(|c| c.match_.clone()),
+                    candidates: cached
+                        .as_ref()
+                        .map(|c| c.candidates.clone())
+                        .unwrap_or_default(),
+                    live_specs,
+                };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+
+            // Client → admin response is sender-side only; if the admin
+            // somehow echoes one back, drop it on the floor.
+            Cmd::OpenServiceCandidatesResponse { .. } => {}
+
+            // ── Application-layer heartbeat ──────────────────────────────
+            //
+            // Admin sends `AppPing` on a timer (~every 15 s) so it can
+            // detect plugin-host wedges that leave the kernel TCP socket
+            // technically alive.  We echo back `AppPong` with the same
+            // nonce + send time; the admin compares and times any drift.
+            // The whole round-trip flows through `handle_command` on
+            // both ends, so if the wasm PluginManager or the egui
+            // dispatcher is hung the pong stops arriving even though
+            // TCP keepalive still says "fine."
+            Cmd::AppPing { nonce, sent_at_ms } => {
+                let response = Cmd::AppPong { nonce, sent_at_ms };
+                if let Ok(payload) = encode_to_vec(&response, standard()) {
+                    sender.send(WsMessage::Binary(payload));
+                }
+            }
+            // Client never sends AppPing in the current shape; if one
+            // arrives (admin echoing its own pong, future bidirectional
+            // heartbeat), just drop.
+            Cmd::AppPong { .. } => {}
+
             Cmd::None => {},
             // ── Remote self-update (terminal-mode path) ──────────────────
             Cmd::MastertechSelfUpdateChunk { chunk_index, total_chunks, data } => {
@@ -2748,7 +2884,7 @@ pub async fn live_computer_stats(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>
             _ = tokio::time::sleep(Duration::from_secs_f32(0.4)) => {
                 match get_sysinfo_no_gpu().await {
                     Ok(systeminfo) => {
-                        log::info!("websockets -> {systeminfo:?}");
+                        // log::info!("websockets -> {systeminfo:?}");
                         tx.send(serialize_system_info(&systeminfo))?
                     }
                     Err(e) => log::error!("Error with live data {e:?}"),
@@ -2889,24 +3025,78 @@ pub async fn create_client(mut client: ConnectedClient) -> anyhow::Result<Connec
 
     log::info!("websockets -> check_id_existence: {check_id_existence:?}");
 
-    if let Ok(Some(_)) = existing_row {
-        log::info!("WE HAVE A CLIENT");
-        if client.friendly_name.is_some() {
-            let res: Option<ConnectedClient> = DATABASE
-                .upsert(client.id.clone())
-                .content(client.clone())
-                .await?
-                .take();
-            log::info!("websockets -> Updated existing client with friendly_name: {res:?}");
-        }
-    } else {
-        let res: Option<ConnectedClient> = DATABASE
-            .upsert(client.id.clone())
-            .content(client.clone())
-            .await?
-            .take();
+    // Persist the client via explicit SET clauses with per-field
+    // `.bind()`.  This used to be `UPDATE $id MERGE $patch` with a
+    // `serde_json::Value::Object` patch, but `serde_json::to_value(rid)`
+    // encodes a `RecordId` as a generic JSON object that SurrealDB
+    // rejects against typed record fields ("Couldn't coerce value for
+    // field `assigned_user`… Expected `none | record<user>` but found
+    // `{ key: …, table: 'user' }`").  Binding each field separately
+    // preserves the type info Surreal needs to coerce a RecordId into
+    // a typed `record<…>` literal.  `UPDATE $id SET …` still creates
+    // the row if it doesn't exist (Surreal record-id semantics), so
+    // this is the equivalent UPSERT.
+    let mut sets: Vec<&'static str> = vec![
+        "client_hash = $client_hash",
+        "connection_string = $connection_string",
+        "connected = $connected",
+        "last_update = time::now()",
+        "customer_locked = $customer_locked",
+    ];
+    let has_assigned = client.assigned_user.is_some();
+    if has_assigned {
+        sets.push("assigned_user = $assigned_user");
+    }
+    let has_computer = client.computer.is_some();
+    if has_computer {
+        sets.push("computer = $computer");
+    }
+    // Only write friendly_name / customer when this run actually
+    // resolved them — never write None, which under content() was
+    // wiping admin edits made via the relink popup.
+    let has_name = client
+        .friendly_name
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if has_name {
+        sets.push("friendly_name = $friendly_name");
+    }
+    let has_customer = client.customer.is_some();
+    if has_customer {
+        sets.push("customer = $customer");
+    }
 
-        log::info!("websockets -> Upsert: {res:?}");
+    let query = format!("UPDATE $id SET {} RETURN AFTER", sets.join(", "));
+    let mut q = DATABASE
+        .query(&query)
+        .bind(("id", client.id.clone()))
+        .bind(("client_hash", client.client_hash.clone()))
+        .bind(("connection_string", client.connection_string.clone()))
+        .bind(("connected", client.connected))
+        .bind(("customer_locked", client.customer_locked));
+    if has_assigned {
+        q = q.bind(("assigned_user", client.assigned_user.clone().unwrap()));
+    }
+    if has_computer {
+        q = q.bind(("computer", client.computer.clone().unwrap()));
+    }
+    if has_name {
+        q = q.bind(("friendly_name", client.friendly_name.clone().unwrap()));
+    }
+    if has_customer {
+        q = q.bind(("customer", client.customer.clone().unwrap()));
+    }
+    let merge_res = q.await;
+    match merge_res {
+        Ok(_) => log::info!(
+            "websockets -> create_client: partial-merge UPDATE applied for {:?}",
+            client.id
+        ),
+        Err(e) => log::warn!(
+            "websockets -> create_client: partial-merge UPDATE failed for {:?}: {e}",
+            client.id
+        ),
     }
     Ok(client)
 }

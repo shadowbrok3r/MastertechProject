@@ -146,6 +146,18 @@ pub struct DiagnosticEntry {
     pub detail: String,
     pub data: Option<serde_json::Value>,
     pub plugins_used: Vec<PluginUsageRef>,
+    /// Server-side vector for semantic similarity search across past
+    /// diagnostics (HNSW index lives on the SurrealDB side — see the
+    /// surrealdb-vector workspace skill).  The schema declares this as
+    /// a non-nullable `array`, so omitting it on insert yields:
+    /// `Couldn't coerce value for field 'embedding'… Expected 'array'
+    /// but found 'NONE'`.  We ship an empty array by default so writes
+    /// succeed before an embedding model has run; an offline backfill
+    /// job (or a future MCP "compute_embedding" tool) fills the real
+    /// vector in afterwards.  `#[serde(default)]` so older rows that
+    /// don't have the field round-trip cleanly through reads.
+    #[serde(default)]
+    pub embedding: Vec<f32>,
 }
 
 impl Default for DiagnosticEntry {
@@ -159,6 +171,7 @@ impl Default for DiagnosticEntry {
             detail: String::new(),
             data: None,
             plugins_used: Vec::new(),
+            embedding: Vec::new(),
         }
     }
 }

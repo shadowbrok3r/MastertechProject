@@ -10,8 +10,12 @@ pub mod task_modal;
 pub mod create_task_modal;
 pub mod tabs;
 pub mod duplicate_merge_modal;
+pub mod open_service_confirm_modal;
 
 pub use duplicate_merge_modal::DuplicateMergeModal;
+pub use open_service_confirm_modal::{
+    OpenServiceConfirmApply, OpenServiceConfirmModal, OpenServiceConfirmOutcome,
+};
 
 #[derive(Serialize, Default, Clone, Debug)]
 pub enum ModalType{
