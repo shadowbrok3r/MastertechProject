@@ -17,34 +17,74 @@ lazy_static::lazy_static! {
     );
 }
 
+/// Process-wide cache for the deterministic `ConnectedClient`
+/// identity (id / connection_string / client_hash / computer link).
+///
+/// Hostname + CPU brand don't change while the process is running, so
+/// hashing them once at first call and reusing the result is correct.
+/// The pre-cache shape ran `System::new_all()` + `sys.refresh_all()`
+/// on **every** invocation, which:
+///
+///   1. floods the log with `generate_client_id` lines (each call
+///      emits two log lines from inside `generate_client_id`), and
+///   2. blocks the tokio runtime worker for the duration of the
+///      sysinfo scan — which on Windows includes process / disk /
+///      memory enumeration and can take 100s of ms.  With many
+///      callers (reachability prober ⇒ `handle_session` ⇒
+///      `get_client_hash`; terminal-mode menu_bar/render ⇒ per-frame;
+///      spawn_direct_tcp_listener ⇒ per-bind) the runtime worker
+///      pool got starved enough that the TCP listener bind task
+///      sometimes never finished `spawn_blocking` and the listener
+///      never came up.
+///
+/// The cache fixes both: first call still does the scan, subsequent
+/// calls clone the cached value in nanoseconds.
+static CLIENT_HASH_CACHE: std::sync::OnceLock<ConnectedClient> = std::sync::OnceLock::new();
+
 pub fn get_client_hash() -> ConnectedClient {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    
-    let cpu = sys.cpus()[0].brand().trim().to_string();
-    let hostname = System::host_name().unwrap_or_default();
+    CLIENT_HASH_CACHE
+        .get_or_init(|| {
+            // First call only — the expensive scan.  Still uses
+            // `System::new_all()` because we want the freshest possible
+            // CPU brand string at process-start time (it can include
+            // tier/SKU detail that isn't present in cached PROCESSOR_
+            // env vars).  Subsequent calls skip all this.
+            let mut sys = System::new_all();
+            sys.refresh_all();
 
-    let client_hash = generate_client_id(hostname.clone(), cpu.trim().to_string());
-    let id = format!("{}:{}", hostname.clone(), client_hash.split_at(9).0);
+            let cpu = sys
+                .cpus()
+                .first()
+                .map(|c| c.brand().trim().to_string())
+                .unwrap_or_default();
+            let hostname = System::host_name().unwrap_or_default();
 
-    let client_id = RecordId::new(
-        CONNECTED_CLIENT_TABLE.to_string(), 
-        id.clone()
-    );
+            let client_hash = generate_client_id(hostname.clone(), cpu.trim().to_string());
+            let id = format!("{}:{}", hostname.clone(), client_hash.split_at(9).0);
 
-    let computer_id = RecordId::new(
-        COMPUTER_TABLE.to_string(), 
-        id.clone()
-    );
+            let client_id = RecordId::new(
+                CONNECTED_CLIENT_TABLE.to_string(),
+                id.clone(),
+            );
+            let computer_id = RecordId::new(
+                COMPUTER_TABLE.to_string(),
+                id.clone(),
+            );
 
-    ConnectedClient {
-        id: client_id.clone(),
-        client_hash,
-        connected: false,
-        connection_string: id.clone(),
-        computer: Some(computer_id.clone()),
-        ..Default::default()
-    }
+            log::info!(
+                "get_client_hash: cached client identity (id={id}, hostname={hostname:?})"
+            );
+
+            ConnectedClient {
+                id: client_id,
+                client_hash,
+                connected: false,
+                connection_string: id,
+                computer: Some(computer_id),
+                ..Default::default()
+            }
+        })
+        .clone()
 }
 
 static MACHINE_INSTANCE: std::sync::OnceLock<std::sync::Arc<machine::Machine>> = std::sync::OnceLock::new();
