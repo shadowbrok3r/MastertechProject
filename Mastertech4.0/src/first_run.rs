@@ -136,6 +136,41 @@ impl MasterTechApp {
         }
 
         self.context.shared_ctx.receive_shared_logic(frame, ctx);
+
+        // Live-query auto-respawn on SurrealDB blip.  Without this, a
+        // transient DB outage (e.g. the 13:56:35 ConnectionFailed event
+        // that stranded a connected client off the admin's list) would
+        // leave every LIVE SELECT subscription terminated and the
+        // in-memory connected_client/task/notification lists stale until
+        // app restart.  `receive_shared_logic` already flips
+        // `live_queries_active = false` + `needs_reconnect = true` when
+        // it sees a transient-looking error on the live-query error
+        // channel; here we re-call `load_data` so the spawn block in
+        // ui_data/mod.rs re-issues every LIVE SELECT against the
+        // (auto-reconnected) SurrealDB websocket.
+        //
+        // The SurrealDB SDK reconnects its websocket on its own, but
+        // LIVE subscriptions are per-connection state — they're gone
+        // after a reset and must be explicitly re-issued.  If the SDK
+        // hasn't reconnected yet by the time this runs, the respawn
+        // fails fast and trips the same error channel; the bounded(1)
+        // error channel naturally rate-limits the loop so we don't
+        // hammer.
+        if self.context.shared_ctx.needs_reconnect {
+            log::info!(
+                "Mastertech4.0: respawning live queries after SurrealDB blip..."
+            );
+            self.context.shared_ctx.needs_reconnect = false;
+            if let Some(user) = self.context.shared_ctx.current_user.clone() {
+                self.context.shared_ctx.load_data(ctx, &user);
+            } else {
+                log::warn!(
+                    "Mastertech4.0: needs_reconnect set but no current_user; \
+                     deferring respawn to next login"
+                );
+            }
+        }
+
         self.receive_prestashop(frame);
         self.receive_database(ctx, frame);
         self.receive_github(ctx);
@@ -307,15 +342,18 @@ impl MasterTechApp {
                     use crate::filesystem::customer_lookup::lookup_customer_by_serial;
                     use database::schema::utilities::query_id;
                     use database::schema::client::ConnectedClient;
+                    use database::DATABASE;
 
                     // Skip the PrestaShop/Everest network roundtrip when
                     // the DB already has a cached friendly_name for this
                     // OA3 — the product key is hardware-derived and won't
                     // change between sessions, so a prior successful
                     // lookup is authoritative until an admin clears it.
-                    if let Ok(Some(cached)) =
-                        query_id::<ConnectedClient>(CONNECTED_CLIENT_TABLE.to_string(), client_uuid)
-                            .await
+                    if let Ok(Some(cached)) = query_id::<ConnectedClient>(
+                        CONNECTED_CLIENT_TABLE.to_string(),
+                        client_uuid.clone(),
+                    )
+                    .await
                     {
                         if let Some(name) = cached.friendly_name.filter(|s| !s.is_empty()) {
                             log::info!(
@@ -329,12 +367,104 @@ impl MasterTechApp {
 
                     if let Ok(raw) = get_oa_style_serial() {
                         if let Ok(serial13) = to_oa3_13digit(&raw) {
-                            if let Ok(name) = lookup_customer_by_serial(&serial13).await {
-                                let _ = fname_tx.try_send(name);
+                            // Structured lookup: customer match + open
+                            // service orders in one call.  Falls back to
+                            // the legacy string-only Everest path if
+                            // PrestaShop fails (the Everest side doesn't
+                            // expose an open-service queue we trust).
+                            use crate::filesystem::customer_lookup::{
+                                lookup_customer_and_open_orders,
+                            };
+                            match lookup_customer_and_open_orders(&serial13).await {
+                                Ok((match_, candidates)) => {
+                                    // Persist friendly_name so subsequent
+                                    // runs hit the cache check above.
+                                    let res = DATABASE
+                                        .query(
+                                            "UPDATE $id SET friendly_name = $name, \
+                                             last_update = time::now()",
+                                        )
+                                        .bind(("id", client_uuid.clone()))
+                                        .bind(("name", match_.friendly_name.clone()))
+                                        .await;
+                                    match res {
+                                        Ok(_) => log::info!(
+                                            "first_run -> persisted friendly_name {:?} \
+                                             to {client_uuid:?}",
+                                            match_.friendly_name
+                                        ),
+                                        Err(e) => log::warn!(
+                                            "first_run -> failed to persist friendly_name \
+                                             to {client_uuid:?}: {e}"
+                                        ),
+                                    }
+                                    let _ = fname_tx.try_send(match_.friendly_name.clone());
+
+                                    // Stage 2: stash the resolution in the
+                                    // in-memory cache so a later
+                                    // `Cmd::RequestOpenServiceCandidates`
+                                    // from the admin can be answered
+                                    // without re-hitting PrestaShop.  The
+                                    // admin's "Refresh suggestions" button
+                                    // (Stage 3) overwrites this via the
+                                    // same code path.
+                                    use crate::filesystem::customer_lookup::{
+                                        set_open_service_cache,
+                                        CachedOpenServiceLookup,
+                                    };
+                                    log::info!(
+                                        "first_run -> OA3 match: customer={} (id={}), \
+                                         open candidates={}",
+                                        match_.friendly_name,
+                                        match_.id_customer,
+                                        candidates.len()
+                                    );
+                                    for c in &candidates {
+                                        log::info!(
+                                            "first_run -> candidate: #{} [{}] state={} \
+                                             ({}) checkin={:?}",
+                                            c.service_number,
+                                            c.doc_alias,
+                                            c.state_name,
+                                            c.state_id,
+                                            c.checkin_notes
+                                        );
+                                    }
+                                    set_open_service_cache(CachedOpenServiceLookup {
+                                        match_: Some(match_),
+                                        candidates,
+                                        resolved_at: std::time::SystemTime::now(),
+                                    });
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "first_run -> structured PrestaShop lookup \
+                                         failed: {e:?} — falling back to Everest \
+                                         friendly_name only"
+                                    );
+                                    if let Ok(name) =
+                                        lookup_customer_by_serial(&serial13).await
+                                    {
+                                        let res = DATABASE
+                                            .query(
+                                                "UPDATE $id SET friendly_name = $name, \
+                                                 last_update = time::now()",
+                                            )
+                                            .bind(("id", client_uuid.clone()))
+                                            .bind(("name", name.clone()))
+                                            .await;
+                                        if let Err(e) = res {
+                                            log::warn!(
+                                                "first_run -> Everest-fallback persist \
+                                                 failed for {client_uuid:?}: {e}"
+                                            );
+                                        }
+                                        let _ = fname_tx.try_send(name);
+                                    }
+                                }
                             }
                         }
                     }
-
                 });
             }
         }

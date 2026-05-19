@@ -48,18 +48,29 @@ pub trait Task {
     ) -> anyhow::Result<Option<T>, anyhow::Error>;
 }
 
-pub async fn query_id<T>(table: String, id: RecordId) -> Result<Option<T>, Error>
+pub async fn query_id<T>(_table: String, id: RecordId) -> Result<Option<T>, Error>
 where
     T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de> + SurrealValue
 {
+    // Select directly by record id.  The prior form was
+    // `SELECT * FROM $table WHERE id == $id`, where `$table` was bound to a
+    // plain String — that doesn't resolve to a table identifier under the
+    // SurrealDB 3.x type system, so the query silently returned `None` for
+    // every call after the 3.1.0-beta.3 bump.  That broke every "is this
+    // row already in the DB?" check: the OA3 friendly-name cache, the
+    // create-vs-update branch in `create_client`, etc., which in turn
+    // wiped admin-set fields like `friendly_name` on reconnect.
+    //
+    // Selecting by record id sidesteps the table-binding problem entirely
+    // and is more efficient (no scan + filter).  `_table` is kept in the
+    // signature so the 30+ callers compile unchanged.
     let record: Option<T> = DATABASE
-        .query("SELECT * FROM $table WHERE id == $id")
+        .query("SELECT * FROM ONLY $id")
         .bind(("id", id.clone()))
-        .bind(("table", table.clone()))
         .await?
         .take(0)?;
 
-    info!("schema/utilities.rs/query_id -> Record: {:?}\nSELECT * FROM ${id:?}", record);
+    info!("schema/utilities.rs/query_id -> Record: {:?}\nSELECT * FROM ONLY ${id:?}", record);
     Ok(record)
 }
 

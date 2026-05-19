@@ -1,7 +1,56 @@
 use anyhow::{anyhow, Context, Result};
+use database::schema::prestashop::order::{Order as FullOrder, OrderState};
+use database::schema::service_match::{
+    OpenServiceCandidate, PrestaSpecsSnapshot, PrestashopCustomerMatch,
+};
 use database::{PRESTASHOP_API_URL_WASM, SCAFFOLD_URL};
 use reqwest::{Client, Method};
 use serde::Deserialize;
+use std::sync::{Mutex, OnceLock};
+
+/// In-memory cache of the last successful PrestaShop lookup for this
+/// running Mastertech client.  Populated by `first_run.rs` after the
+/// OA3 lookup succeeds; consumed by the
+/// `Cmd::RequestOpenServiceCandidates` handler when the admin opens
+/// the suggestion modal.
+///
+/// Cleared by the admin-side "Refresh suggestions" button (which
+/// re-issues the lookup), and survives only the lifetime of the
+/// process — by design, per the product decision to keep suggestions
+/// in-memory only (no DB persistence of transient suggestions).
+pub static OPEN_SERVICE_CACHE: OnceLock<Mutex<Option<CachedOpenServiceLookup>>> =
+    OnceLock::new();
+
+/// Snapshot of one OA3 → PrestaShop resolution.  `match_` is `None`
+/// when PrestaShop failed and we only have an Everest friendly_name
+/// (the admin's modal should fall back to manual relink in that case).
+#[derive(Debug, Clone)]
+pub struct CachedOpenServiceLookup {
+    pub match_: Option<PrestashopCustomerMatch>,
+    pub candidates: Vec<OpenServiceCandidate>,
+    /// Wall-clock instant the lookup completed.  Useful so the admin
+    /// modal can show "Suggestions cached N minutes ago" and decide
+    /// whether to nudge a refresh.
+    pub resolved_at: std::time::SystemTime,
+}
+
+/// Replace the in-memory open-service cache.  Called by
+/// `first_run.rs` after each successful (or partial) OA3 lookup —
+/// including the admin-triggered "Refresh suggestions" path.
+pub fn set_open_service_cache(value: CachedOpenServiceLookup) {
+    let cell = OPEN_SERVICE_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = cell.lock() {
+        *guard = Some(value);
+    }
+}
+
+/// Read the current open-service cache (if populated).  Returns
+/// `None` when first-install hasn't completed the lookup yet, or when
+/// every lookup so far has hard-failed.
+pub fn get_open_service_cache() -> Option<CachedOpenServiceLookup> {
+    let cell = OPEN_SERVICE_CACHE.get_or_init(|| Mutex::new(None));
+    cell.lock().ok().and_then(|g| g.clone())
+}
 
 // ============================================
 // PrestaShop Models
@@ -37,6 +86,21 @@ struct Customer {
     lastname: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct CustomerOrdersResponse {
+    orders: Vec<CustomerOrderRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomerOrderRef {
+    id: serde_json::Value, // PrestaShop returns int or string depending on display
+}
+
+// `PrestashopCustomerMatch`, `OpenServiceCandidate`, and
+// `PrestaSpecsSnapshot` now live in `database::schema::service_match`
+// so the `displays::Cmd` wire enum can reference them without a
+// cyclic crate dep.  Re-export through the imports above.
+
 // ============================================
 // Everest Models
 // ============================================
@@ -65,12 +129,17 @@ struct EverestOrderHeader {
 /// Lookup customer information by OA3 13-digit serial number.
 /// Tries PrestaShop first, then falls back to Everest.
 /// Returns formatted string "FirstName LastName - OrderID" on success.
+///
+/// Kept for the existing call sites that only care about the display
+/// name.  New code that wants the structured match (customer id, open
+/// service orders, etc.) should call
+/// [`lookup_customer_and_open_orders`].
 pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
     // 1) Try PrestaShop first
     match request_prestashop(serial13).await {
-        Ok(result) => {
-            log::info!("PrestaShop customer lookup success: {}", result);
-            return Ok(result);
+        Ok(m) => {
+            log::info!("PrestaShop customer lookup success: {}", m.friendly_name);
+            return Ok(m.friendly_name);
         }
         Err(e) => {
             log::warn!("PrestaShop lookup failed: {:?} -> trying Everest fallback", e);
@@ -91,11 +160,173 @@ pub async fn lookup_customer_by_serial(serial13: &str) -> Result<String> {
     Err(anyhow!("Could not find customer for serial: {}", serial13))
 }
 
+/// Full PrestaShop lookup: resolves the customer by OA3 serial, then
+/// fetches the customer's *open* service orders (anything whose state
+/// is not `AcceptedByOdoo`) so the admin can pick which one — if any —
+/// to bind to this machine.
+///
+/// The function intentionally does *not* fall back to Everest for the
+/// open-order list: Everest tracks delivered orders, not the open
+/// service queue we care about for repair check-ins.  If PrestaShop
+/// fails outright we return the error and let the caller decide whether
+/// to surface the friendly_name via Everest separately.
+pub async fn lookup_customer_and_open_orders(
+    serial13: &str,
+) -> Result<(PrestashopCustomerMatch, Vec<OpenServiceCandidate>)> {
+    let m = request_prestashop(serial13)
+        .await
+        .context("PrestaShop customer lookup failed")?;
+
+    let candidates = lookup_open_service_orders_for_customer(&m.id_customer)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!(
+                "PrestaShop open-order lookup failed for customer {}: {e:?} \
+                 (returning empty candidates list — friendly_name still resolved)",
+                m.id_customer
+            );
+            Vec::new()
+        });
+
+    log::info!(
+        "PrestaShop open-order lookup: customer={} candidates={}",
+        m.id_customer,
+        candidates.len()
+    );
+    Ok((m, candidates))
+}
+
+/// Fetch every order for `id_customer` from PrestaShop, parse each one
+/// in full, and return the ones whose state is *not* `AcceptedByOdoo`.
+///
+/// Each candidate carries the bits the admin modal needs: order number,
+/// doc_alias (i.e. customer-facing label like "Sales Order" /
+/// "Configurator"), the timestamps, the check-in notes, the state
+/// name, and the parsed PrestaShop specs (used for the live-vs-presta
+/// merge preview before the admin approves computer-row creation).
+pub async fn lookup_open_service_orders_for_customer(
+    id_customer: &str,
+) -> Result<Vec<OpenServiceCandidate>> {
+    if id_customer.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = Client::new();
+
+    // List of order IDs for this customer.  `display=[id]` keeps the
+    // payload small — we hit the full /orders/{id} endpoint per match
+    // below to get the order_service association and current_state.
+    let list_url = format!(
+        "{PRESTASHOP_API_URL_WASM}/orders?output_format=JSON&filter[id_customer]={id_customer}&display=[id]"
+    );
+    log::info!("PrestaShop customer orders list URL: {list_url}");
+    let list: CustomerOrdersResponse = client
+        .get(&list_url)
+        .send()
+        .await?
+        .error_for_status()
+        .context("PrestaShop orders listing failed")?
+        .json()
+        .await
+        .context("Failed to parse PrestaShop orders listing")?;
+
+    // Walk each order, full-detail fetch, parse with the shared
+    // `Order` struct from the database crate so we get
+    // extract_drives/extract_motherboard/extract_os/extract_specs for
+    // free.  Best-effort: an individual order parse error is logged
+    // and skipped so one bad order can't sink the whole picker.
+    let mut candidates = Vec::new();
+    for entry in list.orders.iter() {
+        let id = match &entry.id {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            _ => continue,
+        };
+        match fetch_full_order(&client, &id).await {
+            Ok(order) => {
+                let state = OrderState::state_from_id_str(&order.current_state);
+                if matches!(state, OrderState::AcceptedByOdoo) {
+                    log::debug!(
+                        "PrestaShop order {id} is AcceptedByOdoo; skipping"
+                    );
+                    continue;
+                }
+                let candidate = build_candidate(order, state).await;
+                candidates.push(candidate);
+            }
+            Err(e) => {
+                log::warn!("PrestaShop full-order fetch failed for {id}: {e:?}");
+            }
+        }
+    }
+
+    // Newest-first so the admin modal can show the most recent order at
+    // the top.  `date_upd` is "YYYY-MM-DD HH:MM:SS" — lexical sort is
+    // equivalent to chronological for that format.
+    candidates.sort_by(|a, b| b.date_upd.cmp(&a.date_upd));
+    Ok(candidates)
+}
+
+/// GET /orders/{id}?display=full and parse with the canonical
+/// `Order` struct so we inherit every extract_* helper.
+async fn fetch_full_order(client: &Client, id_order: &str) -> Result<FullOrder> {
+    #[derive(Debug, Deserialize)]
+    struct FullOrderResponse {
+        order: FullOrder,
+    }
+    let url = format!(
+        "{PRESTASHOP_API_URL_WASM}/orders/{id_order}?output_format=JSON&display=full"
+    );
+    let resp: FullOrderResponse = client
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()
+        .context("PrestaShop full order fetch failed")?
+        .json()
+        .await
+        .context("Failed to parse PrestaShop full order")?;
+    Ok(resp.order)
+}
+
+async fn build_candidate(order: FullOrder, state: OrderState) -> OpenServiceCandidate {
+    // Service-order header in the associations carries the per-machine
+    // check-in notes that the shop technicians actually want to see.
+    let checkin_notes = order
+        .associations
+        .order_service
+        .first()
+        .map(|s| s.check_in_notes.clone())
+        .unwrap_or_default();
+    // Pull cpu/gpu/ram/serial/mfg via the existing async helper.
+    let extracted = order.extract_specs().await;
+
+    OpenServiceCandidate {
+        service_number: order.id.clone(),
+        doc_alias: order.order_type.clone(),
+        date_add: order.date_add.clone(),
+        date_upd: order.date_upd.clone(),
+        checkin_notes,
+        state_name: state.as_str().to_string(),
+        state_id: order.current_state.clone(),
+        specs: PrestaSpecsSnapshot {
+            cpu: extracted.cpu,
+            gpu: extracted.gpu,
+            ram: extracted.ram,
+            device_serial: extracted.device_serial,
+            device_mfg: extracted.device_mfg,
+            device_model: order.extract_model(),
+            motherboard_name: order.extract_motherboard().unwrap_or_default(),
+            operating_system: order.extract_os().unwrap_or_default(),
+            drives: order.extract_drives(),
+        },
+    }
+}
+
 // ============================================
 // PrestaShop Implementation
 // ============================================
 
-async fn request_prestashop(serial13: &str) -> Result<String> {
+async fn request_prestashop(serial13: &str) -> Result<PrestashopCustomerMatch> {
     let client = Client::new();
 
     // 1) /order_serial - lookup by serial number
@@ -161,10 +392,16 @@ async fn request_prestashop(serial13: &str) -> Result<String> {
         .await
         .context("Failed to parse customer response")?;
 
-    let first = resp3.customer.firstname.trim();
-    let last = resp3.customer.lastname.trim();
+    let first = resp3.customer.firstname.trim().to_string();
+    let last = resp3.customer.lastname.trim().to_string();
 
-    Ok(format!("{} {} - {}", first, last, id_order))
+    Ok(PrestashopCustomerMatch {
+        friendly_name: format!("{first} {last} - {id_order}"),
+        id_customer,
+        id_order,
+        first_name: first,
+        last_name: last,
+    })
 }
 
 // ============================================

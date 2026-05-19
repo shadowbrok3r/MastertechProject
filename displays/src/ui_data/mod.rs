@@ -259,21 +259,71 @@ impl crate::app_state::SharedContext {
     /// Called from `fn logic` so it runs even when the window is hidden.
     pub fn receive_shared_logic(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
-        
-        #[cfg(target_arch = "wasm32")]
+
+        // Drain the live-query error channel on every platform.  The
+        // previous `#[cfg(target_arch = "wasm32")]` gate meant that on
+        // native a SurrealDB blip would silently terminate every live
+        // stream (`listen_tasks`, `listen_connected_clients`, …),
+        // `live_queries_active` would stay `true`, and the admin would
+        // sit with a stale in-memory client list until app restart —
+        // exactly the symptom observed when the connected client
+        // disappeared after the 13:56:35 DB connection reset.
+        //
+        // Any stream-terminated error trips a respawn: we flip
+        // `live_queries_active` back to false so the next `load_data`
+        // call re-spawns the LIVE SELECT subscriptions, and set
+        // `needs_reconnect` so the host binary can re-run
+        // `check_authentication` + `load_data` from its top-level
+        // receive loop (the existing pattern in
+        // `MtechServer2.0/src/first_run.rs:239`).
         if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
             log::warn!("Live query connection error detected: {}", error_msg);
-            if error_msg.contains("connection reset") || error_msg.contains("reset") || error_msg.contains("I/O") {
-                log::warn!("Connection reset detected - setting needs_reconnect flag");
-                self.needs_reconnect = true;
-                self.toasts.add(Toast {
-                    kind: ToastKind::Warning,
-                    text: "Connection lost. Reconnecting...".into(),
-                    options: ToastOptions::default()
-                        .show_progress(true)
-                        .duration_in_seconds(4.0),
-                    style: ToastStyle::default(),
-                });
+            let looks_transient = error_msg.contains("connection reset")
+                || error_msg.contains("reset")
+                || error_msg.contains("I/O")
+                || error_msg.contains("ConnectionFailed")
+                || error_msg.contains("stream terminated");
+            if looks_transient {
+                // Cooldown: a single DB blip queues multiple errors (one per
+                // dead LIVE stream — there are five of them).  Each one
+                // ticks `receive_shared_logic`'s try_recv, so without a
+                // gate we respawn every stream up to five times in the
+                // same frame.  Real symptom in the 15:01:05 log: each
+                // LIVE SELECT opens twice.
+                //
+                // 10 s is long enough to swallow a burst of queued errors
+                // but short enough that the user notices recovery within
+                // the same toast window.
+                const RESPAWN_COOLDOWN: web_time::Duration =
+                    web_time::Duration::from_secs(10);
+                let now = web_time::Instant::now();
+                let in_cooldown = self
+                    .last_live_respawn_at
+                    .map(|t| now.duration_since(t) < RESPAWN_COOLDOWN)
+                    .unwrap_or(false);
+                if in_cooldown {
+                    log::debug!(
+                        "Live query respawn skipped — within cooldown window \
+                         (last respawn {:?} ago)",
+                        now.duration_since(self.last_live_respawn_at.unwrap())
+                    );
+                } else {
+                    log::warn!(
+                        "Connection reset detected - clearing live_queries_active \
+                         and signalling needs_reconnect"
+                    );
+                    self.live_queries_active = false;
+                    self.needs_reconnect = true;
+                    self.last_live_respawn_at = Some(now);
+                    self.toasts.add(Toast {
+                        kind: ToastKind::Warning,
+                        text: "Connection lost. Reconnecting...".into(),
+                        options: ToastOptions::default()
+                            .show_progress(true)
+                            .duration_in_seconds(4.0),
+                        style: ToastStyle::default(),
+                    });
+                }
             }
         }
         

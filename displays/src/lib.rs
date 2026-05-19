@@ -16,6 +16,7 @@ pub mod markdown_editor;
 pub mod file_viewer;
 pub mod viewports;
 pub mod app_state;
+pub mod open_service_suggestions;
 pub mod ui_tools;
 pub mod ui_data;
 pub mod scripts;
@@ -249,6 +250,23 @@ pub enum TaskUiActions {
     /// Open the diagnostics popup for a connected client by
     /// `connection_string`. Shows past `DiagnosticSession`s for this client.
     OpenClientDiagnostics(String),
+    /// Force-refresh the client's open-service-order suggestion bundle.
+    /// Sends `Cmd::RequestOpenServiceCandidates { refresh: true }` over
+    /// the active admin transport, which re-runs the PrestaShop lookup
+    /// on the client and replies with a fresh
+    /// `OpenServiceCandidatesResponse` that updates
+    /// `open_service_suggestions` for the matching `connection_string`.
+    /// Requires an active session; the action handler should toast if
+    /// none is open.
+    RefreshOpenServiceSuggestions(String),
+    /// Open the Stage-4 confirmation modal for binding a suggested
+    /// service order (by index) to the client's computer.  Carries the
+    /// `connection_string` so the modal can read the bundle from
+    /// `open_service_suggestions`.
+    OpenServiceCandidateModal {
+        connection_string: String,
+        candidate_index: usize,
+    },
     None,
 }
 
@@ -596,6 +614,45 @@ pub enum Cmd {
         stdout: String,
         stderr: String,
         duration_ms: u64,
+    },
+
+    // --- Application-layer heartbeat ---
+    //
+    // Separate from the kernel TCP keepalive (60s detection window, set
+    // up in `tcp_protocol::apply_tcp_options`) and from the
+    // tcp_listener's own `Ping`/`Pong` frame tags.  This heartbeat
+    // travels through the *full* Cmd dispatch path on both sides — if
+    // the wasm PluginManager or the egui input dispatcher wedges while
+    // the kernel socket stays alive, the AppPing round-trip stops and
+    // the admin learns the plugin host is hung even though TCP says
+    // "fine."  Carries an opaque nonce + send-time so the admin can
+    // measure round-trip latency and reject stale pongs.
+    AppPing { nonce: u64, sent_at_ms: u64 },
+    AppPong { nonce: u64, sent_at_ms: u64 },
+
+    // --- Open-service-order auto-link (Stage 2 of the OA3-driven
+    // service-binding feature).  Admin pulls the cached PrestaShop
+    // candidates the client built at startup; client replies with the
+    // match + open candidate list + live computer specs so the admin's
+    // confirmation modal can render a per-field live-vs-presta merge.
+    //
+    // Pull-based by design: the client never volunteers the data
+    // (avoids gratuitous traffic), the admin asks for it when it wants
+    // to surface the suggestion modal.  `refresh = true` forces a
+    // PrestaShop re-fetch (admin-side "Refresh suggestions" button),
+    // otherwise the cached value from first-install is returned.
+    RequestOpenServiceCandidates {
+        refresh: bool,
+    },
+
+    /// Client → admin: the bundle the confirmation modal renders.
+    /// `match_` is `None` when the OA3 lookup failed (no PrestaShop
+    /// match — admin should fall back to the manual relink popup);
+    /// `candidates` is empty when the customer has no open orders.
+    OpenServiceCandidatesResponse {
+        match_: Option<database::schema::service_match::PrestashopCustomerMatch>,
+        candidates: Vec<database::schema::service_match::OpenServiceCandidate>,
+        live_specs: Option<database::schema::SystemInformation>,
     },
 
     None,

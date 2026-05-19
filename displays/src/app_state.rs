@@ -278,6 +278,27 @@ pub struct SharedContext {
     /// `connection_string`. Cleared by the renderer after acting.
     #[serde(skip)]
     pub pending_admin_console_focus: Option<String>,
+    /// Set when the user clicks a suggestion chip on a connected-client
+    /// card.  Tuple of `(connection_string, candidate_index)`.  The
+    /// Stage-4 confirmation modal reads this to know which suggestion
+    /// to render and clears it once the modal is instantiated.
+    #[serde(skip)]
+    pub pending_open_service_candidate: Option<(String, usize)>,
+    /// Live Stage-4 confirmation modal.  At most one open at a time —
+    /// keeping it on `SharedContext` rather than inside `opened_modals`
+    /// because it doesn't share the `ModalType` enum's lifecycle (it
+    /// owns its own egui window via its `.show()` method).
+    #[serde(skip)]
+    pub open_service_confirm_modal: Option<crate::modals::OpenServiceConfirmModal>,
+    /// Staged outcome from the confirmation modal.  When the operator
+    /// clicks Confirm, the modal returns
+    /// `OpenServiceConfirmOutcome::Confirm(apply)`; we stash the
+    /// `apply` payload here so Stage 5's persistence layer can drain
+    /// it on the next frame.  Reject outcomes don't populate this — a
+    /// confirmed bind is the only thing that needs to persist.
+    #[serde(skip)]
+    pub pending_open_service_apply:
+        Option<crate::modals::OpenServiceConfirmApply>,
     /// Connected-client diagnostics popup target (`connection_string`).
     /// `Some` while the popup is open; `None` when closed.
     #[serde(skip)]
@@ -326,6 +347,16 @@ pub struct SharedContext {
     /// result is only meaningful for that admin's filter view.
     #[serde(skip)]
     pub reachability_cache: HashMap<String, crate::ui_data::reachability::ReachabilityStatus>,
+    /// Latest `Cmd::OpenServiceCandidatesResponse` keyed by the
+    /// connected client's `connection_string`.  Populated when the
+    /// admin's Web Console session for that client returns a response
+    /// to `Cmd::RequestOpenServiceCandidates`; consumed by the
+    /// connected-client card to render the suggestion chip and by the
+    /// Stage-4 confirmation modal.  In-memory only by design — no DB
+    /// persistence of transient suggestions.
+    #[serde(skip)]
+    pub open_service_suggestions:
+        HashMap<String, crate::open_service_suggestions::OpenServiceSuggestion>,
     /// Sender / Receiver the prober uses to ship probe results
     /// back to the UI thread. Drained per-frame in
     /// `receive_shared_ui`.
@@ -356,6 +387,15 @@ pub struct SharedContext {
     /// shutdown path.
     #[serde(skip)]
     pub live_queries_active: bool,
+    /// Wall-clock instant of the last auto-respawn fired by the
+    /// `live_query_error_rx` drain in `receive_shared_logic`.  Used as
+    /// a cooldown so two errors arriving in the same frame (or a
+    /// freshly-spawned stream immediately failing and re-queueing
+    /// another error) don't trigger a second respawn before the first
+    /// has settled — that's the bug behind every LIVE SELECT showing
+    /// up twice in the log after a SurrealDB blip.
+    #[serde(skip)]
+    pub last_live_respawn_at: Option<web_time::Instant>,
     /// In-memory snapshot of the connected-client list shared with the
     /// reachability prober. The prober was previously running its own
     /// `SELECT * FROM connected_client WHERE connected == true LIMIT 200`
@@ -503,6 +543,9 @@ impl SharedContext {
             last_read_notes: HashMap::new(),
             read_state_tx, read_state_rx,
             pending_admin_console_focus: None,
+            pending_open_service_candidate: None,
+            open_service_confirm_modal: None,
+            pending_open_service_apply: None,
             client_diagnostics_popup: None,
             client_diagnostics_sessions: Vec::new(),
             client_diagnostics_loading: false,
@@ -512,11 +555,13 @@ impl SharedContext {
             client_diagnostics_rx,
             client_diagnostics_selected: None,
             reachability_cache: HashMap::new(),
+            open_service_suggestions: HashMap::new(),
             reachability_tx,
             reachability_rx,
             fleet_agents: None,
             orchestrator_url: String::new(),
             live_queries_active: false,
+            last_live_respawn_at: None,
             clients_for_prober: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -757,6 +802,54 @@ impl SharedContext {
         if let Some(modal) = &self.close_modal {
             self.opened_modals.remove_entry(modal);
             self.close_modal = None;
+        }
+
+        // Stage-4: instantiate the open-service-confirm modal whenever
+        // a card click left a (`connection_string`, `candidate_index`)
+        // tuple on `pending_open_service_candidate`.  The modal reads
+        // the matching suggestion from the global store and renders
+        // independently; once the operator confirms or rejects we
+        // stash the resulting `apply` on `pending_open_service_apply`
+        // for Stage-5 to drain.
+        if let Some((cs, idx)) = self.pending_open_service_candidate.take() {
+            if self.open_service_confirm_modal.is_none() {
+                if let Some(suggestion) = crate::open_service_suggestions::get(&cs) {
+                    if let Some(m) = crate::modals::OpenServiceConfirmModal::new(
+                        cs, suggestion, idx,
+                    ) {
+                        self.open_service_confirm_modal = Some(m);
+                    } else {
+                        log::warn!(
+                            "open_service_confirm_modal: candidate_index out of range; \
+                             ignoring chip click"
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "open_service_confirm_modal: no cached suggestion for \
+                         connection_string; refresh from the card and try again"
+                    );
+                }
+            }
+        }
+        if let Some(modal) = self.open_service_confirm_modal.as_mut() {
+            if let Some(outcome) = modal.show(ctx) {
+                match outcome {
+                    crate::modals::OpenServiceConfirmOutcome::Confirm(apply) => {
+                        log::info!(
+                            "OpenServiceConfirm: operator confirmed bind for {} \
+                             service #{}",
+                            apply.connection_string,
+                            apply.candidate.service_number
+                        );
+                        self.pending_open_service_apply = Some(apply);
+                    }
+                    crate::modals::OpenServiceConfirmOutcome::Reject => {
+                        log::info!("OpenServiceConfirm: operator rejected bind");
+                    }
+                }
+                self.open_service_confirm_modal = None;
+            }
         }
     }
 }

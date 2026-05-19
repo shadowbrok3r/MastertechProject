@@ -45,38 +45,52 @@ fn last_update_within_secs(client: &ConnectedClient, max_age_secs: i64) -> bool 
 }
 
 /// Whether this client should appear in My Tasks "Connected Clients" and the
-/// Admin Console client list. Live TCP/WebSocket admin sessions always qualify.
+/// Admin Console client list.
 ///
-/// **Visibility = "online" not "direct-TCP reachable".** Earlier
-/// iterations gated this on whether the admin's TCP probe had
-/// successfully connected to the client's advertised
-/// `local_ip:tcp_port`. That turned out to be the wrong
-/// semantic: a client whose direct TCP we can't reach (admin and
-/// client on different LANs, NAT, firewall) is still fully
-/// usable via the WebSocket *relay* path. Hiding it produced
-/// the worst-of-both-worlds bug — a client that notified online
-/// would never appear in the list even though we could in fact
-/// open a session against it via relay.
+/// **Now: any row we've ever heard from stays in the list.**  Earlier
+/// iterations gated visibility on either a live admin transport OR
+/// `last_update` within 2 hours — meaning a customer machine that
+/// went stale (or a session that hit the kernel-TCP 60 s keepalive
+/// detection during a transient hang) would *disappear* from the
+/// connected-client list and the operator would think the agent was
+/// gone for good.  That's the wrong default: the operator wants to
+/// keep an eye on the row regardless of how stale the heartbeat is,
+/// and re-establish a session when the agent comes back.
 ///
-/// We're back to two requirements:
-///   1. Either a live admin session is already open, OR
-///   2. The DB heartbeat is recent enough that we expect the
-///      client to respond at all.
+/// Staleness is still visually signaled — the header dot in the card
+/// renders green / yellow / gray off `connected` + `last_update`, and
+/// the "Nm ago" subtext to the right shows the actual heartbeat age.
+/// A future operator-driven action (e.g. an "Archive client" button)
+/// can explicitly remove rows that are truly gone.
 ///
-/// Direct-TCP reachability is still tracked (the per-admin
-/// reachability prober) — it just feeds the UI as informational
-/// metadata, and (in a follow-up) the `ConnectClient` handler
-/// can use it to skip directly to relay when TCP is known to
-/// fail. It no longer affects *visibility*.
+/// Direct-TCP reachability remains a side-signal (the per-admin
+/// reachability prober) and the `ConnectClient` handler is welcome to
+/// skip TCP and go straight to relay when the probe says
+/// unreachable — it just no longer affects whether the card paints.
 #[must_use]
 pub fn should_show_connected_client_in_summaries(
     client: &ConnectedClient,
-    is_live_admin_transport: bool,
+    _is_live_admin_transport: bool,
 ) -> bool {
-    if is_live_admin_transport {
-        return true;
+    // Two failure modes worth filtering out, both effectively "this row
+    // never had a real client behind it":
+    //   - The connection_string is empty (initial-create race or a row
+    //     that was somehow truncated during a buggy upsert).
+    //   - The row has never been heartbeated (`last_update` is `None`)
+    //     AND was never `connected` even once.  Without the second
+    //     half, a freshly-created row with `connected = true` that
+    //     hasn't yet had time to land its first `last_update` would be
+    //     hidden, which is exactly the "fresh row, no DB heartbeat yet"
+    //     race we already fixed once at row-creation time.
+    if client.connection_string.trim().is_empty() {
+        return false;
     }
-    last_update_within_secs(client, CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS)
+    let never_connected =
+        client.last_update.is_none() && !client.connected && client.client_hash.is_empty();
+    if never_connected {
+        return false;
+    }
+    true
 }
 
 fn recently_active(client: &ConnectedClient) -> bool {
@@ -131,6 +145,7 @@ impl ClientCardData {
                 self.stats_row(ui);
                 ui.add_space(6.0);
                 self.button_row(ui, tx);
+                self.open_service_row(ui, tx);
                 if let Some(task) = self.linked_task.as_ref() {
                     ui.add_space(4.0);
                     self.linked_task_chip(ui, task, tx);
@@ -327,6 +342,105 @@ impl ClientCardData {
                 let _ = tx.try_send(TaskUiActions::OpenAdminConsole(
                     self.client.connection_string.clone(),
                 ));
+            }
+        });
+    }
+
+    /// Stage 3: render the open-service-order suggestion strip when
+    /// the client has emitted a `Cmd::OpenServiceCandidatesResponse`.
+    ///
+    /// Three states:
+    /// - no entry in the global store → nothing rendered (we either
+    ///   haven't asked yet, or no session is open).
+    /// - entry with `match_ == None` → small grey "no PrestaShop match"
+    ///   line + Refresh button (rare; usually means the OA3 key didn't
+    ///   resolve a customer).
+    /// - entry with candidates → one clickable chip per candidate
+    ///   (newest first per the sort in `customer_lookup`), each
+    ///   chip's click opens the Stage-4 confirmation modal.
+    fn open_service_row(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
+        let suggestion =
+            match crate::open_service_suggestions::get(&self.client.connection_string) {
+                Some(s) => s,
+                None => return,
+            };
+
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            // Customer-name secondary label.
+            if let Some(m) = suggestion.match_.as_ref() {
+                ui.label(
+                    RichText::new(format!(
+                        "Customer: {} {}",
+                        m.first_name, m.last_name
+                    ))
+                    .small()
+                    .color(Color32::from_rgb(180, 200, 230)),
+                );
+            } else {
+                ui.label(
+                    RichText::new("No PrestaShop customer match")
+                        .small()
+                        .weak(),
+                );
+            }
+
+            // Refresh button — emits an action the AdminConsole drains
+            // and turns into a Cmd::RequestOpenServiceCandidates {
+            // refresh: true } over the active session's transport.
+            if Button::new(RichText::new("⟳ Refresh").small())
+                .ui(ui)
+                .on_hover_text(
+                    "Force the client to re-query PrestaShop for the latest open service \
+                     orders.  Requires an active admin session.",
+                )
+                .clicked()
+            {
+                let _ = tx.try_send(TaskUiActions::RefreshOpenServiceSuggestions(
+                    self.client.connection_string.clone(),
+                ));
+            }
+        });
+
+        if suggestion.candidates.is_empty() && suggestion.match_.is_some() {
+            ui.label(
+                RichText::new("No open service orders for this customer")
+                    .small()
+                    .weak(),
+            );
+            return;
+        }
+
+        // One chip per candidate.  Compact: "#service_number (doc_alias)
+        // — state".  Hover shows the check-in notes (truncated).
+        ui.horizontal_wrapped(|ui| {
+            for (idx, c) in suggestion.candidates.iter().enumerate() {
+                let label = format!("#{} ({}) — {}", c.service_number, c.doc_alias, c.state_name);
+                let chip = Button::new(
+                    RichText::new(label).color(Color32::from_rgb(255, 215, 120)),
+                )
+                .small()
+                .ui(ui);
+                let hover = if c.checkin_notes.trim().is_empty() {
+                    format!(
+                        "Bind this service order to {}",
+                        self.client.connection_string
+                    )
+                } else {
+                    let mut n = c.checkin_notes.clone();
+                    if n.len() > 280 {
+                        n.truncate(280);
+                        n.push_str("…");
+                    }
+                    format!("Check-in notes:\n{n}")
+                };
+                let chip = chip.on_hover_text(hover);
+                if chip.clicked() {
+                    let _ = tx.try_send(TaskUiActions::OpenServiceCandidateModal {
+                        connection_string: self.client.connection_string.clone(),
+                        candidate_index: idx,
+                    });
+                }
             }
         });
     }

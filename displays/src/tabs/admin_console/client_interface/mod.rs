@@ -107,6 +107,15 @@ pub struct WebSocketClient {
     pub is_connected: bool,
     pub last_pong_time: Option<Instant>,
     pub connection_status: String,
+    /// Application-layer ping/pong state (separate from kernel TCP
+    /// keepalive and the `tcp_listener`'s framed Ping/Pong).  See the
+    /// `AppPing`/`AppPong` Cmd variants in `displays::Cmd` for the
+    /// rationale — this round-trip flows through the full Cmd dispatch
+    /// path so a wedged plugin host shows up here even when TCP looks
+    /// fine.  Both fields are updated by `WebSocketClient::receive`.
+    pub last_app_ping_sent: Option<Instant>,
+    pub last_app_pong_received: Option<Instant>,
+    pub app_ping_nonce: u64,
     /// Track if we're using persistent shell mode
     pub persistent_shell_mode: bool,
     /// AI-powered command completion
@@ -261,6 +270,9 @@ Get-WmiObject")
             resource_monitor: ResourceMonitor::default(),
             is_connected: false,
             last_pong_time: None,
+            last_app_ping_sent: None,
+            last_app_pong_received: None,
+            app_ping_nonce: 0,
             connection_status: "Disconnected".to_string(),
             persistent_shell_mode: false,
             ai_completion_enabled: true,

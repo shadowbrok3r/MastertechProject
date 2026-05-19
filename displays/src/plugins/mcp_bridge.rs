@@ -89,6 +89,32 @@ pub fn resolve_pending_request(request_id: &str, success: bool, result_json: Str
     }
 }
 
+/// Best-effort cleanup of a pending request id.  Called when
+/// `call_remote_plugin_tool` aborts (timeout, channel-closed, panic
+/// through the `?` operator) — without this, every timed-out call
+/// leaked a sender into `REMOTE_TOOL_PENDING` forever, eventually
+/// taking up a noticeable amount of memory after a long debugging
+/// session.  Idempotent: cheap no-op when the entry has already been
+/// resolved.
+fn unregister_pending_request(request_id: &str) {
+    if let Ok(mut map) = REMOTE_TOOL_PENDING.lock() {
+        map.remove(request_id);
+    }
+}
+
+/// RAII guard that calls [`unregister_pending_request`] on drop.
+/// Held next to the receiver inside `call_remote_plugin_tool` so the
+/// registry slot evaporates on every exit path, including the
+/// timeout-via-`?`-propagation path the previous code leaked through.
+struct PendingRequestGuard {
+    request_id: String,
+}
+impl Drop for PendingRequestGuard {
+    fn drop(&mut self) {
+        unregister_pending_request(&self.request_id);
+    }
+}
+
 // ─── Local script run request routing ─────────────────────────────────────────
 //
 // Bridges the MCP `scripts_run` tool to the host Mastertech4.0 Scripts tab
@@ -607,7 +633,7 @@ pub struct LogDiagnosticEntryParams {
     pub title: String,
     #[schemars(description = "Detailed description of the finding/action/resolution")]
     pub detail: String,
-    #[schemars(description = "Optional structured data (JSON) — e.g. event logs, command output")]
+    #[schemars(description = "Optional structured data — MUST be a JSON object or array, NOT a stringified JSON. Pass e.g. {\"complaint\":\"bsod\", \"events\": [...]} not \"{\\\"complaint\\\":...\\\"}\". The server will defensively parse stringified JSON but a real object is preferred.")]
     pub data: Option<serde_json::Value>,
     #[schemars(description = "Plugins used for this entry, e.g. [{\"plugin_id\": \"com.mastertech.hw-diag\", \"tool_name\": \"whea_errors\"}]")]
     pub plugins_used: Option<Vec<PluginUsageRefParam>>,
@@ -1352,7 +1378,11 @@ impl PluginToolProvider {
                 .cloned()
                 .ok_or_else(|| {
                     to_internal(format!(
-                        "No artifact for '{}'. Run plugin_compile first.",
+                        "No artifact for '{}' in the local ArtifactStore. \
+                         Populate it first with `fetch_plugin` (registry), \
+                         `plugin_compile` (cargo on this host), `plugin_compile_remote` \
+                         (worker / local fallback), or `plugin_emit_clock_wasm` \
+                         (clock plugin).",
                         p.plugin_id
                     ))
                 })?
@@ -1527,7 +1557,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "plugin_deploy_remote",
-        description = "Deploy a compiled WASM plugin to a remote Mastertech client over the admin WebSocket session. Requires: (1) a compiled artifact in the artifact store (run plugin_compile or plugin_emit_clock_wasm first), (2) an active Web Console session to the target (check remote_egui_list_targets). The remote client loads the plugin into its PluginManager without recompiling."
+        description = "Deploy a compiled WASM plugin to a remote Mastertech client over the admin WebSocket session. PRECONDITIONS (ALL required): (1) artifact in the local store — populate via `fetch_plugin` (registry), `plugin_compile`/`plugin_compile_remote` (build from source), or `plugin_emit_clock_wasm` (clock plugin); (2) active Web Console session to the target — check `remote_egui_list_targets`. If you see `No artifact for '<id>'`, you skipped step 1: call `search_plugins` then `fetch_plugin` for registry plugins, OR `plugin_source` + `plugin_compile_remote` for new code. The remote client loads the plugin into its PluginManager without recompiling."
     )]
     async fn plugin_deploy_remote(
         &self,
@@ -1540,7 +1570,12 @@ impl PluginToolProvider {
                 .cloned()
                 .ok_or_else(|| {
                     to_internal(format!(
-                        "No artifact for '{}'. Run plugin_compile or plugin_emit_clock_wasm first.",
+                        "No artifact for '{}' in the local ArtifactStore. \
+                         You must populate it BEFORE calling plugin_deploy_remote. \
+                         Pick one: \
+                         (a) `search_plugins` for an existing registry plugin and then `fetch_plugin` with its plugin_id; \
+                         (b) `plugin_source` + `plugin_compile` if Rust is on this host; \
+                         (c) `plugin_source` + `plugin_compile_remote` (auto-falls back to local cargo when no plugin_builder workers are live).",
                         p.plugin_id
                     ))
                 })?
@@ -1591,18 +1626,113 @@ impl PluginToolProvider {
             .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
 
         let rx = register_pending_request(request_id.clone());
+        // RAII: registry slot evaporates on any exit path (Ok, Err,
+        // panic propagation through `?`).  Without this every timeout
+        // leaks a sender into REMOTE_TOOL_PENDING.
+        let _guard = PendingRequestGuard { request_id: request_id.clone() };
 
         super::remote_egui_control::hub()
             .send_raw_binary(&p.connection_string, serialized)
             .map_err(to_internal)?;
 
-        let (success, result_json) = tokio::time::timeout(
-            std::time::Duration::from_secs(300),
-            rx,
-        )
-        .await
-        .map_err(|_| to_internal("Remote plugin tool call timed out after 300 seconds"))?
-        .map_err(|_| to_internal("Response channel closed (remote client may have disconnected)"))?;
+        log::info!(
+            "call_remote_plugin_tool start: req={request_id} cs={} plugin={} tool={}",
+            p.connection_string,
+            p.plugin_id,
+            p.tool_name
+        );
+
+        // Periodic stall warnings while waiting: the previous shape was a
+        // single 300 s `tokio::time::timeout` that revealed nothing about
+        // *which* request was stuck or *how long* it had been silent.
+        // Now we wake every 30 s, log a warn naming the request, and
+        // continue waiting up to the hard deadline.  Each wake is cheap
+        // (oneshot polls return immediately when nothing is ready) and
+        // lets the operator see in real time which tool call is the one
+        // holding everything else up.
+        const HARD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(300);
+        const STALL_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+        let started_at = std::time::Instant::now();
+        let mut rx = rx;
+        let result_pair: Option<(bool, String)> = loop {
+            let remaining = HARD_DEADLINE.saturating_sub(started_at.elapsed());
+            if remaining.is_zero() {
+                break None;
+            }
+            let next_tick = remaining.min(STALL_TICK);
+            match tokio::time::timeout(next_tick, &mut rx).await {
+                Ok(Ok(pair)) => break Some(pair),
+                Ok(Err(_)) => {
+                    // Sender dropped — receive-side resolve never came
+                    // and never will.  Bail out as a fast error rather
+                    // than waiting out the deadline.
+                    log::warn!(
+                        "call_remote_plugin_tool: response channel closed for req={request_id} \
+                         cs={} plugin={} tool={} after {:?} — remote client may have \
+                         disconnected mid-call",
+                        p.connection_string,
+                        p.plugin_id,
+                        p.tool_name,
+                        started_at.elapsed()
+                    );
+                    return Err(to_internal(format!(
+                        "Response channel closed for {}::{} req={request_id} \
+                         (remote client {} may have disconnected mid-call)",
+                        p.plugin_id, p.tool_name, p.connection_string
+                    )));
+                }
+                Err(_) => {
+                    let waited = started_at.elapsed();
+                    log::warn!(
+                        "call_remote_plugin_tool STALL: req={request_id} cs={} plugin={} \
+                         tool={} — no response for {:?}; deadline at {:?} total",
+                        p.connection_string,
+                        p.plugin_id,
+                        p.tool_name,
+                        waited,
+                        HARD_DEADLINE
+                    );
+                    // Loop and wait another STALL_TICK.
+                }
+            }
+        };
+
+        let (success, result_json) = match result_pair {
+            Some(pair) => {
+                log::info!(
+                    "call_remote_plugin_tool ok: req={request_id} cs={} plugin={} tool={} \
+                     after {:?}",
+                    p.connection_string,
+                    p.plugin_id,
+                    p.tool_name,
+                    started_at.elapsed()
+                );
+                pair
+            }
+            None => {
+                log::error!(
+                    "call_remote_plugin_tool TIMEOUT: req={request_id} cs={} plugin={} \
+                     tool={} after {:?} (hard deadline {:?})",
+                    p.connection_string,
+                    p.plugin_id,
+                    p.tool_name,
+                    started_at.elapsed(),
+                    HARD_DEADLINE
+                );
+                return Err(to_internal(format!(
+                    "Remote plugin tool call timed out after {:?}: \
+                     req={request_id} cs={} plugin={} tool={}.  \
+                     The kernel TCP socket may still be open (no peer-closed \
+                     event seen on the admin transport) — check the client log \
+                     for whether the call completed there but the response \
+                     never made it back.",
+                    HARD_DEADLINE,
+                    p.connection_string,
+                    p.plugin_id,
+                    p.tool_name
+                )));
+            }
+        };
 
         if success {
             let value: serde_json::Value = serde_json::from_str(&result_json)
@@ -1888,6 +2018,49 @@ impl PluginToolProvider {
             parse_record_id(s, database::schema::TICKET_TABLE)
         });
 
+        // Validate referenced rows actually exist before stamping them
+        // onto a new diagnostic session.  Without this, a malformed
+        // record id (the `parse_record_id` colon-stripping regression
+        // that produced `computer:b57a7e8f9` instead of
+        // `computer:DESKTOP-HQAF13L:b57a7e8f9`) silently lands and the
+        // session points at nothing.  Same protection for customer_id —
+        // the connected_client.customer field has historically been
+        // populated with default UUIDs that have no backing row, and
+        // an AI that trusts that value would create an orphan session.
+        //
+        // Failure surfaces as `invalid_params` so the AI can fix the
+        // call rather than retrying blind.
+        use database::schema::utilities::record_exists;
+        match record_exists(customer_id.clone()).await {
+            Ok(Some(true)) => {}
+            _ => {
+                return Err(ErrorData::invalid_params(
+                    format!(
+                        "create_diagnostic_session: customer_id {customer_id:?} does not \
+                         resolve to an existing customer row.  Use find_customer_by_email/phone \
+                         or follow connected_client.computer.customer; do NOT pass a raw UUID \
+                         from connected_client.customer without verifying it exists.",
+                    ),
+                    None,
+                ));
+            }
+        }
+        match record_exists(computer_id.clone()).await {
+            Ok(Some(true)) => {}
+            _ => {
+                return Err(ErrorData::invalid_params(
+                    format!(
+                        "create_diagnostic_session: computer_id {computer_id:?} does not \
+                         resolve to an existing computer row.  Resolve via \
+                         get_computer_details or connected_client.computer.  Note: the \
+                         canonical computer key includes the hostname, e.g. \
+                         `computer:DESKTOP-XYZ:abc123456`, NOT just the bare hash.",
+                    ),
+                    None,
+                ));
+            }
+        }
+
         let session = database::schema::DiagnosticSession {
             connection_string: p.connection_string,
             hostname: p.hostname,
@@ -1961,6 +2134,33 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<LogDiagnosticEntryParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        // Defensive-parse `data`: the AI sometimes hands us a *stringified*
+        // JSON object (e.g. data: "{\"complaint\":\"…\"}") instead of a
+        // real JSON object.  SurrealDB's `diagnostic_entry.data` field is
+        // typed `none | object`, so a String value gets rejected with
+        // "Couldn't coerce value for field `data`… Expected `none |
+        // object` but found `'{...}'`".  When the value is a String
+        // that parses as a JSON object/array, swap it for the parsed
+        // form before storage.  Bare strings (non-JSON-looking) are
+        // dropped to None — they're not what the schema expects either.
+        let data = match p.data {
+            None => None,
+            Some(serde_json::Value::String(s)) => {
+                match serde_json::from_str::<serde_json::Value>(&s) {
+                    Ok(v) if v.is_object() || v.is_array() => Some(v),
+                    _ => {
+                        log::warn!(
+                            "log_diagnostic_entry: `data` was a non-JSON string \
+                             ({} chars); dropping to None to satisfy schema",
+                            s.len()
+                        );
+                        None
+                    }
+                }
+            }
+            Some(v) => Some(v),
+        };
+
         let entry = database::schema::DiagnosticEntry {
             session_ref: database::schema::RecordId::new(
                 database::schema::DIAGNOSTIC_SESSION_TABLE,
@@ -1969,7 +2169,7 @@ impl PluginToolProvider {
             category: database::schema::DiagnosticCategory::from_str(&p.category),
             title: p.title,
             detail: p.detail,
-            data: p.data,
+            data,
             plugins_used: p.plugins_used.unwrap_or_default().into_iter().map(|pu| {
                 database::schema::PluginUsageRef {
                     plugin_id: pu.plugin_id,
@@ -2521,7 +2721,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "plugin_compile_remote",
-        description = "Dispatch a `cargo build --target <triple> --release` for a plugin to a remote `plugin_builder` worker by writing a row into the SurrealDB `build_job` table. Returns immediately with a `job_id`; poll `plugin_compile_status` to fetch the artifact bytes. Use this on hosts without Rust installed; `plugin_compile` (local) is the equivalent when Rust is available."
+        description = "Dispatch a `cargo build --target <triple> --release` for a plugin to a remote `plugin_builder` worker by writing a row into the SurrealDB `build_job` table. Returns immediately with a `job_id`; poll `plugin_compile_status` to fetch the artifact bytes. **Auto-falls-back to local `plugin_compile` when no live `plugin_builder` workers are present** (rows with `client_kind = 'build_worker'` heartbeating within the last 90 s) — in that case the response carries `status: 'done'` directly and no polling is needed."
     )]
     async fn plugin_compile_remote(
         &self,
@@ -2551,6 +2751,81 @@ impl PluginToolProvider {
 
         let target = p.target.unwrap_or_else(|| "wasm32-wasip1".to_string());
         let profile = p.profile.unwrap_or_else(|| "release".to_string());
+
+        // ── Worker-presence check + auto-fallback to local compile ──────
+        //
+        // The remote-build path is only useful when something is actually
+        // claiming jobs.  If the SurrealDB `connected_client` table has no
+        // rows with `client_kind = 'build_worker'` heartbeating within
+        // 90 s, the job we'd write would sit `pending` forever (and the AI
+        // would burn its retry budget polling `plugin_compile_status`).
+        // Instead, when there's no worker AND `cargo` is available on the
+        // host, transparently run the local compile inline and return the
+        // result as a synthetic `done` job — the AI's deploy step works
+        // unchanged because both paths populate the same ArtifactStore.
+        let workers_resp = database::DATABASE
+            .query(
+                "SELECT count() FROM connected_client \
+                 WHERE client_kind = 'build_worker' \
+                   AND last_update > time::now() - 90s \
+                 GROUP ALL",
+            )
+            .await;
+        let live_worker_count: i64 = match workers_resp {
+            Ok(mut r) => r
+                .take::<Option<serde_json::Value>>(0)
+                .ok()
+                .flatten()
+                .and_then(|v| v.get("count").and_then(|c| c.as_i64()))
+                .unwrap_or(0),
+            Err(e) => {
+                log::warn!(
+                    "plugin_compile_remote: worker-count probe failed: {e:?} \
+                     — assuming 0 workers and falling back to local compile"
+                );
+                0
+            }
+        };
+        if live_worker_count == 0
+            && target == "wasm32-wasip1"
+            && local_cargo_available().await
+        {
+            log::info!(
+                "plugin_compile_remote: no live build_worker rows — \
+                 transparently running local cargo compile for '{}'",
+                p.plugin_id
+            );
+            let (success, stdout, stderr, artifact_size) =
+                run_local_cargo_compile(&dir, &p.plugin_id, &self).await?;
+            return Ok(CallToolResult::success(vec![Content::json(
+                serde_json::json!({
+                    "job_id": format!("local-fallback:{}", p.plugin_id),
+                    "plugin_id": p.plugin_id,
+                    "target": target,
+                    "profile": profile,
+                    "status": if success { "done" } else { "failed" },
+                    "fell_back_to_local": true,
+                    "reason": "No live plugin_builder workers; ran local cargo",
+                    "artifact_bytes": artifact_size,
+                    "stdout_tail": tail_n_lines(&stdout, 20),
+                    "stderr_tail": tail_n_lines(&stderr, 40),
+                    "next": if success {
+                        "plugin_deploy or plugin_deploy_remote — artifact already in local store, no polling needed"
+                    } else {
+                        "fix source from stderr and retry plugin_compile_remote"
+                    },
+                }),
+            )
+            .map_err(to_internal)?]));
+        }
+        if live_worker_count == 0 && !local_cargo_available().await {
+            return Err(to_internal(
+                "plugin_compile_remote: no live plugin_builder workers AND \
+                 no local `cargo` on PATH.  Start a plugin_builder (see \
+                 `plugin_builder/Dockerfile` or `plugin_builder/k3s.yaml`) \
+                 or install Rust + the wasm32-wasip1 target on this host.",
+            ));
+        }
 
         // Resolve a worker pin if the caller gave us one. Either a
         // connection_string (we look up the matching row) or a raw
@@ -2681,6 +2956,21 @@ After initialize, POST notifications/initialized with the same Mcp-Session-Id be
 === AI Workflow ===
 Before writing a new WASM plugin, ALWAYS call search_plugins first to check if a suitable plugin already exists in the registry. If one exists, use fetch_plugin to download it and plugin_deploy / plugin_deploy_remote to deploy it.
 After compiling a useful plugin, call publish_plugin to store it in the SurrealDB registry for future sessions.
+
+=== Plugin Deploy Preconditions (MUST READ) ===
+`plugin_deploy` and `plugin_deploy_remote` need a compiled artifact in the local ArtifactStore first. If you see `No artifact for '<plugin_id>'. Run plugin_compile or plugin_emit_clock_wasm first.`, the artifact isn't loaded — you skipped a step. Pick ONE of these BEFORE calling any deploy tool:
+  1. **Use a registry plugin** (preferred when one exists): `search_plugins` → `fetch_plugin` with the registry plugin_id. `fetch_plugin` populates the artifact store directly; no compile needed.
+  2. **Compile locally**: `plugin_source` (write Rust source) → `plugin_compile`. Requires Rust + the `wasm32-wasip1` target on this host.
+  3. **Compile remotely**: `plugin_source` → `plugin_compile_remote` (auto-falls-back to local compile when no `plugin_builder` workers are live) → `plugin_compile_status` until `status == 'done'`.
+Only AFTER one of those three has populated the ArtifactStore is `plugin_deploy` / `plugin_deploy_remote` a valid call.
+
+=== Plugin / Worker SurrealDB Tables — Canonical Names ===
+When using `query_surrealdb` for plugin work, the ONLY valid tables are:
+  - `plugin_registry`     — published plugins. Use `search_plugins` instead unless you really need raw SQL.
+  - `build_job`           — remote-compile work queue (rows written by `plugin_compile_remote`).
+  - `connected_client`    — every running Mastertech / plugin_builder process. Filter `WHERE client_kind = 'build_worker'` for build workers; use `list_build_workers` for the curated view.
+  - `diagnostic_session` / `diagnostic_entry` — AI diagnostic work product; manage via the diagnostic tools (`create_diagnostic_session`, `log_diagnostic_entry`, …), NOT raw SQL.
+**There is NO `client_plugin` table.** A query against it returns "The table 'client_plugin' does not exist". If you wanted "plugins installed on a connected client", call `list_plugins` against the remote MCP via `call_remote_plugin_tool` or read `plugin_registry` for what's been published.
 
 === Known Plugins in Registry ===
 Always check search_plugins before building new plugins. Current registry (as of last sync):
@@ -3080,16 +3370,118 @@ fn tail_n_lines(s: &str, n: usize) -> String {
     }
 }
 
+/// Returns `true` iff `cargo` is on PATH AND `wasm32-wasip1` is an
+/// installed target.  Used by the `plugin_compile_remote` auto-fallback
+/// — if no live `plugin_builder` workers are present but this host has
+/// the toolchain, we transparently run the compile here.
+async fn local_cargo_available() -> bool {
+    let cargo_ok = tokio::process::Command::new("cargo")
+        .arg("--version")
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !cargo_ok {
+        return false;
+    }
+    let targets = tokio::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .await;
+    match targets {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            s.lines().any(|l| l.trim() == "wasm32-wasip1")
+        }
+        // If `rustup` isn't installed (e.g. system rust via apt), assume
+        // the target is present and let cargo error out informatively
+        // rather than gating early.
+        _ => true,
+    }
+}
+
+/// Runs the same `cargo build --target wasm32-wasip1 --release` that
+/// `plugin_compile` runs, stores the resulting artifact in the
+/// `ArtifactStore`, and returns `(success, stdout, stderr,
+/// artifact_size)` so the remote-fallback caller can return a synthetic
+/// `plugin_compile_status`-shaped response.
+async fn run_local_cargo_compile(
+    dir: &std::path::Path,
+    plugin_id: &str,
+    server: &PluginToolProvider,
+) -> Result<(bool, String, String, usize), ErrorData> {
+    let output = tokio::process::Command::new("cargo")
+        .args([
+            "build",
+            "--target",
+            "wasm32-wasip1",
+            "--release",
+            "--message-format=json",
+        ])
+        .current_dir(dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .await
+        .map_err(|e| to_internal(format!("Failed to run cargo: {e}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Ok((false, stdout, stderr, 0));
+    }
+
+    let crate_name = sanitize_id(plugin_id);
+    let release_dir = dir.join("target").join("wasm32-wasip1").join("release");
+    let primary = release_dir.join(format!("{}.wasm", crate_name.replace('-', "_")));
+    let fallback = release_dir.join(format!("{crate_name}.wasm"));
+    let bytes = if tokio::fs::try_exists(&primary).await.unwrap_or(false) {
+        tokio::fs::read(&primary)
+            .await
+            .map_err(|e| to_internal(format!("Read artifact: {e}")))?
+    } else {
+        tokio::fs::read(&fallback).await.map_err(|e| {
+            to_internal(format!(
+                "Read artifact: {e} (tried {} and {})",
+                primary.display(),
+                fallback.display()
+            ))
+        })?
+    };
+    let size = bytes.len();
+    server.try_lock_artifacts()?.store(plugin_id, bytes);
+    Ok((true, stdout, stderr, size))
+}
+
 /// Parse a Surreal record id from an MCP-supplied string. Accepts either
 /// the full `table:key` form or just the bare `key`, returning a record
 /// id on the requested table in either case. Used by the diagnostic
 /// tools to convert AI-supplied identifiers into the typed `RecordId`
 /// the schema now requires.
+///
+/// **Critical**: only strip the *first* colon (the table prefix).  The
+/// previous `split(':').last()` form stripped *every* colon, which
+/// silently truncated keys that themselves contain colons — like the
+/// canonical `computer:DESKTOP-HQAF13L:b57a7e8f9` (hostname:hash9) the
+/// rest of the codebase uses for client/computer records.  An AI tool
+/// call with that id would land in the DB as `computer:b57a7e8f9`
+/// (bare hash), orphaning the row off the real client.  Exact
+/// regression seen on diagnostic_session:91833f0d-… where the
+/// `computer_id` came in as `computer:b57a7e8f9` while the
+/// connected_client + computer table both use the full
+/// `DESKTOP-HQAF13L:b57a7e8f9` key.
 fn parse_record_id(s: &str, table: &'static str) -> database::schema::RecordId {
-    let key = if s.contains(':') {
-        s.split(':').last().unwrap_or(s).to_string()
-    } else {
-        s.to_string()
+    // Only treat the first segment as a table prefix when it actually
+    // looks like one (alphanumeric + underscore).  Otherwise the input
+    // is a raw key whose first segment happens to contain a colon (e.g.
+    // a hostname:hash9 key passed without the table prefix).
+    let key = match s.split_once(':') {
+        Some((prefix, rest)) if !prefix.is_empty()
+            && prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+        {
+            // Looks like `table:key…`, strip only the prefix.
+            rest.to_string()
+        }
+        _ => s.to_string(),
     };
     database::schema::RecordId::new(table, key)
 }

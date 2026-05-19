@@ -215,6 +215,61 @@ impl SharedContext {
                     info!("receive_ui_action -> OpenClientDiagnostics: {connection_string}");
                     self.client_diagnostics_popup = Some(connection_string);
                 }
+                TaskUiActions::RefreshOpenServiceSuggestions(connection_string) => {
+                    info!(
+                        "receive_ui_action -> RefreshOpenServiceSuggestions: {connection_string}"
+                    );
+                    // Fire `Cmd::RequestOpenServiceCandidates { refresh: true }`
+                    // over whichever admin transport is currently open to
+                    // this client.  The hub silently drops the call if no
+                    // session is active for that connection_string; we
+                    // surface a toast so the operator doesn't think the
+                    // button is broken.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let cmd = crate::Cmd::RequestOpenServiceCandidates { refresh: true };
+                        match bincode::serde::encode_to_vec(&cmd, bincode::config::standard()) {
+                            Ok(serialized) => {
+                                match crate::plugins::remote_egui_control::hub()
+                                    .send_raw_binary(&connection_string, serialized)
+                                {
+                                    Ok(()) => {
+                                        let _ = crate::get_toast_sender().try_send(
+                                            crate::ToastMessage::Info(format!(
+                                                "Refresh requested for {connection_string}",
+                                            )),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        let _ = crate::get_toast_sender().try_send(
+                                            crate::ToastMessage::Warning(format!(
+                                                "No active admin session to refresh \
+                                                 {connection_string}: {e}",
+                                            )),
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => log::error!(
+                                "RefreshOpenServiceSuggestions: bincode encode failed: {e}"
+                            ),
+                        }
+                    }
+                }
+                TaskUiActions::OpenServiceCandidateModal {
+                    connection_string,
+                    candidate_index,
+                } => {
+                    // Stage 4 owns the actual modal rendering; for
+                    // Stage 3 we just stash the selection so the modal
+                    // (when wired in the next step) knows what to show.
+                    info!(
+                        "receive_ui_action -> OpenServiceCandidateModal: \
+                         cs={connection_string} idx={candidate_index}"
+                    );
+                    self.pending_open_service_candidate =
+                        Some((connection_string, candidate_index));
+                }
                 TaskUiActions::None => (),
             };
         }

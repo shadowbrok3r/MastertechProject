@@ -69,7 +69,13 @@ jobs:
       DB: ${{ secrets.DB }}
       NS: ${{ secrets.NS }}
       ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
+      ODOO_JSONRPC_URL: ${{ secrets.ODOO_JSONRPC_URL }}
+      ODOO_DB: ${{ secrets.ODOO_DB }}
+      ODOO_UID: ${{ secrets.ODOO_UID }}
+      PRESTASHOP_API_URL: ${{ secrets.PRESTASHOP_API_URL }}
+      PRESTASHOP_API_URL_WASM: ${{ secrets.PRESTASHOP_API_URL_WASM }}
       SURREAL_GUEST_PASSWORD: ${{ secrets.SURREAL_GUEST_PASSWORD }}
+      XIDAX_ADMIN_URL: ${{ secrets.XIDAX_ADMIN_URL }}
     runs-on: ${{ matrix.runs_on }}
     steps:
       - uses: actions/checkout@v4
@@ -121,7 +127,13 @@ jobs:
       DB: ${{ secrets.DB }}
       NS: ${{ secrets.NS }}
       ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
+      ODOO_JSONRPC_URL: ${{ secrets.ODOO_JSONRPC_URL }}
+      ODOO_DB: ${{ secrets.ODOO_DB }}
+      ODOO_UID: ${{ secrets.ODOO_UID }}
+      PRESTASHOP_API_URL: ${{ secrets.PRESTASHOP_API_URL }}
+      PRESTASHOP_API_URL_WASM: ${{ secrets.PRESTASHOP_API_URL_WASM }}
       SURREAL_GUEST_PASSWORD: ${{ secrets.SURREAL_GUEST_PASSWORD }}
+      XIDAX_ADMIN_URL: ${{ secrets.XIDAX_ADMIN_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
@@ -155,6 +167,32 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Materialise .env for Docker build context
+        run: |
+          cat > .env << 'ENVEOF'
+          USER_SCOPE=${{ secrets.USER_SCOPE }}
+          DB=${{ secrets.DB }}
+          NS=${{ secrets.NS }}
+          SCAFFOLD_URL=${{ secrets.SCAFFOLD_URL }}
+          SCAFFOLD_USER=${{ secrets.SCAFFOLD_USER }}
+          SCAFFOLD_PASS=${{ secrets.SCAFFOLD_PASS }}
+          DB_URL=${{ secrets.DB_URL }}
+          STORAGE_URL=${{ secrets.STORAGE_URL }}
+          REGION=${{ secrets.REGION }}
+          DB_URL_DEV=${{ secrets.DB_URL_DEV }}
+          DB_URL_BETA=${{ secrets.DB_URL_BETA }}
+          WS_CLIENT_URL=${{ secrets.WS_CLIENT_URL }}
+          WS_MASTER_URL=${{ secrets.WS_MASTER_URL }}
+          ODOO_API_KEY=${{ secrets.ODOO_API_KEY }}
+          ODOO_JSONRPC_URL=${{ secrets.ODOO_JSONRPC_URL }}
+          ODOO_DB=${{ secrets.ODOO_DB }}
+          ODOO_UID=${{ secrets.ODOO_UID }}
+          PRESTASHOP_API_URL=${{ secrets.PRESTASHOP_API_URL }}
+          PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
+          SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
+          XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
+          ENVEOF
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -220,6 +258,11 @@ jobs:
           WS_CLIENT_URL=${{ secrets.WS_CLIENT_URL }}
           WS_MASTER_URL=${{ secrets.WS_MASTER_URL }}
           ODOO_API_KEY=${{ secrets.ODOO_API_KEY }}
+          ODOO_JSONRPC_URL=${{ secrets.ODOO_JSONRPC_URL }}
+          ODOO_DB=${{ secrets.ODOO_DB }}
+          ODOO_UID=${{ secrets.ODOO_UID }}
+          PRESTASHOP_API_URL=${{ secrets.PRESTASHOP_API_URL }}
+          PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
           SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
           XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
           ENVEOF
@@ -286,6 +329,11 @@ jobs:
           WS_CLIENT_URL=${{ secrets.WS_CLIENT_URL }}
           WS_MASTER_URL=${{ secrets.WS_MASTER_URL }}
           ODOO_API_KEY=${{ secrets.ODOO_API_KEY }}
+          ODOO_JSONRPC_URL=${{ secrets.ODOO_JSONRPC_URL }}
+          ODOO_DB=${{ secrets.ODOO_DB }}
+          ODOO_UID=${{ secrets.ODOO_UID }}
+          PRESTASHOP_API_URL=${{ secrets.PRESTASHOP_API_URL }}
+          PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
           SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
           XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
           ENVEOF

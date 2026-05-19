@@ -21,8 +21,10 @@
 use crate::filesystem::get_client_hash;
 use crate::terminal_mode::websockets::TerminalWebsocketClient;
 use crate::transport::{
-    ClientTransport, TcpFrame, FRAME_TAG_BINARY, FRAME_TAG_TEXT, HANDSHAKE_MAGIC, HANDSHAKE_VERSION,
+    ClientTransport, TcpFrame, FRAME_TAG_BINARY, FRAME_TAG_PING, FRAME_TAG_PONG, FRAME_TAG_TEXT,
+    HANDSHAKE_MAGIC,
 };
+use tcp_protocol::is_supported_version;
 use anyhow::{anyhow, Context, Result};
 use displays::{deserialize_command, EGUI_INPUT_TAG};
 use std::net::SocketAddr;
@@ -173,8 +175,13 @@ pub async fn accept_loop(listener: TcpListener) {
 ///    streams (e.g. sysinfo) flow back to the admin without the admin
 ///    having to drive the loop with another request.
 async fn handle_session(stream: TcpStream, peer: SocketAddr) -> Result<()> {
-    // Disable Nagle so small Cmd ack frames don't stall under load.
-    stream.set_nodelay(true).ok();
+    // SO_KEEPALIVE + TCP_NODELAY.  Keepalive is the safety net for a peer
+    // that vanishes silently (NAT timeout, cable yank) when no app-level
+    // pings are flowing yet; combined with the master's 15 s ping cadence
+    // both sides notice a dead peer within ~30 s.
+    if let Err(e) = tcp_protocol::apply_tcp_options(&stream) {
+        log::warn!("tcp_listener -> apply_tcp_options failed for {peer}: {e}");
+    }
 
     let (mut read_half, write_half) = stream.into_split();
 
@@ -262,14 +269,21 @@ async fn perform_handshake(
         ));
     }
 
-    // Version
+    // Version.  Accept any version in the supported window so a v1 agent
+    // can talk to a v2 master (and vice versa) — the version *equality*
+    // check this used to do produced "peer closed connection" loops the
+    // moment the master bumped its handshake byte to V2.  See
+    // tcp_protocol::is_supported_version.
     let version = tokio::time::timeout(Duration::from_secs(5), read_half.read_u8())
         .await
         .map_err(|_| anyhow!("handshake timeout reading version from {peer}"))?
         .map_err(|e| anyhow!("handshake read version: {e}"))?;
-    if version != HANDSHAKE_VERSION {
+    if !is_supported_version(version) {
         return Err(anyhow!(
-            "unsupported handshake version from {peer}: got {version}, expected {HANDSHAKE_VERSION}"
+            "unsupported handshake version from {peer}: got {version}, \
+             agent accepts {}..={}",
+            tcp_protocol::HANDSHAKE_VERSION_V1,
+            tcp_protocol::HANDSHAKE_VERSION_CURRENT,
         ));
     }
 
@@ -363,6 +377,13 @@ async fn run_session_loop(
                         // the same way the WebSocket relay path does.
                         client.handle_text_command(text).await;
                     }
+                    Ok(InboundFrame::Ping(payload)) => {
+                        // Master keepalive: echo the payload back as a Pong so
+                        // it can measure round-trip and confirm liveness.  We
+                        // don't enforce a payload length here — the master
+                        // already validates with `decode_ping_payload`.
+                        let _ = write_tx.send(TcpFrame::Pong(payload));
+                    }
                     Ok(InboundFrame::Eof) => {
                         log::info!("tcp_listener -> peer closed connection cleanly");
                         break Ok(());
@@ -440,6 +461,10 @@ async fn reader_task(
 enum InboundFrame {
     Binary(Vec<u8>),
     Text(String),
+    /// Master-side keepalive ping (v2+ protocol). Payload is the 16-byte
+    /// `[seq][epoch_ms]` blob from `tcp_protocol::encode_ping_payload`;
+    /// the session loop echoes it back as a `Pong`.
+    Ping(Vec<u8>),
     Eof,
 }
 
@@ -473,7 +498,22 @@ async fn read_frame(read_half: &mut tokio::net::tcp::OwnedReadHalf) -> Result<In
                 .map_err(|e| anyhow!("text frame not utf-8: {e}"))?;
             Ok(InboundFrame::Text(s))
         }
-        other => Err(anyhow!("unknown frame tag: 0x{other:02x}")),
+        FRAME_TAG_PING => Ok(InboundFrame::Ping(payload)),
+        // Per tcp_protocol docs: unknown tags MUST be ignored, not fatal —
+        // this is what lets a v1 agent survive talking to a v3 master.
+        // We currently don't expect Pong inbound (agent doesn't send Ping),
+        // so it falls through here too.
+        other => {
+            log::warn!(
+                "tcp_listener -> ignoring unknown frame tag: 0x{other:02x} \
+                 (payload {} bytes)",
+                payload.len()
+            );
+            // Re-read by recursing once.  Bounded because the next frame
+            // either parses cleanly, hits EOF, or fails on the length
+            // prefix — none of which recurse further.
+            Box::pin(read_frame(read_half)).await
+        }
     }
 }
 
@@ -486,6 +526,7 @@ async fn writer_task(
         let (tag, payload) = match frame {
             TcpFrame::Binary(b) => (FRAME_TAG_BINARY, b),
             TcpFrame::Text(t) => (FRAME_TAG_TEXT, t.into_bytes()),
+            TcpFrame::Pong(b) => (FRAME_TAG_PONG, b),
         };
         let total_len = (payload.len() as u64).saturating_add(1);
         if total_len > MAX_FRAME_BYTES as u64 {

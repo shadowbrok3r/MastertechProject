@@ -2,12 +2,16 @@
   "version": 1,
   "files": [
     {
+      "path": "database/schema/build_job.surql",
+      "hash": "9deef2070696e90405a4ed78499fc1c9464f1ed04a52313bcfee9e099ab62a1a"
+    },
+    {
       "path": "database/schema/computer.surql",
       "hash": "cc15a2df78507ba93f6b8b0f10e089c9819274a5f6e362491638a80e38e8d09b"
     },
     {
       "path": "database/schema/connected_client.surql",
-      "hash": "ddef566adc66c9802501e7ac2780e930c9de7ee2a31e9a0cb25b54d5d1274087"
+      "hash": "686a73d55d28bad9e4a9c0dbc6ab55ed82b8eccba530bbb32365dc46edf489ab"
     },
     {
       "path": "database/schema/hardware_component.surql",

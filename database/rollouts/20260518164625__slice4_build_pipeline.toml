@@ -1,0 +1,116 @@
+id = "20260518164625__slice4_build_pipeline"
+name = "slice4_build_pipeline"
+source_schema_hash = "1462d467a9e18bd0596c265bb29e0e13b20673c0c6fdb6ee77955a01407e59dc"
+target_schema_hash = "32cfc5d9c7381f23399e3f0f53905e4f5542904d60ccebbed1f73b5d1099b145"
+compatibility = "phased"
+renames = []
+
+[[steps]]
+id = "apply_expand_schema"
+phase = "start"
+kind = "apply_schema"
+files = [
+    "database/schema/build_job.surql",
+    "database/schema/connected_client.surql",
+]
+entities = []
+
+[[steps]]
+id = "rollback_expand_schema"
+phase = "rollback"
+kind = "remove_entities"
+files = []
+
+[[steps.entities]]
+kind = "event"
+scope = "build_job"
+name = "created_at_default"
+
+[[steps.entities]]
+kind = "event"
+scope = "build_job"
+name = "updated_at_touch"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "assigned_worker_id"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "cargo_toml"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "claimed_at"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "claimed_worker_id"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "created_at"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "duration_ms"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "lib_rs"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "plugin_id"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "profile"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "status"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "stderr"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "stdout"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "target"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "updated_at"
+
+[[steps.entities]]
+kind = "field"
+scope = "build_job"
+name = "wasm_bytes"
+
+[[steps.entities]]
+kind = "field"
+scope = "connected_client"
+name = "client_kind"
+
+[[steps.entities]]
+kind = "table"
+name = "build_job"

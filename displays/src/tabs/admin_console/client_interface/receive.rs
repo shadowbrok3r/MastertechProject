@@ -14,6 +14,51 @@ impl WebSocketClient {
             }
         }
 
+        // Application-layer heartbeat: fire an `AppPing` every 15 s
+        // while the transport is open and log a warn if no `AppPong`
+        // has been received for 60+ s.  Detects plugin-host wedges
+        // that leave the kernel socket alive — the case in the
+        // 16:13:01 log where the client's `display_connections` plugin
+        // completed locally but the response Cmd never made it back to
+        // the admin, and TCP keepalive stayed silent for the next
+        // minute+.  Distinct from `last_pong_time`, which is the WS
+        // Pong frame from `ewebsock`'s ping-pong (relay-only, doesn't
+        // exercise the plugin dispatch path).
+        if self.is_connected {
+            let now = web_time::Instant::now();
+            let due = self
+                .last_app_ping_sent
+                .map(|t| now.duration_since(t) >= std::time::Duration::from_secs(15))
+                .unwrap_or(true);
+            if due {
+                self.app_ping_nonce = self.app_ping_nonce.wrapping_add(1);
+                let sent_at_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let ping = Cmd::AppPing {
+                    nonce: self.app_ping_nonce,
+                    sent_at_ms,
+                };
+                self.transport.send(WsMessage::Binary(serialize_command(&ping)));
+                self.last_app_ping_sent = Some(now);
+            }
+            // Wedge detector: if we have ever received an AppPong and
+            // the last one is >60 s old, log once per minute so the
+            // operator (or a future UI badge) can act.
+            if let Some(last_pong) = self.last_app_pong_received {
+                let age = now.duration_since(last_pong);
+                if age >= std::time::Duration::from_secs(60) {
+                    log::warn!(
+                        "AppPong silence: no application-layer pong from {} for {:?} \
+                         — kernel TCP may still report alive while the plugin host is wedged",
+                        self.client.connection_string,
+                        age
+                    );
+                }
+            }
+        }
+
         self.explorer.receive();
         self.toolbox.receive();
 
@@ -222,30 +267,60 @@ impl WebSocketClient {
                 WsEvent::Opened => {
                     self.is_connected = true;
                     self.connection_status = "Connected".to_string();
-                    self.history.push(History { 
-                        from: "Client".to_string(), 
-                        message: "Connection opened".to_string(), 
+                    self.history.push(History {
+                        from: "Client".to_string(),
+                        message: "Connection opened".to_string(),
                         timestamp:  chrono::Local::now().to_rfc3339()
                     });
                     self.notifications += 1;
+
+                    // Stage 3: ask the client for its cached
+                    // open-service-order suggestions so the connected-
+                    // client card can render the badge/chip without
+                    // the operator hunting through menus.  Cheap pull
+                    // (refresh = false) — the client serves from the
+                    // in-memory cache populated by first_run.rs; the
+                    // explicit "Refresh suggestions" button below will
+                    // send refresh = true to force a PrestaShop
+                    // re-fetch.
+                    let req = Cmd::RequestOpenServiceCandidates { refresh: false };
+                    self.transport.send(WsMessage::Binary(serialize_command(&req)));
                 },
                 WsEvent::Closed => {
+                    // Loud log so the operator (and us, reading logs)
+                    // never has to guess WHEN the admin transport
+                    // closed.  Pairs with the new in-flight stall
+                    // warnings in `call_remote_plugin_tool` to make
+                    // these silences self-explanatory.
+                    log::warn!(
+                        "admin transport CLOSED for {} (last_app_pong={:?}, last_ws_pong={:?})",
+                        self.client.connection_string,
+                        self.last_app_pong_received
+                            .map(|t| web_time::Instant::now().duration_since(t)),
+                        self.last_pong_time
+                            .map(|t| web_time::Instant::now().duration_since(t)),
+                    );
                     self.is_connected = false;
                     self.connection_status = "Disconnected".to_string();
                     self.last_pong_time = None;
-                    self.history.push(History { 
-                        from: "Client".to_string(), 
-                        message: "Connection closed".to_string(), 
+                    self.last_app_pong_received = None;
+                    self.history.push(History {
+                        from: "Client".to_string(),
+                        message: "Connection closed".to_string(),
                         timestamp:  chrono::Local::now().to_rfc3339()
                     });
                     self.notifications += 1;
                 },
                 WsEvent::Error(err) => {
+                    log::warn!(
+                        "admin transport ERROR for {}: {err}",
+                        self.client.connection_string
+                    );
                     self.is_connected = false;
                     self.connection_status = format!("Error: {}", err);
-                    self.history.push(History { 
-                        from: "Client".to_string(), 
-                        message: format!("Connection error: {}", err), 
+                    self.history.push(History {
+                        from: "Client".to_string(),
+                        message: format!("Connection error: {}", err),
                         timestamp:  chrono::Local::now().to_rfc3339()
                     });
                     self.notifications += 1;
@@ -657,6 +732,45 @@ impl WebSocketClient {
                         log::info!("Remote plugin tool result: {plugin_id}::{tool_name} req={request_id} success={success}");
                         #[cfg(not(target_arch = "wasm32"))]
                         crate::plugins::mcp_bridge::resolve_pending_request(&request_id, success, result_json);
+                    } else if let Cmd::AppPong { nonce, sent_at_ms } = cmd {
+                        // Application-layer pong from the remote
+                        // client.  Update the last-pong instant and
+                        // compute the round-trip latency in ms (only
+                        // for log clarity — no UI surface yet).  We
+                        // don't strictly check the nonce matches our
+                        // most-recent ping; if the client pongs an
+                        // older nonce, that still proves the dispatch
+                        // loop is alive, which is what we care about.
+                        self.last_app_pong_received = Some(web_time::Instant::now());
+                        let now_ms = web_time::SystemTime::now()
+                            .duration_since(web_time::SystemTime::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(sent_at_ms);
+                        let rtt_ms = now_ms.saturating_sub(sent_at_ms);
+                        log::debug!(
+                            "AppPong from {}: nonce={nonce} rtt={rtt_ms}ms",
+                            self.client.connection_string
+                        );
+                    } else if let Cmd::OpenServiceCandidatesResponse { match_, candidates, live_specs } = cmd {
+                        // Stash the suggestion in the global store keyed
+                        // by this session's connection_string.  The card
+                        // UI in tabs::tasks::client_cards reads from
+                        // there each frame to render the chip; the
+                        // Stage-4 confirmation modal reads the full
+                        // payload (incl. live_specs) for the merge
+                        // preview.
+                        log::info!(
+                            "OpenServiceCandidatesResponse for {}: match={} candidates={}",
+                            self.client.connection_string,
+                            match_.is_some(),
+                            candidates.len()
+                        );
+                        crate::open_service_suggestions::put(
+                            &self.client.connection_string,
+                            crate::open_service_suggestions::OpenServiceSuggestion::from_cmd(
+                                match_, candidates, live_specs,
+                            ),
+                        );
                     } else {
                         let _ = self.receive_cmd_tx.try_send(cmd);
                     }
