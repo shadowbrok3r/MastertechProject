@@ -1,5 +1,5 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}};
-use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
+use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}}};
 use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
@@ -23,7 +23,12 @@ pub struct MastertechContext {
     pub order_rows: Vec<database::schema::prestashop_schema::OrderRow>,
     pub url: Option<String>,
     pub error: String,
-    pub frontend: Option<WebConsoleFrontend>,
+    // `frontend: Option<WebConsoleFrontend>` was removed when the
+    // GUI-side WebSocket-relay client (`tabs/websockets/mod.rs`)
+    // was deleted in favor of the direct-TCP `tcp_listener` path
+    // (with `terminal_mode::websockets::create_client` handling the
+    // DB row creation).  The egui frame broadcast in `first_run`
+    // now goes straight to `tcp_listener::broadcast_egui_frame`.
 
     #[cfg(target_os = "windows")]
     pub minidump_app: MiniDumpApp,
@@ -51,7 +56,6 @@ pub struct MastertechContext {
     pub send_specs: bool,
     pub spinner: bool,
     pub show_deferred_viewport: Arc<AtomicBool>,
-    pub show_ws_viewport: Arc<AtomicBool>,
     pub read_notifications: bool,
     pub task_data: LiveTaskPayload,
     pub ticket_data: TicketData,
@@ -109,10 +113,12 @@ pub struct MastertechContext {
     pub plugin_manager: Arc<RwLock<PluginManager>>,
     pub plugin_manager_registered: bool,
     pub plugin_cmd_rx: Receiver<PluginClientCommand>,
-    pub ws_auto_connected: bool,
     pub egui_frame_rx: Option<Receiver<displays::plugins::EguiFrameMessage>>,
     pub egui_input_tx: Option<Sender<displays::plugins::EguiInputEvent>>,
-    pub last_reconnect_attempt: Option<std::time::Instant>,
+    // `ws_auto_connected` and `last_reconnect_attempt` were retired
+    // along with the GUI-side WS-relay (`tabs/websockets/mod.rs`).
+    // The direct-TCP `tcp_listener` path owns the connection now and
+    // tracks its own retry state in `admin_transport.rs`.
 }
 
 /// State machine for TUR submission workflow
@@ -196,7 +202,6 @@ impl MasterTechApp {
             order_rows: Vec::new(),
             url: Some(ws_url),
             error: Default::default(),
-            frontend: None,
 
             keys: GetKeysResponse {
                 webroot_key: "Webroot Key".to_string(),
@@ -265,7 +270,6 @@ impl MasterTechApp {
             spinner: false,
             read_notifications: false,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
-            show_ws_viewport: Arc::new(AtomicBool::new(false)),
             added_nodes: Default::default(),
 
             prestashop_api_tx, prestashop_api_rx,
@@ -302,10 +306,8 @@ impl MasterTechApp {
             plugin_manager,
             plugin_manager_registered: false,
             plugin_cmd_rx,
-            ws_auto_connected: false,
             egui_frame_rx: None,
             egui_input_tx: None,
-            last_reconnect_attempt: None,
         };
         
         let context = mastertech_context;

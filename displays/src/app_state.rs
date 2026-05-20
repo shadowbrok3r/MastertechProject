@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
@@ -7,6 +7,11 @@ use database::{live_data::Action, schema::RecordId};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use serde::{Deserialize, Serialize};
 use anyhow::Error;
+// `Spawner` (the trait carrying `spawn`) is already pulled in via the
+// top-level `use crate::{... Spawner};` above; we just need
+// `PlatformSpawner` (the struct) in scope so the Stage-5 apply drain at
+// the bottom of `handle_modals` can call `PlatformSpawner::spawn(...)`.
+use crate::PlatformSpawner;
 
 /// Lightweight fleet-agent summary fetched from the orchestrator API.
 /// Displayed in the Fleet Dashboard tab for warehouse employees.
@@ -148,6 +153,50 @@ pub struct SharedContext {
     pub live_query_error_rx: Receiver<String>,
     /// {Flag indicating we need to reconnect due to a connection reset}
     pub needs_reconnect: bool,
+
+    /// Async reconnect result channel for WASM. The reconnect task runs
+    /// inside `wasm_bindgen_futures::spawn_local` (no JoinHandle) and posts
+    /// its `Ok(())` / `Err(reason)` here so the next frame can call
+    /// `load_data` (or bump the failure counter) on the main thread where
+    /// `&mut self` is available.
+    #[serde(skip)]
+    pub reconnect_result_tx: Sender<Result<(), String>>,
+    #[serde(skip)]
+    pub reconnect_result_rx: Receiver<Result<(), String>>,
+    /// Gate so a transient-error storm doesn't start five overlapping
+    /// reconnect tasks. Cleared in the result drain.
+    #[serde(skip)]
+    pub reconnect_in_progress: bool,
+    /// Consecutive reconnect failures. Reset to 0 on a successful
+    /// reconnect; when it reaches 3, `show_reload_prompt` flips so the
+    /// user gets an action-required banner.
+    #[serde(skip)]
+    pub reconnect_attempts: u32,
+    /// When true, `receive_shared_ui` renders the manual-reload banner.
+    #[serde(skip)]
+    pub show_reload_prompt: bool,
+
+    /// `document.visibilitychange` signal. `true` = visible, `false` =
+    /// hidden. Drained in `receive_shared_logic`: on hidden we stamp
+    /// `tab_hidden_at`, on visible we measure the hide duration and only
+    /// force a `window.location.reload()` when the tab was hidden for
+    /// longer than `LONG_HIDE_AUTO_RELOAD`. Short hides (tab-switching)
+    /// no longer trip any reconnect — the only authoritative reconnect
+    /// signal is `live_query_error_rx`.
+    #[serde(skip)]
+    pub visibility_signal_tx: Sender<bool>,
+    #[serde(skip)]
+    pub visibility_signal_rx: Receiver<bool>,
+    /// Wall-clock instant the tab last went `visibility=hidden`. None
+    /// until the first hide event. Used by `receive_shared_logic` to
+    /// decide whether a return-to-foreground qualifies for the
+    /// long-hide auto-reload path.
+    #[serde(skip)]
+    pub tab_hidden_at: Option<web_time::Instant>,
+    /// One-shot guard so the `visibilitychange` listener is only
+    /// registered with the DOM once across `first_run` invocations.
+    #[serde(skip)]
+    pub visibility_listener_installed: bool,
     
     /// {UI actions channel for communication between UI components and main function}
     #[serde(skip)]
@@ -299,6 +348,12 @@ pub struct SharedContext {
     #[serde(skip)]
     pub pending_open_service_apply:
         Option<crate::modals::OpenServiceConfirmApply>,
+    /// Entity-link resolution modal (MCP block or admin manual link).
+    /// Desktop + `tokio` only — not built into the wasm bundle.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[serde(skip)]
+    pub entity_link_resolution_modal:
+        Option<crate::modals::EntityLinkResolutionModal>,
     /// Connected-client diagnostics popup target (`connection_string`).
     /// `Some` while the popup is open; `None` when closed.
     #[serde(skip)]
@@ -396,6 +451,17 @@ pub struct SharedContext {
     /// up twice in the log after a SurrealDB blip.
     #[serde(skip)]
     pub last_live_respawn_at: Option<web_time::Instant>,
+    /// Wall-clock instant of the last `refresh_client_list()` call.
+    /// The admin's connected-client UI is normally driven by the
+    /// `LIVE SELECT * FROM connected_client` subscription, but a
+    /// missed live event (transient blip, subscription stall between
+    /// retries) historically meant the UI got permanently stuck on
+    /// stale state until the operator clicked "Clients" or restarted
+    /// Mastertech.  `receive_shared_logic` now re-runs the one-shot
+    /// fetch every 60 s as a self-heal fallback; this field
+    /// rate-limits that.
+    #[serde(skip)]
+    pub last_client_list_refresh: Option<web_time::Instant>,
     /// In-memory snapshot of the connected-client list shared with the
     /// reachability prober. The prober was previously running its own
     /// `SELECT * FROM connected_client WHERE connected == true LIMIT 200`
@@ -430,7 +496,14 @@ impl SharedContext {
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) = channel::unbounded::<(Action, Notification)>();
         let (live_user_tx, live_user_rx) = channel::unbounded::<(Action, User)>();
-        let (live_query_error_tx, live_query_error_rx) = channel::bounded::<String>(1);
+        // Was bounded(1) — that silently dropped 4 of 5 try_sends when all
+        // live streams errored at the same instant (Cloudflare WS reset).
+        // The 10s cooldown in `receive_shared_logic` still coalesces the
+        // burst, so unbounded is safe and far less brittle.
+        let (live_query_error_tx, live_query_error_rx) = channel::unbounded::<String>();
+        let (reconnect_result_tx, reconnect_result_rx) =
+            channel::unbounded::<Result<(), String>>();
+        let (visibility_signal_tx, visibility_signal_rx) = channel::unbounded::<bool>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
@@ -491,6 +564,13 @@ impl SharedContext {
             live_user_tx, live_user_rx,
             live_query_error_tx, live_query_error_rx,
             needs_reconnect: false,
+            reconnect_result_tx, reconnect_result_rx,
+            reconnect_in_progress: false,
+            reconnect_attempts: 0,
+            show_reload_prompt: false,
+            visibility_signal_tx, visibility_signal_rx,
+            tab_hidden_at: None,
+            visibility_listener_installed: false,
             new_note_tx, new_note_rx,
             notification_tx, notification_rx,
             live_notification_tx, live_notification_rx,
@@ -546,6 +626,8 @@ impl SharedContext {
             pending_open_service_candidate: None,
             open_service_confirm_modal: None,
             pending_open_service_apply: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+            entity_link_resolution_modal: None,
             client_diagnostics_popup: None,
             client_diagnostics_sessions: Vec::new(),
             client_diagnostics_loading: false,
@@ -562,6 +644,7 @@ impl SharedContext {
             orchestrator_url: String::new(),
             live_queries_active: false,
             last_live_respawn_at: None,
+            last_client_list_refresh: None,
             clients_for_prober: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -791,6 +874,35 @@ impl SharedContext {
     }
 
     pub fn handle_modals(&mut self, ctx: &Context) {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+        {
+            use crate::plugins::entity_link_pending::{
+                entity_link_request_receiver, set_entity_link_ui_active,
+            };
+            set_entity_link_ui_active(true);
+            while let Ok(req) = entity_link_request_receiver().try_recv() {
+                if self.entity_link_resolution_modal.is_none() {
+                    self.entity_link_resolution_modal =
+                        Some(crate::modals::EntityLinkResolutionModal::new(req));
+                }
+            }
+            if let Some(modal) = self.entity_link_resolution_modal.as_mut() {
+                if modal.show(ctx).is_some() {
+                    self.entity_link_resolution_modal = None;
+                }
+            }
+        }
+
+        if let Some(apply) = self.pending_open_service_apply.take() {
+            let cs = apply.connection_string.clone();
+            PlatformSpawner::spawn(async move {
+                match crate::ui_data::open_service_apply::apply_open_service_confirm(&apply).await {
+                    Ok(()) => log::info!("OpenService Stage-5 apply ok for {cs}"),
+                    Err(e) => log::error!("OpenService Stage-5 apply failed for {cs}: {e}"),
+                }
+            });
+        }
+
         for (title, modal_type) in self.opened_modals.iter_mut() {
             let action = modal_type.ui(ctx, title.clone(), 750., 850.);
             if let Some(action) = action {

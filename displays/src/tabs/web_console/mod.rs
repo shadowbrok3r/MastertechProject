@@ -460,7 +460,7 @@ impl WebConsole {
         PlatformSpawner::spawn(async move {
             use database::DATABASE;
             let _: Result<_, _> = DATABASE
-                .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $conn")
+                .query("UPDATE connected_client SET connected = false WHERE connection_string == $conn")
                 .bind(("conn", conn_string.clone()))
                 .await;
             log::info!("WebConsole: Marked {} as disconnected", conn_string);

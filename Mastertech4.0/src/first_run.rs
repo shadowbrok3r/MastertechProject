@@ -178,12 +178,10 @@ impl MasterTechApp {
         self.context.scripts_tab.receive();
         self.context.scripts_tab.process_mcp_completions();
 
-        // Pump WebSocket receive even when the Web Console tab / viewport is closed.
-        // Otherwise auto-connected clients never drain `ws_receiver` and admin→client
-        // egui input (EGUI_INPUT_TAG) is never processed.
-        if let Some(ref mut frontend) = self.context.frontend {
-            let _ = frontend.receive();
-        }
+        // The GUI-side WS-relay `frontend.receive()` pump is gone with
+        // `tabs/websockets/mod.rs`.  Admin→client egui input now arrives
+        // on the direct-TCP path (handled in `tcp_listener.rs`); no
+        // per-frame pump is required from this loop.
 
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
@@ -234,14 +232,12 @@ impl MasterTechApp {
             } 
         }
 
-        if self.context.shared_ctx.current_user.is_some()
-            && !self.context.ws_auto_connected
-            && self.context.frontend.is_none()
-        {
-            self.context.ws_auto_connected = true;
-            log::info!("Auto-connecting to WebSocket server...");
-            self.context.connect(ctx.clone());
-        }
+        // The WS-relay auto-connect block (`self.context.connect(ctx)`)
+        // was removed along with `tabs/websockets/mod.rs`.  The
+        // direct-TCP listener binds itself in `spawn_direct_tcp_listener`
+        // (firewall + DB row publish) and the `connected_client` row
+        // creation/maintenance is now handled by the tcp_listener's
+        // UPSERT and `terminal_mode::websockets::create_client`.
 
         let mut latest_egui_frame = None;
         if let Some(ref rx) = self.context.egui_frame_rx {
@@ -250,29 +246,16 @@ impl MasterTechApp {
             }
         }
         if let Some(frame) = latest_egui_frame {
-            if let Some(ref mut frontend) = self.context.frontend {
-                if let Ok(serialized) = bincode::serde::encode_to_vec(
-                    &frame,
-                    bincode::config::standard(),
-                ) {
-                    let mut tagged = Vec::with_capacity(1 + serialized.len());
-                    tagged.push(displays::EGUI_FRAME_TAG);
-                    tagged.extend_from_slice(&serialized);
-                    frontend.ws_sender.send(ewebsock::WsMessage::Binary(tagged.clone()));
-                    // Also broadcast to any admin connected via direct TCP.
-                    crate::tcp_listener::broadcast_egui_frame(tagged);
-                }
-            } else {
-                // No WS relay connection — still broadcast for TCP admins.
-                if let Ok(serialized) = bincode::serde::encode_to_vec(
-                    &frame,
-                    bincode::config::standard(),
-                ) {
-                    let mut tagged = Vec::with_capacity(1 + serialized.len());
-                    tagged.push(displays::EGUI_FRAME_TAG);
-                    tagged.extend_from_slice(&serialized);
-                    crate::tcp_listener::broadcast_egui_frame(tagged);
-                }
+            // Direct-TCP is the only egui-frame transport now (the
+            // WS-relay branch was removed with `tabs/websockets/mod.rs`).
+            if let Ok(serialized) = bincode::serde::encode_to_vec(
+                &frame,
+                bincode::config::standard(),
+            ) {
+                let mut tagged = Vec::with_capacity(1 + serialized.len());
+                tagged.push(displays::EGUI_FRAME_TAG);
+                tagged.extend_from_slice(&serialized);
+                crate::tcp_listener::broadcast_egui_frame(tagged);
             }
         }
         
@@ -379,9 +362,15 @@ impl MasterTechApp {
                                 Ok((match_, candidates)) => {
                                     // Persist friendly_name so subsequent
                                     // runs hit the cache check above.
+                                    // UPSERT — by this point the row should already
+                                    // exist (connect() UPSERTed it earlier), but
+                                    // friendly_name persistence is too important to
+                                    // gate on that assumption: a missed UPSERT here
+                                    // means the client appears anonymously every run
+                                    // because the OA3 cache check above never hits.
                                     let res = DATABASE
                                         .query(
-                                            "UPDATE $id SET friendly_name = $name, \
+                                            "UPSERT $id SET friendly_name = $name, \
                                              last_update = time::now()",
                                         )
                                         .bind(("id", client_uuid.clone()))
@@ -445,9 +434,13 @@ impl MasterTechApp {
                                     if let Ok(name) =
                                         lookup_customer_by_serial(&serial13).await
                                     {
+                                        // UPSERT for the same reason as the structured
+                                        // PrestaShop branch above — Everest is the
+                                        // fallback, so the only chance to persist a
+                                        // friendly_name on this run is here.
                                         let res = DATABASE
                                             .query(
-                                                "UPDATE $id SET friendly_name = $name, \
+                                                "UPSERT $id SET friendly_name = $name, \
                                                  last_update = time::now()",
                                             )
                                             .bind(("id", client_uuid.clone()))

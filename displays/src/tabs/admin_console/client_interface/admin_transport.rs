@@ -28,6 +28,10 @@
 use crate::Spawner;
 use crossbeam::channel::{Receiver as XReceiver, Sender as XSender, TryRecvError};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use web_time::Duration;
 // Wire-protocol constants live in the shared `tcp_protocol` crate so this
@@ -67,6 +71,18 @@ enum AdminTransportInner {
         /// `send()` calls become no-ops instead of leaking unbounded-channel
         /// growth on a dead connection.
         closed: bool,
+        /// Shared with `run_tcp_session` so `close()` can break the retry
+        /// loop even when no writer task is running yet (i.e. we're stuck
+        /// dialing an unreachable host).  Without this, sending
+        /// `TcpFrame::Shutdown` only ends a session that has a live
+        /// writer — a dial-retry loop has no writer, so the Shutdown
+        /// frame sits in the queue forever and the admin keeps trying to
+        /// reconnect to a client the operator already disconnected.
+        ///
+        /// The retry loop polls this atomic at 200 ms granularity (see
+        /// `shutdown_aware_sleep`) so a `close()` is honored within
+        /// ~200 ms even if we're mid-sleep between dial attempts.
+        shutdown: Arc<AtomicBool>,
     },
 }
 
@@ -105,10 +121,25 @@ impl AdminTransport {
         let id_for_handshake = connection_string.clone();
         let in_tx_dial = in_tx.clone();
 
+        // Shared shutdown signal — `close()` flips it from the UI thread;
+        // `run_tcp_session` polls it at every retry sleep and before every
+        // dial attempt.  This is what makes manual disconnect actually stop
+        // the retry loop (vs. the old `TcpFrame::Shutdown` channel which
+        // could only end an already-connected session).
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_for_session = shutdown.clone();
+
         // Use the `displays` crate's existing PlatformSpawner abstraction
         // so we don't have to assume a specific runtime is available.
         crate::PlatformSpawner::spawn(async move {
-            run_tcp_session(dial_addr, id_for_handshake, out_rx, in_tx_dial).await;
+            run_tcp_session(
+                dial_addr,
+                id_for_handshake,
+                out_rx,
+                in_tx_dial,
+                shutdown_for_session,
+            )
+            .await;
         });
 
         Self {
@@ -116,6 +147,7 @@ impl AdminTransport {
                 out_tx,
                 in_rx,
                 closed: false,
+                shutdown,
             },
             kind: TransportKind::Tcp,
         }
@@ -176,7 +208,23 @@ impl AdminTransport {
     pub fn close(&mut self) {
         match &mut self.inner {
             AdminTransportInner::WebSocket { sender, .. } => sender.close(),
-            AdminTransportInner::Tcp { out_tx, closed, .. } => {
+            AdminTransportInner::Tcp {
+                out_tx,
+                closed,
+                shutdown,
+                ..
+            } => {
+                // Set the shared shutdown atomic FIRST so the dial-retry
+                // loop in `run_tcp_session` sees it on its next sleep
+                // poll (≤200ms).  Without this, a Disconnect issued
+                // while the session is in the retry-dial state (peer
+                // unreachable) would do nothing — the writer task
+                // doesn't exist yet, so `TcpFrame::Shutdown` would sit
+                // in the queue forever.
+                shutdown.store(true, Ordering::Relaxed);
+                // Still send Shutdown so an *active* writer task tears
+                // down cleanly (graceful FIN) instead of the retry loop
+                // observing the atomic.
                 let _ = out_tx.send(TcpFrame::Shutdown);
                 *closed = true;
             }
@@ -192,16 +240,21 @@ impl AdminTransport {
 /// not yet acknowledged, machine rebooting, etc.) reconnects automatically
 /// once the path opens up.  Only stops retrying when the outbound channel
 /// is dropped (i.e. `AdminTransport::close()` was called).
+/// `shutdown` is an external signal shared with `AdminTransport::close()`.
+/// Honored at every retry boundary so a UI-initiated disconnect breaks
+/// out of the dial-retry loop within ≤200 ms even when no writer task is
+/// running (i.e. while we're failing to reach an unreachable peer).
 #[cfg(not(target_arch = "wasm32"))]
 async fn run_tcp_session(
     target_addr: String,
     connection_string: String,
     out_rx: XReceiver<TcpFrame>,
     in_tx: XSender<WsEvent>,
+    shutdown: Arc<AtomicBool>,
 ) {
     use std::sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+        Mutex,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -222,10 +275,6 @@ async fn run_tcp_session(
     // Wrap the receiver so the writer task can borrow it each session
     // without taking ownership, allowing reconnect on drop+redial.
     let out_rx = Arc::new(Mutex::new(out_rx));
-
-    // Set to true when the admin explicitly closes the transport (Shutdown
-    // frame or out_tx dropped); breaks the retry loop.
-    let shutdown = Arc::new(AtomicBool::new(false));
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -248,7 +297,10 @@ async fn run_tcp_session(
                 let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
                     format!("Admin TCP connect to {target_addr} failed: {e}"),
                 ));
-                tokio::time::sleep(RETRY_INTERVAL).await;
+                if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
+                    let _ = in_tx.send(WsEvent::Closed);
+                    return;
+                }
                 continue;
             }
             Err(_) => {
@@ -257,7 +309,10 @@ async fn run_tcp_session(
                 let _ = crate::get_toast_sender().try_send(crate::ToastMessage::Warning(
                     format!("Admin TCP connect to {target_addr} timed out (retrying…)"),
                 ));
-                tokio::time::sleep(RETRY_INTERVAL).await;
+                if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
+                    let _ = in_tx.send(WsEvent::Closed);
+                    return;
+                }
                 continue;
             }
         };
@@ -517,8 +572,36 @@ async fn run_tcp_session(
 
         // Session ended (peer closed / read error) — wait and redial
         log::info!("admin_transport -> session ended; reconnecting in {RETRY_INTERVAL:?}");
-        tokio::time::sleep(RETRY_INTERVAL).await;
+        if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
+            let _ = in_tx.send(WsEvent::Closed);
+            return;
+        }
     }
+}
+
+/// Sleeps up to `dur`, polling `shutdown` at 200 ms granularity.
+/// Returns `true` if shutdown was observed (caller should send
+/// `WsEvent::Closed` and exit); `false` if the full duration elapsed.
+///
+/// We don't use `tokio::select!` with a `Notify` here because the
+/// notify would need to be plumbed all the way through the
+/// `AdminTransport` -> `run_tcp_session` boundary; polling a shared
+/// atomic is simpler and 200 ms feels instant to a UI operator.
+#[cfg(not(target_arch = "wasm32"))]
+async fn shutdown_aware_sleep(shutdown: &Arc<AtomicBool>, dur: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + dur;
+    while tokio::time::Instant::now() < deadline {
+        if shutdown.load(Ordering::Relaxed) {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let step = remaining.min(Duration::from_millis(200));
+        if step.is_zero() {
+            break;
+        }
+        tokio::time::sleep(step).await;
+    }
+    shutdown.load(Ordering::Relaxed)
 }
 
 /// Wall-clock epoch milliseconds. Wraps `SystemTime` so callers don't have

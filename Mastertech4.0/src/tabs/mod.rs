@@ -20,7 +20,6 @@ pub mod resource_mon;
 pub mod scripts;
 pub mod system_information;
 pub mod tur_sheet;
-pub mod websockets;
 pub mod egui_file_dialog;
 
 // pub const TABS: [&str; 16] = [
@@ -60,20 +59,11 @@ impl MastertechContext {
         }
     }
 
-    pub fn websocket_menu(&mut self, ui: &mut Ui) {
-        let current_state = self.show_ws_viewport.load(Ordering::Relaxed);
-        let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
-
-        if current_state {
-            if ui.button("Attach Websocket Console").clicked() {
-                self.show_ws_viewport.store(new_state, Ordering::Relaxed);
-            }
-        } else {
-            if ui.button("Detach Websocket Console").clicked() {
-                self.show_ws_viewport.store(new_state, Ordering::Relaxed);
-            }
-        }
-    }
+    // `websocket_menu` was removed along with the GUI-side WS-relay
+    // (`tabs/websockets/mod.rs`).  The "Attach/Detach Websocket
+    // Console" toggle only made sense when there was a separate
+    // viewport for the relay UI; the direct-TCP path has no
+    // operator-visible window of its own, so this menu became dead.
 }
 
 impl TabViewer for MastertechContext {
@@ -82,7 +72,6 @@ impl TabViewer for MastertechContext {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
-            "Part Order" => self.special_part_order(ui),
             "KOTH" => self.shared_ctx.koth.ui(ui),
             "Database" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
             "Scripts" => self.scripts(ui),
@@ -92,12 +81,11 @@ impl TabViewer for MastertechContext {
             #[cfg(target_os = "windows")]
             "Minidump Analysis" => self.mini_dump(ui),
             "QC ☑️" => self.quality_check(ui),
-            "Ai" => self.shared_ctx.ai_playground(ui),
+            // "Ai" => self.shared_ctx.ai_playground(ui),
             "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
             "My Tasks" => self.shared_ctx.render_layout(ui, "My Tasks"),
             "Completed Tasks" => self.shared_ctx.render_layout(ui, "Completed Tasks"),
             "Bug Tracker" => self.github(ui),
-            "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui, self.shared_ctx.ui_actions_tx.clone()),
             "Inventory" => self.shared_ctx.stock_tables.ui(ui),
@@ -142,8 +130,6 @@ impl TabViewer for MastertechContext {
         _node_index: NodeIndex,
     ) {
         match tab.as_str() {
-            "Admin Console" => self.websocket_menu(ui),
-            "Websockets" => self.websocket_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),
             _ => {
                 ui.label(tab.to_string());

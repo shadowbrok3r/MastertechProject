@@ -219,8 +219,8 @@ impl MasterTechApp {
                                 .ui(ui)
                                 .clicked()
                                 {
-                                    let restart_in_terminal_mode = restart_in_terminal_mode();
-                                    log::info!("restart_in_terminal_mode: {restart_in_terminal_mode:?}");
+                                    let result = crate::utilities::app_restart::restart_in_terminal_mode();
+                                    log::info!("restart_in_terminal_mode: {result:?}");
                                     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
                                 }
                     
@@ -462,26 +462,3 @@ impl MasterTechApp {
     }
 }
 
-
-pub fn restart_in_terminal_mode() -> std::io::Result<()> {
-    let current_exe = std::env::current_exe()?;
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new("cmd")
-            .arg("/C")
-            .arg(&current_exe)
-            .arg("-t")
-            .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
-            .creation_flags(0x00000008) // DETACHED_PROCESS flag
-            .spawn()?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::process::Command::new(&current_exe)
-            .arg("-t")
-            .spawn()?;
-        // On Unix-like systems, the process is detached by default when the parent exits
-    }
-    Ok(())
-}

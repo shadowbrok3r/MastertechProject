@@ -33,9 +33,9 @@ pub async fn register(sched: &JobScheduler) -> Result<()> {
                 let res = database::DATABASE
                     .query(
                         "UPDATE connected_client \
-                         SET connected = false, last_update = time::now() \
+                         SET connected = false \
                          WHERE connected == true \
-                           AND (last_update IS NONE OR last_update < time::now() - 3m)",
+                           AND (last_update IS NONE OR last_update < time::now() - 30m)",
                     )
                     .await;
                 match res {
@@ -46,7 +46,7 @@ pub async fn register(sched: &JobScheduler) -> Result<()> {
                         if let Ok(updated) = response.take::<Vec<serde_json::Value>>(0) {
                             if !updated.is_empty() {
                                 log::info!(
-                                    "heartbeat_sweep -> flipped {} stale connected_client row(s)",
+                                    "heartbeat_sweep -> flipped {} stale connected_client row(s): {updated:#?}",
                                     updated.len()
                                 );
                             }
@@ -62,6 +62,6 @@ pub async fn register(sched: &JobScheduler) -> Result<()> {
             })
         })?)
         .await?;
-    log::info!("heartbeat_sweep -> registered (every minute, 3m staleness window)");
+    log::info!("heartbeat_sweep -> registered (every minute, 30m staleness window)");
     Ok(())
 }

@@ -411,6 +411,7 @@ impl MastertechContext {
                 task_data,
                 task_notes,
                 send_specs,
+                false,
             )
             .await;
             info!("send_payload_result: {send_payload_result:?}");

@@ -498,6 +498,7 @@ impl CreateTaskModal {
                             task.into(),
                             payload.task_notes,
                             true,
+                            false,
                         ).await;
                         info!("create_task_result: {create_task_result:?}");
 

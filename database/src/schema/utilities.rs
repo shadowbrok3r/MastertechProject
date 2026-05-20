@@ -217,6 +217,53 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), 
     Ok(())
 }
 
+/// When duplicate `connected_client` rows exist for the same
+/// `connection_string`, keep the best candidate: online first, then
+/// newest `last_update`.
+fn dedupe_connected_clients_by_connection_string(
+    clients: Vec<ConnectedClient>,
+) -> Vec<ConnectedClient> {
+    use super::client::ClientKind;
+
+    let mut by_cs: HashMap<String, ConnectedClient> = HashMap::new();
+    for client in clients {
+        if client.client_kind == ClientKind::BuildWorker {
+            continue;
+        }
+        let key = client.connection_string.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        match by_cs.get(&key) {
+            Some(existing) if !prefer_connected_client_row(&client, existing) => {}
+            _ => {
+                by_cs.insert(key, client);
+            }
+        }
+    }
+    let mut out: Vec<ConnectedClient> = by_cs.into_values().collect();
+    out.sort_by(|a, b| {
+        b.connected
+            .cmp(&a.connected)
+            .then_with(|| last_update_ord(b).cmp(&last_update_ord(a)))
+    });
+    out
+}
+
+fn prefer_connected_client_row(candidate: &ConnectedClient, existing: &ConnectedClient) -> bool {
+    if candidate.connected != existing.connected {
+        return candidate.connected;
+    }
+    last_update_ord(candidate) > last_update_ord(existing)
+}
+
+fn last_update_ord(c: &ConnectedClient) -> String {
+    c.last_update
+        .as_ref()
+        .map(|d| d.to_string())
+        .unwrap_or_default()
+}
+
 pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
     debug!("get_connected_clients");
 
@@ -226,38 +273,31 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
         _ => false,
     };
 
-    // Get the current time and subtract 2 days
-    let two_days_ago = Utc::now() - Duration::days(2);
-    
+    const LIST_FILTER: &str = "(client_kind IS NONE OR client_kind = 'machine') AND connected == true";
+
     if is_root {
-        // Root users: mark stale clients as disconnected for ALL clients
-        let _: Vec<RecordId> = DATABASE
-            .query("UPDATE connected_client SET connected = false WHERE created_at <= $two_days_ago && connected == true")
-            .bind(("two_days_ago", two_days_ago))
-            .await?
-            .take(0)?;
-
-        // Root users: see ALL connected clients
         let query: Vec<ConnectedClient> = DATABASE
-            .query("SELECT * FROM connected_client WHERE connected == true ORDER BY last_update DESC LIMIT 50")
+            .query(&format!(
+                "SELECT * FROM connected_client \
+                 WHERE {LIST_FILTER} AND assigned_user.id_store == $auth.id_store \
+                 ORDER BY connected DESC, last_update DESC LIMIT 15",
+            ))
             .await?
             .take(0)?;
-        tx.try_send(query)?;
+        tx.try_send(dedupe_connected_clients_by_connection_string(query))?;
     } else {
-        // Non-root users: only see their own assigned clients
-        let _: Vec<RecordId> = DATABASE
-            .query("UPDATE connected_client SET connected = false WHERE assigned_user == $auth.id && created_at <= $two_days_ago && connected == true")
-            .bind(("two_days_ago", two_days_ago))
-            .await?
-            .take(0)?;
-
         let query: Vec<ConnectedClient> = DATABASE
-            .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id && connected == true ORDER BY last_update DESC LIMIT 10")
+            .query(&format!(
+                "SELECT * FROM connected_client \
+                 WHERE assigned_user == $auth.id \
+                   AND {LIST_FILTER} \
+                 ORDER BY last_update DESC LIMIT 15",
+            ))
             .await?
             .take(0)?;
-        tx.try_send(query)?;
+        tx.try_send(dedupe_connected_clients_by_connection_string(query))?;
     }
-    
+
     Ok(())
 }
 
@@ -396,8 +436,19 @@ pub async fn create_full_task_payload(
     mut task_data: LiveTaskPayload,
     mut task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
+    allow_placeholder_computer: bool,
 ) -> TaskCreationResult {
     info!("schema/utilities.rs -> Send_Payload");
+    if send_specs
+        && !allow_placeholder_computer
+        && !super::entity_link::computer_has_minimal_hardware(&computer_data)
+    {
+        return TaskCreationResult::Error {
+            message: "Refusing to create a Presta-only placeholder computer: link live \
+                      hardware via the entity-link flow or confirm placeholder explicitly."
+                .into(),
+        };
+    }
     let queried_salesman = match User::query_user_from_email(ticket_data.salesman.clone()).await {
         Ok(user) => user,
         Err(e) => {
@@ -726,7 +777,16 @@ pub async fn create_resolved_task_payload(
 ) -> TaskCreationResult {
     // This is a simplified version that just creates/updates without duplicate checking
     // The duplicate checking should happen before this is called
-    create_full_task_payload(ticket_data, customer_data, computer_data, task_data, task_notes, send_specs).await
+    create_full_task_payload(
+        ticket_data,
+        customer_data,
+        computer_data,
+        task_data,
+        task_notes,
+        send_specs,
+        false,
+    )
+    .await
 }
 
 impl PrestashopPayload {}

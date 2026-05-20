@@ -10,7 +10,8 @@
 use crate::TaskUiActions;
 use crossbeam::channel::Sender;
 use database::schema::{
-    ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt, SystemInformation,
+    client::ClientKind, ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt,
+    SystemInformation,
 };
 use eframe::egui::{
     Button, Color32, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2, Widget,
@@ -29,9 +30,9 @@ use eframe::egui::{
 /// the same conclusion a few seconds earlier.
 const STALE_THRESHOLD_SECS: i64 = 180;
 
-/// Include a client in My Tasks / Admin Console summaries only if the DB
-/// `last_update` is newer than this **or** an admin transport session is live.
-pub const CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS: i64 = 2 * 3600;
+/// Recently-offline machines stay visible in summaries for this long after
+/// their last heartbeat (must match `get_connected_clients` in utilities.rs).
+pub const CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS: i64 = 4 * 3600;
 
 fn last_update_within_secs(client: &ConnectedClient, max_age_secs: i64) -> bool {
     let Some(ref dt) = client.last_update else {
@@ -47,41 +48,18 @@ fn last_update_within_secs(client: &ConnectedClient, max_age_secs: i64) -> bool 
 /// Whether this client should appear in My Tasks "Connected Clients" and the
 /// Admin Console client list.
 ///
-/// **Now: any row we've ever heard from stays in the list.**  Earlier
-/// iterations gated visibility on either a live admin transport OR
-/// `last_update` within 2 hours — meaning a customer machine that
-/// went stale (or a session that hit the kernel-TCP 60 s keepalive
-/// detection during a transient hang) would *disappear* from the
-/// connected-client list and the operator would think the agent was
-/// gone for good.  That's the wrong default: the operator wants to
-/// keep an eye on the row regardless of how stale the heartbeat is,
-/// and re-establish a session when the agent comes back.
-///
-/// Staleness is still visually signaled — the header dot in the card
-/// renders green / yellow / gray off `connected` + `last_update`, and
-/// the "Nm ago" subtext to the right shows the actual heartbeat age.
-/// A future operator-driven action (e.g. an "Archive client" button)
-/// can explicitly remove rows that are truly gone.
-///
-/// Direct-TCP reachability remains a side-signal (the per-admin
-/// reachability prober) and the `ConnectClient` handler is welcome to
-/// skip TCP and go straight to relay when the probe says
-/// unreachable — it just no longer affects whether the card paints.
+/// Matches the `get_connected_clients` query: online rows, recently-offline
+/// machines (heartbeat within [`CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS`]),
+/// or an open admin session. Stale rows that only look "recent" because a
+/// disconnect path bumped `last_update` are no longer included.
 #[must_use]
 pub fn should_show_connected_client_in_summaries(
     client: &ConnectedClient,
-    _is_live_admin_transport: bool,
+    is_live_admin_transport: bool,
 ) -> bool {
-    // Two failure modes worth filtering out, both effectively "this row
-    // never had a real client behind it":
-    //   - The connection_string is empty (initial-create race or a row
-    //     that was somehow truncated during a buggy upsert).
-    //   - The row has never been heartbeated (`last_update` is `None`)
-    //     AND was never `connected` even once.  Without the second
-    //     half, a freshly-created row with `connected = true` that
-    //     hasn't yet had time to land its first `last_update` would be
-    //     hidden, which is exactly the "fresh row, no DB heartbeat yet"
-    //     race we already fixed once at row-creation time.
+    if client.client_kind == ClientKind::BuildWorker {
+        return false;
+    }
     if client.connection_string.trim().is_empty() {
         return false;
     }
@@ -90,7 +68,10 @@ pub fn should_show_connected_client_in_summaries(
     if never_connected {
         return false;
     }
-    true
+    if is_live_admin_transport || client.connected {
+        return true;
+    }
+    last_update_within_secs(client, CONNECTED_CLIENT_SUMMARY_MAX_STALE_SECS)
 }
 
 fn recently_active(client: &ConnectedClient) -> bool {

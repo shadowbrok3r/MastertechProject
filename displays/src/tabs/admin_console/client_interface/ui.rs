@@ -280,13 +280,10 @@ impl WebSocketClient {
                             ui.close();
                         }
                         if ui
-                            .button(RichText::new("🔄 Reboot into Terminal Mode").color(os_btn_color))
+                            .button(RichText::new("💻 Switch to Terminal Mode").color(os_btn_color))
                             .clicked()
                         {
-                            let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem {
-                                persist_mastertech: true,
-                                terminal_mode: true,
-                            });
+                            let _ = self.send_cmd_tx.try_send(Cmd::LaunchTerminalMode);
                             ui.close();
                         }
                         ui.separator();

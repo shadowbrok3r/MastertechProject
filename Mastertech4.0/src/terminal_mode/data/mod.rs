@@ -234,6 +234,7 @@ impl ServiceData {
                 task_data.into(),
                 task_notes,
                 send_specs,
+                false,
             )
             .await;
             log::info!("send_payload_result: {send_payload_result:?}");

@@ -914,6 +914,7 @@ async fn create_audit_task(order_id: &str, date_str: &str, assignee: &User) -> R
         task_data,
         vec![],
         false,
+        false,
     )
     .await;
 

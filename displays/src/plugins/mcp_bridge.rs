@@ -115,6 +115,86 @@ impl Drop for PendingRequestGuard {
     }
 }
 
+// ─── Entity link validation (MCP ↔ operator modal) ───────────────────────────
+
+use crate::plugins::entity_link_pending::{
+    entity_link_ui_active, register_entity_link_resolution, EntityLinkOutcome, EntityLinkRequest,
+};
+use database::schema::entity_link::{repair_connection_links, validate_link_bundle, LinkBundle};
+use database::schema::RecordIdExt;
+use std::time::Duration;
+
+async fn resolve_entity_links_mcp(
+    connection_string: Option<String>,
+    customer_id_str: &str,
+    computer_id_str: &str,
+) -> Result<(database::schema::RecordId, database::schema::RecordId), ErrorData> {
+    let bundle = LinkBundle {
+        connection_string: connection_string.clone(),
+        customer_id: parse_record_id(customer_id_str, database::schema::CUSTOMER_TABLE),
+        computer_id: parse_record_id(computer_id_str, database::schema::COMPUTER_TABLE),
+    };
+    let validation = validate_link_bundle(&bundle).await;
+    if validation.ok {
+        return Ok((
+            validation
+                .resolved_customer_id
+                .unwrap_or(bundle.customer_id),
+            validation
+                .resolved_computer_id
+                .unwrap_or(bundle.computer_id),
+        ));
+    }
+
+    if entity_link_ui_active() {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let rx = register_entity_link_resolution(EntityLinkRequest {
+            request_id,
+            connection_string,
+            customer_id: customer_id_str.to_string(),
+            computer_id: computer_id_str.to_string(),
+            issues: validation.issues.clone(),
+        });
+        match tokio::time::timeout(Duration::from_secs(900), rx).await {
+            Ok(Ok(EntityLinkOutcome::Resolved {
+                customer_id,
+                computer_id,
+            })) => Ok((
+                parse_record_id(&customer_id, database::schema::CUSTOMER_TABLE),
+                parse_record_id(&computer_id, database::schema::COMPUTER_TABLE),
+            )),
+            Ok(Ok(EntityLinkOutcome::Cancelled { reason })) => Err(ErrorData::invalid_params(
+                format!("entity link cancelled: {reason}"),
+                None,
+            )),
+            Ok(Err(_)) => Err(ErrorData::invalid_params(
+                "entity link channel closed".to_string(),
+                None,
+            )),
+            Err(_) => Err(ErrorData::invalid_params(
+                "entity link resolution timed out (15 min)".to_string(),
+                None,
+            )),
+        }
+    } else {
+        Err(ErrorData::invalid_params(
+            format!(
+                "entity link validation failed: {:?}. Open the Mastertech displays UI for \
+                 the blocking repair modal, or call repair_entity_links / \
+                 validate_connection_links first.",
+                validation.issues
+            ),
+            Some(
+                serde_json::json!({
+                    "issues": validation.issues,
+                    "resolution_hint": "Open displays UI or call repair_entity_links(connection_string)",
+                })
+                .into(),
+            ),
+        ))
+    }
+}
+
 // ─── Local script run request routing ─────────────────────────────────────────
 //
 // Bridges the MCP `scripts_run` tool to the host Mastertech4.0 Scripts tab
@@ -363,6 +443,7 @@ pub struct PluginWatchParams {
     #[schemars(description = "Plugin ID to observe")]
     pub plugin_id: String,
     #[schemars(description = "Number of seconds to observe (default 5)")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub duration_secs: Option<u64>,
 }
 
@@ -559,6 +640,7 @@ pub struct SearchPluginsParams {
     #[schemars(description = "Keyword to search across plugin names, descriptions, tool names, and IDs")]
     pub query: String,
     #[schemars(description = "Optional tag filter — only return plugins that have at least one of these tags")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -575,6 +657,7 @@ pub struct PublishPluginParams {
     #[schemars(description = "Human-readable description of what this plugin does")]
     pub description: String,
     #[schemars(description = "Tags for searchability (e.g. ['diagnostics', 'gpu', 'windows'])")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
     #[schemars(description = "Whether to store the Rust source code alongside the WASM binary (default: true)")]
     pub store_source: Option<bool>,
@@ -590,7 +673,23 @@ pub struct FetchPluginParams {
 
 // ─── Diagnostic Knowledge Base parameter types ──────────────────────────────
 
-#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+#[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
+pub struct ValidateConnectionLinksParams {
+    #[schemars(description = "connected_client.connection_string (HOST:hash9)")]
+    pub connection_string: String,
+    #[schemars(description = "Optional customer id to validate")]
+    pub customer_id: Option<String>,
+    #[schemars(description = "Optional computer id to validate")]
+    pub computer_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
+pub struct RepairEntityLinksParams {
+    #[schemars(description = "connected_client.connection_string to repair")]
+    pub connection_string: String,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
 pub struct CreateDiagnosticSessionParams {
     #[schemars(description = "Web Console connection_string of the client being diagnosed")]
     pub connection_string: String,
@@ -648,6 +747,7 @@ pub struct CloseDiagnosticSessionParams {
     #[schemars(description = "AI-written summary of findings, actions taken, and outcome")]
     pub summary: String,
     #[schemars(description = "Final tags to apply (appends to/replaces existing tags)")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -745,6 +845,7 @@ pub struct ScriptsRunParams {
     #[schemars(
         description = "Timeout in seconds to wait for the script to finish. Default 600 (10 minutes). Increase for Windows Updates / scans."
     )]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
 }
 
@@ -761,6 +862,7 @@ pub struct ScriptsRunRemoteParams {
     #[schemars(description = "Customer email. Required for SuperEasyBackup activation.")]
     pub customer_email: Option<String>,
     #[schemars(description = "Timeout in seconds to wait for the script to complete on the remote. Default 600.")]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
 }
 
@@ -2003,14 +2105,6 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<CreateDiagnosticSessionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let customer_id = parse_record_id(
-            &p.customer_id,
-            database::schema::CUSTOMER_TABLE,
-        );
-        let computer_id = parse_record_id(
-            &p.computer_id,
-            database::schema::COMPUTER_TABLE,
-        );
         let task_ref = p.task_id.as_deref().map(|s| {
             parse_record_id(s, database::schema::TASK_TABLE)
         });
@@ -2018,48 +2112,12 @@ impl PluginToolProvider {
             parse_record_id(s, database::schema::TICKET_TABLE)
         });
 
-        // Validate referenced rows actually exist before stamping them
-        // onto a new diagnostic session.  Without this, a malformed
-        // record id (the `parse_record_id` colon-stripping regression
-        // that produced `computer:b57a7e8f9` instead of
-        // `computer:DESKTOP-HQAF13L:b57a7e8f9`) silently lands and the
-        // session points at nothing.  Same protection for customer_id —
-        // the connected_client.customer field has historically been
-        // populated with default UUIDs that have no backing row, and
-        // an AI that trusts that value would create an orphan session.
-        //
-        // Failure surfaces as `invalid_params` so the AI can fix the
-        // call rather than retrying blind.
-        use database::schema::utilities::record_exists;
-        match record_exists(customer_id.clone()).await {
-            Ok(Some(true)) => {}
-            _ => {
-                return Err(ErrorData::invalid_params(
-                    format!(
-                        "create_diagnostic_session: customer_id {customer_id:?} does not \
-                         resolve to an existing customer row.  Use find_customer_by_email/phone \
-                         or follow connected_client.computer.customer; do NOT pass a raw UUID \
-                         from connected_client.customer without verifying it exists.",
-                    ),
-                    None,
-                ));
-            }
-        }
-        match record_exists(computer_id.clone()).await {
-            Ok(Some(true)) => {}
-            _ => {
-                return Err(ErrorData::invalid_params(
-                    format!(
-                        "create_diagnostic_session: computer_id {computer_id:?} does not \
-                         resolve to an existing computer row.  Resolve via \
-                         get_computer_details or connected_client.computer.  Note: the \
-                         canonical computer key includes the hostname, e.g. \
-                         `computer:DESKTOP-XYZ:abc123456`, NOT just the bare hash.",
-                    ),
-                    None,
-                ));
-            }
-        }
+        let (customer_id, computer_id) = resolve_entity_links_mcp(
+            Some(p.connection_string.clone()),
+            &p.customer_id,
+            &p.computer_id,
+        )
+        .await?;
 
         let session = database::schema::DiagnosticSession {
             connection_string: p.connection_string,
@@ -2082,6 +2140,49 @@ impl PluginToolProvider {
             serde_json::json!({ "session_id": id_str }),
         )
         .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "validate_connection_links",
+        description = "Validate customer/computer FK health for a connected client before create_diagnostic_session. Returns issues and resolved canonical ids when valid."
+    )]
+    async fn validate_connection_links(
+        &self,
+        Parameters(p): Parameters<ValidateConnectionLinksParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let bundle = LinkBundle {
+            connection_string: Some(p.connection_string.clone()),
+            customer_id: parse_record_id(
+                &p.customer_id.unwrap_or_default(),
+                database::schema::CUSTOMER_TABLE,
+            ),
+            computer_id: parse_record_id(
+                &p.computer_id.unwrap_or_default(),
+                database::schema::COMPUTER_TABLE,
+            ),
+        };
+        let validation = validate_link_bundle(&bundle).await;
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+            "ok": validation.ok,
+            "issues": validation.issues,
+            "resolved_customer_id": validation.resolved_customer_id.map(|r| r.key_string()),
+            "resolved_computer_id": validation.resolved_computer_id.map(|r| r.key_string()),
+        }))
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
+        name = "repair_entity_links",
+        description = "Repair FK graph for a connected client: repoint to canonical computer:HOST:hash9, fix diagnostic_session computer_id, set connected_client.computer. Use for DESKTOP-HQAF13L-style bad linkage."
+    )]
+    async fn repair_entity_links(
+        &self,
+        Parameters(p): Parameters<RepairEntityLinksParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = repair_connection_links(&p.connection_string)
+            .await
+            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::json(report).map_err(to_internal)?]))
     }
 
     #[tool(
@@ -2394,12 +2495,12 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<GetComputerDetailsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let key = if p.computer_id.contains(':') {
-            p.computer_id.split(':').last().unwrap_or(&p.computer_id).to_string()
-        } else {
-            p.computer_id.clone()
-        };
-        let rid = database::schema::RecordId::new("computer", key);
+        let rid = database::schema::entity_link::resolve_computer_id(
+            &p.computer_id,
+            None,
+        )
+        .await
+        .map_err(|e| ErrorData::invalid_params(e, None))?;
         let result: Option<serde_json::Value> = database::DATABASE
             .query("SELECT * FROM $rid")
             .bind(("rid", rid))
@@ -3361,6 +3462,39 @@ fn to_internal<E: std::fmt::Display>(e: E) -> ErrorData {
 /// Last `n` lines of `s`, joined with `\n`. Used to keep
 /// `plugin_compile_status` payloads compact when a build prints
 /// kilobytes of warnings before succeeding.
+/// Lenient `Option<u64>` deserializer for AI-supplied MCP params.
+///
+/// The AI repeatedly hands us numeric strings (e.g. `"300"`) where the
+/// schema expects a real number, and strict serde refuses with
+/// `failed to deserialize parameters: invalid type: string "300", expected u64`
+/// (see the 12:10:04/11 block in the log).  Accept either form so a
+/// stringified value doesn't short-circuit an otherwise-valid tool call.
+/// Companion to the existing `deserialize_optional_string_vec` which
+/// handles the same shape for `Option<Vec<String>>`.
+fn deserialize_lenient_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let v: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match v {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n.as_u64().map(Some).ok_or_else(|| {
+            D::Error::custom(format!(
+                "expected non-negative integer, got fractional or negative: {n}"
+            ))
+        }),
+        Some(serde_json::Value::String(s)) => s.trim().parse::<u64>().map(Some).map_err(|e| {
+            D::Error::custom(format!(
+                "expected u64 or numeric string, got string {s:?} that doesn't parse: {e}"
+            ))
+        }),
+        Some(other) => Err(D::Error::custom(format!(
+            "expected u64 or numeric string, got: {other}"
+        ))),
+    }
+}
+
 fn tail_n_lines(s: &str, n: usize) -> String {
     let lines: Vec<&str> = s.lines().collect();
     if lines.len() <= n {
@@ -3470,20 +3604,7 @@ async fn run_local_cargo_compile(
 /// connected_client + computer table both use the full
 /// `DESKTOP-HQAF13L:b57a7e8f9` key.
 fn parse_record_id(s: &str, table: &'static str) -> database::schema::RecordId {
-    // Only treat the first segment as a table prefix when it actually
-    // looks like one (alphanumeric + underscore).  Otherwise the input
-    // is a raw key whose first segment happens to contain a colon (e.g.
-    // a hostname:hash9 key passed without the table prefix).
-    let key = match s.split_once(':') {
-        Some((prefix, rest)) if !prefix.is_empty()
-            && prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
-        {
-            // Looks like `table:key…`, strip only the prefix.
-            rest.to_string()
-        }
-        _ => s.to_string(),
-    };
-    database::schema::RecordId::new(table, key)
+    database::schema::entity_link::parse_record_id(s, table)
 }
 
 // ─── TCP server ────────────────────────────────────────────────────────────────

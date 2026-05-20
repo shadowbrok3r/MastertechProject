@@ -22,6 +22,12 @@ pub enum ClientUiAction {
     /// Open the re-link customer popup for this client (the
     /// used-machine-with-wrong-owner workflow). See `relink_popup.rs`.
     RelinkCustomer(ConnectedClient),
+    /// Open entity-link modal to create/fix the computer FK.
+    LinkComputer(ConnectedClient),
+    /// Open entity-link modal focused on customer linkage.
+    LinkCustomer(ConnectedClient),
+    /// Run automated repair for this connection_string.
+    RepairAssociations(ConnectedClient),
 }
 
 impl AdminConsole {
@@ -175,9 +181,58 @@ impl AdminConsole {
             ClientUiAction::RelinkCustomer(client) => {
                 self.relink_popup = Some(super::RelinkClientPopup::new(client));
             },
+            ClientUiAction::LinkComputer(client) => {
+                submit_admin_entity_link(&client, "computer");
+            }
+            ClientUiAction::LinkCustomer(client) => {
+                submit_admin_entity_link(&client, "customer");
+            }
+            ClientUiAction::RepairAssociations(client) => {
+                let cs = client.connection_string.clone();
+                crate::PlatformSpawner::spawn(async move {
+                    match database::schema::entity_link::repair_connection_links(&cs).await {
+                        Ok(report) => log::info!("repair_connection_links({cs}): {report}"),
+                        Err(e) => log::error!("repair_connection_links({cs}): {e}"),
+                    }
+                });
+            }
         }
     }
 }
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+fn submit_admin_entity_link(client: &ConnectedClient, focus: &str) {
+    use crate::plugins::entity_link_pending::{
+        submit_manual_entity_link_request, EntityLinkRequest,
+    };
+    use database::schema::entity_link::LinkValidationIssue;
+    use database::schema::RecordIdExt;
+
+    let mut issues = Vec::new();
+    if focus == "computer" {
+        issues.push(LinkValidationIssue::MissingComputer);
+    } else {
+        issues.push(LinkValidationIssue::MissingCustomer);
+    }
+    submit_manual_entity_link_request(EntityLinkRequest {
+        request_id: String::new(),
+        connection_string: Some(client.connection_string.clone()),
+        customer_id: client
+            .customer
+            .as_ref()
+            .map(|c| c.key_string())
+            .unwrap_or_default(),
+        computer_id: client
+            .computer
+            .as_ref()
+            .map(|c| c.key_string())
+            .unwrap_or_default(),
+        issues,
+    });
+}
+
+#[cfg(not(all(not(target_arch = "wasm32"), feature = "tokio")))]
+fn submit_admin_entity_link(_client: &ConnectedClient, _focus: &str) {}
 
 pub trait ClientHandler { 
     fn export_logs(&mut self, history: Vec<History>);
