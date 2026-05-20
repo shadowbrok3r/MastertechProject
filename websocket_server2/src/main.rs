@@ -587,7 +587,7 @@ impl ChatServer {
         // to a different client), the remote client is still running and connected.
         if role == "client" {
             let client: Option<ConnectedClient> = DATABASE
-                .query("UPDATE connected_client SET connected = false, last_update = time::now() WHERE connection_string == $connection_id")
+                .query("UPDATE connected_client SET connected = false WHERE connection_string == $connection_id")
                 .bind(("connection_id", room_id.clone()))
                 .await?
                 .take(0)?;

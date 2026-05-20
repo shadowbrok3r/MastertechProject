@@ -11,13 +11,15 @@
 //! 5. Returns a result string so the caller can send
 //!    [`displays::Cmd::MastertechSelfUpdateResult`] back before exiting.
 //!
-//! Both the GUI path (`tabs/websockets/mod.rs`) and the terminal-mode path
-//! (`terminal_mode/websockets/mod.rs`) share this single implementation.
+//! Used by the terminal-mode path (`terminal_mode/websockets/mod.rs`).
+//! (The GUI-side `tabs/websockets/mod.rs` was removed; what remains of
+//! the egui-client transport now goes over direct TCP via
+//! `tcp_listener.rs`.)
 
 use std::collections::HashMap;
 
-/// Accumulator for in-flight self-update chunks.  A single instance is stored
-/// on each `TerminalWebsocketClient` (and the GUI `WebConsoleFrontend`).
+/// Accumulator for in-flight self-update chunks.  A single instance is
+/// stored on each `TerminalWebsocketClient`.
 #[derive(Default)]
 pub struct SelfUpdateBuffer {
     chunks: HashMap<u32, Vec<u8>>,

@@ -108,8 +108,12 @@ impl SharedContext {
                 ticket.checkin_notes = service.check_in_notes.clone();
             }
             
-            // Check if we have computer data and set ticket.computer reference
-            if !computer.device_mfg.is_none() || !computer.device_serial.is_none() || !computer.cpu.is_empty() || !computer.gpu.is_empty() || !computer.ram.is_empty() {
+            // Only link ticket.computer when we have real hardware identity —
+            // not Presta-only "Diagnosis of Computer" placeholders.
+            use database::schema::entity_link::{
+                computer_has_minimal_hardware, is_placeholder_computer,
+            };
+            if computer_has_minimal_hardware(computer) && !is_placeholder_computer(computer) {
                 ticket.computer = Some(computer.id.clone());
             }
 

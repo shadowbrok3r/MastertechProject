@@ -178,6 +178,40 @@ impl MtechServer {
             }
         };
 
+        // Register the `document.visibilitychange` listener once. We push
+        // the *current* visibility state (true=visible, false=hidden) on
+        // every change so `receive_shared_logic` can time the hide. Short
+        // hides are ignored; long hides (>= 45min, browser-tab-suspend
+        // territory) auto-reload the page. The closure is leaked via
+        // `Closure::forget` so it lives for the page's lifetime, matching
+        // how every other long-lived JS callback in this app is registered.
+        #[cfg(target_arch = "wasm32")]
+        if !self.shared_ctx.visibility_listener_installed {
+            use wasm_bindgen::{closure::Closure, JsCast};
+            self.shared_ctx.visibility_listener_installed = true;
+            let tx = self.shared_ctx.visibility_signal_tx.clone();
+            let cb = Closure::wrap(Box::new(move |_e: web_sys::Event| {
+                if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                    let is_visible =
+                        doc.visibility_state() == web_sys::VisibilityState::Visible;
+                    let _ = tx.try_send(is_visible);
+                }
+            }) as Box<dyn FnMut(_)>);
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Err(e) = doc.add_event_listener_with_callback(
+                    "visibilitychange",
+                    cb.as_ref().unchecked_ref(),
+                ) {
+                    log::error!(
+                        "Failed to register visibilitychange listener: {e:?}"
+                    );
+                } else {
+                    log::info!("visibilitychange listener installed");
+                }
+            }
+            cb.forget();
+        }
+
         // use displays::Spawner;
         // displays::PlatformSpawner::spawn(async move {
         //     let results = database::test_database_wasm().await;
@@ -235,31 +269,17 @@ impl MtechServer {
         
         self.shared_ctx.receive_shared(frame, ctx);
         
-        // Handle live query connection errors - reconnect if needed.
-        // MtechServer2.0 is the wasm-only browser admin, so the wasm gate
-        // stays.  The equivalent handler for the native desktop admin
-        // (Mastertech4.0) lives in Mastertech4.0/src/first_run.rs and
-        // calls `load_data` directly (its DB signin lives in a different
-        // path).  Both rely on `receive_shared_logic` flipping
-        // `live_queries_active = false` + `needs_reconnect = true`
-        // when a transient-looking error appears on the live-query
-        // error channel.
-        #[cfg(target_arch = "wasm32")]
-        if self.shared_ctx.needs_reconnect {
-            log::info!("Reconnecting due to live query connection error...");
-            self.shared_ctx.needs_reconnect = false;
-
-            // Re-run check_authentication which will reconnect and trigger load_data
-            let db_tx = self.shared_ctx.db_tx.clone();
-            match check_authentication(db_tx) {
-                Ok(state) => {
-                    log::info!("Reconnection initiated, new state: {:?}", state);
-                }
-                Err(e) => {
-                    log::error!("Failed to initiate reconnection: {:?}", e);
-                }
-            }
-        }
+        // There is no longer an automatic reconnect path on WASM. The
+        // previous `needs_reconnect → reconnect_with_jwt` chain produced
+        // cascades of `"Already connected"` failures whenever the
+        // visibility handler tripped (every tab switch) even though the
+        // WS was perfectly healthy. The authoritative reconnect signal is
+        // the `live_query_error_rx` drain in `receive_shared_logic`,
+        // which now sets `show_reload_prompt = true`. The operator
+        // confirms with a click; `reload_prompt_ui` then calls
+        // `load_data` directly to re-issue the LIVE SELECTs. Long
+        // tab-hide auto-reloads are handled by the visibility drain in
+        // `receive_shared_logic` (>= 45min hidden → window.location.reload).
         
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.shared_ctx.db_rx.try_recv() {
@@ -481,6 +501,18 @@ impl MtechServer {
                     .cloned();
 
                 let mut is_open = true;
+                // MtechServer2.0 is the wasm-only browser admin and has no
+                // foreign-key health prober wired in — pass empty placeholder
+                // channels/maps so the shared `client_header` signature
+                // (which the native Mastertech4.0 caller fills with real
+                // `ws_client.fk_health_tx`/`fk_health_cache`) stays unified.
+                // No probes will ever queue here because nothing drains the
+                // receiver end; `fk_health_cache` is empty so the per-row
+                // FK health badge renders as "unknown".
+                let (fk_health_tx, _fk_health_rx) =
+                    crossbeam::channel::unbounded::<(String, bool, bool)>();
+                let fk_health_cache: std::collections::HashMap<String, (bool, bool)> =
+                    std::collections::HashMap::new();
                 Window::new(&client.connection_string)
                     .open(&mut is_open)
                     .frame(column_frame)
@@ -497,6 +529,8 @@ impl MtechServer {
                                     session_layout,
                                     focused.as_deref(),
                                     is_ws_connected,
+                                    &fk_health_tx,
+                                    &fk_health_cache,
                                     inventory.as_deref(),
                                     None,
                                 );

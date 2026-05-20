@@ -92,13 +92,24 @@ impl SharedContext {
                 }
             };
 
-            // Update the admin console's client list
+            // Update the admin console's client list.
+            //
+            // `web_console_layout.clients` used to be just the
+            // `connected == true` subset, which meant a client that
+            // flipped to false (intentional shutdown, transient TCP
+            // blip the live query then missed) effectively vanished
+            // from the UI.  Match the philosophy of
+            // `should_show_connected_client_in_summaries` instead:
+            // include every assigned row in the rendered list and let
+            // the per-card status dot tell the operator which ones are
+            // online.  `client_map` keeps the connected/disconnected
+            // split for callers that still need it (sidebar grouping).
             let connected: Vec<ConnectedClient> = self.clients.iter().filter(|c| c.connected).cloned().collect();
             let disconnected: Vec<ConnectedClient> = self.clients.iter().filter(|c| !c.connected).cloned().collect();
             let mut client_map = BTreeMap::new();
             client_map.insert("Connected".to_string(), connected.clone());
             client_map.insert("Disconnected".to_string(), disconnected);
-            self.web_console_layout.clients = connected;
+            self.web_console_layout.clients = self.clients.clone();
             self.web_console_layout.client_map = client_map;
 
             // Refresh the prober's shared snapshot so the next probe
@@ -117,7 +128,10 @@ impl SharedContext {
 
             client_map.insert("Connected".to_string(), connected.clone());
             client_map.insert("Disconnected".to_string(), disconnected);
-            self.web_console_layout.clients = connected;
+            // Same loosening as the live-update path above: render every
+            // row, not just `connected == true`, so a transiently-offline
+            // client doesn't vanish from the UI between heartbeats.
+            self.web_console_layout.clients = self.clients.clone();
             self.web_console_layout.client_map = client_map;
 
             // Same snapshot refresh as above — this path runs on the

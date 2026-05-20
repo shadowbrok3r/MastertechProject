@@ -32,7 +32,11 @@ web-sys = { version = "0.3", features = [
 	"CacheStorage",
 	"Navigator",
 	"ServiceWorkerContainer",
-	"ServiceWorkerRegistration"
+	"ServiceWorkerRegistration",
+	"Document",
+	"Event",
+	"EventTarget",
+	"VisibilityState"
 ] }
 wasm-cookies = { workspace = true }
 wasm-bindgen-futures.workspace = true

@@ -35,6 +35,7 @@ pub mod build_job;
 pub mod diagnostic;
 pub mod stress_test;
 pub mod service_match;
+pub mod entity_link;
 
 pub use task::*;
 pub use task_note::*;
@@ -54,6 +55,7 @@ pub use plugin_registry::*;
 pub use build_job::*;
 pub use diagnostic::*;
 pub use service_match::*;
+pub use entity_link::*;
 pub use stress_test::*;
 
 pub const NS: &str = "Mastertech";

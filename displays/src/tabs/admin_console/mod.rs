@@ -10,9 +10,9 @@ use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
 use log::info;
-use core::f32;
 
 use super::script_editor::ScriptEditor;
+use crate::tabs::admin_console::ui::CLIENT_ROW_CONTENT_W;
 
 pub mod client_action;
 pub mod client_interface;
@@ -46,7 +46,7 @@ pub enum SessionLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchAction {
     Reboot,
-    RebootIntoTerminalMode,
+    SwitchToTerminalMode,
     Lock,
     LogOff,
     Shutdown,
@@ -62,7 +62,7 @@ impl BatchAction {
     pub fn label(self) -> &'static str {
         match self {
             BatchAction::Reboot => "Reboot",
-            BatchAction::RebootIntoTerminalMode => "Reboot into Terminal Mode",
+            BatchAction::SwitchToTerminalMode => "Switch to Terminal Mode",
             BatchAction::Lock => "Lock workstation",
             BatchAction::LogOff => "Log off user",
             BatchAction::Shutdown => "Shutdown",
@@ -139,11 +139,19 @@ pub struct AdminConsole {
     /// See `relink_popup.rs`.
     #[serde(skip)]
     pub relink_popup: Option<RelinkClientPopup>,
+    /// `(customer_exists, computer_exists)` per `connection_string`.
+    #[serde(skip)]
+    pub fk_health_cache: HashMap<String, (bool, bool)>,
+    #[serde(skip)]
+    pub fk_health_tx: crossbeam::channel::Sender<(String, bool, bool)>,
+    #[serde(skip)]
+    pub fk_health_rx: crossbeam::channel::Receiver<(String, bool, bool)>,
 }
 
 impl AdminConsole {
     pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, clients: Vec<ConnectedClient>) -> Self {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
+        let (fk_health_tx, fk_health_rx) = crossbeam::channel::unbounded();
         Self {
             clients,
             client_map,
@@ -165,6 +173,9 @@ impl AdminConsole {
             script_editor: ScriptEditor::new(),
             ai_playground: EnhancedAiPlayground::default(),
             relink_popup: None,
+            fk_health_cache: HashMap::new(),
+            fk_health_tx,
+            fk_health_rx,
         }
     }
 
@@ -176,6 +187,9 @@ impl AdminConsole {
 
     pub fn receive(&mut self, ctx: &Context) {
         self.filesystem.receive();
+        while let Ok((cs, cust_ok, comp_ok)) = self.fk_health_rx.try_recv() {
+            self.fk_health_cache.insert(cs, (cust_ok, comp_ok));
+        }
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             self.handle_action(action);
             ctx.request_repaint();
@@ -273,10 +287,7 @@ impl AdminConsole {
                 persist_mastertech: true,
                 terminal_mode: false,
             },
-            BatchAction::RebootIntoTerminalMode => Cmd::RebootSystem {
-                persist_mastertech: true,
-                terminal_mode: true,
-            },
+            BatchAction::SwitchToTerminalMode => Cmd::LaunchTerminalMode,
             BatchAction::Lock => Cmd::LockWorkstation,
             BatchAction::LogOff => Cmd::LogOffUser,
             BatchAction::Shutdown => Cmd::ShutdownSystem,
@@ -484,7 +495,7 @@ impl SharedContext {
                             // confirm dialog is the firing point.
                             for action in [
                                 BatchAction::Reboot,
-                                BatchAction::RebootIntoTerminalMode,
+                                BatchAction::SwitchToTerminalMode,
                                 BatchAction::Lock,
                                 BatchAction::LogOff,
                                 BatchAction::Shutdown,
@@ -492,7 +503,7 @@ impl SharedContext {
                             ] {
                                 let color = match action {
                                     BatchAction::Shutdown => Color32::LIGHT_RED,
-                                    BatchAction::Reboot | BatchAction::RebootIntoTerminalMode => {
+                                    BatchAction::Reboot | BatchAction::SwitchToTerminalMode => {
                                         Color32::from_rgb(180, 180, 200)
                                     }
                                     BatchAction::RunWindowsUpdate => {
@@ -585,7 +596,9 @@ impl SharedContext {
             .max_size(500.)
             .show_animated_inside(ui, self.web_console_layout.open_menu, |ui |
         {
-            ui.vertical_centered(|ui| {
+            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                ui.set_width(CLIENT_ROW_CONTENT_W);
+                ui.set_max_width(CLIENT_ROW_CONTENT_W);
 
                 // Snapshot the per-connection reachability lookup
                 // *before* the mut borrow on `web_console_layout`
@@ -627,7 +640,8 @@ impl SharedContext {
                         b_mine.cmp(&a_mine) // mine first; equal elements keep prior order (stable)
                     });
                 }
-                        let visible_indices: Vec<usize> = clients
+                
+                let visible_indices: Vec<usize> = clients
                     .iter()
                     .enumerate()
                     .filter_map(|(i, client)| {
@@ -650,22 +664,19 @@ impl SharedContext {
                 if visible_indices.is_empty() {
                     ui.label(
                         egui::RichText::new(
-                            "No connected clients with activity in the last 2 hours (or an open admin session).",
+                            "No clients with connected = true in the database (or an open admin session).",
                         )
                         .weak(),
                     );
                     ui.add_space(6.);
                 }
-                // Rows can grow/shrink as the user expands a client's
-                // collapsing header, so we can't use `show_rows` (which
-                // assumes a uniform row height for virtualization). The
-                // visible-indices filter already trims to a handful of
-                // active clients, so a non-virtualized `show` is fine.
+
                 ScrollArea::vertical()
-                    .max_width(f32::INFINITY)
-                    .max_width(f32::INFINITY)
-                    .show(ui, |ui|
-                {
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
+                    ui.set_width(CLIENT_ROW_CONTENT_W);
+                    ui.set_min_width(CLIENT_ROW_CONTENT_W);
+                    ui.set_max_width(CLIENT_ROW_CONTENT_W);
                     for &index in &visible_indices {
                         ui.add_space(4.);
                         if let Some(client) = clients.get(index) {
@@ -697,6 +708,8 @@ impl SharedContext {
                                 ws_client.session_layout.clone(),
                                 ws_client.focused_client.as_deref(),
                                 is_ws_connected,
+                                &ws_client.fk_health_tx,
+                                &ws_client.fk_health_cache,
                                 inventory,
                                 reachability,
                             );
@@ -787,11 +800,14 @@ impl SharedContext {
                              Mastertech will reconnect on next boot only \
                              if the client is set to auto-start.",
                         ),
-                        BatchAction::Reboot
-                        | BatchAction::RebootIntoTerminalMode => Some(
+                        BatchAction::Reboot => Some(
                             "Sessions will drop while the clients reboot. \
                              Mastertech reattaches automatically after \
                              restart.",
+                        ),
+                        BatchAction::SwitchToTerminalMode => Some(
+                            "Spawns Mastertech in terminal mode on each client. \
+                             The current GUI session will remain running.",
                         ),
                         BatchAction::LogOff => Some(
                             "User sessions will end immediately on each \

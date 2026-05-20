@@ -1,3 +1,4 @@
+pub mod app_restart;
 pub mod crypto;
 pub mod ui_action;
 pub mod scripts;

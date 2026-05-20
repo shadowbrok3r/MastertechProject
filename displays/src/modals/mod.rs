@@ -11,8 +11,12 @@ pub mod create_task_modal;
 pub mod tabs;
 pub mod duplicate_merge_modal;
 pub mod open_service_confirm_modal;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub mod entity_link_resolution_modal;
 
 pub use duplicate_merge_modal::DuplicateMergeModal;
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+pub use entity_link_resolution_modal::EntityLinkResolutionModal;
 pub use open_service_confirm_modal::{
     OpenServiceConfirmApply, OpenServiceConfirmModal, OpenServiceConfirmOutcome,
 };

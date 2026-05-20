@@ -1,9 +1,8 @@
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportCommand, ViewportId};
-use std::{sync::{atomic::Ordering, Arc}, time::Duration};
+use std::sync::{atomic::Ordering, Arc};
 use displays::tabs::admin_console::client_interface::TransportKind;
 use displays::tabs::admin_console::{AdminConsole, SessionLayout};
 use crate::app_state::MasterTechApp;
-use log::info;
 
 impl MasterTechApp{
     pub fn viewport_loader(&mut self, ctx: &Context) {
@@ -30,40 +29,11 @@ impl MasterTechApp{
             });
         }
 
-        if self.context.show_ws_viewport.load(Ordering::Relaxed) {
-            let show_ws_viewport = self.context.show_ws_viewport.clone();
-            let viewport_id = ViewportId::from_hash_of("deferred_viewport_ws_connection");
-            let viewport_builder = ViewportBuilder::default()
-                .with_title("Websocket Connection")
-                .with_inner_size([400.0, 500.0]);
-
-            ctx.show_viewport_immediate(
-                viewport_id,
-                viewport_builder,
-                |ctx, _class| 
-            {
-                CentralPanel::default().show(ctx, |ui| {
-                    if let Some(ref mut frontend) = self.context.frontend {
-                        let connected = frontend.initialize_websocket(ui);
-                        if !connected {
-                            let should_reconnect = self.context.last_reconnect_attempt
-                                .map(|t| t.elapsed() >= Duration::from_secs(5))
-                                .unwrap_or(true);
-                            if should_reconnect {
-                                if let Some(url) = &self.context.url {
-                                    info!("Trying to reconnect");
-                                    self.context.last_reconnect_attempt = Some(std::time::Instant::now());
-                                    self.context.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.context.client_uuid.clone());
-                                }
-                            }
-                        }
-                    }
-                });
-                if ctx.input(|i| i.viewport().close_requested()) {
-                    show_ws_viewport.store(false, Ordering::Relaxed); // Tell parent to close us.
-                }
-            });
-        }
+        // The detached "Websocket Connection" viewport was tied to the
+        // GUI-side WS-relay (`tabs/websockets/mod.rs`).  That relay is
+        // gone — the direct-TCP `tcp_listener` does not need an
+        // operator-visible reconnect UI, so this whole viewport block
+        // was removed.  See git history for the original implementation.
 
         let layout = &mut self.context.shared_ctx.web_console_layout;
         for client in self.context.shared_ctx.clients.clone() {
@@ -116,6 +86,21 @@ impl MasterTechApp{
                     // detached window doesn't need to show the
                     // probe state (operators look at that in the
                     // main admin console row).
+                    //
+                    // Same goes for `fk_health_tx`/`fk_health_cache`:
+                    // the detached viewport never owns a probe channel.
+                    // Pass an empty placeholder pair so the shared
+                    // `client_header` signature stays unified with the
+                    // primary admin-console caller (which feeds it real
+                    // `ws_client.fk_health_tx`/`fk_health_cache`).  The
+                    // viewport will render FK health as "unknown"; the
+                    // docked row stays the source of truth for it.
+                    let (fk_health_tx, _fk_health_rx) =
+                        crossbeam::channel::unbounded::<(String, bool, bool)>();
+                    let fk_health_cache: std::collections::HashMap<
+                        String,
+                        (bool, bool),
+                    > = std::collections::HashMap::new();
                     ui.horizontal(|ui| {
                         AdminConsole::client_header(
                             ui,
@@ -124,6 +109,8 @@ impl MasterTechApp{
                             layout.session_layout.clone(),
                             layout.focused_client.as_deref(),
                             is_ws_connected,
+                            &fk_health_tx,
+                            &fk_health_cache,
                             inventory,
                             None,
                         );

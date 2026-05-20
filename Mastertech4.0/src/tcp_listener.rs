@@ -622,9 +622,16 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
     tokio::spawn(async move {
         let ip_string = local_ip.to_string();
         for attempt in 0..5u32 {
+            // UPSERT (not UPDATE): on first-run we may race the
+            // `websockets::connect()` row-create and publish before the
+            // row exists. SurrealDB 3.x `UPDATE` is strictly update —
+            // it silently no-ops on a missing row, so the admin never
+            // sees `local_ip` / `tcp_port` and can't dial the client
+            // directly. UPSERT creates-or-updates so the publish always
+            // lands regardless of who wins the race.
             let res = DATABASE
                 .query(
-                    "UPDATE $client SET local_ip = $ip, tcp_port = $port, \
+                    "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
                      connection_string = $cs, last_update = time::now()",
                 )
                 .bind(("client", publish_uuid.clone()))

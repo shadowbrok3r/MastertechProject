@@ -392,6 +392,9 @@ pub enum Cmd {
     SaveResult(bool, String),
     /// Reboot the remote system (with optional persistence flag for auto-restart)
     RebootSystem { persist_mastertech: bool, terminal_mode: bool },
+    /// Spawn Mastertech in terminal mode on the remote client without rebooting.
+    /// Equivalent to the local "Terminal Mode" menu bar action.
+    LaunchTerminalMode,
     /// Shutdown the remote system
     ShutdownSystem,
     /// Lock the remote workstation

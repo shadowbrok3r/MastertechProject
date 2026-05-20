@@ -14,6 +14,7 @@ pub mod receive_users;
 pub mod receive_read_state;
 pub mod admin_notification;
 pub mod reachability;
+pub mod open_service_apply;
 // pub mod receive_database;
 
 impl crate::app_state::SharedContext {
@@ -181,10 +182,16 @@ impl crate::app_state::SharedContext {
             // admin UI needs to see disconnected rows (to show them as
             // offline in the list); only store-scoping is applied here.
             let store = store_id_str.clone();
+            let is_root = user.get_authorization() == database::schema::user::UserAuthorization::Root;
             PlatformSpawner::spawn(async move {
+                let query = if is_root {
+                    "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $store AND connected == true".to_string()
+                } else {
+                    "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND connected == true".to_string()
+                };
                 let res = listen_data_filtered::<database::schema::ConnectedClient>(
                     live_clients_tx,
-                    "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $store".to_string(),
+                    query,
                     vec![("store", serde_json::Value::String(store))],
                 ).await;
                 log::info!("listen_connected_clients: {res:?}");
@@ -260,22 +267,7 @@ impl crate::app_state::SharedContext {
     pub fn receive_shared_logic(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
 
-        // Drain the live-query error channel on every platform.  The
-        // previous `#[cfg(target_arch = "wasm32")]` gate meant that on
-        // native a SurrealDB blip would silently terminate every live
-        // stream (`listen_tasks`, `listen_connected_clients`, …),
-        // `live_queries_active` would stay `true`, and the admin would
-        // sit with a stale in-memory client list until app restart —
-        // exactly the symptom observed when the connected client
-        // disappeared after the 13:56:35 DB connection reset.
-        //
-        // Any stream-terminated error trips a respawn: we flip
-        // `live_queries_active` back to false so the next `load_data`
-        // call re-spawns the LIVE SELECT subscriptions, and set
-        // `needs_reconnect` so the host binary can re-run
-        // `check_authentication` + `load_data` from its top-level
-        // receive loop (the existing pattern in
-        // `MtechServer2.0/src/first_run.rs:239`).
+
         if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
             log::warn!("Live query connection error detected: {}", error_msg);
             let looks_transient = error_msg.contains("connection reset")
@@ -284,16 +276,9 @@ impl crate::app_state::SharedContext {
                 || error_msg.contains("ConnectionFailed")
                 || error_msg.contains("stream terminated");
             if looks_transient {
-                // Cooldown: a single DB blip queues multiple errors (one per
-                // dead LIVE stream — there are five of them).  Each one
-                // ticks `receive_shared_logic`'s try_recv, so without a
-                // gate we respawn every stream up to five times in the
-                // same frame.  Real symptom in the 15:01:05 log: each
-                // LIVE SELECT opens twice.
-                //
-                // 10 s is long enough to swallow a burst of queued errors
-                // but short enough that the user notices recovery within
-                // the same toast window.
+                // Cooldown: a single DB blip queues five identical errors
+                // (one per dead LIVE stream). Without this gate the banner
+                // would flicker open/close five times in the same frame.
                 const RESPAWN_COOLDOWN: web_time::Duration =
                     web_time::Duration::from_secs(10);
                 let now = web_time::Instant::now();
@@ -303,30 +288,57 @@ impl crate::app_state::SharedContext {
                     .unwrap_or(false);
                 if in_cooldown {
                     log::debug!(
-                        "Live query respawn skipped — within cooldown window \
-                         (last respawn {:?} ago)",
+                        "Live query banner skipped — within cooldown window \
+                         (last fired {:?} ago)",
                         now.duration_since(self.last_live_respawn_at.unwrap())
                     );
                 } else {
                     log::warn!(
-                        "Connection reset detected - clearing live_queries_active \
-                         and signalling needs_reconnect"
+                        "Stream-terminated error — prompting operator to reconnect"
                     );
                     self.live_queries_active = false;
-                    self.needs_reconnect = true;
+                    self.show_reload_prompt = true;
                     self.last_live_respawn_at = Some(now);
-                    self.toasts.add(Toast {
-                        kind: ToastKind::Warning,
-                        text: "Connection lost. Reconnecting...".into(),
-                        options: ToastOptions::default()
-                            .show_progress(true)
-                            .duration_in_seconds(4.0),
-                        style: ToastStyle::default(),
-                    });
                 }
             }
         }
-        
+
+        // `document.visibilitychange` is no longer treated as evidence of
+        // a broken connection — the SurrealDB WS survives short hides and
+        // the Cloudflare Tunnel idle window is long. Instead: stamp when
+        // the tab goes hidden, and on return-to-foreground only force a
+        // hard reload when the hide duration exceeded `LONG_HIDE_AUTO_RELOAD`
+        // (browser tab-suspend territory — the JS runtime was almost
+        // certainly paused). Sub-threshold hides clear the stamp and do
+        // nothing; the live-query error path is the source of truth for
+        // "the connection actually broke."
+        const LONG_HIDE_AUTO_RELOAD: web_time::Duration =
+            web_time::Duration::from_secs(60 * 45);
+        while let Ok(is_visible) = self.visibility_signal_rx.try_recv() {
+            if is_visible {
+                if let Some(hidden_at) = self.tab_hidden_at.take() {
+                    let elapsed = web_time::Instant::now().duration_since(hidden_at);
+                    log::info!("Tab visible after {:?} hidden", elapsed);
+                    if elapsed >= LONG_HIDE_AUTO_RELOAD {
+                        log::warn!(
+                            "Tab was hidden for {:?} (>= {:?}) — auto-reloading page",
+                            elapsed,
+                            LONG_HIDE_AUTO_RELOAD
+                        );
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            if let Some(win) = web_sys::window() {
+                                let _ = win.location().reload();
+                            }
+                        }
+                    }
+                }
+            } else {
+                log::info!("Tab hidden");
+                self.tab_hidden_at = Some(web_time::Instant::now());
+            }
+        }
+
         if let Ok(state) = self.app_state_rx.try_recv() {
             log::info!("Got a new state: {state:?}\nbefore state: {:?}", self.state);
             if let crate::app_state::AppState::NoAuth(reason) = &state {
@@ -443,7 +455,94 @@ impl crate::app_state::SharedContext {
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);
         self.drain_reachability_events();
+        self.reload_prompt_ui(ctx);
         self.toasts.show(ctx);
+    }
+
+    /// Action-required banner shown when `live_query_error_rx` reports
+    /// a stream-terminated error. There is no automatic reconnect path
+    /// anymore — the operator clicks "Reconnect" to call `load_data`
+    /// directly (the same pattern Mastertech4.0 uses), which re-issues
+    /// the five LIVE SELECT subscriptions against whatever WS the
+    /// SurrealDB SDK is currently holding. If that fails too, the
+    /// operator can click "Reload page" to fully restart the WASM app.
+    fn reload_prompt_ui(&mut self, ctx: &eframe::egui::Context) {
+        if !self.show_reload_prompt {
+            return;
+        }
+        let mut reload_clicked = false;
+        let mut reconnect_clicked = false;
+        eframe::egui::Window::new("Connection lost")
+            .anchor(eframe::egui::Align2::CENTER_TOP, [0.0, 60.0])
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .frame(
+                eframe::egui::Frame::window(&ctx.style())
+                    .fill(eframe::egui::Color32::from_rgb(60, 30, 30))
+                    .stroke(eframe::egui::Stroke::new(
+                        1.5,
+                        eframe::egui::Color32::from_rgb(220, 80, 80),
+                    )),
+            )
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(4.0);
+                    ui.label(
+                        eframe::egui::RichText::new("Real-time updates are offline")
+                            .strong()
+                            .size(14.0)
+                            .color(eframe::egui::Color32::from_rgb(255, 200, 200)),
+                    );
+                    ui.label(
+                        eframe::egui::RichText::new(
+                            "The live subscription was dropped. Click Reconnect to \
+                             re-issue the subscriptions, or reload the page if that \
+                             doesn't recover.",
+                        )
+                        .color(eframe::egui::Color32::from_rgb(230, 200, 200)),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Reconnect").clicked() {
+                            reconnect_clicked = true;
+                        }
+                        if ui.button("Reload page").clicked() {
+                            reload_clicked = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                });
+            });
+        if reconnect_clicked {
+            log::info!(
+                "Reconnect button clicked — calling load_data to re-issue LIVE SELECTs"
+            );
+            self.show_reload_prompt = false;
+            self.reconnect_attempts = 0;
+            // Snapshot current_user before calling load_data so we don't
+            // hold an aliasing borrow of self.
+            let user = self.current_user.clone();
+            if let Some(user) = user {
+                self.load_data(ctx, &user);
+            } else {
+                log::warn!("Reconnect clicked but current_user is None");
+            }
+        }
+        if reload_clicked {
+            #[cfg(target_arch = "wasm32")]
+            {
+                if let Some(win) = web_sys::window() {
+                    let _ = win.location().reload();
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // Native: reload doesn't apply. Just dismiss; the
+                // operator can hit Reconnect again if they want to retry.
+                self.show_reload_prompt = false;
+            }
+        }
     }
 
     /// Slice 5: drain the background prober's results into the

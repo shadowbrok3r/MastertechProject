@@ -391,6 +391,29 @@ impl Database {
     }
 }
 
+/// Force-rebuild the SurrealDB websocket and re-authenticate with the cached
+/// JWT. Used by the WASM client after a Cloudflare-Tunnel-driven WS reset.
+///
+/// `DATABASE` is a `Lazy<Surreal<WsClient>>` singleton, so after a transport
+/// drop the SDK can end up in a state where `.connect()` returns
+/// `"Already connected"` even though the underlying socket is dead. Calling
+/// `invalidate()` first clears that stale state so the subsequent `.connect()`
+/// builds a fresh socket.
+pub async fn reconnect_with_jwt(jwt: Option<String>) -> anyhow::Result<()> {
+    let jwt = jwt.ok_or_else(|| anyhow::anyhow!("reconnect_with_jwt: no JWT cached"))?;
+    let _ = DATABASE.invalidate().await;
+    if cfg!(debug_assertions) {
+        DATABASE.connect::<Ws>(DB_URL_LOCAL).await?;
+    } else {
+        DATABASE.connect::<Wss>(DB_URL_DEV).await?;
+    }
+    DATABASE.use_ns(NS).use_db(DB).await?;
+    DATABASE.authenticate(jwt.clone()).await?;
+    cache_auth(Some(jwt), None, None);
+    log::info!("reconnect_with_jwt: WS reconnected and re-authenticated");
+    Ok(())
+}
+
 pub fn get_current_user_from_auth() -> Option<User> {
     if let Ok(current_user) = CURRENT_USER_INFO.try_lock() {
         log::trace!("get_current_user_from_auth: user retrieved from global state");
