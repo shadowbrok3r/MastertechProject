@@ -284,7 +284,7 @@ impl Drop for RunController {
 // ---------------------------------------------------------------------------
 
 fn worker(
-    spec: RunSpec,
+    mut spec: RunSpec,
     telemetry: Arc<TelemetryAgent>,
     cancel: Arc<AtomicBool>,
     update_tx: Sender<RunUpdate>,
@@ -292,6 +292,22 @@ fn worker(
     running: Arc<AtomicBool>,
 ) {
     let started_at = Instant::now();
+
+    // ---- 0. Hardware-component middleware ----
+    // Upsert `hardware_component` rows for the CPU + every GPU this machine
+    // reports, then patch the spec so the run row links them via
+    // `target_component` / `touched_components`. Best-effort: failures are
+    // logged but don't abort the run — the row would just have a `NONE`
+    // target_component which is permitted by the schema.
+    let snapshot = telemetry.snapshot();
+    let (cpu_component, all_components) =
+        crate::hardware::ensure_components_from_snapshot(&snapshot);
+    if spec.target_component.is_none() {
+        spec.target_component = cpu_component;
+    }
+    if spec.touched_components.is_empty() {
+        spec.touched_components = all_components;
+    }
 
     // ---- 1. Build + persist the StressTestRun row ----
     let run = build_run(&spec);

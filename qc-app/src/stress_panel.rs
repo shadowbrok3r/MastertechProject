@@ -20,6 +20,10 @@ use stress_runner::{RecordId, StressKitStressor};
 pub enum PanelMode {
     Single,
     Scenario,
+    /// Curated 8-stage burn-in shared with the MCP `run_qc_benchmark` tool.
+    /// One knob: a duration multiplier. Same `RunController` + persistence
+    /// path as the other modes.
+    QcBenchmark,
 }
 
 impl Default for PanelMode {
@@ -34,6 +38,24 @@ pub struct StressPanelConfig {
     pub mode: PanelMode,
     pub single: SingleConfig,
     pub scenario: ScenarioConfig,
+    #[serde(default)]
+    pub qc_benchmark: QcBenchmarkConfig,
+}
+
+/// Persisted state for the QC Benchmark mode (just the duration multiplier).
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct QcBenchmarkConfig {
+    /// Multiplier applied to every stage's base duration (default 20 s).
+    /// Stored as f32 so the egui slider is happy.
+    pub duration_multiplier: f32,
+}
+
+impl Default for QcBenchmarkConfig {
+    fn default() -> Self {
+        Self {
+            duration_multiplier: 1.0,
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -428,6 +450,40 @@ impl StressPanel {
         }
     }
 
+    /// Spin up the curated QC benchmark. Same `RunController` + persistence
+    /// path as `start_scenario`; uses the shared `qc_benchmark` recipe so the
+    /// MCP and GUI paths can never disagree on what the preset runs.
+    fn start_qc_benchmark(
+        &mut self,
+        cfg: &QcBenchmarkConfig,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
+        let mult = cfg.duration_multiplier.clamp(0.1, 10.0);
+        let stages = crate::qc_benchmark::qc_benchmark_stages(mult);
+        let plan = RunPlan::Scenario {
+            stages: stages.clone(),
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        let mut spec = RunSpec::single_stresskit(
+            computer,
+            stages.first().map(|s| s.stressor).unwrap_or(Stressor::Cpu),
+            None,
+        );
+        spec.plan = plan;
+        spec.tool = TestTool::StressKitScenario {
+            name: Some(crate::qc_benchmark::QC_BENCHMARK_PRESET.to_string()),
+        };
+        spec.preset_label = Some(crate::qc_benchmark::QC_BENCHMARK_PRESET.to_string());
+        spec.tags = vec!["origin:gui".into(), "preset:qc-benchmark".into()];
+        self.history.clear();
+        self.latest = None;
+        self.scenario_state = ScenarioState::default();
+        self.show_verdict = false;
+        self.run = Some(RunController::start(spec, telemetry));
+    }
+
     /// Stress tab UI.
     ///
     /// `telemetry` is the shared `TelemetryAgent` (typically from `HwSampler::agent()`).
@@ -465,13 +521,15 @@ impl StressPanel {
             ui.add_enabled_ui(!running, |ui| {
                 ui.selectable_value(&mut cfg.mode, PanelMode::Single, "Single stressor");
                 ui.selectable_value(&mut cfg.mode, PanelMode::Scenario, "Scenario");
+                ui.selectable_value(&mut cfg.mode, PanelMode::QcBenchmark, "QC Benchmark");
             });
         });
         ui.separator();
 
         match cfg.mode {
             PanelMode::Single => self.ui_single(ui, cfg, running, telemetry.clone(), computer.clone()),
-            PanelMode::Scenario => self.ui_scenario(ui, cfg, running, telemetry, computer),
+            PanelMode::Scenario => self.ui_scenario(ui, cfg, running, telemetry.clone(), computer.clone()),
+            PanelMode::QcBenchmark => self.ui_qc_benchmark(ui, cfg, running, telemetry, computer),
         }
 
         if self.show_verdict {
@@ -776,6 +834,71 @@ impl StressPanel {
         let unit = cfg
             .scenario
             .stages
+            .get(stage_idx)
+            .map(|s| s.stressor.throughput_unit())
+            .unwrap_or("ops/s");
+        self.ui_metrics(ui, unit);
+    }
+
+    /// QC Benchmark mode. Just the duration multiplier slider + a Start
+    /// button — every stage is hard-coded by the shared `qc_benchmark` recipe.
+    fn ui_qc_benchmark(
+        &mut self,
+        ui: &mut egui::Ui,
+        cfg: &mut StressPanelConfig,
+        running: bool,
+        telemetry: Arc<TelemetryAgent>,
+        computer: RecordId,
+    ) {
+        let mult = cfg.qc_benchmark.duration_multiplier.clamp(0.1, 10.0);
+        let total_secs = (mult * 20.0 * 8.0).round() as u64;
+
+        ui.group(|ui| {
+            ui.label(egui::RichText::new("QC Benchmark v1").strong());
+            ui.label(
+                egui::RichText::new(
+                    "8-stage burn-in: cpu, matrix, fp, stream, cache, branch, memory, vm. \
+                     Shared with the MCP `run_qc_benchmark` tool — same recipe, same persistence.",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label("Duration multiplier");
+                ui.add_enabled(
+                    !running,
+                    egui::Slider::new(&mut cfg.qc_benchmark.duration_multiplier, 0.1..=4.0)
+                        .step_by(0.05)
+                        .suffix("×"),
+                );
+                ui.label(
+                    egui::RichText::new(format!("≈ {total_secs} s total"))
+                        .small()
+                        .weak(),
+                );
+            });
+            ui.label(
+                egui::RichText::new(
+                    "1.0× ≈ 20 s/stage (~2.7 min). 0.25× ≈ 40 s smoke. 4.0× ≈ 11 min.",
+                )
+                .small()
+                .weak(),
+            );
+        });
+
+        let bench_clone = cfg.qc_benchmark.clone();
+        let computer_clone = computer.clone();
+        self.ui_start_stop(ui, running, move |panel| {
+            panel.start_qc_benchmark(&bench_clone, telemetry, computer_clone);
+        });
+
+        if running || (self.has_run() && cfg.mode == PanelMode::QcBenchmark) {
+            self.ui_scenario_progress(ui, cfg);
+        }
+
+        let stage_idx = self.scenario_state.current_stage_index;
+        let unit = crate::qc_benchmark::qc_benchmark_stages(mult)
             .get(stage_idx)
             .map(|s| s.stressor.throughput_unit())
             .unwrap_or("ops/s");

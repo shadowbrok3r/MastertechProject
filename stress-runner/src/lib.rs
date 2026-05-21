@@ -27,8 +27,11 @@
 //!   scripts tab, with a ratatui UI on top.
 
 mod controller;
+mod hardware;
 mod mapping;
 mod runtime;
+
+pub use hardware::ensure_components_from_snapshot;
 
 pub use controller::{RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict};
 pub use mapping::{
