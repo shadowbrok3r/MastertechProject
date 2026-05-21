@@ -15,11 +15,11 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use stress_kit::scenario::{
-    FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage,
-};
 use stress_kit::telemetry::TelemetryAgent;
-use stress_kit::{Metrics, StressConfig, StressSession, Stressor};
+use stress_kit::{Metrics, Stressor};
+use stress_runner::{
+    stressor_to_db, RecordId, RunController, RunPlan, RunSpec, RunStage, RunUpdate, TestTool,
+};
 
 use crate::hw_sampler::CoreRow;
 use crate::reporting::ReportSink;
@@ -57,6 +57,9 @@ pub struct QcMcpState {
     /// Shared telemetry agent. Held in `Option` so the state can be constructed
     /// before the sampler boots on the first frame.
     pub telemetry: Arc<Mutex<Option<Arc<TelemetryAgent>>>>,
+    /// Stable `computer:<machine_id>` record this agent reports runs against.
+    /// Populated once at state construction (mirrors `app::local_computer_record`).
+    pub computer: RecordId,
     /// The active stress run (single or scenario), if any.
     pub run_slot: Arc<Mutex<RunSlot>>,
 }
@@ -295,46 +298,60 @@ impl QcToolProvider {
 
     #[tool(
         name = "run_stress_scenario",
-        description = "Run a multi-stage stress scenario and return per-stage final metrics. Blocks until the scenario completes or its wall cap fires."
+        description = "Run a multi-stage stress scenario via stress_runner::RunController. Blocks until done; every tick lands in `stress_test_metric` + the final verdict in `stress_test_run`."
     )]
     async fn run_stress_scenario(
         &self,
         Parameters(args): Parameters<RunScenarioArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Build the stress-kit scenario definition off the DTO.
-        let stages: Vec<ScenarioStage> = args
-            .stages
-            .iter()
-            .map(|s| ScenarioStage {
-                label: s.label.clone(),
-                duration_secs: s.duration_secs.max(1),
-                config: StressConfig {
-                    stressor: s.stressor.into(),
-                    threads: s.threads,
-                    timeout: None,
-                    memory_cap_mb: s.memory_cap_mb,
-                    disk_file_mb: s.disk_file_mb,
-                },
-            })
-            .collect();
-
-        if stages.is_empty() {
+        if args.stages.is_empty() {
             return Err(to_internal("stages cannot be empty"));
         }
 
+        let stages: Vec<RunStage> = args
+            .stages
+            .iter()
+            .map(|s| RunStage {
+                label: s.label.clone(),
+                stressor: s.stressor.into(),
+                threads: s.threads,
+                duration_secs: s.duration_secs.max(1),
+                memory_cap_mb: s.memory_cap_mb,
+                disk_file_mb: s.disk_file_mb,
+            })
+            .collect();
         let labels: Vec<String> = stages.iter().map(|s| s.label.clone()).collect();
-        let def = ScenarioDefinition {
+
+        let telemetry = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready (first frame pending)"))?;
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+
+        let mut spec =
+            RunSpec::single_stresskit(computer, stages.first().map(|s| s.stressor).unwrap_or(Stressor::Cpu), None);
+        spec.plan = RunPlan::Scenario {
             stages,
             total_wall_secs: args.total_wall_secs,
             repeat_until_total: args.repeat_until_total,
         };
+        spec.tool = TestTool::StressKitScenario {
+            name: Some("qc-mcp:scenario".to_string()),
+        };
+        spec.preset_label = Some("qc-mcp:scenario".to_string());
+        spec.tags = vec!["origin:mcp".into()];
 
-        let slot = self.state.run_slot.clone();
-        // Driving the runner is blocking. Hop to a blocking thread so we don't
-        // stall the tokio runtime.
-        let report = tokio::task::spawn_blocking(move || drive_scenario(def, labels, slot))
-            .await
-            .map_err(|e| to_internal(format!("scenario task join: {e}")))?;
+        // RunController driving is blocking. Hop to a blocking thread so we
+        // don't stall the tokio runtime.
+        let report = tokio::task::spawn_blocking(move || {
+            drive_scenario_via_controller(spec, telemetry, labels, slot)
+        })
+        .await
+        .map_err(|e| to_internal(format!("scenario task join: {e}")))?;
 
         let json = serde_json::to_string_pretty(&report)
             .map_err(|e| to_internal(e.to_string()))?;
@@ -343,28 +360,44 @@ impl QcToolProvider {
 
     #[tool(
         name = "run_stressor",
-        description = "Run a single stressor for a fixed duration and return final metrics. Blocks until the duration elapses or `stop_stress_run` cancels."
+        description = "Run a single stressor via stress_runner::RunController for `duration_secs` seconds. Persists to stress_test_run + stress_test_metric; blocks until done or cancelled."
     )]
     async fn run_stressor(
         &self,
         Parameters(args): Parameters<RunStressorArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let kind = args.stressor;
-        let duration = Duration::from_secs(args.duration_secs.max(1));
-        let config = StressConfig {
-            stressor: kind.into(),
+        let stressor: Stressor = kind.into();
+        let duration_secs = args.duration_secs.max(1);
+        let label = stressor.label().to_string();
+        let unit = stressor.throughput_unit().to_string();
+
+        let telemetry = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready (first frame pending)"))?;
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+
+        let mut spec = RunSpec::single_stresskit(computer, stressor, Some(duration_secs));
+        spec.plan = RunPlan::Single {
+            stressor,
             threads: args.threads,
-            timeout: Some(duration),
+            duration_secs: Some(duration_secs),
             memory_cap_mb: args.memory_cap_mb,
             disk_file_mb: args.disk_file_mb,
         };
-        let label: String = stress_kit::Stressor::from(kind).label().to_string();
-        let unit: String = stress_kit::Stressor::from(kind).throughput_unit().to_string();
-        let slot = self.state.run_slot.clone();
-        let run_id = format!("stressor-{}", new_run_id());
+        spec.tool = TestTool::StressKit {
+            stressor: stressor_to_db(stressor),
+        };
+        spec.preset_label = Some(format!("qc-mcp:single:{}", stressor.label()));
+        spec.tags = vec!["origin:mcp".into()];
 
         let report = tokio::task::spawn_blocking(move || {
-            drive_single(config, label, unit, run_id, duration, slot)
+            drive_single_via_controller(spec, telemetry, label, unit, slot)
         })
         .await
         .map_err(|e| to_internal(format!("stressor task join: {e}")))?;
@@ -421,6 +454,138 @@ impl QcToolProvider {
     }
 
     #[tool(
+        name = "run_qc_benchmark",
+        description = "Run the curated 8-stage QC burn-in (cpu, matrix, fp, stream, cache, branch, memory, vm) and return a pass/warn/fail verdict. Routes through stress_runner so the full run + telemetry persists to SurrealDB. Watches WHEA deltas and per-stage throughput floors."
+    )]
+    async fn run_qc_benchmark(
+        &self,
+        Parameters(args): Parameters<QcBenchmarkArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Capture WHEA baseline so we can detect any new MCEs during the run.
+        let whea_before = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .and_then(|a| a.snapshot().whea.map(|w| w.absolute_since_boot));
+
+        let mult = args.duration_multiplier.unwrap_or(1.0).max(0.1).min(10.0);
+        let stages = qc_benchmark_stages(mult);
+        let labels: Vec<String> = stages.iter().map(|s| s.label.clone()).collect();
+        // Snapshot the (stressor, floor) pairs alongside each stage so the
+        // verdict can map per-stage results back to their pass/fail floor.
+        let floors: Vec<(Stressor, f64)> = stages
+            .iter()
+            .map(|s| (s.stressor, qc_floor_for(s.stressor)))
+            .collect();
+
+        let telemetry = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready"))?;
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+
+        let mut spec =
+            RunSpec::single_stresskit(computer, stages.first().map(|s| s.stressor).unwrap_or(Stressor::Cpu), None);
+        spec.plan = RunPlan::Scenario {
+            stages,
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        spec.tool = TestTool::StressKitScenario {
+            name: Some("qc-mcp:benchmark-v1".into()),
+        };
+        spec.preset_label = Some("qc-mcp:benchmark-v1".into());
+        spec.tags = vec!["origin:mcp".into(), "preset:qc-benchmark".into()];
+
+        let scenario = tokio::task::spawn_blocking(move || {
+            drive_scenario_via_controller(spec, telemetry, labels.clone(), slot)
+        })
+        .await
+        .map_err(|e| to_internal(format!("benchmark task join: {e}")))?;
+
+        // Post-run WHEA delta + final per-stage scoring.
+        let whea_after = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .and_then(|a| a.snapshot().whea.map(|w| w.absolute_since_boot));
+        let whea_delta = match (whea_before, whea_after) {
+            (Some(b), Some(a)) => Some(a.saturating_sub(b)),
+            _ => None,
+        };
+
+        let mut stage_results: Vec<QcStageResult> = Vec::with_capacity(scenario.stages.len());
+        let mut failed_count = 0usize;
+        let mut warn_count = 0usize;
+        for (idx, stage) in scenario.stages.iter().enumerate() {
+            let (stressor, floor) = floors.get(idx).copied().unwrap_or((Stressor::Cpu, 0.0));
+            let throughput = stage.last_metrics.as_ref().map(|m| m.throughput).unwrap_or(0.0);
+            let last_error = stage.last_metrics.as_ref().and_then(|m| m.last_error.clone());
+            let mut status = if throughput >= floor {
+                "pass"
+            } else if throughput >= floor * 0.9 {
+                warn_count += 1;
+                "warn"
+            } else {
+                failed_count += 1;
+                "fail"
+            };
+            // Any explicit per-tick error forces fail regardless of throughput.
+            if last_error.is_some() {
+                failed_count += 1;
+                status = "fail";
+            }
+            stage_results.push(QcStageResult {
+                index: idx,
+                label: stage.label.clone(),
+                stressor: stressor.label().to_string(),
+                throughput,
+                throughput_unit: stressor.throughput_unit().to_string(),
+                floor,
+                ratio: if floor > 0.0 { throughput / floor } else { 0.0 },
+                last_error,
+                status: status.into(),
+            });
+        }
+
+        // Overall verdict precedence: WHEA hits > any fail > any warn > pass.
+        let verdict = if whea_delta.unwrap_or(0) > 0 {
+            "fail"
+        } else if failed_count > 0 {
+            "fail"
+        } else if warn_count > 0 {
+            "warn"
+        } else if scenario.finished_reason != "completed" {
+            // Cancelled or aborted mid-run -> inconclusive, not pass.
+            "inconclusive"
+        } else {
+            "pass"
+        };
+
+        let body = QcBenchmarkReport {
+            preset: "qc-benchmark-v1".into(),
+            verdict: verdict.into(),
+            finished_reason: scenario.finished_reason,
+            total_elapsed_secs: scenario.total_elapsed_secs,
+            duration_multiplier: mult,
+            whea_delta,
+            stages: stage_results,
+            reasoning: build_reasoning(verdict, whea_delta, failed_count, warn_count),
+        };
+        let json = serde_json::to_string_pretty(&body)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
         name = "list_stressors",
         description = "Enumerate the stressors this build accepts, with default human-readable labels and throughput units."
     )]
@@ -466,6 +631,174 @@ impl QcToolProvider {
     }
 }
 
+/// `run_qc_benchmark` arguments. Both fields optional — defaults give a ~2.7-minute
+/// representative burn-in that exercises the eight subsystems most likely to
+/// surface marginal silicon on a fresh PC build.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct QcBenchmarkArgs {
+    /// Scales every stage's `duration_secs`. `1.0` = ~20 s/stage (default).
+    /// `0.5` = quick smoke (~80 s total), `2.0` = thorough (~5.5 min total).
+    /// Clamped to `[0.1, 10.0]` server-side.
+    #[serde(default)]
+    pub duration_multiplier: Option<f32>,
+}
+
+/// One stage's pass/fail breakdown in [`QcBenchmarkReport`].
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct QcStageResult {
+    pub index: usize,
+    pub label: String,
+    pub stressor: String,
+    pub throughput: f64,
+    pub throughput_unit: String,
+    /// Hard-coded minimum throughput this build expects for `stressor`. Will be
+    /// replaced by per-component `hardware_test_baseline` lookups in a later
+    /// step. Until then, the floors are a permissive baseline that any modern
+    /// (post-2018) consumer CPU should clear; warning band is 0.9× floor.
+    pub floor: f64,
+    /// `throughput / floor` for fast inspection.
+    pub ratio: f64,
+    pub last_error: Option<String>,
+    /// `"pass"` / `"warn"` / `"fail"`.
+    pub status: String,
+}
+
+/// Final report shape for `run_qc_benchmark`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct QcBenchmarkReport {
+    pub preset: String,
+    /// `"pass"` / `"warn"` / `"fail"` / `"inconclusive"`.
+    pub verdict: String,
+    pub finished_reason: String,
+    pub total_elapsed_secs: f64,
+    pub duration_multiplier: f32,
+    /// New WHEA records (machine-check exceptions) observed during the run.
+    /// `None` on non-Windows where the counter isn't readable. Any value > 0
+    /// forces a `fail` verdict.
+    pub whea_delta: Option<u64>,
+    pub stages: Vec<QcStageResult>,
+    /// Human-readable explanation of how the verdict was derived.
+    pub reasoning: String,
+}
+
+/// Build the 8-stage QC benchmark. Order is deliberate:
+///   1. CPU / matrix / fp warm the cores at increasing FP intensity.
+///   2. Stream / cache test memory bandwidth + hierarchy under that load.
+///   3. Branch validates the branch predictor.
+///   4. Memory / vm pressure RAM + page tables last so any heat-soaked
+///      memory controller has had a chance to drift.
+fn qc_benchmark_stages(mult: f32) -> Vec<RunStage> {
+    fn dur(base: u64, mult: f32) -> u64 {
+        ((base as f32) * mult).round().max(1.0) as u64
+    }
+    let mk = |label: &str, stressor: Stressor, base_secs: u64| RunStage {
+        label: label.to_string(),
+        stressor,
+        threads: 0,
+        duration_secs: dur(base_secs, mult),
+        memory_cap_mb: 1024,
+        disk_file_mb: 16,
+    };
+    vec![
+        mk("cpu",    Stressor::Cpu,    20),
+        mk("matrix", Stressor::Matrix, 20),
+        mk("fp",     Stressor::Fp,     20),
+        mk("stream", Stressor::Stream, 20),
+        mk("cache",  Stressor::Cache,  20),
+        mk("branch", Stressor::Branch, 20),
+        mk("memory", Stressor::Memory, 20),
+        mk("vm",     Stressor::Vm,     20),
+    ]
+}
+
+/// Throughput floor below which a stage is graded `fail` (or `warn` between
+/// 0.9× and 1.0×). Numbers are intentionally permissive — they're a "this
+/// machine is broken" smoke check, not a competitive benchmark.
+///
+/// Reference points (single 9950X core at idle):
+///   * cpu       ~600  Mop/s  → floor 50  (allows ~1 core of headroom)
+///   * matrix    ~3000 Mflop/s → floor 200
+///   * fp        ~4500 Mflop/s → floor 200
+///   * stream    ~50   GB/s   → floor 5
+///   * cache     ~700  Mref/s → floor 50
+///   * branch    ~1200 Mbranch/s → floor 100
+///   * memory    ~20   MiB/s  → floor 2
+///   * vm        ~4000 MiB/s  → floor 200
+///
+/// Replace per-component once `hardware_test_baseline` is populated.
+fn qc_floor_for(stressor: Stressor) -> f64 {
+    match stressor {
+        Stressor::Cpu => 50.0,
+        Stressor::Matrix => 200.0,
+        Stressor::Fp => 200.0,
+        Stressor::Stream => 5.0,
+        Stressor::Cache => 50.0,
+        Stressor::Branch => 100.0,
+        Stressor::Memory => 2.0,
+        Stressor::Vm => 200.0,
+        Stressor::Memcpy => 2.0,
+        Stressor::Bitops => 50.0,
+        Stressor::Disk => 5.0,
+        Stressor::Atomic => 5.0,
+        Stressor::Mutex => 0.5,
+        Stressor::Switch => 0.05,
+        Stressor::Prime => 0.5,
+        Stressor::Hash => 50.0,
+        Stressor::Prefetch => 50.0,
+        Stressor::Icache => 5.0,
+        Stressor::Tsc => 5.0,
+    }
+}
+
+fn build_reasoning(
+    verdict: &str,
+    whea_delta: Option<u64>,
+    failed_count: usize,
+    warn_count: usize,
+) -> String {
+    match verdict {
+        "pass" => {
+            "All 8 stages cleared their throughput floors; no machine-check exceptions \
+             observed; no stage reported an inner error. Hardware looks healthy."
+                .into()
+        }
+        "warn" => format!(
+            "{warn_count} stage(s) finished between 90% and 100% of their throughput floor — \
+             borderline, but no fatal failures. Re-run after letting the machine cool, \
+             or compare to the per-component baseline if you have one."
+        ),
+        "fail" => {
+            let mut bits = Vec::new();
+            if let Some(d) = whea_delta {
+                if d > 0 {
+                    bits.push(format!(
+                        "{d} new WHEA (machine-check) record(s) during the run — the CPU or \
+                         memory controller raised a hardware error. Treat as fail regardless \
+                         of throughput numbers."
+                    ));
+                }
+            }
+            if failed_count > 0 {
+                bits.push(format!(
+                    "{failed_count} stage(s) below 90% of the throughput floor or reported \
+                     a runtime error."
+                ));
+            }
+            if bits.is_empty() {
+                "Run did not complete cleanly. See `finished_reason` and per-stage `status`.".into()
+            } else {
+                bits.join("\n")
+            }
+        }
+        "inconclusive" => {
+            "Run did not complete normally (cancelled or aborted). No verdict — \
+             re-run to get a clean result."
+                .into()
+        }
+        _ => format!("Unknown verdict: {verdict}"),
+    }
+}
+
 /// One single-stressor invocation.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct RunStressorArgs {
@@ -492,6 +825,14 @@ pub struct StressorReport {
     pub finished_reason: String,
 }
 
+/// Stringify a `RecordId` for the MCP wire surface. Uses the table-qualified
+/// `table:key` form so a client can paste it straight into a SurrealQL
+/// `SELECT * FROM <run_id>;` query.
+fn format_run_id(id: &RecordId) -> String {
+    use database::schema::RecordIdExt;
+    format!("stress_test_run:{}", id.key_string())
+}
+
 fn new_run_id() -> String {
     use std::sync::atomic::AtomicU64;
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -503,178 +844,224 @@ fn new_run_id() -> String {
     format!("{ms:x}-{n:x}")
 }
 
-fn drive_single(
-    config: StressConfig,
+/// Drive a single-stressor run through `RunController` so it persists to
+/// `stress_test_run` / `stress_test_metric` / `stress_test_event`. Publishes
+/// live progress into `RunSlot` for `get_run_status` and bridges
+/// `stop_stress_run`'s `AtomicBool` to `RunController::stop()`.
+fn drive_single_via_controller(
+    spec: RunSpec,
+    telemetry: Arc<TelemetryAgent>,
     label: String,
     unit: String,
-    run_id: String,
-    duration: Duration,
     slot: Arc<Mutex<RunSlot>>,
 ) -> StressorReport {
-    let session = StressSession::start(config);
-    let cancel = std::sync::Arc::new(AtomicBool::new(false));
-
-    // Publish initial slot state.
-    if let Ok(mut s) = slot.lock() {
-        s.cancel = Some(cancel.clone());
-        s.latest = RunSnapshot {
-            run_id: run_id.clone(),
-            mode: "stressor".into(),
-            label: label.clone(),
-            elapsed_secs: 0.0,
-            throughput: 0.0,
-            throughput_unit: unit.clone(),
-            last_error: None,
-            finished: false,
-            finished_reason: None,
-        };
-    }
-
     let started = Instant::now();
-    let mut last: Option<MetricsDto> = None;
-    let mut finished_reason = "duration_elapsed".to_string();
-
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            session.stop();
-            finished_reason = "cancelled".into();
-            break;
-        }
-        if started.elapsed() >= duration {
-            session.stop();
-            break;
-        }
-        if let Some(m) = session.try_recv() {
-            last = Some((&m).into());
-            if let Ok(mut s) = slot.lock() {
-                s.latest.elapsed_secs = m.elapsed_secs;
-                s.latest.throughput = m.throughput;
-                s.latest.last_error = m.last_error.clone();
-            }
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    // Final tick drain.
-    if let Some(m) = session.try_recv() {
-        last = Some((&m).into());
-    }
-
-    // Clear slot.
-    if let Ok(mut s) = slot.lock() {
-        s.cancel = None;
-        s.latest.finished = true;
-        s.latest.finished_reason = Some(finished_reason.clone());
-        if let Some(m) = &last {
-            s.latest.elapsed_secs = m.elapsed_secs;
-            s.latest.throughput = m.throughput;
-            s.latest.last_error = m.last_error.clone();
-        }
-    }
-
-    StressorReport {
-        run_id,
-        label,
-        throughput_unit: unit,
-        elapsed_secs: started.elapsed().as_secs_f64(),
-        last_metrics: last,
-        finished_reason,
-    }
+    let mode = "stressor".to_string();
+    let mut report = drive_run(spec, telemetry, label.clone(), Some(unit), mode, slot)
+        .into_stressor_report(started.elapsed().as_secs_f64());
+    report.label = label;
+    report
 }
 
-fn drive_scenario(
-    def: ScenarioDefinition,
+/// Drive a multi-stage scenario through `RunController`. Same persistence
+/// guarantees as `drive_single_via_controller`.
+fn drive_scenario_via_controller(
+    spec: RunSpec,
+    telemetry: Arc<TelemetryAgent>,
     labels: Vec<String>,
     slot: Arc<Mutex<RunSlot>>,
 ) -> ScenarioReport {
-    let runner = ScenarioRunner::start(def);
-    let cancel = runner.cancel_handle();
-    let run_id = format!("scenario-{}", new_run_id());
+    let started = Instant::now();
+    let mode = "scenario".to_string();
+    let label = labels.first().cloned().unwrap_or_default();
+    let outcome = drive_run(spec, telemetry, label, None, mode, slot);
+    outcome.into_scenario_report(labels, started.elapsed().as_secs_f64())
+}
 
-    // Publish initial slot state so `stop_stress_run` can find the cancel
-    // handle and `get_run_status` can read live progress.
+/// Internal: shared driver for both single and scenario runs. Wraps the
+/// `RunController` event loop, mirrors progress to `RunSlot`, and translates
+/// the bridge cancel atomic into `controller.stop()` calls.
+struct DriveOutcome {
+    /// Server-side run id (`stress_test_run:<uuid>` formatted).
+    run_id: String,
+    throughput_unit: String,
+    last_metrics: Option<MetricsDto>,
+    finished_reason: String,
+    /// Per-stage final metrics keyed by stage index; index 0 is always
+    /// populated even for single-stressor runs.
+    per_stage_final: std::collections::HashMap<u32, MetricsDto>,
+}
+
+impl DriveOutcome {
+    fn into_stressor_report(self, elapsed_secs: f64) -> StressorReport {
+        StressorReport {
+            run_id: self.run_id,
+            label: String::new(), // filled by drive_single_via_controller via state.label
+            throughput_unit: self.throughput_unit,
+            elapsed_secs,
+            last_metrics: self.last_metrics,
+            finished_reason: self.finished_reason,
+        }
+    }
+
+    fn into_scenario_report(self, labels: Vec<String>, elapsed_secs: f64) -> ScenarioReport {
+        let stages = labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| StageReport {
+                index: i,
+                label: label.clone(),
+                last_metrics: self.per_stage_final.get(&(i as u32)).cloned(),
+            })
+            .collect();
+        let _ = elapsed_secs;
+        ScenarioReport {
+            finished_reason: self.finished_reason,
+            total_elapsed_secs: self
+                .last_metrics
+                .as_ref()
+                .map(|m| m.elapsed_secs)
+                .unwrap_or(0.0),
+            stages,
+        }
+    }
+}
+
+fn drive_run(
+    spec: RunSpec,
+    telemetry: Arc<TelemetryAgent>,
+    initial_label: String,
+    initial_unit: Option<String>,
+    mode: String,
+    slot: Arc<Mutex<RunSlot>>,
+) -> DriveOutcome {
+    let controller = RunController::start(spec, telemetry);
+    let cancel_bridge = Arc::new(AtomicBool::new(false));
+    let pre_run_id = format!("pending-{}", new_run_id());
+
+    // Publish initial slot state with a placeholder run_id; replaced once the
+    // controller fires `Started`.
     if let Ok(mut s) = slot.lock() {
-        s.cancel = Some(cancel.clone());
+        s.cancel = Some(cancel_bridge.clone());
         s.latest = RunSnapshot {
-            run_id: run_id.clone(),
-            mode: "scenario".into(),
-            label: labels.first().cloned().unwrap_or_default(),
+            run_id: pre_run_id.clone(),
+            mode: mode.clone(),
+            label: initial_label.clone(),
             elapsed_secs: 0.0,
             throughput: 0.0,
-            throughput_unit: String::new(),
+            throughput_unit: initial_unit.clone().unwrap_or_default(),
             last_error: None,
             finished: false,
             finished_reason: None,
         };
     }
 
-    let mut last_metrics: Vec<Option<MetricsDto>> = vec![None; labels.len().max(1)];
-    let mut report: Option<ScenarioReport> = None;
+    let mut run_id: String = pre_run_id.clone();
+    let mut last: Option<MetricsDto> = None;
+    let mut throughput_unit = initial_unit.unwrap_or_default();
+    let mut finished_reason = "duration_elapsed".to_string();
+    let mut per_stage_final: std::collections::HashMap<u32, MetricsDto> =
+        std::collections::HashMap::new();
 
-    while report.is_none() {
-        for event in runner.try_recv_all() {
-            match event {
-                ScenarioEvent::StageStarted { index, .. } => {
+    loop {
+        // Bridge: if the MCP `stop_stress_run` flipped our atomic, ask the
+        // controller to wind down. The controller will still emit `Finished`,
+        // which is when we exit this loop.
+        if cancel_bridge.load(Ordering::Relaxed) {
+            controller.stop();
+        }
+
+        let updates = controller.poll();
+        for update in updates {
+            match update {
+                RunUpdate::Started { run_id: rid } => {
+                    run_id = format_run_id(&rid);
                     if let Ok(mut s) = slot.lock() {
-                        if let Some(lbl) = labels.get(index) {
-                            s.latest.label = lbl.clone();
-                        }
+                        s.latest.run_id = run_id.clone();
                     }
                 }
-                ScenarioEvent::Tick { stage_index, metrics } => {
-                    if let Some(stage) = last_metrics.get_mut(stage_index) {
-                        *stage = Some((&metrics).into());
+                RunUpdate::StageStarted {
+                    index,
+                    label,
+                    stage_count: _,
+                } => {
+                    if let Ok(mut s) = slot.lock() {
+                        s.latest.label = label;
+                        let _ = index;
                     }
+                }
+                RunUpdate::Tick {
+                    stage_index,
+                    stage_label: _,
+                    metrics,
+                    telemetry: _,
+                    throughput_unit: unit,
+                } => {
+                    let dto: MetricsDto = (&metrics).into();
+                    if let Some(idx) = stage_index {
+                        per_stage_final.insert(idx, dto.clone());
+                    } else {
+                        per_stage_final.insert(0, dto.clone());
+                    }
+                    throughput_unit = unit.to_string();
                     if let Ok(mut s) = slot.lock() {
                         s.latest.elapsed_secs = metrics.elapsed_secs;
                         s.latest.throughput = metrics.throughput;
                         s.latest.last_error = metrics.last_error.clone();
+                        s.latest.throughput_unit = throughput_unit.clone();
+                    }
+                    last = Some(dto);
+                }
+                RunUpdate::StageFinished { index: _ } => {}
+                RunUpdate::Warning { message } => {
+                    log::warn!("[qc-mcp/run] warning: {message}");
+                    if let Ok(mut s) = slot.lock() {
+                        s.latest.last_error = Some(message);
                     }
                 }
-                ScenarioEvent::Finished {
-                    reason,
-                    total_elapsed_secs: t,
-                } => {
-                    report = Some(ScenarioReport {
-                        finished_reason: finish_reason_label(reason),
-                        total_elapsed_secs: t,
-                        stages: labels
-                            .iter()
-                            .enumerate()
-                            .map(|(i, label)| StageReport {
-                                index: i,
-                                label: label.clone(),
-                                last_metrics: last_metrics.get(i).cloned().flatten(),
-                            })
-                            .collect(),
-                    });
-                    break;
+                RunUpdate::Error { message } => {
+                    log::error!("[qc-mcp/run] fatal: {message}");
+                    if let Ok(mut s) = slot.lock() {
+                        s.latest.last_error = Some(message);
+                    }
                 }
-                _ => {}
+                RunUpdate::Finished(verdict) => {
+                    finished_reason = format!("{:?}", verdict.finish_reason).to_lowercase();
+                    if let Ok(mut s) = slot.lock() {
+                        s.cancel = None;
+                        s.latest.finished = true;
+                        s.latest.finished_reason = Some(finished_reason.clone());
+                        s.latest.run_id = format_run_id(&verdict.run_id);
+                    }
+                    return DriveOutcome {
+                        run_id: format_run_id(&verdict.run_id),
+                        throughput_unit,
+                        last_metrics: last,
+                        finished_reason,
+                        per_stage_final,
+                    };
+                }
             }
         }
-        if report.is_none() {
-            std::thread::sleep(Duration::from_millis(100));
+
+        if !controller.is_running() {
+            // Controller reaped without emitting Finished — shouldn't happen,
+            // but defensive: clear the slot so we don't leak a phantom run.
+            if let Ok(mut s) = slot.lock() {
+                s.cancel = None;
+                s.latest.finished = true;
+                s.latest.finished_reason = Some("controller_exited".into());
+            }
+            return DriveOutcome {
+                run_id,
+                throughput_unit,
+                last_metrics: last,
+                finished_reason: "controller_exited".into(),
+                per_stage_final,
+            };
         }
-    }
 
-    let report = report.expect("scenario loop must produce a report before exiting");
-
-    // Clear slot so subsequent get_run_status returns null.
-    if let Ok(mut s) = slot.lock() {
-        s.cancel = None;
-        s.latest.finished = true;
-        s.latest.finished_reason = Some(report.finished_reason.clone());
-    }
-
-    report
-}
-
-fn finish_reason_label(reason: FinishReason) -> String {
-    match reason {
-        FinishReason::Completed => "completed".into(),
-        FinishReason::Cancelled => "cancelled".into(),
-        FinishReason::TotalTime => "total_time".into(),
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -694,7 +1081,10 @@ impl ServerHandler for QcToolProvider {
             ServerCapabilities::builder().enable_tools().build(),
         )
         .with_instructions(
-            "QC tools: `get_hw_snapshot`, `get_last_report`, `send_report`, `get_extended_telemetry`, `run_stress_scenario`."
+            "QC tools. Telemetry: `get_hw_snapshot`, `get_extended_telemetry`. \
+             Stress (all persist to SurrealDB via stress_runner): `list_stressors`, `run_stressor`, \
+             `run_stress_scenario`, `run_qc_benchmark` (curated 8-stage burn-in with pass/fail verdict), \
+             `stop_stress_run`, `get_run_status`. Reporting: `get_last_report`, `send_report`.",
         )
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::LATEST)
