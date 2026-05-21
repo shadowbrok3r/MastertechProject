@@ -86,15 +86,23 @@ impl SharedContext {
         }
     }
 
-    /// Idempotently start the poller against the current `orchestrator_url`.
-    /// Safe to call every frame; the `fleet_poller_running` flag is the
-    /// no-op guard. Reset that flag from the settings UI when the URL
-    /// changes to re-spawn against the new base.
+    /// Idempotently start the poller against `database::orchestrator_url()`.
+    /// Safe to call every frame; `fleet_poller_running` is the no-op guard.
+    /// The URL is compile-time (`ORCHESTRATOR_URL` / `ORCHESTRATOR_URL_DEV`
+    /// in `.env`), so there's no runtime "change URL" path — rebuild to
+    /// switch environments.
     pub fn ensure_fleet_poller(&mut self) {
-        if self.fleet_poller_running || self.orchestrator_url.is_empty() {
+        if self.fleet_poller_running {
             return;
         }
-        start_fleet_poller(self.orchestrator_url.clone(), self.fleet_agents_tx.clone());
+        let url = database::orchestrator_url().to_string();
+        if url.is_empty() {
+            // Mark as "running" so we don't keep retrying every frame; with
+            // an empty URL the fleet feature is intentionally disabled.
+            self.fleet_poller_running = true;
+            return;
+        }
+        start_fleet_poller(url, self.fleet_agents_tx.clone());
         self.fleet_poller_running = true;
     }
 }
@@ -167,9 +175,19 @@ impl SharedContext {
                     }
                 });
         } else {
-            ui.colored_label(Color32::GRAY, "Configure the orchestrator URL in Settings to see live fleet data.");
-            ui.add_space(8.0);
-            ui.label("Once configured, this panel will list every QC machine, its CPU load, and last report time.");
+            let url = database::orchestrator_url();
+            if url.is_empty() {
+                ui.colored_label(
+                    Color32::GRAY,
+                    "Fleet reporting disabled: `ORCHESTRATOR_URL` / `ORCHESTRATOR_URL_DEV` \
+                     is empty in .env. Set it and rebuild to see live fleet data.",
+                );
+            } else {
+                ui.colored_label(
+                    Color32::GRAY,
+                    format!("Waiting for first /api/v1/qc/agents response from {url} …"),
+                );
+            }
         }
     }
 }

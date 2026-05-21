@@ -72,6 +72,27 @@ pub const PRESTASHOP_API_URL_WASM: &str = env!("PRESTASHOP_API_URL_WASM");
 /// suffixes so URL paths stay defined in one place.
 pub const XIDAX_ADMIN_URL: &str = env!("XIDAX_ADMIN_URL");
 
+/// Production fleet-orchestrator base (axum_server). Empty string disables
+/// fleet reporting at runtime. Use [`orchestrator_url`] to pick between this
+/// and [`ORCHESTRATOR_URL_DEV`] based on the build profile.
+pub const ORCHESTRATOR_URL: &str = env!("ORCHESTRATOR_URL");
+
+/// Dev fleet-orchestrator base. Selected when the binary is built with
+/// `cfg(debug_assertions)` (i.e. any non-release profile).
+pub const ORCHESTRATOR_URL_DEV: &str = env!("ORCHESTRATOR_URL_DEV");
+
+/// Pick the active orchestrator URL based on the current build profile.
+/// Debug → [`ORCHESTRATOR_URL_DEV`]; release → [`ORCHESTRATOR_URL`].
+/// Callers should treat an empty return as "fleet disabled" and short-circuit.
+#[inline]
+pub fn orchestrator_url() -> &'static str {
+    if cfg!(debug_assertions) {
+        ORCHESTRATOR_URL_DEV
+    } else {
+        ORCHESTRATOR_URL
+    }
+}
+
 /// Build a Xidax admin URL that opens an order detail page.
 #[must_use]
 pub fn xidax_order_url(order_id: impl std::fmt::Display) -> String {

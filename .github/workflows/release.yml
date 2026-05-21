@@ -76,6 +76,12 @@ jobs:
       PRESTASHOP_API_URL_WASM: ${{ secrets.PRESTASHOP_API_URL_WASM }}
       SURREAL_GUEST_PASSWORD: ${{ secrets.SURREAL_GUEST_PASSWORD }}
       XIDAX_ADMIN_URL: ${{ secrets.XIDAX_ADMIN_URL }}
+      # Fleet orchestrator (axum_server) endpoints. Empty values are allowed
+      # — `database::orchestrator_url()` short-circuits fleet reporting at
+      # runtime when the active URL is empty. Add the GitHub repo secrets
+      # `ORCHESTRATOR_URL` (prod) and `ORCHESTRATOR_URL_DEV` (dev) to enable.
+      ORCHESTRATOR_URL: ${{ secrets.ORCHESTRATOR_URL }}
+      ORCHESTRATOR_URL_DEV: ${{ secrets.ORCHESTRATOR_URL_DEV }}
     runs-on: ${{ matrix.runs_on }}
     steps:
       - uses: actions/checkout@v4
@@ -134,6 +140,12 @@ jobs:
       PRESTASHOP_API_URL_WASM: ${{ secrets.PRESTASHOP_API_URL_WASM }}
       SURREAL_GUEST_PASSWORD: ${{ secrets.SURREAL_GUEST_PASSWORD }}
       XIDAX_ADMIN_URL: ${{ secrets.XIDAX_ADMIN_URL }}
+      # Fleet orchestrator (axum_server) endpoints. Empty values are allowed
+      # — `database::orchestrator_url()` short-circuits fleet reporting at
+      # runtime when the active URL is empty. Add the GitHub repo secrets
+      # `ORCHESTRATOR_URL` (prod) and `ORCHESTRATOR_URL_DEV` (dev) to enable.
+      ORCHESTRATOR_URL: ${{ secrets.ORCHESTRATOR_URL }}
+      ORCHESTRATOR_URL_DEV: ${{ secrets.ORCHESTRATOR_URL_DEV }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
@@ -192,6 +204,10 @@ jobs:
           PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
           SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
           XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
+          # Fleet orchestrator: empty values are valid ("fleet reporting disabled").
+          # Set the GitHub repo secrets when ready to enable.
+          ORCHESTRATOR_URL=${{ secrets.ORCHESTRATOR_URL }}
+          ORCHESTRATOR_URL_DEV=${{ secrets.ORCHESTRATOR_URL_DEV }}
           ENVEOF
 
       - name: Log in to Docker Hub
@@ -265,6 +281,10 @@ jobs:
           PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
           SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
           XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
+          # Fleet orchestrator: empty values are valid ("fleet reporting disabled").
+          # Set the GitHub repo secrets when ready to enable.
+          ORCHESTRATOR_URL=${{ secrets.ORCHESTRATOR_URL }}
+          ORCHESTRATOR_URL_DEV=${{ secrets.ORCHESTRATOR_URL_DEV }}
           ENVEOF
 
       - name: Log in to Docker Hub
@@ -336,6 +356,10 @@ jobs:
           PRESTASHOP_API_URL_WASM=${{ secrets.PRESTASHOP_API_URL_WASM }}
           SURREAL_GUEST_PASSWORD=${{ secrets.SURREAL_GUEST_PASSWORD }}
           XIDAX_ADMIN_URL=${{ secrets.XIDAX_ADMIN_URL }}
+          # Fleet orchestrator: empty values are valid ("fleet reporting disabled").
+          # Set the GitHub repo secrets when ready to enable.
+          ORCHESTRATOR_URL=${{ secrets.ORCHESTRATOR_URL }}
+          ORCHESTRATOR_URL_DEV=${{ secrets.ORCHESTRATOR_URL_DEV }}
           ENVEOF
 
       - name: Log in to Docker Hub
