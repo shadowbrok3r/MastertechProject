@@ -36,6 +36,7 @@ pub mod diagnostic;
 pub mod stress_test;
 pub mod service_match;
 pub mod entity_link;
+pub mod fleet;
 
 pub use task::*;
 pub use task_note::*;
@@ -85,6 +86,9 @@ pub const STRESS_TEST_RUN_TABLE: &str = "stress_test_run";
 pub const STRESS_TEST_METRIC_TABLE: &str = "stress_test_metric";
 pub const STRESS_TEST_EVENT_TABLE: &str = "stress_test_event";
 pub const HARDWARE_TEST_BASELINE_TABLE: &str = "hardware_test_baseline";
+pub const FLEET_AGENT_TABLE: &str = "fleet_agent";
+pub const FLEET_EVENT_TABLE: &str = "fleet_event";
+pub const FLEET_COMMAND_TABLE: &str = "fleet_command";
 
 pub use prestashop as prestashop_schema;
 

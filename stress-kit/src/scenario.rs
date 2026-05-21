@@ -93,6 +93,13 @@ impl ScenarioRunner {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
+    /// Clone of the internal cancel flag. Useful when the host needs an
+    /// external lever (e.g. an MCP `stop_stress_run` tool) without holding
+    /// the runner itself.
+    pub fn cancel_handle(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
     /// `true` after `stop`, completion, or wall cap.
     pub fn is_stopping(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)

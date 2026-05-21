@@ -55,6 +55,28 @@ pub enum Stressor {
     Cache,
     /// Page-touch + churn to pressure the working set / page file; reports MiB/s.
     Vm,
+    /// STREAM-style memory bandwidth (copy/scale/add/triad); reports GB/s.
+    Stream,
+    /// Data-dependent branches to fuzz the branch predictor; reports Mbranch/s.
+    Branch,
+    /// Many cores fighting over one `AtomicU64`; reports Mop/s.
+    Atomic,
+    /// Many threads contending on a single mutex; reports Mop/s of lock-unlock pairs.
+    Mutex,
+    /// Paired threads ping-ponging on condvars to force OS context switches; reports Mctxsw/s.
+    Switch,
+    /// Sieve of Eratosthenes; reports Mprime/s (primes found per second).
+    Prime,
+    /// Independent FMA chains; reports Mflop/s.
+    Fp,
+    /// FNV-1a hashing over a 1 MiB buffer; reports MiB/s.
+    Hash,
+    /// Sequential + striped reads exercising the HW prefetcher; reports Mref/s.
+    Prefetch,
+    /// Indirect calls through a 64-fn table to spill the i-cache; reports Mcall/s.
+    Icache,
+    /// `rdtsc` read rate; reports Mread/s.
+    Tsc,
 }
 
 impl Stressor {
@@ -68,6 +90,17 @@ impl Stressor {
             Self::Bitops => "Bitops",
             Self::Cache => "Cache",
             Self::Vm => "VM",
+            Self::Stream => "Stream",
+            Self::Branch => "Branch",
+            Self::Atomic => "Atomic",
+            Self::Mutex => "Mutex",
+            Self::Switch => "Context Switch",
+            Self::Prime => "Prime",
+            Self::Fp => "FP/FMA",
+            Self::Hash => "Hash",
+            Self::Prefetch => "Prefetch",
+            Self::Icache => "I-Cache",
+            Self::Tsc => "TSC",
         }
     }
 
@@ -81,6 +114,17 @@ impl Stressor {
             Self::Bitops => "Mop/s",
             Self::Cache => "Mref/s",
             Self::Vm => "MiB/s",
+            Self::Stream => "GB/s",
+            Self::Branch => "Mbranch/s",
+            Self::Atomic => "Mop/s",
+            Self::Mutex => "Mop/s",
+            Self::Switch => "Mctxsw/s",
+            Self::Prime => "Mprime/s",
+            Self::Fp => "Mflop/s",
+            Self::Hash => "MiB/s",
+            Self::Prefetch => "Mref/s",
+            Self::Icache => "Mcall/s",
+            Self::Tsc => "Mread/s",
         }
     }
 }

@@ -23,6 +23,17 @@ pub fn stressor_to_db(s: Stressor) -> StressKitStressor {
         Stressor::Bitops => StressKitStressor::Bitops,
         Stressor::Cache => StressKitStressor::Cache,
         Stressor::Vm => StressKitStressor::Vm,
+        Stressor::Stream => StressKitStressor::Stream,
+        Stressor::Branch => StressKitStressor::Branch,
+        Stressor::Atomic => StressKitStressor::Atomic,
+        Stressor::Mutex => StressKitStressor::Mutex,
+        Stressor::Switch => StressKitStressor::Switch,
+        Stressor::Prime => StressKitStressor::Prime,
+        Stressor::Fp => StressKitStressor::Fp,
+        Stressor::Hash => StressKitStressor::Hash,
+        Stressor::Prefetch => StressKitStressor::Prefetch,
+        Stressor::Icache => StressKitStressor::Icache,
+        Stressor::Tsc => StressKitStressor::Tsc,
     }
 }
 
@@ -38,6 +49,17 @@ pub fn stressor_from_db(s: StressKitStressor) -> Stressor {
         StressKitStressor::Bitops => Stressor::Bitops,
         StressKitStressor::Cache => Stressor::Cache,
         StressKitStressor::Vm => Stressor::Vm,
+        StressKitStressor::Stream => Stressor::Stream,
+        StressKitStressor::Branch => Stressor::Branch,
+        StressKitStressor::Atomic => Stressor::Atomic,
+        StressKitStressor::Mutex => Stressor::Mutex,
+        StressKitStressor::Switch => Stressor::Switch,
+        StressKitStressor::Prime => Stressor::Prime,
+        StressKitStressor::Fp => Stressor::Fp,
+        StressKitStressor::Hash => Stressor::Hash,
+        StressKitStressor::Prefetch => Stressor::Prefetch,
+        StressKitStressor::Icache => Stressor::Icache,
+        StressKitStressor::Tsc => Stressor::Tsc,
     }
 }
 
@@ -48,8 +70,20 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
         Stressor::Cpu
         | Stressor::Matrix
         | Stressor::Bitops
-        | Stressor::Cache => TargetKind::Cpu,
-        Stressor::Memory | Stressor::Memcpy | Stressor::Vm => TargetKind::Memory,
+        | Stressor::Cache
+        | Stressor::Branch
+        | Stressor::Atomic
+        | Stressor::Mutex
+        | Stressor::Switch
+        | Stressor::Prime
+        | Stressor::Fp
+        | Stressor::Hash
+        | Stressor::Prefetch
+        | Stressor::Icache
+        | Stressor::Tsc => TargetKind::Cpu,
+        Stressor::Memory | Stressor::Memcpy | Stressor::Vm | Stressor::Stream => {
+            TargetKind::Memory
+        }
         Stressor::Disk => TargetKind::Storage,
     }
 }

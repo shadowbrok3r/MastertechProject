@@ -2,8 +2,9 @@ use egui::Style;
 
 mod app;
 mod db;
+mod fleet_client;
+mod hw_monitor;
 mod hw_sampler;
-mod hw_table;
 mod mcp;
 mod oa3_sager;
 mod reporting;
@@ -23,7 +24,30 @@ async fn main() -> eframe::Result<()> {
         }
     }
 
-    env_logger::init();
+    // Default to a chatty filter so the operator sees the fleet handshake,
+    // sampler ticks, and MCP server URLs without having to set RUST_LOG.
+    // RUST_LOG still overrides — e.g. `RUST_LOG=warn,qc_app=debug`.
+    env_logger::Builder::from_env(
+        env_logger::Env::default()
+            .default_filter_or("info,qc_app=debug,stress_runner=info,database=info"),
+    )
+    .format_timestamp_millis()
+    .init();
+    log::info!(
+        "qc-app: starting v{} (pid={})",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    );
+
+    // rustls 0.23 demands a process-level CryptoProvider. SurrealDB's WS
+    // transport and reqwest both pick it up — install once before any TLS
+    // handshake, or both panic on first use.
+    if rustls::crypto::ring::default_provider()
+        .install_default()
+        .is_err()
+    {
+        log::debug!("qc-app: rustls CryptoProvider already installed");
+    }
 
     // Establish the SurrealDB connection + guest signin once at startup so
     // stress-runner can persist `stress_test_run` / metric / event rows.  The

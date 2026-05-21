@@ -294,6 +294,28 @@ pub enum StressKitStressor {
     Cache,
     #[surreal(value = "vm")]
     Vm,
+    #[surreal(value = "stream")]
+    Stream,
+    #[surreal(value = "branch")]
+    Branch,
+    #[surreal(value = "atomic")]
+    Atomic,
+    #[surreal(value = "mutex")]
+    Mutex,
+    #[surreal(value = "switch")]
+    Switch,
+    #[surreal(value = "prime")]
+    Prime,
+    #[surreal(value = "fp")]
+    Fp,
+    #[surreal(value = "hash")]
+    Hash,
+    #[surreal(value = "prefetch")]
+    Prefetch,
+    #[surreal(value = "icache")]
+    Icache,
+    #[surreal(value = "tsc")]
+    Tsc,
 }
 
 impl StressKitStressor {
@@ -307,6 +329,17 @@ impl StressKitStressor {
             Self::Bitops => "bitops",
             Self::Cache => "cache",
             Self::Vm => "vm",
+            Self::Stream => "stream",
+            Self::Branch => "branch",
+            Self::Atomic => "atomic",
+            Self::Mutex => "mutex",
+            Self::Switch => "switch",
+            Self::Prime => "prime",
+            Self::Fp => "fp",
+            Self::Hash => "hash",
+            Self::Prefetch => "prefetch",
+            Self::Icache => "icache",
+            Self::Tsc => "tsc",
         }
     }
 }
