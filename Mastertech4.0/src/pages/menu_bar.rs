@@ -56,6 +56,7 @@ impl MasterTechApp {
                             &"Database".to_string(),
                             &"Ai".to_string(),
                             &"Resource Monitor".to_string(),
+                            &"Fleet Dashboard".to_string(),
                             &"My Tasks".to_string(),
                             &"Store Tasks".to_string(),
                             &"Completed Tasks".to_string(),

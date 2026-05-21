@@ -102,6 +102,7 @@ impl TabViewer for MastertechContext {
                 .show(ui),
             "Resource Monitor" => self.show_resource_monitor(ui),
             "Admin Console" => self.shared_ctx.admin_console(ui),
+            "Fleet Dashboard" => self.shared_ctx.fleet_dashboard(ui),
             "Query Editor" => if let Some(usr) = &self.shared_ctx.current_user {
                 if usr.is_admin() {
                     self.shared_ctx.query_editor.ui(ui)

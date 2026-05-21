@@ -21,12 +21,22 @@ pub use routes::*;
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
+    // Default filter has to actually mention our crate(s) or every tracing::info!
+    // gets swallowed. The previous default was "mtech_srv=trace" — that's the
+    // name of an entirely different project. RUST_LOG, if set, still wins.
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "mtech_srv=trace".into()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| {
+                "info,axum_server=debug,tower_http=info,database=info".into()
+            }),
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
+    tracing::info!(
+        "axum_server: starting v{} (pid={})",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    );
 
     let server_url = dotenv::var("SERVER_URL").unwrap_or("0.0.0.0".to_string());
     let server_port = dotenv::var("SERVER_PORT").unwrap_or("8082".to_string());
