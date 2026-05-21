@@ -424,6 +424,20 @@ pub struct SharedContext {
     /// HTTP poller; `None` until the orchestrator URL is configured.
     #[serde(skip)]
     pub fleet_agents: Option<Vec<FleetAgentSummary>>,
+    /// Sender half of the fleet poller channel. The poller task writes the
+    /// latest `/api/v1/qc/agents` snapshot here; `drain_fleet_updates()`
+    /// pulls the most-recent one off the receiver each frame.
+    #[serde(skip)]
+    pub fleet_agents_tx: crossbeam::channel::Sender<Vec<FleetAgentSummary>>,
+    /// Receiver paired with `fleet_agents_tx`. Bounded(1) keeps us at the
+    /// latest snapshot only — older payloads are dropped if the UI is slow.
+    #[serde(skip)]
+    pub fleet_agents_rx: crossbeam::channel::Receiver<Vec<FleetAgentSummary>>,
+    /// `true` once a fleet poller is alive against `orchestrator_url`. Reset
+    /// to `false` when the URL changes so the lifecycle code can spawn a
+    /// fresh poller without leaking duplicates.
+    #[serde(skip)]
+    pub fleet_poller_running: bool,
     /// Base URL of the fleet orchestrator used by the Fleet Dashboard.
     /// Persisted so the setting survives app restarts.
     pub orchestrator_url: String,
@@ -513,6 +527,11 @@ impl SharedContext {
         let specs_channel = <database::schema::prestashop::order::ExtractedOrderSpecs>::create_unbounded_channel();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
+        // bounded(1) → only the latest snapshot survives if the UI is slow.
+        // Pair the tx/rx here so they share one channel; the poller `try_send`s
+        // and drops on overflow.
+        let (fleet_agents_tx, fleet_agents_rx) =
+            crossbeam::channel::bounded::<Vec<FleetAgentSummary>>(1);
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
@@ -641,6 +660,9 @@ impl SharedContext {
             reachability_tx,
             reachability_rx,
             fleet_agents: None,
+            fleet_agents_tx,
+            fleet_agents_rx,
+            fleet_poller_running: false,
             orchestrator_url: String::new(),
             live_queries_active: false,
             last_live_respawn_at: None,

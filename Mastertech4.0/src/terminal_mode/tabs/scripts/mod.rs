@@ -577,7 +577,7 @@ impl<'a> ScriptsTab<'a> {
         }
     }
 
-    /// Cycle through stress-kit's 8 stressors.  Bound to right-click on the
+    /// Cycle through every stress-kit stressor.  Bound to right-click on the
     /// stress button.  Takes `&self` (uses RefCell internally) so the mouse
     /// handler — which is `&self` — can call it directly.  The button label
     /// stays generic; the current stressor is reported in the log.
@@ -590,7 +590,18 @@ impl<'a> ScriptsTab<'a> {
             Stressor::Memcpy => Stressor::Bitops,
             Stressor::Bitops => Stressor::Cache,
             Stressor::Cache => Stressor::Vm,
-            Stressor::Vm => Stressor::Cpu,
+            Stressor::Vm => Stressor::Stream,
+            Stressor::Stream => Stressor::Branch,
+            Stressor::Branch => Stressor::Atomic,
+            Stressor::Atomic => Stressor::Mutex,
+            Stressor::Mutex => Stressor::Switch,
+            Stressor::Switch => Stressor::Prime,
+            Stressor::Prime => Stressor::Fp,
+            Stressor::Fp => Stressor::Hash,
+            Stressor::Hash => Stressor::Prefetch,
+            Stressor::Prefetch => Stressor::Icache,
+            Stressor::Icache => Stressor::Tsc,
+            Stressor::Tsc => Stressor::Cpu,
         };
         *self.stress_choice.borrow_mut() = next;
         self.log_message(format!(

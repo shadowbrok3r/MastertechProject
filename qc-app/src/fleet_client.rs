@@ -25,18 +25,20 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Bounded queue so a stuck UI loop doesn't grow memory without bound.
 const CHANNEL_CAP: usize = 64;
 
-/// One command dequeued from the orchestrator.
+/// One command dequeued from the orchestrator. The wire shape is
+/// `{"id": "...", "issued_at": "...", "kind": "send_report" | {"custom": {...}}, "status": "pending"}`
+/// — externally tagged so a bare unit variant is just a string. The
+/// `status` field is server-side bookkeeping we don't care about here.
 #[derive(Debug, Clone, Deserialize)]
 pub struct InboundCommand {
     /// Server-side id we must quote in the eventual ack.
     pub id: String,
     pub issued_at: String,
-    #[serde(flatten)]
     pub kind: InboundCommandKind,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
+#[serde(rename_all = "snake_case")]
 pub enum InboundCommandKind {
     /// Ask the agent to push a `QcReport` right now.
     SendReport,

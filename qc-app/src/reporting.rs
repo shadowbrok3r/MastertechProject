@@ -139,21 +139,20 @@ async fn sink_task(rx: Receiver<SinkItem>, base_url: String, machine_id: Arc<Str
 // Machine id: same string as Mastertech `generate_client_id` (SHA-256 hex).
 
 /// `hostname-cpu-PROCESSOR_IDENTIFIER` → SHA-256 hex (`PROCESSOR_IDENTIFIER` missing → `"unknown-cpu"`).
+///
+/// The inputs (and therefore the output) don't change at runtime, so the
+/// two `log::debug!` lines here are intentionally not `info!`: the function
+/// can be called from per-frame UI code, and an `info!` would flood the
+/// terminal whenever the user moves their mouse.
 pub fn generate_client_id(hostname: String, cpu: String) -> String {
     let cpu_id = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
     let combined = format!("{}-{}-{}", hostname, cpu, cpu_id);
-    log::info!(
-        "[reporting] generate_client_id -> combined: {}",
-        combined
-    );
+    log::debug!("[reporting] generate_client_id -> combined: {}", combined);
     let mut hasher = Sha256::new();
     hasher.update(combined.as_bytes());
     let result = hasher.finalize();
     let hex_string = hex::encode(result);
-    log::info!(
-        "[reporting] generate_client_id -> hex_string: {}",
-        hex_string
-    );
+    log::debug!("[reporting] generate_client_id -> hex_string: {}", hex_string);
     hex_string
 }
 

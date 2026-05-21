@@ -1,11 +1,103 @@
 //! Warehouse fleet dashboard tab.
 //!
 //! Renders a read-only summary of the QC fleet: which machines are online,
-//! their last heartbeat, CPU load, and last report time.  Data is sourced
-//! from the orchestrator REST API via a background poller.
+//! their last heartbeat, CPU load, and last report time. Data is sourced
+//! from the orchestrator REST API via a background poller spawned by
+//! [`start_fleet_poller`] and drained per frame by [`SharedContext::drain_fleet_updates`].
 
+use std::time::Duration;
+
+use crossbeam::channel::Sender;
 use eframe::egui::{Color32, Grid, Label, RichText, Ui};
-use crate::app_state::SharedContext;
+use crate::app_state::{FleetAgentSummary, SharedContext};
+
+/// Poll cadence for `/api/v1/qc/agents`. 15 s matches the cadence the
+/// warehouse dashboard needs (fast enough to spot a machine going dark
+/// within one HVAC-cycle, slow enough that 50 dashboards don't DoS axum).
+const POLL_INTERVAL: Duration = Duration::from_secs(15);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Spawn a background task that polls the orchestrator's agent list every
+/// [`POLL_INTERVAL`] and writes the latest snapshot through `tx`.
+///
+/// The task lives for the process lifetime. Call this **once** per
+/// orchestrator URL; SharedContext's `fleet_poller_running` flag is the
+/// guard so the host can detect URL changes and re-spawn against the new
+/// base. Old pollers keep running silently against dead URLs and just log
+/// warnings — that's preferable to a complex shutdown channel for a feature
+/// that's read-only and side-effect-free.
+pub fn start_fleet_poller(base_url: String, tx: Sender<Vec<FleetAgentSummary>>) {
+    if base_url.is_empty() {
+        log::info!("[fleet_poller] no orchestrator URL configured — poller not started");
+        return;
+    }
+
+    tokio::spawn(async move {
+        let client = match reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("[fleet_poller] reqwest build failed: {e}");
+                return;
+            }
+        };
+
+        let url = format!("{base_url}/api/v1/qc/agents");
+        log::info!("[fleet_poller] started polling {url} every {POLL_INTERVAL:?}");
+
+        loop {
+            match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<Vec<FleetAgentSummary>>().await {
+                        Ok(rows) => {
+                            log::debug!(
+                                "[fleet_poller] {} agent row(s) from orchestrator",
+                                rows.len()
+                            );
+                            // bounded(1): drop the previous queued snapshot
+                            // if it's still sitting unread. The UI doesn't
+                            // care about stale data — only the latest.
+                            let _ = tx.try_send(rows);
+                        }
+                        Err(e) => log::warn!("[fleet_poller] decode failed: {e}"),
+                    }
+                }
+                Ok(resp) => log::warn!("[fleet_poller] HTTP {} from {url}", resp.status()),
+                Err(e) => log::debug!("[fleet_poller] request error (will retry): {e}"),
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    });
+}
+
+impl SharedContext {
+    /// Pull at most the most-recent fleet snapshot out of the bounded
+    /// channel and into [`SharedContext::fleet_agents`]. Cheap — the
+    /// channel is bounded(1), so this is one `try_recv` per frame.
+    pub fn drain_fleet_updates(&mut self) {
+        // Drain everything (in case the poller sent multiple before the UI
+        // could keep up — bounded(1) means there's at most one, but this is
+        // future-proof if we raise the cap).
+        let mut latest = None;
+        while let Ok(rows) = self.fleet_agents_rx.try_recv() {
+            latest = Some(rows);
+        }
+        if let Some(rows) = latest {
+            self.fleet_agents = Some(rows);
+        }
+    }
+
+    /// Idempotently start the poller against the current `orchestrator_url`.
+    /// Safe to call every frame; the `fleet_poller_running` flag is the
+    /// no-op guard. Reset that flag from the settings UI when the URL
+    /// changes to re-spawn against the new base.
+    pub fn ensure_fleet_poller(&mut self) {
+        if self.fleet_poller_running || self.orchestrator_url.is_empty() {
+            return;
+        }
+        start_fleet_poller(self.orchestrator_url.clone(), self.fleet_agents_tx.clone());
+        self.fleet_poller_running = true;
+    }
+}
 
 impl SharedContext {
     /// Render the "Fleet Dashboard" tab for warehouse employees.

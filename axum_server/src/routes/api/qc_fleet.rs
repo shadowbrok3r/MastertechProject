@@ -57,8 +57,12 @@ pub struct FleetCommand {
     pub status: CommandStatus,
 }
 
+/// External tagging on purpose: lets the wire body be
+/// `{"kind": "send_report"}` or `{"kind": {"custom": {"payload": ...}}}`.
+/// Internal tagging would collide with the surrounding `IssueCommandRequest.kind`
+/// field and force callers to double-nest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
+#[serde(rename_all = "snake_case")]
 pub enum FleetCommandKind {
     /// Send an immediate QC report.
     SendReport,

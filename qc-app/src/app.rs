@@ -18,14 +18,22 @@ use crate::stress_panel::{StressPanel, StressPanelConfig};
 use crate::telemetry::{Heartbeat, HwSnapshot, QcReport};
 
 /// Stable `computer:<machine_id>` record for stress runs originating on this
-/// machine.  The record itself may or may not already exist in the database —
-/// SurrealDB doesn't enforce FK existence, so the run row carries the link
-/// either way.  If the customer's computer record gets created or re-keyed
-/// later, the `connected_client`-style hostname re-link query can repair the
-/// reference.
+/// machine. Cached for the process lifetime: the inputs (hostname + CPU brand)
+/// don't change, and the disk read inside `machine_id()` was previously firing
+/// on every UI frame. SurrealDB doesn't enforce FK existence, so the run row
+/// carries the link either way; if the customer's computer record gets
+/// re-keyed later, the `connected_client`-style hostname re-link query repairs
+/// the reference.
 fn local_computer_record() -> database::schema::RecordId {
-    let id = crate::reporting::machine_id();
-    database::schema::RecordId::new(database::schema::COMPUTER_TABLE, id)
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<database::schema::RecordId> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            let id = crate::reporting::machine_id();
+            log::info!("qc-app: local computer record cached as computer:{id}");
+            database::schema::RecordId::new(database::schema::COMPUTER_TABLE, id)
+        })
+        .clone()
 }
 
 fn init_arc_mutex_string() -> Arc<Mutex<String>> {
