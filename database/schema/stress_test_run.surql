@@ -66,8 +66,13 @@ DEFINE FIELD hostname            ON stress_test_run TYPE none | string          
 DEFINE FIELD machine_id          ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
 DEFINE FIELD ambient_temp_c      ON stress_test_run TYPE none | number                              PERMISSIONS FULL;
 DEFINE FIELD environment_notes   ON stress_test_run TYPE none | string                              PERMISSIONS FULL;
-DEFINE FIELD bios_settings       ON stress_test_run TYPE object                                     PERMISSIONS FULL;
-DEFINE FIELD driver_versions     ON stress_test_run TYPE object                                     PERMISSIONS FULL;
+-- Relaxed to `none | object` so callers that don't fill these in (most
+-- runs, since both Rust structs are all-Option fields that serialize to NONE
+-- when default-constructed) can still write the row. Previously these were
+-- required `TYPE object` and every MCP-driven run failed with "Expected
+-- `object` but found `NONE`" before any record landed.
+DEFINE FIELD bios_settings       ON stress_test_run TYPE none | object                              PERMISSIONS FULL;
+DEFINE FIELD driver_versions     ON stress_test_run TYPE none | object                              PERMISSIONS FULL;
 
 -- --- Verdict ---
 -- `result` is one of: 'pass' | 'fail' | 'aborted' | 'inconclusive' | 'in_progress'.

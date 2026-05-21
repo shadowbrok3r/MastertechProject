@@ -160,6 +160,9 @@ pub struct ScenarioReport {
     pub finished_reason: String,
     pub total_elapsed_secs: f64,
     pub stages: Vec<StageReport>,
+    /// First fatal `Error` emitted by the underlying RunController, if any.
+    /// `None` on clean runs.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -498,9 +501,9 @@ impl QcToolProvider {
             repeat_until_total: false,
         };
         spec.tool = TestTool::StressKitScenario {
-            name: Some("qc-mcp:benchmark-v1".into()),
+            name: Some(QC_BENCHMARK_PRESET.into()),
         };
-        spec.preset_label = Some("qc-mcp:benchmark-v1".into());
+        spec.preset_label = Some(QC_BENCHMARK_PRESET.into());
         spec.tags = vec!["origin:mcp".into(), "preset:qc-benchmark".into()];
 
         let scenario = tokio::task::spawn_blocking(move || {
@@ -556,15 +559,23 @@ impl QcToolProvider {
             });
         }
 
-        // Overall verdict precedence: WHEA hits > any fail > any warn > pass.
-        let verdict = if whea_delta.unwrap_or(0) > 0 {
+        // Overall verdict precedence:
+        //   `errored`       — RunController emitted a fatal Error (likely DB).
+        //                     Distinct from `fail` because it's an *infra*
+        //                     problem, not a hardware verdict.
+        //   `fail`          — WHEA delta > 0, or any stage below 0.9× floor.
+        //   `warn`          — any stage between 0.9× and 1.0× floor.
+        //   `inconclusive`  — finished_reason != "completed" (cancelled/aborted).
+        //   `pass`          — everything else.
+        let verdict = if scenario.error.is_some() {
+            "errored"
+        } else if whea_delta.unwrap_or(0) > 0 {
             "fail"
         } else if failed_count > 0 {
             "fail"
         } else if warn_count > 0 {
             "warn"
         } else if scenario.finished_reason != "completed" {
-            // Cancelled or aborted mid-run -> inconclusive, not pass.
             "inconclusive"
         } else {
             "pass"
@@ -578,7 +589,14 @@ impl QcToolProvider {
             duration_multiplier: mult,
             whea_delta,
             stages: stage_results,
-            reasoning: build_reasoning(verdict, whea_delta, failed_count, warn_count),
+            reasoning: build_reasoning(
+                verdict,
+                whea_delta,
+                failed_count,
+                warn_count,
+                scenario.error.as_deref(),
+            ),
+            error: scenario.error,
         };
         let json = serde_json::to_string_pretty(&body)
             .map_err(|e| to_internal(e.to_string()))?;
@@ -679,84 +697,30 @@ pub struct QcBenchmarkReport {
     pub stages: Vec<QcStageResult>,
     /// Human-readable explanation of how the verdict was derived.
     pub reasoning: String,
+    /// Fatal error from the underlying RunController (DB create failure, etc).
+    /// When present, `verdict == "errored"` and per-stage results should be
+    /// disregarded — the run never produced real telemetry.
+    pub error: Option<String>,
 }
 
-/// Build the 8-stage QC benchmark. Order is deliberate:
-///   1. CPU / matrix / fp warm the cores at increasing FP intensity.
-///   2. Stream / cache test memory bandwidth + hierarchy under that load.
-///   3. Branch validates the branch predictor.
-///   4. Memory / vm pressure RAM + page tables last so any heat-soaked
-///      memory controller has had a chance to drift.
-fn qc_benchmark_stages(mult: f32) -> Vec<RunStage> {
-    fn dur(base: u64, mult: f32) -> u64 {
-        ((base as f32) * mult).round().max(1.0) as u64
-    }
-    let mk = |label: &str, stressor: Stressor, base_secs: u64| RunStage {
-        label: label.to_string(),
-        stressor,
-        threads: 0,
-        duration_secs: dur(base_secs, mult),
-        memory_cap_mb: 1024,
-        disk_file_mb: 16,
-    };
-    vec![
-        mk("cpu",    Stressor::Cpu,    20),
-        mk("matrix", Stressor::Matrix, 20),
-        mk("fp",     Stressor::Fp,     20),
-        mk("stream", Stressor::Stream, 20),
-        mk("cache",  Stressor::Cache,  20),
-        mk("branch", Stressor::Branch, 20),
-        mk("memory", Stressor::Memory, 20),
-        mk("vm",     Stressor::Vm,     20),
-    ]
-}
-
-/// Throughput floor below which a stage is graded `fail` (or `warn` between
-/// 0.9× and 1.0×). Numbers are intentionally permissive — they're a "this
-/// machine is broken" smoke check, not a competitive benchmark.
-///
-/// Reference points (single 9950X core at idle):
-///   * cpu       ~600  Mop/s  → floor 50  (allows ~1 core of headroom)
-///   * matrix    ~3000 Mflop/s → floor 200
-///   * fp        ~4500 Mflop/s → floor 200
-///   * stream    ~50   GB/s   → floor 5
-///   * cache     ~700  Mref/s → floor 50
-///   * branch    ~1200 Mbranch/s → floor 100
-///   * memory    ~20   MiB/s  → floor 2
-///   * vm        ~4000 MiB/s  → floor 200
-///
-/// Replace per-component once `hardware_test_baseline` is populated.
-fn qc_floor_for(stressor: Stressor) -> f64 {
-    match stressor {
-        Stressor::Cpu => 50.0,
-        Stressor::Matrix => 200.0,
-        Stressor::Fp => 200.0,
-        Stressor::Stream => 5.0,
-        Stressor::Cache => 50.0,
-        Stressor::Branch => 100.0,
-        Stressor::Memory => 2.0,
-        Stressor::Vm => 200.0,
-        Stressor::Memcpy => 2.0,
-        Stressor::Bitops => 50.0,
-        Stressor::Disk => 5.0,
-        Stressor::Atomic => 5.0,
-        Stressor::Mutex => 0.5,
-        Stressor::Switch => 0.05,
-        Stressor::Prime => 0.5,
-        Stressor::Hash => 50.0,
-        Stressor::Prefetch => 50.0,
-        Stressor::Icache => 5.0,
-        Stressor::Tsc => 5.0,
-    }
-}
+use crate::qc_benchmark::{qc_benchmark_stages, qc_floor_for, QC_BENCHMARK_PRESET};
 
 fn build_reasoning(
     verdict: &str,
     whea_delta: Option<u64>,
     failed_count: usize,
     warn_count: usize,
+    error: Option<&str>,
 ) -> String {
     match verdict {
+        "errored" => format!(
+            "RunController reported a fatal error before/during the run — most likely \
+             the initial `stress_test_run` row failed to persist to SurrealDB, which \
+             bails the worker before any stressor starts. Per-stage numbers below are \
+             not real telemetry, just zeros from the empty event stream.\n\
+             \nError: {}",
+            error.unwrap_or("<missing>")
+        ),
         "pass" => {
             "All 8 stages cleared their throughput floors; no machine-check exceptions \
              observed; no stage reported an inner error. Hardware looks healthy."
@@ -823,6 +787,10 @@ pub struct StressorReport {
     pub elapsed_secs: f64,
     pub last_metrics: Option<MetricsDto>,
     pub finished_reason: String,
+    /// First fatal `Error` (or `Warning`) emitted by the underlying RunController,
+    /// if any. `None` on clean runs. Present + `finished_reason: "controller_exited"`
+    /// usually means the row create failed before the stressor even started.
+    pub error: Option<String>,
 }
 
 /// Stringify a `RecordId` for the MCP wire surface. Uses the table-qualified
@@ -887,6 +855,11 @@ struct DriveOutcome {
     throughput_unit: String,
     last_metrics: Option<MetricsDto>,
     finished_reason: String,
+    /// First `RunUpdate::Error` or `Warning` message the worker emitted,
+    /// stashed here so the MCP caller sees *why* a run that returned
+    /// `controller_exited` (or even a normally-finished run) had a
+    /// failure. None on clean runs.
+    error: Option<String>,
     /// Per-stage final metrics keyed by stage index; index 0 is always
     /// populated even for single-stressor runs.
     per_stage_final: std::collections::HashMap<u32, MetricsDto>,
@@ -901,6 +874,7 @@ impl DriveOutcome {
             elapsed_secs,
             last_metrics: self.last_metrics,
             finished_reason: self.finished_reason,
+            error: self.error,
         }
     }
 
@@ -923,6 +897,7 @@ impl DriveOutcome {
                 .map(|m| m.elapsed_secs)
                 .unwrap_or(0.0),
             stages,
+            error: self.error,
         }
     }
 }
@@ -962,6 +937,10 @@ fn drive_run(
     let mut finished_reason = "duration_elapsed".to_string();
     let mut per_stage_final: std::collections::HashMap<u32, MetricsDto> =
         std::collections::HashMap::new();
+    // Sticky first-error: an `Error` from the controller is fatal and the
+    // worker exits right after; we want the MCP caller to see the message
+    // even on the `controller_exited` path.
+    let mut first_error: Option<String> = None;
 
     loop {
         // Bridge: if the MCP `stop_stress_run` flipped our atomic, ask the
@@ -1016,13 +995,19 @@ fn drive_run(
                 RunUpdate::Warning { message } => {
                     log::warn!("[qc-mcp/run] warning: {message}");
                     if let Ok(mut s) = slot.lock() {
-                        s.latest.last_error = Some(message);
+                        s.latest.last_error = Some(message.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = Some(format!("warning: {message}"));
                     }
                 }
                 RunUpdate::Error { message } => {
                     log::error!("[qc-mcp/run] fatal: {message}");
                     if let Ok(mut s) = slot.lock() {
-                        s.latest.last_error = Some(message);
+                        s.latest.last_error = Some(message.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = Some(message);
                     }
                 }
                 RunUpdate::Finished(verdict) => {
@@ -1038,6 +1023,7 @@ fn drive_run(
                         throughput_unit,
                         last_metrics: last,
                         finished_reason,
+                        error: first_error,
                         per_stage_final,
                     };
                 }
@@ -1045,8 +1031,10 @@ fn drive_run(
         }
 
         if !controller.is_running() {
-            // Controller reaped without emitting Finished — shouldn't happen,
-            // but defensive: clear the slot so we don't leak a phantom run.
+            // Controller exited without emitting Finished. Most common cause:
+            // the row create at the top of `worker()` failed and the worker
+            // bailed via `RunUpdate::Error`. `first_error` will hold the
+            // message; the MCP report surfaces it so the caller can act.
             if let Ok(mut s) = slot.lock() {
                 s.cancel = None;
                 s.latest.finished = true;
@@ -1057,6 +1045,7 @@ fn drive_run(
                 throughput_unit,
                 last_metrics: last,
                 finished_reason: "controller_exited".into(),
+                error: first_error,
                 per_stage_final,
             };
         }

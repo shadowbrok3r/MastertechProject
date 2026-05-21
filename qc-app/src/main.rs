@@ -6,6 +6,7 @@ mod fleet_client;
 mod hw_monitor;
 mod hw_sampler;
 mod mcp;
+mod qc_benchmark;
 mod oa3_sager;
 mod reporting;
 mod schema;

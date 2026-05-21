@@ -1,0 +1,25 @@
+id = "20260521210000__slice6_relax_run_objects"
+name = "slice6_relax_run_objects"
+state = "planned"
+# Source: post-slice5 schema (the fleet rollout's target hash). Surrealkit
+# will recompute the actual target hash from the schema files; the value
+# below will be reported in the lint error if it disagrees, just paste it back.
+source_schema_hash = "d90b01684eeb80bfe2abae669b2e07292c33277177dcec087eb9c97afdb04ac9"
+target_schema_hash = "slice6_relax_run_objects_pending_recompute"
+# Modifies existing managed fields → non-additive → "none" compatibility.
+compatibility = "none"
+renames = []
+
+# ── Apply ──────────────────────────────────────────────────────────────
+# Single-statement OVERWRITE for each field. Goes in the [complete] phase
+# because relaxing a required field is safe to run while the app is up:
+# existing rows already have an object value; new rows are now allowed to
+# omit it. No data backfill needed.
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+DEFINE FIELD OVERWRITE bios_settings   ON stress_test_run TYPE none | object PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE driver_versions ON stress_test_run TYPE none | object PERMISSIONS FULL;
+"""
