@@ -11,8 +11,10 @@
 
 mod core;
 mod disk;
+mod gpu;
 mod memory;
 mod network;
+mod processes;
 #[cfg(target_os = "windows")]
 mod whea_windows;
 
@@ -26,8 +28,10 @@ use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, Re
 
 pub use self::core::CoreSample;
 pub use self::disk::DiskRateSample;
+pub use self::gpu::GpuSample;
 pub use self::memory::MemorySample;
 pub use self::network::NetworkRateSample;
+pub use self::processes::ProcessSample;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WheaCounters {
@@ -42,6 +46,12 @@ pub struct TelemetrySnapshot {
     pub memory: MemorySample,
     pub disks: Vec<DiskRateSample>,
     pub networks: Vec<NetworkRateSample>,
+    /// Top-N processes by CPU then RAM. Empty until the first refresh tick.
+    #[serde(default)]
+    pub processes: Vec<ProcessSample>,
+    /// GPU components surfaced by sysinfo. Empty if no GPU sensors are visible.
+    #[serde(default)]
+    pub gpus: Vec<GpuSample>,
     /// `None` on non-Windows targets, or when the WHEA log isn't readable.
     pub whea: Option<WheaCounters>,
 }
@@ -135,6 +145,8 @@ fn sampler_loop(
             memory: memory::sample_memory(&sys),
             disks: disk::sample_disks(&disks, elapsed),
             networks: network::sample_networks(&networks, elapsed),
+            processes: processes::sample_processes(&sys),
+            gpus: gpu::sample_gpus(&components),
             #[cfg(target_os = "windows")]
             whea: whea.as_mut().map(|w| w.poll()),
             #[cfg(not(target_os = "windows"))]

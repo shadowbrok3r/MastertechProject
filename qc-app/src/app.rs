@@ -8,8 +8,9 @@ use egui::containers::menu::MenuConfig;
 use egui::{Align, Layout, PopupCloseBehavior};
 
 use crate::db;
+use crate::fleet_client::{FleetClient, InboundCommandKind};
+use crate::hw_monitor::HwMonitor;
 use crate::hw_sampler::HwSampler;
-use crate::hw_table::HwTable;
 use crate::mcp::{QcMcpState, spawn_mcp_servers};
 use crate::oa3_sager::{self, H2oGeneration};
 use crate::reporting::ReportSink;
@@ -35,8 +36,8 @@ fn init_arc_atomic_bool() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
 }
 
-fn init_hw_table() -> Arc<Mutex<HwTable>> {
-    Arc::new(Mutex::new(HwTable::new()))
+fn init_hw_monitor() -> Arc<Mutex<HwMonitor>> {
+    Arc::new(Mutex::new(HwMonitor::default()))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -68,15 +69,19 @@ pub struct QcApp {
     /// Undocked hardware monitor window visibility.
     #[serde(skip, default = "init_arc_atomic_bool")]
     show_hw_monitor: Arc<AtomicBool>,
-    /// Shared CPU table: sampler writes, HW monitor reads.
-    #[serde(skip, default = "init_hw_table")]
-    hw_table: Arc<Mutex<HwTable>>,
+    /// Shared multi-view monitor: sampler writes a snapshot here each frame,
+    /// the undocked viewport reads it.
+    #[serde(skip, default = "init_hw_monitor")]
+    hw_monitor: Arc<Mutex<HwMonitor>>,
     /// Background sampler; created on first frame.
     #[serde(skip)]
     hw_sampler: Option<HwSampler>,
     /// Orchestrator HTTP sink; recreated when URL changes.
     #[serde(skip)]
     report_sink: Option<ReportSink>,
+    /// Inbound fleet command client; recreated when URL changes.
+    #[serde(skip)]
+    fleet_client: Option<FleetClient>,
     /// Last heartbeat send time (30 s throttle).
     #[serde(skip)]
     last_heartbeat: Option<Instant>,
@@ -103,9 +108,10 @@ impl Default for QcApp {
             db_line: init_arc_mutex_string(),
             stress_panel: StressPanel::default(),
             show_hw_monitor: init_arc_atomic_bool(),
-            hw_table: init_hw_table(),
+            hw_monitor: init_hw_monitor(),
             hw_sampler: None,
             report_sink: None,
+            fleet_client: None,
             last_heartbeat: None,
             mcp_state: None,
         }
@@ -120,6 +126,44 @@ impl QcApp {
             }
         }
         Self::default()
+    }
+
+    /// Apply one inbound fleet command and ack it. The fleet_client handle
+    /// is passed in (rather than read off `self`) so the caller can use
+    /// `&mut self` for the work without re-locking the client option.
+    fn dispatch_inbound_command(
+        &mut self,
+        cmd: crate::fleet_client::InboundCommand,
+        client: &FleetClient,
+        current_cores: &[crate::hw_sampler::CoreRow],
+    ) {
+        let id = cmd.id.clone();
+        log::info!("qc-app: dispatching fleet command {id} ({:?})", cmd.kind);
+        match cmd.kind {
+            InboundCommandKind::SendReport => {
+                let snapshot = HwSnapshot::from_cores(current_cores);
+                let mid = client.machine_id.as_ref().clone();
+                let report = QcReport::new(&mid, snapshot);
+                if let Some(sink) = self.report_sink.as_ref() {
+                    sink.send_report(report.clone());
+                }
+                if let Some(state) = self.mcp_state.as_ref() {
+                    if let Ok(mut g) = state.last_report.lock() {
+                        *g = Some(report);
+                    }
+                }
+                client.ack(id);
+            }
+            InboundCommandKind::Custom { payload } => {
+                log::warn!(
+                    "qc-app: fleet command {id} kind=custom not yet handled; payload={}",
+                    payload
+                );
+                // Ack anyway so it doesn't loop forever; future commands can
+                // dispatch off `payload["op"]` once we wire more handlers.
+                client.ack(id);
+            }
+        }
     }
 
     fn set_status(&self, msg: impl Into<String>) {
@@ -176,9 +220,21 @@ impl QcApp {
             .small()
             .weak(),
         );
-        let changed = ui.text_edit_singleline(&mut self.orchestrator_url).changed();
-        if changed {
+        // Only re-wire on focus loss / Enter / explicit Apply click. Otherwise
+        // every keystroke spins up a fresh ReportSink + FleetClient against a
+        // partial URL — 25 doomed background tasks before "http://localhost:80"
+        // even has its `82` typed.
+        let resp = ui.text_edit_singleline(&mut self.orchestrator_url);
+        let pressed_enter = resp.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let apply_clicked = ui.button("Apply").clicked();
+        if pressed_enter || apply_clicked || resp.lost_focus() {
+            log::info!(
+                "qc-app: orchestrator URL committed -> '{}' (rewiring sink + fleet client)",
+                self.orchestrator_url
+            );
             self.report_sink = None;
+            self.fleet_client = None;
             self.last_heartbeat = None;
         }
         ui.add_space(8.0);
@@ -265,12 +321,14 @@ impl eframe::App for QcApp {
             self.hw_sampler = Some(HwSampler::start(1000));
         }
 
-        // Copy sampler snapshot into `hw_table` for the monitor window.
+        // Copy sampler snapshot into the shared HwMonitor so the undocked
+        // viewport always sees the latest tick. `current_cores` is also kept
+        // for the heartbeat path below.
         let current_cores = if let Some(ref sampler) = self.hw_sampler {
             let snapshot = sampler.snapshot();
             let rows = snapshot.cores.clone();
-            if let Ok(mut table) = self.hw_table.lock() {
-                table.update(snapshot);
+            if let Ok(mut monitor) = self.hw_monitor.lock() {
+                monitor.update(snapshot);
             }
             rows
         } else {
@@ -284,6 +342,7 @@ impl eframe::App for QcApp {
                 last_report: Arc::new(Mutex::new(None)),
                 report_sink: Arc::new(Mutex::new(None)),
                 telemetry: Arc::new(Mutex::new(None)),
+                run_slot: Arc::new(Mutex::new(crate::mcp::RunSlot::default())),
             });
             spawn_mcp_servers(state.clone());
             self.mcp_state = Some(state);
@@ -309,8 +368,25 @@ impl eframe::App for QcApp {
             let mid = crate::reporting::machine_id();
             self.report_sink = Some(ReportSink::start(
                 Some(self.orchestrator_url.clone()),
+                mid.clone(),
+            ));
+            // Twin-spawn the inbound command client. It auto-registers and
+            // polls /commands until the URL changes.
+            self.fleet_client = Some(FleetClient::start(
+                Some(self.orchestrator_url.clone()),
                 mid,
             ));
+            log::info!(
+                "qc-app: fleet client + report sink wired to {}",
+                self.orchestrator_url
+            );
+        }
+
+        // Drain any orchestrator commands that landed since the last frame.
+        if let Some(client) = self.fleet_client.clone() {
+            for cmd in client.drain_commands(8) {
+                self.dispatch_inbound_command(cmd, &client, &current_cores);
+            }
         }
 
         const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -335,13 +411,13 @@ impl eframe::App for QcApp {
 
         // Undocked HW monitor: clone `Arc`s so the viewport closure does not capture `self`.
         if self.show_hw_monitor.load(Ordering::Relaxed) {
-            let hw_table = Arc::clone(&self.hw_table);
+            let hw_monitor = Arc::clone(&self.hw_monitor);
             let show_hw_monitor = Arc::clone(&self.show_hw_monitor);
 
             let viewport_id = egui::ViewportId::from_hash_of("qc_hw_monitor");
             let viewport_builder = egui::ViewportBuilder::default()
                 .with_title("Hardware Monitor")
-                .with_inner_size([820.0, 480.0]);
+                .with_inner_size([960.0, 620.0]);
 
             #[allow(deprecated)]
             ctx.show_viewport_immediate(
@@ -349,8 +425,8 @@ impl eframe::App for QcApp {
                 viewport_builder,
                 move |ctx, _class| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        if let Ok(mut table) = hw_table.lock() {
-                            table.show(ui);
+                        if let Ok(mut monitor) = hw_monitor.lock() {
+                            monitor.show(ui);
                         }
                     });
                     if ctx.input(|i| i.viewport().close_requested()) {
@@ -385,9 +461,9 @@ impl eframe::App for QcApp {
         });
         egui::CentralPanel::default().show_inside(ui, |ui| {
             match self.selected_tab {
-                1 => self.ui_database(ui),
-                2 => self.ui_oa3(ui),
-                4 => self.ui_settings(ui),
+                0 => self.ui_database(ui),
+                1 => self.ui_oa3(ui),
+                3 => self.ui_settings(ui),
                 _ => {
                     let mut open_hw = false;
                     // The stress panel now persists runs through stress-runner

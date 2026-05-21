@@ -48,6 +48,15 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::error!("axum_server: SurrealDB init failed: {e:?}"),
     }
 
+    // Re-hydrate the fleet from SurrealDB so an axum_server restart doesn't
+    // black-hole the admin dashboard until every agent re-registers. Best
+    // effort: if the DB is unreachable, the in-memory state starts empty
+    // and agents will repopulate it on their next heartbeat.
+    match routes::api::qc_fleet::hydrate_from_db(&app_state.fleet).await {
+        Ok(n) => tracing::info!("axum_server: hydrated {n} fleet_agent row(s) from SurrealDB"),
+        Err(e) => tracing::warn!("axum_server: fleet hydration skipped: {e:?}"),
+    }
+
     // Start the shared cron scheduler. We keep the returned handle alive
     // for the whole process lifetime — dropping it would silently cancel
     // every registered job. New periodic chores should be added inside

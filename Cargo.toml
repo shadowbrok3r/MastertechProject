@@ -19,7 +19,7 @@ rmcp = { version = "1.7.0", features = ["server", "client", "transport-async-rw"
 axum = { version = "0.8", default-features = true, features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["now"] } 
 tokio = { version = "1", features = ["full", "tracing"] }
-async-openai = { version = "0.38.2", features = ["full"] }
+async-openai = { version = "0.40", features = ["full"] }
 image = { version = "0.25", features = ["jpeg", "png", "gif"] }
 structdiff = {version = "0.7", features = ["rustc_hash"]}
 bincode = { version="2", features = ["serde", "derive"] }
@@ -43,8 +43,8 @@ crossbeam = "0.8"
 futures = "0.3"
 fuzzy-matcher = "0.3"
 rusty-s3 = "0.9.0"
-wasmtime = "44"
-wasmtime-wasi = "44"
+wasmtime = "45.0.0"
+wasmtime-wasi = "45.0.0"
 wat = "1.2"
 rfd = "0.17.2"
 regex = "1.12"

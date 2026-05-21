@@ -59,8 +59,8 @@ impl Default for SingleConfig {
     }
 }
 
-/// Serde-friendly mirror of stress-kit's [`Stressor`].  All 8 stress-kit stressors
-/// are now exposed; the panel picks sensible defaults per kind.
+/// Serde-friendly mirror of stress-kit's [`Stressor`].  All stress-kit stressors
+/// are exposed here; the panel picks sensible defaults per kind.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StressorChoice {
     Cpu,
@@ -71,10 +71,21 @@ pub enum StressorChoice {
     Bitops,
     Cache,
     Vm,
+    Stream,
+    Branch,
+    Atomic,
+    Mutex,
+    Switch,
+    Prime,
+    Fp,
+    Hash,
+    Prefetch,
+    Icache,
+    Tsc,
 }
 
 impl StressorChoice {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 19] = [
         Self::Cpu,
         Self::Memory,
         Self::Disk,
@@ -83,19 +94,21 @@ impl StressorChoice {
         Self::Bitops,
         Self::Cache,
         Self::Vm,
+        Self::Stream,
+        Self::Branch,
+        Self::Atomic,
+        Self::Mutex,
+        Self::Switch,
+        Self::Prime,
+        Self::Fp,
+        Self::Hash,
+        Self::Prefetch,
+        Self::Icache,
+        Self::Tsc,
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Cpu => "CPU",
-            Self::Memory => "Memory",
-            Self::Disk => "Disk I/O",
-            Self::Matrix => "Matrix",
-            Self::Memcpy => "Memcpy",
-            Self::Bitops => "Bitops",
-            Self::Cache => "Cache",
-            Self::Vm => "VM",
-        }
+        self.to_stressor().label()
     }
 
     pub fn to_stressor(self) -> Stressor {
@@ -108,6 +121,17 @@ impl StressorChoice {
             Self::Bitops => Stressor::Bitops,
             Self::Cache => Stressor::Cache,
             Self::Vm => Stressor::Vm,
+            Self::Stream => Stressor::Stream,
+            Self::Branch => Stressor::Branch,
+            Self::Atomic => Stressor::Atomic,
+            Self::Mutex => Stressor::Mutex,
+            Self::Switch => Stressor::Switch,
+            Self::Prime => Stressor::Prime,
+            Self::Fp => Stressor::Fp,
+            Self::Hash => Stressor::Hash,
+            Self::Prefetch => Stressor::Prefetch,
+            Self::Icache => Stressor::Icache,
+            Self::Tsc => Stressor::Tsc,
         }
     }
 
@@ -229,6 +253,8 @@ pub struct StressPanel {
     last_verdict: Option<RunVerdict>,
     /// True until the user dismisses the last verdict banner.
     show_verdict: bool,
+    /// Stressor currently selected in the scenario "add stage" combobox.
+    pending_stage_pick: StressorChoice,
 }
 
 impl Default for StressPanel {
@@ -242,6 +268,7 @@ impl Default for StressPanel {
             last_run_id: None,
             last_verdict: None,
             show_verdict: false,
+            pending_stage_pick: StressorChoice::Cpu,
         }
     }
 }
@@ -465,13 +492,17 @@ impl StressPanel {
         let s = &mut cfg.single;
 
         ui.group(|ui| {
-            ui.label("Stressor");
-            ui.horizontal_wrapped(|ui| {
-                for choice in StressorChoice::ALL {
-                    ui.add_enabled_ui(!running, |ui| {
-                        ui.selectable_value(&mut s.stressor, choice, choice.label());
-                    });
-                }
+            ui.horizontal(|ui| {
+                ui.label("Stressor");
+                ui.add_enabled_ui(!running, |ui| {
+                    egui::ComboBox::from_id_salt("single_stressor")
+                        .selected_text(s.stressor.label())
+                        .show_ui(ui, |ui| {
+                            for choice in StressorChoice::ALL {
+                                ui.selectable_value(&mut s.stressor, choice, choice.label());
+                            }
+                        });
+                });
             });
 
             ui.add_space(4.0);
@@ -505,10 +536,22 @@ impl StressPanel {
                         );
                     });
                 }
+                // Pure CPU/cache/memory-bandwidth stressors have no extra knobs.
                 StressorChoice::Cpu
                 | StressorChoice::Matrix
                 | StressorChoice::Bitops
-                | StressorChoice::Cache => {}
+                | StressorChoice::Cache
+                | StressorChoice::Stream
+                | StressorChoice::Branch
+                | StressorChoice::Atomic
+                | StressorChoice::Mutex
+                | StressorChoice::Switch
+                | StressorChoice::Prime
+                | StressorChoice::Fp
+                | StressorChoice::Hash
+                | StressorChoice::Prefetch
+                | StressorChoice::Icache
+                | StressorChoice::Tsc => {}
             }
 
             ui.horizontal(|ui| {
@@ -664,24 +707,34 @@ impl StressPanel {
 
             ui.add_space(4.0);
             if !running {
-                ui.horizontal_wrapped(|ui| {
-                    for choice in StressorChoice::ALL {
-                        if ui.small_button(format!("+ {}", choice.label())).clicked() {
-                            let stage = match choice {
-                                StressorChoice::Cpu => ScenarioStageConfig::default_cpu(),
-                                StressorChoice::Memory => ScenarioStageConfig::default_memory(),
-                                StressorChoice::Disk => ScenarioStageConfig::default_disk(),
-                                other => ScenarioStageConfig {
-                                    label: other.label().into(),
-                                    stressor: other,
-                                    threads: 0,
-                                    duration_secs: 60,
-                                    memory_cap_mb: 256,
-                                    disk_file_mb: 16,
-                                },
-                            };
-                            cfg.scenario.stages.push(stage);
-                        }
+                ui.horizontal(|ui| {
+                    ui.label("Add stage");
+                    egui::ComboBox::from_id_salt("scenario_add_stage")
+                        .selected_text(self.pending_stage_pick.label())
+                        .show_ui(ui, |ui| {
+                            for choice in StressorChoice::ALL {
+                                ui.selectable_value(
+                                    &mut self.pending_stage_pick,
+                                    choice,
+                                    choice.label(),
+                                );
+                            }
+                        });
+                    if ui.button("+ Add").clicked() {
+                        let stage = match self.pending_stage_pick {
+                            StressorChoice::Cpu => ScenarioStageConfig::default_cpu(),
+                            StressorChoice::Memory => ScenarioStageConfig::default_memory(),
+                            StressorChoice::Disk => ScenarioStageConfig::default_disk(),
+                            other => ScenarioStageConfig {
+                                label: other.label().into(),
+                                stressor: other,
+                                threads: 0,
+                                duration_secs: 60,
+                                memory_cap_mb: 256,
+                                disk_file_mb: 16,
+                            },
+                        };
+                        cfg.scenario.stages.push(stage);
                     }
                 });
             }

@@ -1,10 +1,21 @@
+pub mod atomic;
 pub mod bitops;
+pub mod branch;
 pub mod cache;
 pub mod cpu;
 pub mod disk;
+pub mod fp;
+pub mod hash;
+pub mod icache;
 pub mod matrix;
 pub mod memcpy;
 pub mod memory;
+pub mod mutex;
+pub mod prefetch;
+pub mod prime;
+pub mod stream;
+pub mod switch;
+pub mod tsc;
 pub mod vm;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -57,5 +68,16 @@ pub(crate) fn run_core(
         Stressor::Bitops => bitops::run(thread_count, cancel, tx, started_at),
         Stressor::Cache => cache::run(thread_count, cancel, tx, started_at),
         Stressor::Vm => vm::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
+        Stressor::Stream => stream::run(thread_count, cancel, tx, started_at),
+        Stressor::Branch => branch::run(thread_count, cancel, tx, started_at),
+        Stressor::Atomic => atomic::run(thread_count, cancel, tx, started_at),
+        Stressor::Mutex => mutex::run(thread_count, cancel, tx, started_at),
+        Stressor::Switch => switch::run(thread_count, cancel, tx, started_at),
+        Stressor::Prime => prime::run(thread_count, cancel, tx, started_at),
+        Stressor::Fp => fp::run(thread_count, cancel, tx, started_at),
+        Stressor::Hash => hash::run(thread_count, cancel, tx, started_at),
+        Stressor::Prefetch => prefetch::run(thread_count, cancel, tx, started_at),
+        Stressor::Icache => icache::run(thread_count, cancel, tx, started_at),
+        Stressor::Tsc => tsc::run(thread_count, cancel, tx, started_at),
     }
 }
