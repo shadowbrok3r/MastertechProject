@@ -1,0 +1,59 @@
+id = "20260521190000__slice5_fleet_schema"
+name = "slice5_fleet_schema"
+# Required by `database/scripts/migrate-local.sh`'s auto-detect — without
+# this the script's `grep ... state = "planned"` filter never matches the
+# manifest and the apply silently no-ops. surrealkit itself also reads this
+# field for its lifecycle state machine.
+state = "planned"
+# Source: slice4_build_pipeline's target hash (the previous applied schema).
+source_schema_hash = "32cfc5d9c7381f23399e3f0f53905e4f5542904d60ccebbed1f73b5d1099b145"
+# Target: SHA-256 of the post-fleet schema set. surrealkit lint *does* validate
+# this (turns out my earlier comment about hashes being metadata-only was wrong)
+# — it computes the current schema hash and refuses if the manifest doesn't
+# match. Value below was reported by `rollout lint` after the placeholder
+# rejection on the first apply attempt.
+target_schema_hash = "d90b01684eeb80bfe2abae669b2e07292c33277177dcec087eb9c97afdb04ac9"
+# Three brand-new tables, no modifications to existing entities → "phased" is
+# overkill but matches the slice4 convention so the apply script's state
+# machine doesn't have to special-case this rollout.
+compatibility = "phased"
+renames = []
+
+# ── Apply ──────────────────────────────────────────────────────────────
+# Single step: sync the three fleet schema files. surrealkit applies the
+# DEFINE TABLE / FIELD / INDEX statements verbatim. They use no OVERWRITE
+# because the entities are new — re-running would error and surface a real
+# state mismatch we'd want to know about.
+[[steps]]
+id = "apply_fleet_schema"
+phase = "start"
+kind = "apply_schema"
+files = [
+    "database/schema/fleet_agent.surql",
+    "database/schema/fleet_event.surql",
+    "database/schema/fleet_command.surql",
+]
+entities = []
+
+# ── Rollback ───────────────────────────────────────────────────────────
+# Pure-additive change → rollback is "drop the three new tables", which
+# cascades to every field and index defined above. Listing the tables alone
+# (instead of every field individually like slice4 did for build_job) is
+# the correct shape because none of these fields existed before.
+[[steps]]
+id = "rollback_fleet_schema"
+phase = "rollback"
+kind = "remove_entities"
+files = []
+
+[[steps.entities]]
+kind = "table"
+name = "fleet_agent"
+
+[[steps.entities]]
+kind = "table"
+name = "fleet_event"
+
+[[steps.entities]]
+kind = "table"
+name = "fleet_command"

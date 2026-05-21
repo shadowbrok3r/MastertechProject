@@ -356,6 +356,7 @@ impl eframe::App for QcApp {
                 last_report: Arc::new(Mutex::new(None)),
                 report_sink: Arc::new(Mutex::new(None)),
                 telemetry: Arc::new(Mutex::new(None)),
+                computer: local_computer_record(),
                 run_slot: Arc::new(Mutex::new(crate::mcp::RunSlot::default())),
             });
             spawn_mcp_servers(state.clone());
