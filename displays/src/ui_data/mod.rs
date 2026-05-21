@@ -101,12 +101,6 @@ impl crate::app_state::SharedContext {
         if !self.live_queries_active {
             self.live_queries_active = true;
 
-            // The whole spawn block needs the store id (for the
-            // WHERE bindings) and the user id (for notification
-            // scoping). Capture once so each spawn just clones a
-            // ready-to-go pair instead of re-running `get_store()`.
-            let store_id_str = user.get_store().as_str().to_string();
-
             // Clone error channel for each live query
             let error_tx_notes = self.live_query_error_tx.clone();
             let error_tx_users = self.live_query_error_tx.clone();
@@ -117,12 +111,11 @@ impl crate::app_state::SharedContext {
             // task_note → joined through task.assignee.store so a note's
             // visibility tracks the task it's attached to. Matches the
             // pattern used by `TaskNotePayload::get_all_notes_in_my_store`.
-            let store = store_id_str.clone();
             PlatformSpawner::spawn(async move {
                 let res = listen_data_filtered::<TaskNotePayload>(
                     notes_tx,
-                    "LIVE SELECT * FROM task_note WHERE task_id.assignee.store == $store".to_string(),
-                    vec![("store", serde_json::Value::String(store))],
+                    "LIVE SELECT * FROM task_note WHERE task_id.assignee.store == $auth.store".to_string(),
+                    vec![],
                 ).await;
                 log::info!("listen_task_notes: {res:?}");
                 if let Err(e) = res {
@@ -132,12 +125,11 @@ impl crate::app_state::SharedContext {
 
             // user → other users in the same store (admin presence /
             // settings updates). Unfiltered before; now store-scoped.
-            let store = store_id_str.clone();
             PlatformSpawner::spawn(async move {
                 let res = listen_data_filtered::<User>(
                     live_user_tx,
-                    "LIVE SELECT * FROM user WHERE store == $store".to_string(),
-                    vec![("store", serde_json::Value::String(store))],
+                    "LIVE SELECT * FROM user WHERE store == $auth.store".to_string(),
+                    vec![],
                 ).await;
                 log::info!("listen_user: {res:?}");
                 if let Err(e) = res {
@@ -147,12 +139,11 @@ impl crate::app_state::SharedContext {
 
             // task → assignee on this store. Matches the initial-fetch
             // shape from `get_tasks_for_store` (assignee.store == $store).
-            let store = store_id_str.clone();
             PlatformSpawner::spawn(async move {
                 let res = listen_data_filtered::<database::schema::LiveTaskPayload>(
                     live_tasks_tx,
-                    "LIVE SELECT * FROM task WHERE assignee.store == $store".to_string(),
-                    vec![("store", serde_json::Value::String(store))],
+                    "LIVE SELECT * FROM task WHERE assignee.store == $auth.store".to_string(),
+                    vec![],
                 ).await;
                 log::info!("listen_tasks: {res:?}");
                 if let Err(e) = res {
@@ -164,12 +155,11 @@ impl crate::app_state::SharedContext {
             // are addressed via the `user` field, so this is the tightest
             // possible scope. Reduces server fan-out from "every
             // notification table change" to "only mine".
-            let user_id = user.get_id();
             PlatformSpawner::spawn(async move {
                 let res = listen_data_filtered::<database::schema::Notification>(
                     live_notif_tx,
-                    "LIVE SELECT * FROM notification WHERE user == $user".to_string(),
-                    vec![("user", serde_json::to_value(&user_id).unwrap_or(serde_json::Value::Null))],
+                    "LIVE SELECT * FROM notification WHERE user == $auth.id".to_string(),
+                    vec![],
                 ).await;
                 log::info!("listen_notifications: {res:?}");
                 if let Err(e) = res {
@@ -181,18 +171,17 @@ impl crate::app_state::SharedContext {
             // iterations also gated on `connected == true`, but the
             // admin UI needs to see disconnected rows (to show them as
             // offline in the list); only store-scoping is applied here.
-            let store = store_id_str.clone();
             let is_root = user.get_authorization() == database::schema::user::UserAuthorization::Root;
             PlatformSpawner::spawn(async move {
                 let query = if is_root {
-                    "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $store AND connected == true".to_string()
+                    "LIVE SELECT * FROM connected_client WHERE assigned_user.store == $auth.store AND connected == true".to_string()
                 } else {
-                    "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND connected == true".to_string()
+                    "LIVE SELECT * FROM connected_client WHERE assigned_user == $auth.id AND assigned_user.store == $auth.store AND connected == true".to_string()
                 };
                 let res = listen_data_filtered::<database::schema::ConnectedClient>(
                     live_clients_tx,
                     query,
-                    vec![("store", serde_json::Value::String(store))],
+                    vec![],
                 ).await;
                 log::info!("listen_connected_clients: {res:?}");
                 if let Err(e) = res {
