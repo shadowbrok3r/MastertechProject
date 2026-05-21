@@ -433,36 +433,12 @@ pub struct SharedContext {
     /// latest snapshot only — older payloads are dropped if the UI is slow.
     #[serde(skip)]
     pub fleet_agents_rx: crossbeam::channel::Receiver<Vec<FleetAgentSummary>>,
-    /// `true` once a fleet poller is alive against `orchestrator_url`. Reset
-    /// to `false` when the URL changes so the lifecycle code can spawn a
-    /// fresh poller without leaking duplicates.
     #[serde(skip)]
     pub fleet_poller_running: bool,
-    /// Base URL of the fleet orchestrator used by the Fleet Dashboard.
-    /// Persisted so the setting survives app restarts.
-    pub orchestrator_url: String,
-    /// `true` once `load_data` has spawned its 5 live-query tasks. Without
-    /// this guard a second login or `load_data` call would stack another
-    /// 5 streams on top of the still-running first set — the documented
-    /// fan-out problem in `SurrealCrashes.md`.
-    ///
-    /// SurrealDB 3.1's Rust SDK auto-fires `KILL` when a live-query
-    /// `Stream` is dropped (`method/live.rs::Drop`), so explicit
-    /// cancellation tokens would be redundant here. If a future SDK
-    /// change makes that automatic cleanup unreliable, add a
-    /// `Vec<tokio::sync::oneshot::Sender<()>>` cancellation list and
-    /// have each spawned task `select!` between the stream and its
-    /// receiver — the streams' `Drop` will then send `KILL` on every
-    /// shutdown path.
+
     #[serde(skip)]
     pub live_queries_active: bool,
-    /// Wall-clock instant of the last auto-respawn fired by the
-    /// `live_query_error_rx` drain in `receive_shared_logic`.  Used as
-    /// a cooldown so two errors arriving in the same frame (or a
-    /// freshly-spawned stream immediately failing and re-queueing
-    /// another error) don't trigger a second respawn before the first
-    /// has settled — that's the bug behind every LIVE SELECT showing
-    /// up twice in the log after a SurrealDB blip.
+
     #[serde(skip)]
     pub last_live_respawn_at: Option<web_time::Instant>,
     /// Wall-clock instant of the last `refresh_client_list()` call.
@@ -663,7 +639,6 @@ impl SharedContext {
             fleet_agents_tx,
             fleet_agents_rx,
             fleet_poller_running: false,
-            orchestrator_url: String::new(),
             live_queries_active: false,
             last_live_respawn_at: None,
             last_client_list_refresh: None,

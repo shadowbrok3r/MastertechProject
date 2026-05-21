@@ -63,6 +63,13 @@ const ALL_INJECT_KEYS: &[&str] = &[
     "PRESTASHOP_API_URL",
     "PRESTASHOP_API_URL_WASM",
     "XIDAX_ADMIN_URL",
+    // Fleet orchestrator (axum_server) endpoints — qc-app posts heartbeats and
+    // polls commands against these. Picked at runtime by
+    // `database::orchestrator_url()` based on `cfg(debug_assertions)`. Safe
+    // defaults applied below so missing .env entries don't fail the build;
+    // an empty URL just disables fleet reporting at runtime.
+    "ORCHESTRATOR_URL",
+    "ORCHESTRATOR_URL_DEV",
 ];
 
 fn apply_defaults(map: &mut HashMap<String, String>) {
@@ -93,6 +100,15 @@ fn apply_defaults(map: &mut HashMap<String, String>) {
     }
     if map.get("WS_MASTER_URL_LOCAL").map_or(true, |s| s.is_empty()) {
         map.insert("WS_MASTER_URL_LOCAL".into(), "ws://127.0.0.1:8080".into());
+    }
+    // Fleet orchestrator: empty string is a valid value meaning "fleet reporting
+    // disabled". `database::orchestrator_url()` short-circuits the sink + poller
+    // when the active URL is empty.
+    if map.get("ORCHESTRATOR_URL").is_none() {
+        map.insert("ORCHESTRATOR_URL".into(), String::new());
+    }
+    if map.get("ORCHESTRATOR_URL_DEV").is_none() {
+        map.insert("ORCHESTRATOR_URL_DEV".into(), "http://localhost:8082".into());
     }
 }
 

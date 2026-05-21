@@ -63,8 +63,6 @@ pub struct QcApp {
     pub selected_tab: u8,
     /// Persisted stress panel config.
     pub stress_cfg: StressPanelConfig,
-    /// Fleet orchestrator base URL; empty disables HTTP reporting.
-    pub orchestrator_url: String,
 
     #[serde(skip, default = "init_arc_mutex_string")]
     status_line: Arc<Mutex<String>>,
@@ -110,7 +108,6 @@ impl Default for QcApp {
             h2o_generation: H2oGeneration::H2O14,
             selected_tab: 0,
             stress_cfg: StressPanelConfig::default(),
-            orchestrator_url: String::new(),
             status_line: init_arc_mutex_string(),
             github_in_flight: init_arc_atomic_bool(),
             db_line: init_arc_mutex_string(),
@@ -220,36 +217,45 @@ impl QcApp {
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
         ui.heading("Settings");
         ui.add_space(8.0);
-        ui.label("Fleet orchestrator URL");
+
+        ui.label(egui::RichText::new("Fleet orchestrator").strong());
         ui.label(
             egui::RichText::new(
-                "Leave empty to disable network reporting.  Example: http://192.168.1.50:7700",
+                "Picked from .env at compile time. Rebuild after editing \
+                 ORCHESTRATOR_URL / ORCHESTRATOR_URL_DEV to change.",
             )
             .small()
             .weak(),
         );
-        // Only re-wire on focus loss / Enter / explicit Apply click. Otherwise
-        // every keystroke spins up a fresh ReportSink + FleetClient against a
-        // partial URL — 25 doomed background tasks before "http://localhost:80"
-        // even has its `82` typed.
-        let resp = ui.text_edit_singleline(&mut self.orchestrator_url);
-        let pressed_enter = resp.lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let apply_clicked = ui.button("Apply").clicked();
-        if pressed_enter || apply_clicked || resp.lost_focus() {
-            log::info!(
-                "qc-app: orchestrator URL committed -> '{}' (rewiring sink + fleet client)",
-                self.orchestrator_url
-            );
-            self.report_sink = None;
-            self.fleet_client = None;
-            self.last_heartbeat = None;
-        }
+        ui.add_space(6.0);
+
+        let active_url = database::orchestrator_url();
+        let active_label = if cfg!(debug_assertions) {
+            "ORCHESTRATOR_URL_DEV (debug build)"
+        } else {
+            "ORCHESTRATOR_URL (release build)"
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Active key:").monospace().small().weak());
+            ui.label(egui::RichText::new(active_label).monospace().small());
+        });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Resolved URL:").monospace().small().weak());
+            if active_url.is_empty() {
+                ui.colored_label(
+                    egui::Color32::from_rgb(180, 140, 50),
+                    egui::RichText::new("(empty — reporting disabled)").monospace().small(),
+                );
+            } else {
+                ui.label(egui::RichText::new(active_url).monospace().small());
+            }
+        });
+
         ui.add_space(8.0);
-        let status = if self.orchestrator_url.is_empty() {
-            "Reporting disabled (no URL)".to_string()
+        let status = if active_url.is_empty() {
+            "Reporting disabled (env var unset)".to_string()
         } else if self.report_sink.is_some() {
-            format!("Reporting active → {}", self.orchestrator_url)
+            format!("Reporting active → {active_url}")
         } else {
             "Reporting will start on next frame".to_string()
         };
@@ -372,22 +378,16 @@ impl eframe::App for QcApp {
             }
         }
 
-        if self.report_sink.is_none() && !self.orchestrator_url.is_empty() {
-            let mid = crate::reporting::machine_id();
-            self.report_sink = Some(ReportSink::start(
-                Some(self.orchestrator_url.clone()),
-                mid.clone(),
-            ));
-            // Twin-spawn the inbound command client. It auto-registers and
-            // polls /commands until the URL changes.
-            self.fleet_client = Some(FleetClient::start(
-                Some(self.orchestrator_url.clone()),
-                mid,
-            ));
-            log::info!(
-                "qc-app: fleet client + report sink wired to {}",
-                self.orchestrator_url
-            );
+        if self.report_sink.is_none() {
+            let url = database::orchestrator_url();
+            if !url.is_empty() {
+                let mid = crate::reporting::machine_id();
+                self.report_sink = Some(ReportSink::start(Some(url.to_string()), mid.clone()));
+                // Twin-spawn the inbound command client. It auto-registers and
+                // polls /commands; URL is compile-time so no reconfig path.
+                self.fleet_client = Some(FleetClient::start(Some(url.to_string()), mid));
+                log::info!("qc-app: fleet client + report sink wired to {url}");
+            }
         }
 
         // Drain any orchestrator commands that landed since the last frame.
