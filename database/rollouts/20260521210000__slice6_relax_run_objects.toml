@@ -5,7 +5,7 @@ state = "planned"
 # will recompute the actual target hash from the schema files; the value
 # below will be reported in the lint error if it disagrees, just paste it back.
 source_schema_hash = "d90b01684eeb80bfe2abae669b2e07292c33277177dcec087eb9c97afdb04ac9"
-target_schema_hash = "slice6_relax_run_objects_pending_recompute"
+target_schema_hash = "fe30e4ac257eba92168df6fc814cf51c54b2f2eb2e5152b2b7420935d6d59ce0"
 # Modifies existing managed fields → non-additive → "none" compatibility.
 compatibility = "none"
 renames = []
