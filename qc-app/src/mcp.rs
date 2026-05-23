@@ -657,8 +657,38 @@ pub struct QcBenchmarkArgs {
     /// Scales every stage's `duration_secs`. `1.0` = ~20 s/stage (default).
     /// `0.5` = quick smoke (~80 s total), `2.0` = thorough (~5.5 min total).
     /// Clamped to `[0.1, 10.0]` server-side.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deser_opt_f32_or_str")]
     pub duration_multiplier: Option<f32>,
+}
+
+/// Accept both a JSON number and a JSON string for f32 fields.
+/// The MCP harness sometimes encodes float arguments as `"0.25"` (string)
+/// rather than `0.25` (number); this handles both without rejecting either.
+fn deser_opt_f32_or_str<'de, D>(de: D) -> Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<f32>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a float or string-encoded float, or null")
+        }
+        fn visit_none<E: Error>(self) -> Result<Option<f32>, E> { Ok(None) }
+        fn visit_unit<E: Error>(self) -> Result<Option<f32>, E> { Ok(None) }
+        fn visit_f32<E: Error>(self, v: f32) -> Result<Option<f32>, E> { Ok(Some(v)) }
+        fn visit_f64<E: Error>(self, v: f64) -> Result<Option<f32>, E> { Ok(Some(v as f32)) }
+        fn visit_i64<E: Error>(self, v: i64) -> Result<Option<f32>, E> { Ok(Some(v as f32)) }
+        fn visit_u64<E: Error>(self, v: u64) -> Result<Option<f32>, E> { Ok(Some(v as f32)) }
+        fn visit_str<E: Error>(self, v: &str) -> Result<Option<f32>, E> {
+            v.parse::<f32>().map(Some).map_err(|_| E::custom(format!("expected float, got {:?}", v)))
+        }
+        fn visit_some<D2: serde::Deserializer<'de>>(self, d: D2) -> Result<Option<f32>, D2::Error> {
+            d.deserialize_any(V)
+        }
+    }
+    de.deserialize_option(V)
 }
 
 /// One stage's pass/fail breakdown in [`QcBenchmarkReport`].
