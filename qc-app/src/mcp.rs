@@ -90,6 +90,13 @@ pub enum StressorKind {
     Prefetch,
     Icache,
     Tsc,
+    // GPU stressors (wgpu — D3D12 on Windows / Vulkan on Linux / Metal on macOS).
+    // Single shared device per run; thread_count is ignored. memory_cap_mb caps
+    // the buffer for gpu_vram and gpu_pcie.
+    Gpu,
+    GpuMatmul,
+    GpuVram,
+    GpuPcie,
 }
 
 impl From<StressorKind> for Stressor {
@@ -114,6 +121,10 @@ impl From<StressorKind> for Stressor {
             StressorKind::Prefetch => Stressor::Prefetch,
             StressorKind::Icache => Stressor::Icache,
             StressorKind::Tsc => Stressor::Tsc,
+            StressorKind::Gpu => Stressor::Gpu,
+            StressorKind::GpuMatmul => Stressor::GpuMatmul,
+            StressorKind::GpuVram => Stressor::GpuVram,
+            StressorKind::GpuPcie => Stressor::GpuPcie,
         }
     }
 }
@@ -631,6 +642,10 @@ impl QcToolProvider {
             StressorKind::Prefetch,
             StressorKind::Icache,
             StressorKind::Tsc,
+            StressorKind::Gpu,
+            StressorKind::GpuMatmul,
+            StressorKind::GpuVram,
+            StressorKind::GpuPcie,
         ];
         let rows: Vec<serde_json::Value> = kinds
             .iter()

@@ -115,10 +115,6 @@ pub struct MastertechContext {
     pub plugin_cmd_rx: Receiver<PluginClientCommand>,
     pub egui_frame_rx: Option<Receiver<displays::plugins::EguiFrameMessage>>,
     pub egui_input_tx: Option<Sender<displays::plugins::EguiInputEvent>>,
-    // `ws_auto_connected` and `last_reconnect_attempt` were retired
-    // along with the GUI-side WS-relay (`tabs/websockets/mod.rs`).
-    // The direct-TCP `tcp_listener` path owns the connection now and
-    // tracks its own retry state in `admin_transport.rs`.
 }
 
 /// State machine for TUR submission workflow

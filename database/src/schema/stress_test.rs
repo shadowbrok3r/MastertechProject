@@ -316,6 +316,18 @@ pub enum StressKitStressor {
     Icache,
     #[surreal(value = "tsc")]
     Tsc,
+
+    // ── GPU stressors (wgpu — D3D12 / Vulkan / Metal) ──
+    // New variants APPENDED, never reordered, so existing rows in
+    // `stress_test_run.tool.stressor` stay deserializable.
+    #[surreal(value = "gpu")]
+    Gpu,
+    #[surreal(value = "gpu_matmul")]
+    GpuMatmul,
+    #[surreal(value = "gpu_vram")]
+    GpuVram,
+    #[surreal(value = "gpu_pcie")]
+    GpuPcie,
 }
 
 impl StressKitStressor {
@@ -340,6 +352,10 @@ impl StressKitStressor {
             Self::Prefetch => "prefetch",
             Self::Icache => "icache",
             Self::Tsc => "tsc",
+            Self::Gpu => "gpu",
+            Self::GpuMatmul => "gpu_matmul",
+            Self::GpuVram => "gpu_vram",
+            Self::GpuPcie => "gpu_pcie",
         }
     }
 }
@@ -779,6 +795,21 @@ pub struct StressTestRun {
     /// iterate on the prompt without migrations.
     pub ai_assessment: Option<serde_json::Value>,
     pub tags: Vec<String>,
+
+    /// Server-side 768-dim vector for "find runs that look like this one"
+    /// (root-cause triage, regression hunts, anomaly clustering). The
+    /// HNSW index lives on the SurrealDB side (`strun_embedding`, see
+    /// `database/schema/stress_test_run.surql`). Mirrors the
+    /// `DiagnosticEntry.embedding` pattern: the schema declares this
+    /// non-nullable, so omitting it on insert yields `Couldn't coerce
+    /// value for field 'embedding'… Expected 'array' but found 'NONE'`.
+    /// We ship an empty array by default so writes succeed before an
+    /// embedding model has run; an offline backfill job (or a future
+    /// MCP "compute_embedding" tool) fills the real vector in afterwards.
+    /// `#[serde(default)]` so older rows that don't have the field
+    /// round-trip cleanly through reads.
+    #[serde(default)]
+    pub embedding: Vec<f32>,
 }
 
 impl StressTestRun {
@@ -824,6 +855,7 @@ impl StressTestRun {
             notes: None,
             ai_assessment: None,
             tags: Vec::new(),
+            embedding: Vec::new(),
         }
     }
 

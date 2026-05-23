@@ -1,6 +1,6 @@
 use database::{schema::{utilities::{check_id_existence, query_id}, ConnectedClient, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, DATABASE, WS_CLIENT_URL, WS_CLIENT_URL_LOCAL};
 use displays::{deserialize_command, remote_viewer::{encode_buffer_with_timestamp, ratagui::TerminalEvent}, serialize_system_info, tabs::admin_console::client_action::ClientHandler, Cmd, EventLogEntry, FileSystemAction, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, RemoteDirEntry, RemoteScriptItem, RemoteScriptStatus, ScheduledTask, ServiceActionType, StartupApp, WindowsService};
-use crate::{filesystem::{get_client_hash, system_info::get_sysinfo_no_gpu}, tabs::file_browser::read_folder, transport::ClientTransport};
+use crate::{filesystem::{get_client_hash, system_info::{get_sysinfo, get_sysinfo_no_gpu}}, tabs::file_browser::read_folder, transport::ClientTransport};
 use std::{path::Path, time::{Duration, Instant}};
 use command::{handle_windows_cmd_interactive, PersistentShell};
 use bincode::{config::standard, serde::*};
@@ -2712,7 +2712,14 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 }
 
                 let cached = get_open_service_cache();
-                let live_specs = get_sysinfo_no_gpu().await.ok();
+                // `get_sysinfo()` (vs `_no_gpu`) so live_specs.gpu_info
+                // is populated — the admin's entity-link modal maps
+                // it through to the form's GPU field. This handler
+                // only fires on session open / explicit refresh, so
+                // the ~hundreds-of-ms GPU enumeration is acceptable
+                // here (unlike the 400ms live-stats loop below, which
+                // still uses `_no_gpu`).
+                let live_specs = get_sysinfo().await.ok();
                 let response = Cmd::OpenServiceCandidatesResponse {
                     match_: cached.as_ref().and_then(|c| c.match_.clone()),
                     candidates: cached

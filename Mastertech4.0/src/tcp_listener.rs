@@ -632,7 +632,8 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
             let res = DATABASE
                 .query(
                     "UPSERT $client SET local_ip = $ip, tcp_port = $port, \
-                     connection_string = $cs, last_update = time::now()",
+                     connection_string = $cs, connected = true, \
+                     last_update = time::now()",
                 )
                 .bind(("client", publish_uuid.clone()))
                 .bind(("ip", ip_string.clone()))
@@ -661,6 +662,40 @@ pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) 
             "spawn_direct_tcp_listener -> failed to publish IP/port after 5 attempts; \
              admins will fall back to relay"
         );
+    });
+
+    // Periodic heartbeat: refresh `last_update` and re-assert
+    // `connected = true` every 15 minutes so the axum_server's 30-min
+    // stale sweep (heartbeat_sweep.rs) doesn't flip this row to
+    // `connected = false` on long-lived egui sessions. The terminal-mode
+    // path heartbeats through its own websocket loop; this is the
+    // egui-mode equivalent. 15 min sits comfortably under the 30-min
+    // threshold without flooding the DB.
+    let heartbeat_uuid = client_uuid.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                _ = displays::wait_for_shutdown() => {
+                    log::info!("tcp_listener heartbeat -> shutdown signaled; stopping");
+                    return;
+                }
+                _ = tokio::time::sleep(Duration::from_secs(15 * 60)) => {
+                    let res = DATABASE
+                        .query("UPDATE $client SET connected = true, last_update = time::now()")
+                        .bind(("client", heartbeat_uuid.clone()))
+                        .await;
+                    match res {
+                        Ok(_) => log::debug!(
+                            "tcp_listener heartbeat -> refreshed last_update"
+                        ),
+                        Err(e) => log::warn!(
+                            "tcp_listener heartbeat -> refresh failed: {e:?}"
+                        ),
+                    }
+                }
+            }
+        }
     });
 
     accept_loop(listener).await;

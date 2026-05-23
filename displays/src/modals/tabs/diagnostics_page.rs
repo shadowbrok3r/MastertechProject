@@ -145,7 +145,13 @@ fn render_session(
                     }
                     if !session.tags.is_empty() {
                         ui.label(RichText::new("Tags").weak());
-                        ui.label(session.tags.join(", "));
+                        ScrollArea::horizontal()
+                        .id_salt("diag_sessions_tags_scroll")
+                        .auto_shrink([false, true])
+                        .max_width(ui.available_width().max(500.))
+                        .show(ui, |ui| {
+                            ui.label(session.tags.join(", "));
+                        });
                         ui.end_row();
                     }
                 });
@@ -192,7 +198,7 @@ fn render_entry(ui: &mut Ui, entry: &DiagnosticEntry, idx: usize) {
         _ => Color32::GRAY,
     };
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.colored_label(cat_color, format!("[{}]", cat_str));
         ui.label(RichText::new(&entry.title).strong());
         ui.with_layout(

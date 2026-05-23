@@ -232,13 +232,6 @@ impl MasterTechApp {
             } 
         }
 
-        // The WS-relay auto-connect block (`self.context.connect(ctx)`)
-        // was removed along with `tabs/websockets/mod.rs`.  The
-        // direct-TCP listener binds itself in `spawn_direct_tcp_listener`
-        // (firewall + DB row publish) and the `connected_client` row
-        // creation/maintenance is now handled by the tcp_listener's
-        // UPSERT and `terminal_mode::websockets::create_client`.
-
         let mut latest_egui_frame = None;
         if let Some(ref rx) = self.context.egui_frame_rx {
             while let Ok(frame) = rx.try_recv() {

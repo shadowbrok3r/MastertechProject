@@ -11,15 +11,9 @@ resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
 [dependencies]
 eframe = { version = "0.34", features = ["persistence", "serde", "default_fonts", "glow"], default-features = false }
-# rustls 0.23 no longer ships a default crypto provider. Pull `ring` in here so a
-# provider is *compiled* in; main.rs then installs it as the process default.
-# Without this every TLS-using crate (reqwest, surrealdb WS) panics on first use.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 egui_plot = { workspace = true }
 web-time = { workspace = true }
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
-eframe = { version = "0.34", features = ["x11", "wayland"], default-features = false }
 stress-kit.workspace = true
 stress-runner.workspace = true
 database.workspace = true
@@ -36,13 +30,15 @@ axum.workspace = true
 crossbeam.workspace = true
 once_cell.workspace = true
 directories = "6.0.0"
-
 env_logger = "*"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls"] }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 image = "0.25"
 sha2 = "0.10"
 hex = "0.4"
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+eframe = { version = "0.34", features = ["x11", "wayland"], default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [

@@ -41,6 +41,13 @@ pub struct EntityLinkResolutionModal {
     error: String,
     commit_rx: Receiver<Result<(String, String), String>>,
     commit_tx: Sender<Result<(String, String), String>>,
+    /// `received_at` of the most recently consumed
+    /// `OpenServiceSuggestion`. The `draw()` poll only re-merges when
+    /// a strictly newer snapshot lands, so a fresh response that
+    /// arrives after the operator opened the modal still flows into
+    /// the form, but a stale cached snapshot can't keep re-clobbering
+    /// the same fields every frame.
+    last_merged_at: Option<web_time::Instant>,
 }
 
 impl EntityLinkResolutionModal {
@@ -51,6 +58,7 @@ impl EntityLinkResolutionModal {
 
         let mut service_number = String::new();
         let mut computer = ComputerData::default();
+        let mut last_merged_at: Option<web_time::Instant> = None;
         if !connection_string.is_empty() {
             computer.id = canonical_computer_id(&connection_string);
             if let Some((host, _)) = connection_string.split_once(':') {
@@ -61,7 +69,16 @@ impl EntityLinkResolutionModal {
                     service_number = c.service_number.clone();
                 }
                 merge_specs_into_computer(&mut computer, &suggestion);
+                last_merged_at = Some(suggestion.received_at);
             }
+            // Fire a fresh fetch so the hardware fields populate from
+            // the client's own `ComputerData` / `SystemInformation`
+            // (same source the tur sheet renders from) even if no
+            // suggestion was cached yet. Silent no-op when no admin
+            // session is registered for this connection — operator
+            // opens the Web Console session and the next `draw()`
+            // poll picks up the response when it lands.
+            request_live_specs_refresh(&connection_string);
         }
 
         let (commit_tx, commit_rx) = unbounded();
@@ -78,7 +95,35 @@ impl EntityLinkResolutionModal {
             error: String::new(),
             commit_rx,
             commit_tx,
+            last_merged_at,
         }
+    }
+
+    /// Re-merge from the global `open_service_suggestions` cache when
+    /// a strictly newer snapshot has landed since the last merge.
+    /// Called at the top of `draw()` so a response arriving after the
+    /// modal opened still flows into the form fields. The merge
+    /// itself uses "only fill empty" semantics so operator edits in
+    /// the form are never clobbered by a subsequent poll.
+    fn poll_live_specs(&mut self) {
+        let Some(cs) = self.request.connection_string.as_deref() else {
+            return;
+        };
+        let Some(suggestion) = crate::open_service_suggestions::get(cs) else {
+            return;
+        };
+        if let Some(prev) = self.last_merged_at {
+            if prev >= suggestion.received_at {
+                return;
+            }
+        }
+        merge_specs_into_computer(&mut self.computer, &suggestion);
+        if self.service_number.is_empty() {
+            if let Some(c) = suggestion.candidates.first() {
+                self.service_number = c.service_number.clone();
+            }
+        }
+        self.last_merged_at = Some(suggestion.received_at);
     }
 
     pub fn show(&mut self, ctx: &Context) -> Option<EntityLinkOutcome> {
@@ -126,6 +171,11 @@ impl EntityLinkResolutionModal {
     }
 
     fn draw(&mut self, ui: &mut Ui, close: &mut bool) -> Option<EntityLinkOutcome> {
+        // Pick up any fresh `OpenServiceCandidatesResponse` that landed
+        // since the last frame (operator may have opened the Web
+        // Console session after the modal was already open).
+        self.poll_live_specs();
+
         ui.label(
             RichText::new("Validation failed — link or create records before continuing.")
                 .strong(),
@@ -302,27 +352,130 @@ impl EntityLinkResolutionModal {
 
 fn merge_specs_into_computer(computer: &mut ComputerData, suggestion: &OpenServiceSuggestion) {
     if let Some(live) = suggestion.live_specs.as_ref() {
-        if !live.hostname.is_empty() {
-            computer.hostname = live.hostname.clone();
-        }
-        if !live.os_version.is_empty() {
-            computer.operating_system = live.os_version.clone();
-        }
-        if !live.product_serial.is_empty() {
-            computer.device_serial = Some(live.product_serial.clone());
-        }
-        if !live.product_vendor.is_empty() {
-            computer.device_mfg = Some(live.product_vendor.clone());
-        }
-        if !live.product_name.is_empty() {
-            computer.device_model = Some(live.product_name.clone());
-        }
-        if !live.motherboard_name.is_empty() {
-            computer.motherboard_name = live.motherboard_name.clone();
-        }
+        merge_live_specs_into_computer(computer, live);
     }
     if let Some(c) = suggestion.candidates.first() {
         merge_presta_specs(computer, &c.specs);
+    }
+}
+
+/// Copy the client's reported `SystemInformation` (same data source
+/// the tur sheet renders from on the client) into a `ComputerData`
+/// for the link/repair modal. "Only fill empty" so the operator's
+/// edits in the form aren't overwritten when a later poll re-merges.
+fn merge_live_specs_into_computer(
+    computer: &mut ComputerData,
+    live: &database::schema::SystemInformation,
+) {
+    if computer.hostname.is_empty() && !live.hostname.is_empty() {
+        computer.hostname = live.hostname.clone();
+    }
+    if computer.operating_system.is_empty() && !live.os_version.is_empty() {
+        computer.operating_system = live.os_version.clone();
+    }
+    if computer.cpu.is_empty() && !live.cpu.is_empty() {
+        computer.cpu = live.cpu.clone();
+    }
+    if computer.gpu.is_empty() {
+        if let Some(card) = live.gpu_info.card.first() {
+            if !card.name.is_empty() {
+                // Match the client's `get_computer_data` formatting:
+                // first 3 whitespace tokens of the card name
+                // (see filesystem/system_info.rs ~line 184).
+                computer.gpu = card
+                    .name
+                    .split_whitespace()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+        }
+    }
+    if computer.ram.is_empty() && live.total_memory > 0.0 {
+        // `SystemInformation.total_memory` is bytes; client formatter
+        // (filesystem/system_info.rs ~line 199) renders as "N Gb".
+        let gb = (live.total_memory as u64 / (1024 * 1024 * 1024)) + 1;
+        computer.ram = format!("{gb} Gb");
+    }
+    // Device-* fields surface in the modal as "Device Mfg / Model /
+    // Serial". The client reports these through `product_*` on
+    // `SystemInformation` (BIOS DMI / OEM strings), so we map across
+    // field names — the original `device_name`/`device_mfg` slots
+    // were intended for OEM-reported identity.
+    if computer
+        .device_serial
+        .as_ref()
+        .is_none_or(|s| s.is_empty())
+        && !live.product_serial.is_empty()
+    {
+        computer.device_serial = Some(live.product_serial.clone());
+    }
+    if computer.device_mfg.as_ref().is_none_or(|s| s.is_empty())
+        && !live.product_vendor.is_empty()
+    {
+        computer.device_mfg = Some(live.product_vendor.clone());
+    }
+    if computer
+        .device_model
+        .as_ref()
+        .is_none_or(|s| s.is_empty())
+        && !live.product_name.is_empty()
+    {
+        computer.device_model = Some(live.product_name.clone());
+    }
+    if computer.product_name.is_empty() && !live.product_name.is_empty() {
+        computer.product_name = live.product_name.clone();
+    }
+    if computer.product_sku.is_empty() && !live.product_sku.is_empty() {
+        computer.product_sku = live.product_sku.clone();
+    }
+    if computer.product_serial.is_empty() && !live.product_serial.is_empty() {
+        computer.product_serial = live.product_serial.clone();
+    }
+    if computer.product_vendor.is_empty() && !live.product_vendor.is_empty() {
+        computer.product_vendor = live.product_vendor.clone();
+    }
+    if computer.motherboard_name.is_empty() && !live.motherboard_name.is_empty() {
+        computer.motherboard_name = live.motherboard_name.clone();
+    }
+    if computer.motherboard_serial.is_empty() && !live.motherboard_serial.is_empty() {
+        computer.motherboard_serial = live.motherboard_serial.clone();
+    }
+    if computer.motherboard_asset_tag.is_empty()
+        && !live.motherboard_asset_tag.is_empty()
+    {
+        computer.motherboard_asset_tag = live.motherboard_asset_tag.clone();
+    }
+    if computer.motherboard_vendor.is_empty() && !live.motherboard_vendor.is_empty() {
+        computer.motherboard_vendor = live.motherboard_vendor.clone();
+    }
+}
+
+/// Fire `Cmd::RequestOpenServiceCandidates { refresh: false }` at the
+/// connected client so it returns its current `SystemInformation`
+/// (which carries live cpu/gpu/ram/etc) into the
+/// `open_service_suggestions` cache. The next `draw()` poll picks it
+/// up and merges into the form. Silent no-op when the hub has no
+/// admin transport registered for `connection_string` — the operator
+/// can open the Web Console session for that client and the response
+/// will flow in then.
+fn request_live_specs_refresh(connection_string: &str) {
+    let cmd = crate::Cmd::RequestOpenServiceCandidates { refresh: false };
+    let bytes = match bincode::serde::encode_to_vec(&cmd, bincode::config::standard()) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!(
+                "entity_link_modal: encode RequestOpenServiceCandidates failed: {e}"
+            );
+            return;
+        }
+    };
+    if let Err(e) = crate::plugins::remote_egui_control::hub()
+        .send_raw_binary(connection_string, bytes)
+    {
+        log::debug!(
+            "entity_link_modal: live-specs refresh skipped for {connection_string}: {e}"
+        );
     }
 }
 

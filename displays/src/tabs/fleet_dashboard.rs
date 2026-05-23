@@ -10,12 +10,44 @@ use std::time::Duration;
 use crossbeam::channel::Sender;
 use eframe::egui::{Color32, Grid, Label, RichText, Ui};
 use crate::app_state::{FleetAgentSummary, SharedContext};
+use crate::{PlatformSpawner, Spawner};
 
 /// Poll cadence for `/api/v1/qc/agents`. 15 s matches the cadence the
 /// warehouse dashboard needs (fast enough to spot a machine going dark
 /// within one HVAC-cycle, slow enough that 50 dashboards don't DoS axum).
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+
+async fn fleet_sleep(duration: Duration) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::sleep(duration).await;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use js_sys::Promise;
+        use wasm_bindgen_futures::JsFuture;
+
+        let ms = duration.as_millis().min(i32::MAX as u128) as f64;
+        let promise = Promise::new(&mut |resolve, _reject| {
+            if let Some(window) = web_sys::window() {
+                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    &resolve,
+                    ms as i32,
+                );
+            }
+        });
+        let _ = JsFuture::from(promise).await;
+    }
+}
+
+fn build_fleet_client() -> Result<reqwest::Client, reqwest::Error> {
+    let builder = reqwest::Client::builder();
+    // `ClientBuilder::timeout` is not available in the wasm reqwest build.
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.timeout(REQUEST_TIMEOUT);
+    builder.build()
+}
 
 /// Spawn a background task that polls the orchestrator's agent list every
 /// [`POLL_INTERVAL`] and writes the latest snapshot through `tx`.
@@ -32,8 +64,8 @@ pub fn start_fleet_poller(base_url: String, tx: Sender<Vec<FleetAgentSummary>>) 
         return;
     }
 
-    tokio::spawn(async move {
-        let client = match reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() {
+    PlatformSpawner::spawn(async move {
+        let client = match build_fleet_client() {
             Ok(c) => c,
             Err(e) => {
                 log::error!("[fleet_poller] reqwest build failed: {e}");
@@ -45,26 +77,48 @@ pub fn start_fleet_poller(base_url: String, tx: Sender<Vec<FleetAgentSummary>>) 
         log::info!("[fleet_poller] started polling {url} every {POLL_INTERVAL:?}");
 
         loop {
-            match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<Vec<FleetAgentSummary>>().await {
-                        Ok(rows) => {
-                            log::debug!(
-                                "[fleet_poller] {} agent row(s) from orchestrator",
-                                rows.len()
-                            );
-                            // bounded(1): drop the previous queued snapshot
-                            // if it's still sitting unread. The UI doesn't
-                            // care about stale data — only the latest.
-                            let _ = tx.try_send(rows);
+            #[cfg(target_arch = "wasm32")]
+            {
+                match client.get(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<Vec<FleetAgentSummary>>().await {
+                            Ok(rows) => {
+                                log::debug!(
+                                    "[fleet_poller] {} agent row(s) from orchestrator",
+                                    rows.len()
+                                );
+                                let _ = tx.try_send(rows);
+                            }
+                            Err(e) => log::warn!("[fleet_poller] decode failed: {e}"),
                         }
-                        Err(e) => log::warn!("[fleet_poller] decode failed: {e}"),
                     }
+                    Ok(resp) => log::warn!("[fleet_poller] HTTP {} from {url}", resp.status()),
+                    Err(e) => log::debug!("[fleet_poller] request error (will retry): {e}"),
                 }
-                Ok(resp) => log::warn!("[fleet_poller] HTTP {} from {url}", resp.status()),
-                Err(e) => log::debug!("[fleet_poller] request error (will retry): {e}"),
             }
-            tokio::time::sleep(POLL_INTERVAL).await;
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                match tokio::time::timeout(REQUEST_TIMEOUT, client.get(&url).send()).await {
+                    Ok(Ok(resp)) if resp.status().is_success() => {
+                        match resp.json::<Vec<FleetAgentSummary>>().await {
+                            Ok(rows) => {
+                                log::debug!(
+                                    "[fleet_poller] {} agent row(s) from orchestrator",
+                                    rows.len()
+                                );
+                                let _ = tx.try_send(rows);
+                            }
+                            Err(e) => log::warn!("[fleet_poller] decode failed: {e}"),
+                        }
+                    }
+                    Ok(Ok(resp)) => log::warn!("[fleet_poller] HTTP {} from {url}", resp.status()),
+                    Ok(Err(e)) => log::debug!("[fleet_poller] request error (will retry): {e}"),
+                    Err(_) => log::debug!("[fleet_poller] request timed out (will retry)"),
+                }
+            }
+
+            fleet_sleep(POLL_INTERVAL).await;
         }
     });
 }
@@ -74,9 +128,6 @@ impl SharedContext {
     /// channel and into [`SharedContext::fleet_agents`]. Cheap — the
     /// channel is bounded(1), so this is one `try_recv` per frame.
     pub fn drain_fleet_updates(&mut self) {
-        // Drain everything (in case the poller sent multiple before the UI
-        // could keep up — bounded(1) means there's at most one, but this is
-        // future-proof if we raise the cap).
         let mut latest = None;
         while let Ok(rows) = self.fleet_agents_rx.try_recv() {
             latest = Some(rows);
@@ -88,17 +139,12 @@ impl SharedContext {
 
     /// Idempotently start the poller against `database::orchestrator_url()`.
     /// Safe to call every frame; `fleet_poller_running` is the no-op guard.
-    /// The URL is compile-time (`ORCHESTRATOR_URL` / `ORCHESTRATOR_URL_DEV`
-    /// in `.env`), so there's no runtime "change URL" path — rebuild to
-    /// switch environments.
     pub fn ensure_fleet_poller(&mut self) {
         if self.fleet_poller_running {
             return;
         }
         let url = database::orchestrator_url().to_string();
         if url.is_empty() {
-            // Mark as "running" so we don't keep retrying every frame; with
-            // an empty URL the fleet feature is intentionally disabled.
             self.fleet_poller_running = true;
             return;
         }
@@ -109,9 +155,6 @@ impl SharedContext {
 
 impl SharedContext {
     /// Render the "Fleet Dashboard" tab for warehouse employees.
-    ///
-    /// This is a minimal read-only view: agent list + last known status.
-    /// The admin console provides full per-machine control.
     pub fn fleet_dashboard(&mut self, ui: &mut Ui) {
         ui.heading("Fleet Dashboard");
         ui.add_space(4.0);
@@ -122,13 +165,6 @@ impl SharedContext {
             .weak(),
         );
         ui.separator();
-
-        // Poll the fleet list from the orchestrator if a URL is configured.
-        // For now we display a helpful placeholder until the polling layer is wired in.
-        //
-        // TODO: add a `fleet_agents: Arc<Mutex<Vec<FleetAgentSummary>>>` field to
-        // `SharedContext` and spawn a background task that calls
-        // `GET /api/v1/qc/agents` every 15 seconds, then render the results here.
         ui.add_space(8.0);
 
         if let Some(ref agents) = self.fleet_agents {
@@ -141,7 +177,6 @@ impl SharedContext {
                 .striped(true)
                 .spacing([16.0, 4.0])
                 .show(ui, |ui| {
-                    // Header
                     ui.label(RichText::new("Machine").strong());
                     ui.label(RichText::new("Version").strong());
                     ui.label(RichText::new("CPU %").strong());

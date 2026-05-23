@@ -34,6 +34,10 @@ pub fn stressor_to_db(s: Stressor) -> StressKitStressor {
         Stressor::Prefetch => StressKitStressor::Prefetch,
         Stressor::Icache => StressKitStressor::Icache,
         Stressor::Tsc => StressKitStressor::Tsc,
+        Stressor::Gpu => StressKitStressor::Gpu,
+        Stressor::GpuMatmul => StressKitStressor::GpuMatmul,
+        Stressor::GpuVram => StressKitStressor::GpuVram,
+        Stressor::GpuPcie => StressKitStressor::GpuPcie,
     }
 }
 
@@ -60,6 +64,10 @@ pub fn stressor_from_db(s: StressKitStressor) -> Stressor {
         StressKitStressor::Prefetch => Stressor::Prefetch,
         StressKitStressor::Icache => Stressor::Icache,
         StressKitStressor::Tsc => Stressor::Tsc,
+        StressKitStressor::Gpu => Stressor::Gpu,
+        StressKitStressor::GpuMatmul => Stressor::GpuMatmul,
+        StressKitStressor::GpuVram => Stressor::GpuVram,
+        StressKitStressor::GpuPcie => Stressor::GpuPcie,
     }
 }
 
@@ -85,6 +93,9 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
             TargetKind::Memory
         }
         Stressor::Disk => TargetKind::Storage,
+        Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
+            TargetKind::Gpu
+        }
     }
 }
 

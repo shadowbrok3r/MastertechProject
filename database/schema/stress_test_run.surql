@@ -34,6 +34,16 @@ DEFINE INDEX strun_failure_kind     ON stress_test_run FIELDS failure_kind;
 DEFINE INDEX strun_started_at       ON stress_test_run FIELDS started_at;
 DEFINE INDEX strun_tags             ON stress_test_run FIELDS tags;
 
+-- HNSW vector index for "find runs that look like this one" (root-cause
+-- triage, regression hunts, anomaly clustering). Dimension matches the
+-- sentence-transformer family we use elsewhere in the codebase
+-- (`all-mpnet-base-v2`-class, 768-dim). Cosine distance because embeddings
+-- come back L2-normalized. EFC / M tuned per the surrealdb-vector skill's
+-- "stress-test sized table" defaults — re-tune once the table grows past
+-- a few million rows.
+DEFINE INDEX strun_embedding ON stress_test_run FIELDS embedding
+    HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+
 -- --- Links ---
 DEFINE FIELD computer            ON stress_test_run TYPE record<computer>                           PERMISSIONS FULL;
 DEFINE FIELD service_order       ON stress_test_run TYPE none | record<service_order>              PERMISSIONS FULL;
@@ -97,3 +107,15 @@ DEFINE FIELD notes               ON stress_test_run TYPE none | string          
 DEFINE FIELD ai_assessment       ON stress_test_run TYPE none | object                              PERMISSIONS FULL;
 DEFINE FIELD tags                ON stress_test_run TYPE array<string> DEFAULT []                  PERMISSIONS FULL;
 DEFINE FIELD tags.*              ON stress_test_run TYPE string                                     PERMISSIONS FULL;
+
+-- --- Semantic similarity ---
+-- 768-dim sentence-transformer embedding (matches the HNSW `strun_embedding`
+-- index above). Required `array<float>` rather than `option<array<float>>`
+-- because the HNSW index needs a populated vector to insert into the graph;
+-- `DEFAULT []` keeps writes from failing before an embedding model has run,
+-- and the Rust struct ships an empty Vec by default for the same reason
+-- (mirrors the `diagnostic_entry.embedding` pattern). An offline backfill
+-- job — or a future MCP "compute_embedding" tool — fills the real vector
+-- in afterwards.
+DEFINE FIELD embedding           ON stress_test_run TYPE array<float> DEFAULT []                   PERMISSIONS FULL;
+DEFINE FIELD embedding.*         ON stress_test_run TYPE float                                     PERMISSIONS FULL;

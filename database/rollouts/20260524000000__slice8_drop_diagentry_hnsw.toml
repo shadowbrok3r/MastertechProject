@@ -1,0 +1,44 @@
+id = "20260524000000__slice8_drop_diagentry_hnsw"
+name = "slice8_drop_diagentry_hnsw"
+# Required by `database/scripts/migrate-local.{ps1,sh}` — the apply script
+# greps for `state = "planned"` to find the latest pending manifest.
+state = "planned"
+# Source: slice7's target hash (the in-progress run_embedding migration on
+# stress_test_run). Re-lint with surrealkit to pick up the real value if it
+# has changed since this file was authored.
+source_schema_hash = "7ecad58cdd1f1947b63c48b1cdda1c6235a507cb46c0e52ae31a77daea1d6696"
+# Target: recompute via
+# `surrealkit rollout lint database/rollouts/20260524000000__slice8_drop_diagentry_hnsw.toml`
+# and paste the reported value back. Placeholder below is intentionally invalid
+# so the lint step surfaces the correct one.
+target_schema_hash = "REPLACE_ME_VIA_SURREALKIT_LINT"
+# Pure relaxation: removing an index that should never have existed without a
+# source file. Old code that doesn't write `embedding` succeeds (it already
+# defaults to []), and new code that does write it is unaffected — the index
+# is gone, so the dimension check is gone. Phased = safe in either order.
+compatibility = "phased"
+renames = []
+
+# ── Apply ──────────────────────────────────────────────────────────────────────
+# Drops the orphaned HNSW that's blocking every log_diagnostic_entry insert
+# when Ollama is offline. See database/schema/diagnostic_entry.surql for the
+# longer explanation and the criteria for re-adding it.
+#
+# Idempotent: REMOVE INDEX … IF EXISTS is a no-op if the index isn't there.
+
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+REMOVE INDEX IF EXISTS diagnostic_entry_embedding ON diagnostic_entry;
+-- Common alternative naming if the live index was created under a different
+-- handle; the second REMOVE is also a no-op if the index doesn't exist.
+REMOVE INDEX IF EXISTS diagentry_embedding ON diagnostic_entry;
+"""
+
+# Rollback intentionally omitted. To re-introduce the HNSW once embeddings are
+# wired AND a backfill has run, add a NEW rollout (slice9+) that runs:
+#   DEFINE INDEX diagentry_embedding ON diagnostic_entry FIELDS embedding
+#       HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+# (matches the strun_embedding shape in stress_test_run.surql:44.)

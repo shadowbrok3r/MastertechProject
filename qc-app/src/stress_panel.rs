@@ -10,11 +10,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use eframe::egui;
+use stress_kit::telemetry::TelemetrySnapshot;
 use stress_runner::{
     RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict, Stressor, TelemetryAgent,
     TestTool,
 };
 use stress_runner::{RecordId, StressKitStressor};
+
+use crate::charts::ChartBoard;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub enum PanelMode {
@@ -277,6 +280,9 @@ pub struct StressPanel {
     show_verdict: bool,
     /// Stressor currently selected in the scenario "add stage" combobox.
     pending_stage_pick: StressorChoice,
+    /// Live system telemetry charts (relocated from the hardware monitor).
+    /// Fed every frame from the shared `HwSampler` via [`StressPanel::push_telemetry`].
+    charts: ChartBoard,
 }
 
 impl Default for StressPanel {
@@ -291,11 +297,19 @@ impl Default for StressPanel {
             last_verdict: None,
             show_verdict: false,
             pending_stage_pick: StressorChoice::Cpu,
+            charts: ChartBoard::default(),
         }
     }
 }
 
 impl StressPanel {
+    /// Push the latest hardware sampler snapshot into the chart history.
+    /// Call once per frame from the host so the bottom-panel charts stay
+    /// populated even when the user hasn't started a stress run.
+    pub fn push_telemetry(&mut self, snapshot: &TelemetrySnapshot) {
+        self.charts.push(snapshot);
+    }
+
     /// Drain controller updates.  Call from the host `update` loop each frame.
     pub fn tick(&mut self, ctx: &egui::Context) {
         let Some(controller) = self.run.as_ref() else {
@@ -486,6 +500,14 @@ impl StressPanel {
 
     /// Stress tab UI.
     ///
+    /// Lays out as:
+    ///   * `Panel::top`    — mode selector (Single / Scenario / QC Benchmark)
+    ///                       plus the Hardware Monitor button.
+    ///   * `Panel::bottom` — live system telemetry charts (relocated from
+    ///                       the hardware monitor's old `Charts` view).
+    ///   * `CentralPanel`  — the mode-specific configuration + run controls
+    ///                       + metrics + verdict banner.
+    ///
     /// `telemetry` is the shared `TelemetryAgent` (typically from `HwSampler::agent()`).
     /// `computer` is the `RecordId` the run will be persisted against — qc-app
     /// computes this from `reporting::machine_id()`.
@@ -499,44 +521,59 @@ impl StressPanel {
     ) {
         let running = self.is_running();
 
-        ui.horizontal(|ui| {
-            ui.heading("Stress Test");
-            ui.add_space(8.0);
-            if ui.button("Hardware Monitor").clicked() {
-                *open_hw_monitor = true;
-            }
-            if let Some(id) = &self.last_run_id {
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(format!("run: {}", id.key_string_pretty()))
-                        .weak()
-                        .small()
-                        .monospace(),
-                );
-            }
+        egui::Panel::top("stress_panel_top").show_inside(ui, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!running, |ui| {
+                    ui.selectable_value(&mut cfg.mode, PanelMode::Single, "Single stressor");
+                    ui.selectable_value(&mut cfg.mode, PanelMode::Scenario, "Scenario");
+                    ui.selectable_value(&mut cfg.mode, PanelMode::QcBenchmark, "QC Benchmark");
+                });
+                ui.separator();
+                if ui.button("Hardware Monitor").clicked() {
+                    *open_hw_monitor = true;
+                }
+                if let Some(id) = &self.last_run_id {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!("run: {}", id.key_string_pretty()))
+                            .weak()
+                            .small()
+                            .monospace(),
+                    );
+                }
+            });
+            ui.add_space(4.0);
         });
-        ui.add_space(6.0);
 
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(!running, |ui| {
-                ui.selectable_value(&mut cfg.mode, PanelMode::Single, "Single stressor");
-                ui.selectable_value(&mut cfg.mode, PanelMode::Scenario, "Scenario");
-                ui.selectable_value(&mut cfg.mode, PanelMode::QcBenchmark, "QC Benchmark");
+        egui::Panel::bottom("stress_panel_bottom")
+            .resizable(true)
+            .default_size(300.0)
+            .show_inside(ui, |ui| {
+                self.charts.show(ui);
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                match cfg.mode {
+                    PanelMode::Single => {
+                        self.ui_single(ui, cfg, running, telemetry.clone(), computer.clone())
+                    }
+                    PanelMode::Scenario => {
+                        self.ui_scenario(ui, cfg, running, telemetry.clone(), computer.clone())
+                    }
+                    PanelMode::QcBenchmark => {
+                        self.ui_qc_benchmark(ui, cfg, running, telemetry, computer)
+                    }
+                }
+
+                if self.show_verdict {
+                    if let Some(v) = self.last_verdict.clone() {
+                        self.ui_verdict_banner(ui, &v);
+                    }
+                }
             });
         });
-        ui.separator();
-
-        match cfg.mode {
-            PanelMode::Single => self.ui_single(ui, cfg, running, telemetry.clone(), computer.clone()),
-            PanelMode::Scenario => self.ui_scenario(ui, cfg, running, telemetry.clone(), computer.clone()),
-            PanelMode::QcBenchmark => self.ui_qc_benchmark(ui, cfg, running, telemetry, computer),
-        }
-
-        if self.show_verdict {
-            if let Some(v) = self.last_verdict.clone() {
-                self.ui_verdict_banner(ui, &v);
-            }
-        }
     }
 
     fn ui_single(
