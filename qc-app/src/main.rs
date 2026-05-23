@@ -1,6 +1,7 @@
 use egui::Style;
 
 mod app;
+mod charts;
 mod db;
 mod fleet_client;
 mod hw_monitor;

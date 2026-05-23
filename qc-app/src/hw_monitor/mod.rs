@@ -12,8 +12,6 @@
 //!   * **WHEA**    — Windows machine-check counters (when readable).
 //!   * **Processes** — top-N by CPU% then RAM.
 //!   * **GPUs**    — vendor / name / temp; vendor-specific live usage TBD.
-//!   * **Charts**  — clean live plots (raw samples, linear segments). The
-//!     antidote to the wavy `displays::resource_monitor` interpolation.
 //!
 //! The widget is `Sync + Send`-free by design (egui ownership) but its
 //! internal history buffer is updated in place from [`HwMonitor::update`],
@@ -22,10 +20,7 @@
 use eframe::egui::{self, Color32, RichText};
 use stress_kit::telemetry::TelemetrySnapshot;
 
-mod charts;
 mod tables;
-
-use self::charts::ChartBoard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HwView {
@@ -36,7 +31,6 @@ pub enum HwView {
     Whea,
     Processes,
     Gpus,
-    Charts,
 }
 
 impl Default for HwView {
@@ -46,7 +40,7 @@ impl Default for HwView {
 }
 
 impl HwView {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Cores,
         Self::Memory,
         Self::Disks,
@@ -54,7 +48,6 @@ impl HwView {
         Self::Whea,
         Self::Processes,
         Self::Gpus,
-        Self::Charts,
     ];
 
     pub fn label(self) -> &'static str {
@@ -66,7 +59,6 @@ impl HwView {
             Self::Whea => "WHEA",
             Self::Processes => "Processes",
             Self::Gpus => "GPUs",
-            Self::Charts => "Charts",
         }
     }
 }
@@ -75,7 +67,6 @@ pub struct HwMonitor {
     view: HwView,
     filter: String,
     snapshot: TelemetrySnapshot,
-    charts: ChartBoard,
 }
 
 impl Default for HwMonitor {
@@ -84,17 +75,13 @@ impl Default for HwMonitor {
             view: HwView::default(),
             filter: String::new(),
             snapshot: TelemetrySnapshot::default(),
-            charts: ChartBoard::default(),
         }
     }
 }
 
 impl HwMonitor {
-    /// Push the latest sampler snapshot. Cheap clone. The chart history is
-    /// extended unconditionally so users get a populated graph even before
-    /// they switch to the Charts view.
+    /// Push the latest sampler snapshot. Cheap clone.
     pub fn update(&mut self, snapshot: TelemetrySnapshot) {
-        self.charts.push(&snapshot);
         self.snapshot = snapshot;
     }
 
@@ -159,7 +146,6 @@ impl HwMonitor {
                     tables::show_processes(ui, &self.snapshot.processes, &self.filter)
                 }
                 HwView::Gpus => tables::show_gpus(ui, &self.snapshot.gpus),
-                HwView::Charts => self.charts.show(ui),
             }
         });
     }

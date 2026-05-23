@@ -1,0 +1,33 @@
+-- diagnostic_entry — AI/tech notes against a diagnostic_session.
+--
+-- This file documents the field set declared in `database/src/schema/diagnostic.rs`
+-- (`DiagnosticEntry`). The table itself is created lazily on first insert (no
+-- `DEFINE TABLE`); these statements only declare field defaults + the embedding
+-- field shape.
+--
+-- ── Why no HNSW index on `embedding` here ──────────────────────────────────────
+-- The Rust struct ships `embedding: Vec::new()` by design (see the docstring on
+-- `DiagnosticEntry.embedding` in diagnostic.rs). Writes must succeed before an
+-- embedding model is online — embeddings are filled by an OFFLINE backfill job
+-- once Ollama (or whichever model server) is wired up.
+--
+-- A `DEFINE INDEX diagnostic_entry_embedding ON … HNSW DIMENSION 768 …` was added
+-- live to a production DB out-of-band (no source file). That index rejects the
+-- default empty array with
+--   "Incorrect vector dimension (0). Expected a vector of 768 dimension."
+-- breaking every `log_diagnostic_entry` write whenever Ollama is unavailable.
+-- See the matching pattern (and the same warning) in stress_test_run.surql:117.
+--
+-- The migration `database/rollouts/20260524000000__slice8_drop_diagentry_hnsw.toml`
+-- removes that orphaned index. Re-add the HNSW (mirroring `strun_embedding` in
+-- stress_test_run.surql:44) ONLY after:
+--   1. the embedding worker is implemented + reachable, AND
+--   2. a backfill has populated `embedding` on every existing row with a real
+--      768-dim vector (an all-zero vector poisons KNN — don't ship that).
+--
+-- ── Field defaults ─────────────────────────────────────────────────────────────
+-- `OVERWRITE` so this file is idempotent — re-running on an environment that
+-- already has the field is a no-op.
+
+DEFINE FIELD OVERWRITE embedding   ON diagnostic_entry TYPE array<float> DEFAULT [] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON diagnostic_entry TYPE float                  PERMISSIONS FULL;

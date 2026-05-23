@@ -1,0 +1,45 @@
+id = "20260523190000__slice7_run_embedding"
+name = "slice7_run_embedding"
+# Required by `database/scripts/migrate-local.{ps1,sh}` — the apply script
+# greps for `state = "planned"` to find the latest pending manifest.
+state = "planned"
+# Source: slice6's target hash. Slice6 is the previous pending rollout in
+# `state = "planned"` (relaxes bios_settings + driver_versions). If slice6
+# hasn't been applied yet on this environment, surrealkit will still pick
+# the right chain because rollouts are applied in timestamp order.
+source_schema_hash = "fe30e4ac257eba92168df6fc814cf51c54b2f2eb2e5152b2b7420935d6d59ce0"
+# Target: SHA-256 of the post-embedding schema set. Recompute via
+# `surrealkit rollout lint database/rollouts/20260523190000__slice7_run_embedding.toml`
+# — the correct hash will appear in the lint error if this placeholder
+# disagrees with the on-disk schema files. Paste the reported value back.
+target_schema_hash = "7ecad58cdd1f1947b63c48b1cdda1c6235a507cb46c0e52ae31a77daea1d6696"
+# `DEFINE FIELD ... OVERWRITE` is technically a modification of a managed
+# field, but in this case the field already exists in the live DB (added
+# out-of-band before we tracked it). Old code that doesn't write `embedding`
+# will still succeed once we OVERWRITE with `DEFAULT []`, and new code that
+# does write it is purely additive. Either ordering of app deploy vs.
+# migration is safe → "phased".
+compatibility = "phased"
+renames = []
+
+# ── Apply ──────────────────────────────────────────────────────────────
+# All work happens in `[complete]`. The DDL is idempotent because of
+# OVERWRITE, so re-running on an environment that already has the field
+# is a no-op. Goes through the same lifecycle hooks as slice6.
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+DEFINE FIELD OVERWRITE embedding ON stress_test_run TYPE array<float> DEFAULT [] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON stress_test_run TYPE float PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE strun_embedding ON stress_test_run FIELDS embedding HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+"""
+
+# Rollback intentionally omitted: matches the slice6 pattern (the closest
+# analog — also a hand-authored DDL relaxation). If a rollback ever becomes
+# necessary, run by hand against Surrealist:
+#   REMOVE INDEX strun_embedding ON stress_test_run;
+#   REMOVE FIELD embedding ON stress_test_run;
+# (Index first because it depends on the field. Note any populated vectors
+# will be lost — re-applying will need an embedding backfill.)

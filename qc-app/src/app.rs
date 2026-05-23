@@ -336,11 +336,14 @@ impl eframe::App for QcApp {
         }
 
         // Copy sampler snapshot into the shared HwMonitor so the undocked
-        // viewport always sees the latest tick. `current_cores` is also kept
-        // for the heartbeat path below.
+        // viewport always sees the latest tick, and feed the stress panel's
+        // chart board so the Panel::bottom plots stay populated even when no
+        // stress run is active. `current_cores` is also kept for the
+        // heartbeat path below.
         let current_cores = if let Some(ref sampler) = self.hw_sampler {
             let snapshot = sampler.snapshot();
             let rows = snapshot.cores.clone();
+            self.stress_panel.push_telemetry(&snapshot);
             if let Ok(mut monitor) = self.hw_monitor.lock() {
                 monitor.update(snapshot);
             }
@@ -468,42 +471,46 @@ impl eframe::App for QcApp {
                 });
             });
         });
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            match self.selected_tab {
-                0 => self.ui_database(ui),
-                1 => self.ui_oa3(ui),
-                3 => self.ui_settings(ui),
-                _ => {
-                    let mut open_hw = false;
-                    // The stress panel now persists runs through stress-runner
-                    // → SurrealDB.  It needs the shared TelemetryAgent (so the
-                    // run picks up the same hardware snapshots the HW monitor
-                    // shows) and a `computer` RecordId to attach the run to.
-                    let telemetry = self
-                        .hw_sampler
-                        .as_ref()
-                        .map(|s| s.agent());
-                    if let Some(telemetry) = telemetry {
-                        let computer = local_computer_record();
-                        self.stress_panel.ui(
-                            ui,
-                            &mut self.stress_cfg,
-                            &mut open_hw,
-                            telemetry,
-                            computer,
-                        );
-                        if open_hw {
-                            self.show_hw_monitor.store(true, Ordering::Relaxed);
-                        }
-                    } else {
+        match self.selected_tab {
+            0 => {
+                egui::CentralPanel::default().show_inside(ui, |ui| self.ui_database(ui));
+            }
+            1 => {
+                egui::CentralPanel::default().show_inside(ui, |ui| self.ui_oa3(ui));
+            }
+            3 => {
+                egui::CentralPanel::default().show_inside(ui, |ui| self.ui_settings(ui));
+            }
+            _ => {
+                // Stress test tab. `stress_panel.ui` lays out its own
+                // Panel::top (mode buttons + Hardware Monitor) +
+                // Panel::bottom (live charts) + CentralPanel (mode content),
+                // so we hand it the raw parent `ui` rather than wrapping in
+                // another CentralPanel here.
+                let mut open_hw = false;
+                let telemetry = self.hw_sampler.as_ref().map(|s| s.agent());
+                if let Some(telemetry) = telemetry {
+                    let computer = local_computer_record();
+                    self.stress_panel.ui(
+                        ui,
+                        &mut self.stress_cfg,
+                        &mut open_hw,
+                        telemetry,
+                        computer,
+                    );
+                    if open_hw {
+                        self.show_hw_monitor.store(true, Ordering::Relaxed);
+                    }
+                } else {
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
                         ui.colored_label(
                             egui::Color32::from_rgb(180, 140, 50),
                             "Telemetry sampler not initialized — open the Hardware Monitor first.",
                         );
-                    }
+                    });
                 }
             }
-        });
+        }
     }
 
 

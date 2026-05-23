@@ -244,8 +244,6 @@ impl crate::app_state::SharedContext {
         toast.add(auth_toast);
     }
 
-    /// Backward-compatible method that calls both logic and UI halves.
-    /// Used by MtechServer2.0 which hasn't split fn logic / fn ui yet.
     pub fn receive_shared(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
         self.receive_shared_logic(frame, ctx);
         self.receive_shared_ui(ctx);
@@ -467,7 +465,7 @@ impl crate::app_state::SharedContext {
             .resizable(false)
             .title_bar(false)
             .frame(
-                eframe::egui::Frame::window(&ctx.style())
+                eframe::egui::Frame::new()
                     .fill(eframe::egui::Color32::from_rgb(60, 30, 30))
                     .stroke(eframe::egui::Stroke::new(
                         1.5,

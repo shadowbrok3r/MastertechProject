@@ -1036,7 +1036,11 @@ impl PluginToolProvider {
 
     #[tool(
         name = "list_plugins",
-        description = "List all registered Mastertech plugins with their status, version, and tool count."
+        description = "List the plugins CURRENTLY REGISTERED in this Mastertech process's PluginManager (with status, version, tool count). \
+                       Only the two built-in egui plumbing plugins (`com.mastertech.egui-frame-capture`, `com.mastertech.egui-remote-viewer`) are registered by default. \
+                       Diagnostic plugins (hw-diag, repair, diagnostics, status-reporter, bsod-fixer, etc.) are NOT auto-loaded even if their compiled .wasm exists in `%LOCALAPPDATA%/Mastertech/plugins/` (Windows) or `$HOME/.local/share/mastertech/plugins/` (Linux). \
+                       To use them: call `search_plugins` → `fetch_plugin` → `plugin_deploy` (local) or `plugin_deploy_remote` (target client). \
+                       See `search_plugins` for the registry-side catalog and the 'Known Plugins in Registry' section of the server instructions for the canonical list."
     )]
     async fn list_plugins(
         &self,
@@ -2229,7 +2233,10 @@ impl PluginToolProvider {
 
     #[tool(
         name = "log_diagnostic_entry",
-        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'."
+        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. \
+                       \n\n\
+                       NOTE — Embedding dependency: the `diagnostic_entry.embedding` field is wired for semantic search (HNSW DIMENSION 768 DIST COSINE). The Rust default is `Vec::new()` (empty) and the schema docstring promises empty writes succeed before an embedding model has run — but if an HNSW index has been added live to the DB out-of-band, empty writes will fail with `Incorrect vector dimension (0). Expected a vector of 768 dimension.` \
+                       If you hit that, the embedding worker (Ollama) is offline AND the live DB has the strict index. Workaround: capture findings in the `close_diagnostic_session` summary instead — the session-level path doesn't traverse the vector index. The proper fix is to drop the orphaned HNSW until embeddings are wired (see `database/schema/diagnostic_entry.surql`)."
     )]
     async fn log_diagnostic_entry(
         &self,
@@ -3064,6 +3071,22 @@ After compiling a useful plugin, call publish_plugin to store it in the SurrealD
   2. **Compile locally**: `plugin_source` (write Rust source) → `plugin_compile`. Requires Rust + the `wasm32-wasip1` target on this host.
   3. **Compile remotely**: `plugin_source` → `plugin_compile_remote` (auto-falls-back to local compile when no `plugin_builder` workers are live) → `plugin_compile_status` until `status == 'done'`.
 Only AFTER one of those three has populated the ArtifactStore is `plugin_deploy` / `plugin_deploy_remote` a valid call.
+
+=== Default Plugin Set + AppData Fallback (CRITICAL — read before "no diagnostic tools available" panic) ===
+**`list_plugins` only returns the two built-in egui plumbing plugins by default** (`com.mastertech.egui-frame-capture` + `com.mastertech.egui-remote-viewer`, both `tool_count: 0`). It does NOT scan the on-disk plugin store at startup. If you see only those two and conclude "no diagnostic capability is available", you have skipped the fallback.
+
+Three places diagnostic plugins live, in order of preference:
+  1. **SurrealDB registry** — published via `publish_plugin`. Discover with `search_plugins`, pull with `fetch_plugin`. As of writing the registry contains hw-diag, repair, diagnostics, status-reporter (see "Known Plugins in Registry" below).
+  2. **Local on-disk store** (`%LOCALAPPDATA%/Mastertech/plugins/<sanitized_id>/` on Windows, `$HOME/.local/share/mastertech/plugins/<sanitized_id>/` on Linux) — created by `plugin_source` / `plugin_compile`. Contains `Cargo.toml`, `src/lib.rs`, and the compiled `.wasm` under `target/wasm32-wasip1/release/`. The MCP server does NOT currently auto-scan-and-load this directory; you must `plugin_compile` (rebuild) or `fetch_plugin` (registry copy) before `plugin_deploy` will find an artifact. Future work: a startup scanner that auto-registers compiled artifacts here.
+  3. **Write a new one** — `plugin_source` + `plugin_compile` (or `plugin_compile_remote`). Last resort — only after `search_plugins` confirms nothing suitable already exists in #1 and #2.
+
+Practical workflow when starting a diagnostic session that needs hw/system telemetry:
+  a. `list_plugins` → see only the two egui ones; don't panic.
+  b. `search_plugins "diagnostic"` (or "hw" / "gpu" / "bsod" / whichever symptom area).
+  c. `fetch_plugin <registry-id>` → populates the ArtifactStore.
+  d. `plugin_deploy <id>` → registers locally; `plugin_deploy_remote <id> <connection_string>` → pushes to the target client.
+  e. `call_plugin_tool` / `call_remote_plugin_tool` → execute the tools.
+Every NEW session repeats steps (b)–(d); registrations don't persist across server restarts.
 
 === Plugin / Worker SurrealDB Tables — Canonical Names ===
 When using `query_surrealdb` for plugin work, the ONLY valid tables are:

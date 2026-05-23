@@ -77,6 +77,29 @@ pub enum Stressor {
     Icache,
     /// `rdtsc` read rate; reports Mread/s.
     Tsc,
+
+    // ── GPU stressors (wgpu — D3D12 on Windows, Vulkan on Linux, Metal on macOS) ──
+    //
+    // Single shared `wgpu::Device`/`Queue` per run — `thread_count` is ignored
+    // (the GPU's own parallelism is what's being exercised). Cancellation is
+    // checked between command submissions, so worst-case latency is one dispatch.
+    /// Compute-shader FMA + scattered-load hammer on the discrete GPU; reports GFLOPS.
+    /// The general "is this card running?" probe. Drives the same DXGI/D3D12 path
+    /// that games use, so a card that TDRs in normal use will TDR here too.
+    Gpu,
+    /// Repeated NxN fp32 matrix multiplications on the GPU; reports GFLOPS.
+    /// Heavier on compute units than [`Stressor::Gpu`] (which mixes mem + math);
+    /// useful for raw shader-core throughput and thermal soak.
+    GpuMatmul,
+    /// VRAM write-then-verify pattern walker; reports MiB/s. The GDDR equivalent
+    /// of memtest86 — counts mismatches via a GPU-side atomic and surfaces them
+    /// through [`Metrics::last_error`]. Any error count > 0 is a hardware fault.
+    GpuVram,
+    /// CPU↔GPU buffer round-trip bandwidth; reports GB/s. Stresses the PCIe link
+    /// (and the PSU/board power delivery that backs it). On a sick card this
+    /// either drops throughput hard or triggers PCIe replay deltas via the
+    /// telemetry watcher.
+    GpuPcie,
 }
 
 impl Stressor {
@@ -101,6 +124,10 @@ impl Stressor {
             Self::Prefetch => "Prefetch",
             Self::Icache => "I-Cache",
             Self::Tsc => "TSC",
+            Self::Gpu => "GPU Compute",
+            Self::GpuMatmul => "GPU Matmul",
+            Self::GpuVram => "GPU VRAM",
+            Self::GpuPcie => "GPU PCIe",
         }
     }
 
@@ -125,7 +152,18 @@ impl Stressor {
             Self::Prefetch => "Mref/s",
             Self::Icache => "Mcall/s",
             Self::Tsc => "Mread/s",
+            Self::Gpu => "GFLOPS",
+            Self::GpuMatmul => "GFLOPS",
+            Self::GpuVram => "MiB/s",
+            Self::GpuPcie => "GB/s",
         }
+    }
+
+    /// `true` for stressors whose workers run on the GPU. The supervisor uses
+    /// this to skip per-CPU thread fan-out — GPU stressors run from a single
+    /// host thread that drives the `wgpu::Queue`.
+    pub fn is_gpu(self) -> bool {
+        matches!(self, Self::Gpu | Self::GpuMatmul | Self::GpuVram | Self::GpuPcie)
     }
 }
 

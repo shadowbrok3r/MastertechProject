@@ -18,6 +18,17 @@ pub mod switch;
 pub mod tsc;
 pub mod vm;
 
+#[cfg(feature = "gpu")]
+pub mod gpu;
+#[cfg(feature = "gpu")]
+pub mod gpu_matmul;
+#[cfg(feature = "gpu")]
+pub mod gpu_vram;
+#[cfg(feature = "gpu")]
+pub mod gpu_pcie;
+#[cfg(feature = "gpu")]
+mod gpu_common;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
@@ -79,5 +90,33 @@ pub(crate) fn run_core(
         Stressor::Prefetch => prefetch::run(thread_count, cancel, tx, started_at),
         Stressor::Icache => icache::run(thread_count, cancel, tx, started_at),
         Stressor::Tsc => tsc::run(thread_count, cancel, tx, started_at),
+
+        // ── GPU stressors ──
+        #[cfg(feature = "gpu")]
+        Stressor::Gpu => gpu::run(thread_count, cancel, tx, started_at),
+        #[cfg(feature = "gpu")]
+        Stressor::GpuMatmul => gpu_matmul::run(thread_count, cancel, tx, started_at),
+        #[cfg(feature = "gpu")]
+        Stressor::GpuVram => gpu_vram::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
+        #[cfg(feature = "gpu")]
+        Stressor::GpuPcie => gpu_pcie::run(thread_count, config.memory_cap_mb, cancel, tx, started_at),
+
+        // Without the `gpu` feature, the variants still exist on the enum so
+        // upstream DTOs don't break, but dispatch emits a single error metric
+        // and idles until cancel — same shape as a successful run, just with
+        // a "feature off" message in `last_error`.
+        #[cfg(not(feature = "gpu"))]
+        Stressor::Gpu | Stressor::GpuMatmul | Stressor::GpuVram | Stressor::GpuPcie => {
+            log::warn!("stress-kit built without 'gpu' feature; GPU stressor dispatched as no-op");
+            let _ = (config, thread_count); // suppress unused warnings on this path
+            let _ = tx.send(crate::Metrics {
+                elapsed_secs: started_at.elapsed().as_secs_f64(),
+                throughput: 0.0,
+                last_error: Some("stress-kit built without 'gpu' feature".into()),
+            });
+            while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
     }
 }

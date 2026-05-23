@@ -87,5 +87,18 @@ pub fn qc_floor_for(stressor: Stressor) -> f64 {
         Stressor::Prefetch => 50.0,
         Stressor::Icache => 5.0,
         Stressor::Tsc => 5.0,
+        // GPU floors are intentionally permissive — many of the cards we see
+        // in the shop are old iGPUs and budget dGPUs. The point isn't to fail
+        // a healthy GTX 1050 against a 4090's number; it's to catch a card
+        // that's clearly not running. A working RTX 2070 SUPER reports ~3000
+        // GFLOPS on the `gpu` test; a marginal/throttling one will fall well
+        // under 100. VRAM throughput on a working modern card is in the tens
+        // of thousands of MiB/s; floor at 1000 catches "completely broken".
+        // PCIe throughput depends on link gen, but anything under 1 GB/s on
+        // an x16 slot means the lane has dropped — definitely fail.
+        Stressor::Gpu => 100.0,
+        Stressor::GpuMatmul => 100.0,
+        Stressor::GpuVram => 1000.0,
+        Stressor::GpuPcie => 1.0,
     }
 }
