@@ -1,19 +1,4 @@
-//! GPU VRAM stressor — the GDDR equivalent of memtest86.
-//!
-//! Cycle per tick:
-//!   1. `write` pass — fill VRAM buffer with `pattern(i, seed)` (xorshift)
-//!   2. `verify` pass — recompute `pattern(i, seed)`, compare to buffer
-//!      contents, atomic-increment an error counter when mismatch
-//!   3. Read the error counter back to the CPU; rotate the seed
-//!
-//! Each completed cycle moves `2 * buffer_bytes` (write + verify-read) so we
-//! report `MiB/s` covering that. Any non-zero error count is surfaced via
-//! `Metrics::last_error` — the operator should treat a single error as a
-//! hardware fault. Real GDDR doesn't quietly flip bits.
-//!
-//! `memory_cap_mb` from the stressor config caps the buffer size. We round
-//! down to a multiple of the workgroup size × 4 bytes per element. Default
-//! cap is whatever the supervisor passes through (256 MiB in `StressConfig`).
+//! GPU VRAM write-verify pattern walker. Reports MiB/s; surfaces mismatches via `last_error`.
 
 #![cfg(feature = "gpu")]
 
@@ -28,8 +13,6 @@ use crate::Metrics;
 use super::gpu_common::{emit_tick, run_unsupported, GpuContext, TICK};
 
 const WG_SIZE: u32 = 64;
-/// Minimum buffer = 16 MiB. Anything smaller doesn't meaningfully exercise a
-/// modern card's memory controller.
 const MIN_BUFFER_BYTES: u64 = 16 * 1024 * 1024;
 
 const SHADER: &str = r#"
@@ -45,8 +28,6 @@ struct Params {
 @group(0) @binding(2) var<uniform>             params:  Params;
 
 fn pattern(i: u32, seed: u32) -> u32 {
-    // 32-bit xorshift mixed with seed and index. Distinct values per index,
-    // not all-zeros, not predictable enough to be optimized away.
     var x: u32 = (i ^ seed) ^ ((i << 13u) | (i >> 19u));
     x = x ^ (x << 7u);
     x = x ^ (x >> 9u);
@@ -85,8 +66,6 @@ pub(crate) fn run(
         Err(e) => return run_unsupported(format!("gpu_vram acquire failed: {e}"), cancel, tx, started_at),
     };
 
-    // Buffer sizing: respect memory_cap_mb but enforce a sane minimum and
-    // round down to WG_SIZE × 4 bytes so the dispatch math is clean.
     let cap_bytes = (memory_cap_mb.max(16)) * 1024 * 1024;
     let buffer_bytes = cap_bytes.max(MIN_BUFFER_BYTES);
     let element_bytes = 4u64;
@@ -108,7 +87,7 @@ pub(crate) fn run(
 
     let errors_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("gpu_vram errors"),
-        size: 16, // one u32 counter, plus padding for alignment
+        size: 16,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST,
@@ -152,8 +131,6 @@ pub(crate) fn run(
         cache: None,
     });
 
-    // Bind groups: layouts come from the pipelines. write and verify use the
-    // same group-0 layout (same bindings), so reuse via either pipeline.
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("gpu_vram bind group"),
         layout: &write_pipeline.get_bind_group_layout(0),
@@ -171,14 +148,10 @@ pub(crate) fn run(
     let mut total_errors_observed: u64 = 0;
 
     while !cancel.load(Ordering::Relaxed) {
-        // Rotate the seed each cycle so a marginal cell that only fails for
-        // specific bit patterns gets a different pattern.
         params.seed = params.seed.wrapping_mul(1103515245).wrapping_add(12345);
         ctx.queue.write_buffer(&params_buf, 0, bytemuck::bytes_of(&params));
-        // Reset error counter.
         ctx.queue.write_buffer(&errors_buf, 0, bytemuck::bytes_of(&[0u32; 4]));
 
-        // Write + verify in one submission to minimize host round-trips.
         let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gpu_vram encoder"),
         });
@@ -203,7 +176,6 @@ pub(crate) fn run(
         encoder.copy_buffer_to_buffer(&errors_buf, 0, &readback_buf, 0, 16);
         ctx.queue.submit(std::iter::once(encoder.finish()));
 
-        // Map readback to pull the error count.
         let slice = readback_buf.slice(..);
         let (tx_map, rx_map) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |res| {
@@ -225,7 +197,7 @@ pub(crate) fn run(
         };
 
         total_errors_observed += err_count;
-        bytes_touched_in_tick += buffer_bytes * 2; // write + verify-read
+        bytes_touched_in_tick += buffer_bytes * 2;
 
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);

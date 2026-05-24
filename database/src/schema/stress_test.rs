@@ -317,9 +317,6 @@ pub enum StressKitStressor {
     #[surreal(value = "tsc")]
     Tsc,
 
-    // ── GPU stressors (wgpu — D3D12 / Vulkan / Metal) ──
-    // New variants APPENDED, never reordered, so existing rows in
-    // `stress_test_run.tool.stressor` stay deserializable.
     #[surreal(value = "gpu")]
     Gpu,
     #[surreal(value = "gpu_matmul")]

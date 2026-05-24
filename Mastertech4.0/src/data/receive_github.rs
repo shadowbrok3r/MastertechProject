@@ -54,8 +54,7 @@ impl MasterTechApp {
                     std::process::Command::new("cmd")
                         .arg("/C")
                         .arg(&current_exe)
-                        .creation_flags(0x00000010) // CREATE_NEW_CONSOLE flag
-                        .creation_flags(0x00000008) // DETACHED_PROCESS flag
+                        .creation_flags(0x00000008) // DETACHED_PROCESS
                         .spawn()
                         .unwrap();
                     let replacement = self_replace::self_replace(&current_exe);

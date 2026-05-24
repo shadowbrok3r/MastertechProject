@@ -17,6 +17,8 @@ mod network;
 mod processes;
 #[cfg(target_os = "windows")]
 mod whea_windows;
+#[cfg(target_os = "windows")]
+mod tdr_windows;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -39,6 +41,16 @@ pub struct WheaCounters {
     pub absolute_since_boot: u64,
 }
 
+#[cfg(target_os = "windows")]
+pub use self::tdr_windows::TdrCounters;
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TdrCounters {
+    pub delta_since_program_start: u64,
+    pub absolute_since_boot: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelemetrySnapshot {
     pub captured_at_unix_ms: u64,
@@ -46,14 +58,13 @@ pub struct TelemetrySnapshot {
     pub memory: MemorySample,
     pub disks: Vec<DiskRateSample>,
     pub networks: Vec<NetworkRateSample>,
-    /// Top-N processes by CPU then RAM. Empty until the first refresh tick.
     #[serde(default)]
     pub processes: Vec<ProcessSample>,
-    /// GPU components surfaced by sysinfo. Empty if no GPU sensors are visible.
     #[serde(default)]
     pub gpus: Vec<GpuSample>,
-    /// `None` on non-Windows targets, or when the WHEA log isn't readable.
     pub whea: Option<WheaCounters>,
+    #[serde(default)]
+    pub tdr: Option<TdrCounters>,
 }
 
 pub struct TelemetryAgent {
@@ -117,6 +128,11 @@ fn sampler_loop(
     #[cfg(not(target_os = "windows"))]
     let whea: Option<()> = None;
 
+    #[cfg(target_os = "windows")]
+    let mut tdr = tdr_windows::TdrMonitor::open();
+    #[cfg(not(target_os = "windows"))]
+    let tdr: Option<()> = None;
+
     // First refresh seeds counters; the next tick yields usable rates.
     sys.refresh_cpu_all();
     thread::sleep(interval);
@@ -152,6 +168,13 @@ fn sampler_loop(
             #[cfg(not(target_os = "windows"))]
             whea: {
                 let _ = whea;
+                None
+            },
+            #[cfg(target_os = "windows")]
+            tdr: tdr.as_mut().map(|t| t.poll()),
+            #[cfg(not(target_os = "windows"))]
+            tdr: {
+                let _ = tdr;
                 None
             },
         };

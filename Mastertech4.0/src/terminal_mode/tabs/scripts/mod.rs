@@ -601,7 +601,11 @@ impl<'a> ScriptsTab<'a> {
             Stressor::Hash => Stressor::Prefetch,
             Stressor::Prefetch => Stressor::Icache,
             Stressor::Icache => Stressor::Tsc,
-            Stressor::Tsc => Stressor::Cpu,
+            Stressor::Tsc => Stressor::Gpu,
+            Stressor::Gpu => Stressor::GpuMatmul,
+            Stressor::GpuMatmul => Stressor::GpuVram,
+            Stressor::GpuVram => Stressor::GpuPcie,
+            Stressor::GpuPcie => Stressor::Cpu,
         };
         *self.stress_choice.borrow_mut() = next;
         self.log_message(format!(

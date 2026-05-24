@@ -40,10 +40,92 @@ impl <'a> ScriptsTab <'a> {
             "Install Windows Updates" => self.install_windows_updates(item_text, category),
             "Change Timezone to Mountain" => self.change_timezone_to_mountain(item_text, category),
             "Disable BitLocker" => self.disable_bitlocker(item_text, category),
+            "Run GPU Probe" => self.run_gpu_probe(item_text, category),
             _ => {
                 self.log_message(&format!("Unknown Tuneup script: {}", item_text));
             }
         }
+    }
+
+    pub fn run_gpu_probe(&mut self, item_text: &str, category: &Category) {
+        use stress_kit::{
+            scenario::{FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage},
+            StressConfig, Stressor,
+        };
+        self.log_message("Starting GPU probe (compute → matmul → VRAM → PCIe)…");
+
+        let log_tx = self.script_log_tx.clone();
+        let checklist_tx = self.checklist_completion_tx.clone();
+        let category_clone = category.clone();
+        let item_clone = item_text.to_string();
+
+        let stages = vec![
+            ScenarioStage {
+                label: "gpu_compute".into(),
+                config: StressConfig { stressor: Stressor::Gpu, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
+                duration_secs: 30,
+            },
+            ScenarioStage {
+                label: "gpu_matmul".into(),
+                config: StressConfig { stressor: Stressor::GpuMatmul, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
+                duration_secs: 30,
+            },
+            ScenarioStage {
+                label: "gpu_vram".into(),
+                config: StressConfig { stressor: Stressor::GpuVram, threads: 0, timeout: None, memory_cap_mb: 1024, disk_file_mb: 16 },
+                duration_secs: 45,
+            },
+            ScenarioStage {
+                label: "gpu_pcie".into(),
+                config: StressConfig { stressor: Stressor::GpuPcie, threads: 0, timeout: None, memory_cap_mb: 64, disk_file_mb: 16 },
+                duration_secs: 20,
+            },
+        ];
+
+        std::thread::spawn(move || {
+            let runner = ScenarioRunner::start(ScenarioDefinition {
+                stages,
+                total_wall_secs: None,
+                repeat_until_total: false,
+            });
+            let mut last_error: Option<String> = None;
+            let mut last_throughput = 0.0f64;
+            let mut current_stage = String::new();
+
+            loop {
+                for ev in runner.try_recv_all() {
+                    match ev {
+                        ScenarioEvent::StageStarted { index, label, stage_count } => {
+                            current_stage = label.clone();
+                            let _ = log_tx.try_send(format!("GPU probe stage {}/{}: {label}", index + 1, stage_count));
+                        }
+                        ScenarioEvent::Tick { metrics, .. } => {
+                            last_throughput = metrics.throughput;
+                            if let Some(err) = metrics.last_error.as_ref() {
+                                if last_error.as_deref() != Some(err.as_str()) {
+                                    let _ = log_tx.try_send(format!("GPU probe {current_stage}: {err}"));
+                                    last_error = Some(err.clone());
+                                }
+                            }
+                        }
+                        ScenarioEvent::StageFinished { .. } => {
+                            let _ = log_tx.try_send(format!("GPU probe {current_stage}: finished (last throughput {:.2})", last_throughput));
+                        }
+                        ScenarioEvent::Finished { reason, total_elapsed_secs } => {
+                            let success = matches!(reason, FinishReason::Completed) && last_error.is_none();
+                            let _ = log_tx.try_send(format!(
+                                "GPU probe {} in {:.1}s",
+                                if success { "PASSED" } else { "FAILED" },
+                                total_elapsed_secs
+                            ));
+                            let _ = checklist_tx.try_send((category_clone, item_clone, success));
+                            return;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
     }
     
     // Tuneup Items

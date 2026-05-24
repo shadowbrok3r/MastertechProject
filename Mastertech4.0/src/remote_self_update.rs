@@ -94,11 +94,10 @@ pub fn apply_and_relaunch(bytes: Vec<u8>) -> (bool, String) {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     let spawn_result = std::process::Command::new(&temp_path)
         .args(&args)
-        .creation_flags(CREATE_NEW_CONSOLE | DETACHED_PROCESS)
+        .creation_flags(DETACHED_PROCESS)
         .spawn();
 
     if let Err(e) = spawn_result {

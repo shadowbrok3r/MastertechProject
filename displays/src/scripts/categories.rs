@@ -42,6 +42,11 @@ pub fn tuneup_scripts() -> Vec<ScriptItem> {
             .with_description("Set system timezone to Mountain Standard Time"),
         ScriptItem::new("Disable BitLocker", ScriptCategory::Tuneup)
             .with_description("Detect and disable BitLocker encryption on all drives"),
+        ScriptItem::new("Run GPU Probe", ScriptCategory::Tuneup)
+            .with_description("Run a 4-stage GPU stress probe (compute, matmul, VRAM write-verify, PCIe round-trip); reports verdict with TDR / PCIe-replay / ECC deltas")
+            .with_pass_criteria("All stages above throughput floors; no TDR, no ECC errors, no VRAM mismatches")
+            .with_warning_criteria("Corrected ECC errors or PCIe replay deltas")
+            .with_error_criteria("Uncorrected ECC, new TDR event, or VRAM mismatch"),
     ]
 }
 
