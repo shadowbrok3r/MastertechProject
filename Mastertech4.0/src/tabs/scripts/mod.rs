@@ -561,12 +561,134 @@ impl EguiScriptsTab {
             "Disable BitLocker" => {
                 self.execute_disable_bitlocker(log_tx, category, script_name);
             },
+            "Run GPU Probe" => {
+                self.execute_gpu_probe(log_tx, category, script_name);
+            },
             _ => {
                 let _ = log_tx.try_send(ScriptLogEntry::warning(
                     category, &script_name, format!("Script '{}' not yet implemented", script_name)
                 ));
             }
         }
+    }
+
+    fn execute_gpu_probe(
+        &mut self,
+        log_tx: Sender<ScriptLogEntry>,
+        category: ScriptCategory,
+        script_name: String,
+    ) {
+        use stress_kit::{
+            scenario::{FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage},
+            StressConfig, Stressor,
+        };
+        let _ = log_tx.try_send(ScriptLogEntry::info(
+            category.clone(),
+            &script_name,
+            "Starting 4-stage GPU probe (compute → matmul → VRAM → PCIe)",
+        ));
+
+        let stages = vec![
+            ScenarioStage {
+                label: "gpu_compute".into(),
+                config: StressConfig { stressor: Stressor::Gpu, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
+                duration_secs: 30,
+            },
+            ScenarioStage {
+                label: "gpu_matmul".into(),
+                config: StressConfig { stressor: Stressor::GpuMatmul, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
+                duration_secs: 30,
+            },
+            ScenarioStage {
+                label: "gpu_vram".into(),
+                config: StressConfig { stressor: Stressor::GpuVram, threads: 0, timeout: None, memory_cap_mb: 1024, disk_file_mb: 16 },
+                duration_secs: 45,
+            },
+            ScenarioStage {
+                label: "gpu_pcie".into(),
+                config: StressConfig { stressor: Stressor::GpuPcie, threads: 0, timeout: None, memory_cap_mb: 64, disk_file_mb: 16 },
+                duration_secs: 20,
+            },
+        ];
+
+        let log_tx2 = log_tx.clone();
+        let script_name2 = script_name.clone();
+        let category2 = category.clone();
+        std::thread::spawn(move || {
+            let runner = ScenarioRunner::start(ScenarioDefinition {
+                stages,
+                total_wall_secs: None,
+                repeat_until_total: false,
+            });
+            let mut last_throughput = 0.0f64;
+            let mut last_error: Option<String> = None;
+            let mut current_stage = String::new();
+
+            loop {
+                let events = runner.try_recv_all();
+                for ev in events {
+                    match ev {
+                        ScenarioEvent::StageStarted { index, label, stage_count } => {
+                            current_stage = label.clone();
+                            let _ = log_tx2.try_send(ScriptLogEntry::info(
+                                category2.clone(),
+                                &script_name2,
+                                format!("Stage {}/{}: {label}", index + 1, stage_count),
+                            ));
+                        }
+                        ScenarioEvent::Tick { stage_index: _, metrics } => {
+                            last_throughput = metrics.throughput;
+                            if let Some(err) = metrics.last_error.as_ref() {
+                                if last_error.as_deref() != Some(err.as_str()) {
+                                    let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                                        category2.clone(),
+                                        &script_name2,
+                                        format!("{current_stage}: {err}"),
+                                    ));
+                                    last_error = Some(err.clone());
+                                }
+                            }
+                        }
+                        ScenarioEvent::StageFinished { index: _ } => {
+                            let _ = log_tx2.try_send(ScriptLogEntry::info(
+                                category2.clone(),
+                                &script_name2,
+                                format!("{current_stage}: finished (last throughput {:.2})", last_throughput),
+                            ));
+                        }
+                        ScenarioEvent::Finished { reason, total_elapsed_secs } => {
+                            let level_success = matches!(reason, FinishReason::Completed) && last_error.is_none();
+                            let msg = format!(
+                                "GPU probe {} in {:.1}s",
+                                if level_success { "passed" } else { "completed with issues" },
+                                total_elapsed_secs
+                            );
+                            if level_success {
+                                let _ = log_tx2.try_send(ScriptLogEntry::success(
+                                    category2.clone(),
+                                    &script_name2,
+                                    msg,
+                                ));
+                            } else if let Some(err) = last_error.clone() {
+                                let _ = log_tx2.try_send(ScriptLogEntry::error(
+                                    category2.clone(),
+                                    &script_name2,
+                                    format!("{msg} — {err}"),
+                                ));
+                            } else {
+                                let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                                    category2.clone(),
+                                    &script_name2,
+                                    format!("{msg} (reason: {})", reason.label()),
+                                ));
+                            }
+                            return;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
     }
 
     /// Execute Data Transfer script

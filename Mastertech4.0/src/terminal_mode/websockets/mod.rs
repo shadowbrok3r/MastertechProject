@@ -2420,6 +2420,108 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                             send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                         }
 
+                        "Run GPU Probe" => {
+                            use stress_kit::{
+                                scenario::{FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage},
+                                StressConfig, Stressor,
+                            };
+                            send_log(&tx, "GPU probe: compute → matmul → VRAM → PCIe".into());
+
+                            enum ProbeMsg {
+                                Log(String),
+                                Done(bool),
+                            }
+
+                            let stages = vec![
+                                ScenarioStage {
+                                    label: "gpu_compute".into(),
+                                    config: StressConfig { stressor: Stressor::Gpu, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
+                                    duration_secs: 30,
+                                },
+                                ScenarioStage {
+                                    label: "gpu_matmul".into(),
+                                    config: StressConfig { stressor: Stressor::GpuMatmul, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
+                                    duration_secs: 30,
+                                },
+                                ScenarioStage {
+                                    label: "gpu_vram".into(),
+                                    config: StressConfig { stressor: Stressor::GpuVram, threads: 0, timeout: None, memory_cap_mb: 1024, disk_file_mb: 16 },
+                                    duration_secs: 45,
+                                },
+                                ScenarioStage {
+                                    label: "gpu_pcie".into(),
+                                    config: StressConfig { stressor: Stressor::GpuPcie, threads: 0, timeout: None, memory_cap_mb: 64, disk_file_mb: 16 },
+                                    duration_secs: 20,
+                                },
+                            ];
+
+                            let (probe_tx, probe_rx) = crossbeam::channel::unbounded::<ProbeMsg>();
+                            std::thread::spawn(move || {
+                                let runner = ScenarioRunner::start(ScenarioDefinition {
+                                    stages,
+                                    total_wall_secs: None,
+                                    repeat_until_total: false,
+                                });
+                                let mut current_stage = String::new();
+                                let mut last_throughput = 0.0f64;
+                                let mut last_error: Option<String> = None;
+
+                                loop {
+                                    for ev in runner.try_recv_all() {
+                                        match ev {
+                                            ScenarioEvent::StageStarted { index, label, stage_count } => {
+                                                current_stage = label.clone();
+                                                let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                                    "Stage {}/{}: {label}", index + 1, stage_count
+                                                )));
+                                            }
+                                            ScenarioEvent::Tick { metrics, .. } => {
+                                                last_throughput = metrics.throughput;
+                                                if let Some(err) = metrics.last_error.as_ref() {
+                                                    if last_error.as_deref() != Some(err.as_str()) {
+                                                        let _ = probe_tx.send(ProbeMsg::Log(format!("{current_stage}: {err}")));
+                                                        last_error = Some(err.clone());
+                                                    }
+                                                }
+                                            }
+                                            ScenarioEvent::StageFinished { .. } => {
+                                                let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                                    "{current_stage}: finished (last throughput {:.2})", last_throughput
+                                                )));
+                                            }
+                                            ScenarioEvent::Finished { reason, total_elapsed_secs } => {
+                                                let success = matches!(reason, FinishReason::Completed) && last_error.is_none();
+                                                let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                                    "GPU probe {} in {:.1}s",
+                                                    if success { "PASSED" } else { "FAILED" },
+                                                    total_elapsed_secs
+                                                )));
+                                                let _ = probe_tx.send(ProbeMsg::Done(success));
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                }
+                            });
+
+                            let mut final_success: Option<bool> = None;
+                            while final_success.is_none() {
+                                while let Ok(msg) = probe_rx.try_recv() {
+                                    match msg {
+                                        ProbeMsg::Log(line) => send_log(&tx, line),
+                                        ProbeMsg::Done(ok) => final_success = Some(ok),
+                                    }
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            }
+                            send_result(
+                                &tx,
+                                &script.name,
+                                if final_success.unwrap_or(false) { RemoteScriptStatus::Success } else { RemoteScriptStatus::Failed },
+                            );
+                        }
+
                         _ => {
                             if let Some(content) = &script.content {
                                 send_log(&tx, format!("Running custom script: {}", script.name));

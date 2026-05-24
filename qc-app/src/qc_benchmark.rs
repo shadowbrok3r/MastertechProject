@@ -23,6 +23,8 @@ use stress_runner::RunStage;
 /// and tagged with `"preset:qc-benchmark"` for cross-machine queries.
 pub const QC_BENCHMARK_PRESET: &str = "qc-mcp:benchmark-v1";
 
+pub const GPU_PROBE_PRESET: &str = "qc-mcp:gpu-probe-v1";
+
 /// Build the 8-stage QC benchmark, scaled by `mult` (clamped at the caller).
 ///
 /// `mult = 1.0` → ~20 s/stage, ~2.7 min total.
@@ -49,6 +51,26 @@ pub fn qc_benchmark_stages(mult: f32) -> Vec<RunStage> {
         mk("branch", Stressor::Branch, 20),
         mk("memory", Stressor::Memory, 20),
         mk("vm",     Stressor::Vm,     20),
+    ]
+}
+
+pub fn gpu_probe_stages(mult: f32) -> Vec<RunStage> {
+    fn dur(base: u64, mult: f32) -> u64 {
+        ((base as f32) * mult).round().max(1.0) as u64
+    }
+    let mk = |label: &str, stressor: Stressor, base_secs: u64, mem_mb: u64| RunStage {
+        label: label.to_string(),
+        stressor,
+        threads: 0,
+        duration_secs: dur(base_secs, mult),
+        memory_cap_mb: mem_mb,
+        disk_file_mb: 16,
+    };
+    vec![
+        mk("gpu_compute", Stressor::Gpu,       30, 256),
+        mk("gpu_matmul",  Stressor::GpuMatmul, 30, 256),
+        mk("gpu_vram",    Stressor::GpuVram,   45, 1024),
+        mk("gpu_pcie",    Stressor::GpuPcie,   20, 64),
     ]
 }
 
@@ -87,15 +109,6 @@ pub fn qc_floor_for(stressor: Stressor) -> f64 {
         Stressor::Prefetch => 50.0,
         Stressor::Icache => 5.0,
         Stressor::Tsc => 5.0,
-        // GPU floors are intentionally permissive — many of the cards we see
-        // in the shop are old iGPUs and budget dGPUs. The point isn't to fail
-        // a healthy GTX 1050 against a 4090's number; it's to catch a card
-        // that's clearly not running. A working RTX 2070 SUPER reports ~3000
-        // GFLOPS on the `gpu` test; a marginal/throttling one will fall well
-        // under 100. VRAM throughput on a working modern card is in the tens
-        // of thousands of MiB/s; floor at 1000 catches "completely broken".
-        // PCIe throughput depends on link gen, but anything under 1 GB/s on
-        // an x16 slot means the lane has dropped — definitely fail.
         Stressor::Gpu => 100.0,
         Stressor::GpuMatmul => 100.0,
         Stressor::GpuVram => 1000.0,

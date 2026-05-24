@@ -1,15 +1,4 @@
-//! GPU matrix-multiplication stressor.
-//!
-//! Repeatedly computes `C = A * B` for fixed `N×N` fp32 matrices. The
-//! workload is pure FMA on register-resident accumulators — no scattered
-//! memory loads, no atomics — so it isolates shader-core throughput from
-//! memory subsystem behavior.
-//!
-//! Reports GFLOPS using the standard `2 * N^3` op count per matmul.
-//!
-//! N is chosen so a single matmul fits comfortably in a 4 GB iGPU partition
-//! (3 × N² × 4 bytes ≤ 96 MB for N=2048) and saturates a mid-range card's
-//! compute pipeline for ~tens of ms per dispatch.
+//! Repeated NxN fp32 matmul on the GPU. Reports GFLOPS via `2 * N^3` per matmul.
 
 #![cfg(feature = "gpu")]
 
@@ -24,7 +13,7 @@ use crate::Metrics;
 use super::gpu_common::{emit_tick, run_unsupported, GpuContext, TICK};
 
 const N: u32 = 2048;
-const TILE: u32 = 16; // workgroup tile size
+const TILE: u32 = 16;
 const OPS_PER_MATMUL: u64 = 2 * (N as u64) * (N as u64) * (N as u64);
 
 const SHADER: &str = r#"
@@ -43,10 +32,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (row >= n || col >= n) { return; }
 
     var acc: f32 = 0.0;
-    // Naive triple loop. Slow vs. tiled SMEM, but that's the point — the test
-    // is meant to keep the FMA pipeline saturated for tens of ms, not to win
-    // a benchmark. Tiled would finish too quickly on big cards and the run
-    // loop overhead would dominate.
     for (var k: u32 = 0u; k < n; k = k + 1u) {
         acc = fma(a[row * n + k], b[k * n + col], acc);
     }
@@ -72,9 +57,6 @@ pub(crate) fn run(
     let n_f32 = (N as usize) * (N as usize);
     let bytes = (n_f32 * std::mem::size_of::<f32>()) as u64;
 
-    // A and B are populated with a deterministic but non-trivial pattern;
-    // the values don't matter for benchmark correctness, only that they're
-    // not all zero (which some drivers can short-circuit).
     let mut a_data = vec![0f32; n_f32];
     let mut b_data = vec![0f32; n_f32];
     for i in 0..n_f32 {

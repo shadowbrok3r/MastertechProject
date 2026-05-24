@@ -90,9 +90,6 @@ pub enum StressorKind {
     Prefetch,
     Icache,
     Tsc,
-    // GPU stressors (wgpu — D3D12 on Windows / Vulkan on Linux / Metal on macOS).
-    // Single shared device per run; thread_count is ignored. memory_cap_mb caps
-    // the buffer for gpu_vram and gpu_pcie.
     Gpu,
     GpuMatmul,
     GpuVram,
@@ -615,6 +612,209 @@ impl QcToolProvider {
     }
 
     #[tool(
+        name = "run_gpu_probe",
+        description = "Run the curated 4-stage GPU probe (gpu_compute, gpu_matmul, gpu_vram, gpu_pcie) on the discrete GPU and return a pass/warn/fail verdict. Captures TDR delta + PCIe replay delta + ECC error delta across the run; any GPU VRAM mismatch, any new TDR event, or any uncorrected ECC error forces fail. ~2 min default; scale via duration_multiplier."
+    )]
+    async fn run_gpu_probe(
+        &self,
+        Parameters(args): Parameters<QcBenchmarkArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let snap_before = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .map(|a| a.snapshot());
+        let tdr_before = snap_before
+            .as_ref()
+            .and_then(|s| s.tdr.as_ref())
+            .map(|t| t.absolute_since_boot);
+        let pcie_replay_before = snap_before
+            .as_ref()
+            .and_then(|s| s.gpus.first())
+            .and_then(|g| g.pcie_replay_counter)
+            .map(|c| c as u64);
+        let ecc_corrected_before = snap_before
+            .as_ref()
+            .and_then(|s| s.gpus.first())
+            .and_then(|g| g.ecc_errors_corrected);
+        let ecc_uncorrected_before = snap_before
+            .as_ref()
+            .and_then(|s| s.gpus.first())
+            .and_then(|g| g.ecc_errors_uncorrected);
+
+        let mult = args.duration_multiplier.unwrap_or(1.0).max(0.1).min(10.0);
+        let stages = gpu_probe_stages(mult);
+        let labels: Vec<String> = stages.iter().map(|s| s.label.clone()).collect();
+        let floors: Vec<(Stressor, f64)> = stages
+            .iter()
+            .map(|s| (s.stressor, qc_floor_for(s.stressor)))
+            .collect();
+
+        let telemetry = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .ok_or_else(|| to_internal("telemetry sampler not yet ready"))?;
+        let computer = self.state.computer.clone();
+        let slot = self.state.run_slot.clone();
+
+        let mut spec =
+            RunSpec::single_stresskit(computer, stages.first().map(|s| s.stressor).unwrap_or(Stressor::Gpu), None);
+        spec.plan = RunPlan::Scenario {
+            stages,
+            total_wall_secs: None,
+            repeat_until_total: false,
+        };
+        spec.tool = TestTool::StressKitScenario {
+            name: Some(GPU_PROBE_PRESET.into()),
+        };
+        spec.preset_label = Some(GPU_PROBE_PRESET.into());
+        spec.tags = vec!["origin:mcp".into(), "preset:gpu-probe".into()];
+
+        let scenario = tokio::task::spawn_blocking(move || {
+            drive_scenario_via_controller(spec, telemetry, labels.clone(), slot)
+        })
+        .await
+        .map_err(|e| to_internal(format!("gpu_probe task join: {e}")))?;
+
+        let snap_after = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .map(|a| a.snapshot());
+        let tdr_after = snap_after
+            .as_ref()
+            .and_then(|s| s.tdr.as_ref())
+            .map(|t| t.absolute_since_boot);
+        let pcie_replay_after = snap_after
+            .as_ref()
+            .and_then(|s| s.gpus.first())
+            .and_then(|g| g.pcie_replay_counter)
+            .map(|c| c as u64);
+        let ecc_corrected_after = snap_after
+            .as_ref()
+            .and_then(|s| s.gpus.first())
+            .and_then(|g| g.ecc_errors_corrected);
+        let ecc_uncorrected_after = snap_after
+            .as_ref()
+            .and_then(|s| s.gpus.first())
+            .and_then(|g| g.ecc_errors_uncorrected);
+
+        let tdr_delta = pair_delta(tdr_before, tdr_after);
+        let pcie_replay_delta = pair_delta(pcie_replay_before, pcie_replay_after);
+        let ecc_corrected_delta = pair_delta(ecc_corrected_before, ecc_corrected_after);
+        let ecc_uncorrected_delta = pair_delta(ecc_uncorrected_before, ecc_uncorrected_after);
+
+        let mut stage_results: Vec<QcStageResult> = Vec::with_capacity(scenario.stages.len());
+        let mut failed_count = 0usize;
+        let mut warn_count = 0usize;
+        for (idx, stage) in scenario.stages.iter().enumerate() {
+            let (stressor, floor) = floors.get(idx).copied().unwrap_or((Stressor::Gpu, 0.0));
+            let throughput = stage.last_metrics.as_ref().map(|m| m.throughput).unwrap_or(0.0);
+            let last_error = stage.last_metrics.as_ref().and_then(|m| m.last_error.clone());
+            let mut status = if throughput >= floor {
+                "pass"
+            } else if throughput >= floor * 0.9 {
+                warn_count += 1;
+                "warn"
+            } else {
+                failed_count += 1;
+                "fail"
+            };
+            if last_error.is_some() {
+                failed_count += 1;
+                status = "fail";
+            }
+            stage_results.push(QcStageResult {
+                index: idx,
+                label: stage.label.clone(),
+                stressor: stressor.label().to_string(),
+                throughput,
+                throughput_unit: stressor.throughput_unit().to_string(),
+                floor,
+                ratio: if floor > 0.0 { throughput / floor } else { 0.0 },
+                last_error,
+                status: status.into(),
+            });
+        }
+
+        let verdict = if scenario.error.is_some() {
+            "errored"
+        } else if ecc_uncorrected_delta.unwrap_or(0) > 0 {
+            "fail"
+        } else if tdr_delta.unwrap_or(0) > 0 {
+            "fail"
+        } else if failed_count > 0 {
+            "fail"
+        } else if ecc_corrected_delta.unwrap_or(0) > 0 || pcie_replay_delta.unwrap_or(0) > 0 {
+            "warn"
+        } else if warn_count > 0 {
+            "warn"
+        } else if scenario.finished_reason != "completed" {
+            "inconclusive"
+        } else {
+            "pass"
+        };
+
+        let reasoning = build_gpu_reasoning(
+            verdict,
+            tdr_delta,
+            pcie_replay_delta,
+            ecc_corrected_delta,
+            ecc_uncorrected_delta,
+            failed_count,
+            warn_count,
+            scenario.error.as_deref(),
+        );
+
+        let body = GpuProbeReport {
+            preset: "gpu-probe-v1".into(),
+            verdict: verdict.into(),
+            finished_reason: scenario.finished_reason,
+            total_elapsed_secs: scenario.total_elapsed_secs,
+            duration_multiplier: mult,
+            tdr_delta,
+            pcie_replay_delta,
+            ecc_corrected_delta,
+            ecc_uncorrected_delta,
+            gpu_snapshot: snap_after.and_then(|s| s.gpus.into_iter().next()),
+            stages: stage_results,
+            reasoning,
+            error: scenario.error,
+        };
+        let json = serde_json::to_string_pretty(&body)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "get_gpu_telemetry",
+        description = "Return the latest per-GPU telemetry sample: NVML-backed for NVIDIA (temp, power, clocks, util, mem, PCIe replay counter, ECC errors, throttle reasons), sysinfo fallback otherwise. Use this between stress runs to spot-check the card."
+    )]
+    async fn get_gpu_telemetry(
+        &self,
+        Parameters(_p): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let gpus = self
+            .state
+            .telemetry
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .map(|a| a.snapshot().gpus)
+            .unwrap_or_default();
+        let json = serde_json::to_string_pretty(&gpus)
+            .map_err(|e| to_internal(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
         name = "list_stressors",
         description = "Enumerate the stressors this build accepts, with default human-readable labels and throughput units."
     )]
@@ -748,7 +948,111 @@ pub struct QcBenchmarkReport {
     pub error: Option<String>,
 }
 
-use crate::qc_benchmark::{qc_benchmark_stages, qc_floor_for, QC_BENCHMARK_PRESET};
+use crate::qc_benchmark::{gpu_probe_stages, qc_benchmark_stages, qc_floor_for, GPU_PROBE_PRESET, QC_BENCHMARK_PRESET};
+use stress_kit::telemetry::GpuSample;
+
+fn pair_delta<T: PartialOrd + std::ops::Sub<Output = T> + Copy>(before: Option<T>, after: Option<T>) -> Option<T> {
+    match (before, after) {
+        (Some(b), Some(a)) if a >= b => Some(a - b),
+        (Some(_), Some(a)) => Some(a),
+        _ => None,
+    }
+}
+
+fn build_gpu_reasoning(
+    verdict: &str,
+    tdr_delta: Option<u64>,
+    pcie_replay_delta: Option<u64>,
+    ecc_corrected_delta: Option<u64>,
+    ecc_uncorrected_delta: Option<u64>,
+    failed_count: usize,
+    warn_count: usize,
+    error: Option<&str>,
+) -> String {
+    match verdict {
+        "errored" => format!(
+            "RunController reported a fatal error before/during the GPU probe. \
+             Per-stage numbers are not reliable telemetry.\n\nError: {}",
+            error.unwrap_or("<missing>")
+        ),
+        "pass" => "All four GPU stages cleared their throughput floors. No VRAM mismatches, \
+             no new TDR events, no ECC errors, no PCIe replay deltas. GPU subsystem healthy."
+            .into(),
+        "warn" => {
+            let mut bits = Vec::new();
+            if ecc_corrected_delta.unwrap_or(0) > 0 {
+                bits.push(format!(
+                    "{} corrected ECC error(s) during the run — VRAM error correction is engaging. \
+                     Card is still functional but the cell health is degrading.",
+                    ecc_corrected_delta.unwrap_or(0)
+                ));
+            }
+            if pcie_replay_delta.unwrap_or(0) > 0 {
+                bits.push(format!(
+                    "{} new PCIe replay event(s) during the run — link instability under load. \
+                     Suspect PSU sag, riser cable, or marginal PCIe slot.",
+                    pcie_replay_delta.unwrap_or(0)
+                ));
+            }
+            if warn_count > 0 {
+                bits.push(format!(
+                    "{warn_count} stage(s) finished between 90% and 100% of throughput floor."
+                ));
+            }
+            if bits.is_empty() {
+                "Run completed with marginal indicators. See per-stage status.".into()
+            } else {
+                bits.join("\n")
+            }
+        }
+        "fail" => {
+            let mut bits = Vec::new();
+            if ecc_uncorrected_delta.unwrap_or(0) > 0 {
+                bits.push(format!(
+                    "{} UNCORRECTED ECC error(s) during the run — VRAM is failing. Replace the card.",
+                    ecc_uncorrected_delta.unwrap_or(0)
+                ));
+            }
+            if tdr_delta.unwrap_or(0) > 0 {
+                bits.push(format!(
+                    "{} new TDR event(s) (nvlddmkm/amdkmdap Event 4101/4109) during the run — \
+                     driver had to reset the GPU. Either the driver is broken or the hardware is.",
+                    tdr_delta.unwrap_or(0)
+                ));
+            }
+            if failed_count > 0 {
+                bits.push(format!(
+                    "{failed_count} stage(s) fell below 90% of the throughput floor or surfaced a runtime error \
+                     (e.g. VRAM verify mismatch). Treat as hardware fault until ruled out."
+                ));
+            }
+            if bits.is_empty() {
+                "Run did not complete cleanly. See `finished_reason` and per-stage `status`.".into()
+            } else {
+                bits.join("\n")
+            }
+        }
+        "inconclusive" => "Run did not complete normally (cancelled or aborted). Re-run for a clean result.".into(),
+        _ => format!("Unknown verdict: {verdict}"),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct GpuProbeReport {
+    pub preset: String,
+    pub verdict: String,
+    pub finished_reason: String,
+    pub total_elapsed_secs: f64,
+    pub duration_multiplier: f32,
+    pub tdr_delta: Option<u64>,
+    pub pcie_replay_delta: Option<u64>,
+    pub ecc_corrected_delta: Option<u64>,
+    pub ecc_uncorrected_delta: Option<u64>,
+    pub gpu_snapshot: Option<GpuSample>,
+    pub stages: Vec<QcStageResult>,
+    pub reasoning: String,
+    pub error: Option<String>,
+}
 
 fn build_reasoning(
     verdict: &str,

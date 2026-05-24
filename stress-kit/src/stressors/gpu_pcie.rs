@@ -1,15 +1,4 @@
-//! PCIe bandwidth stressor.
-//!
-//! Repeatedly:
-//!   1. Upload a 16 MiB (configurable) buffer from CPU staging to GPU storage.
-//!   2. Issue a tiny compute kernel that touches the buffer so the upload
-//!      can't be elided.
-//!   3. Download the buffer back to CPU via a MAP_READ buffer.
-//!
-//! Reports GB/s = (2 × buffer_bytes) / cycle_time. Stresses the PCIe link
-//! itself and the host-side DMA path. Pairs with the (future) PCIe-replay
-//! counter watcher in `telemetry::gpu` — if PSU sag is causing the link to
-//! drop packets, replay counter will tick during this test.
+//! CPU↔GPU upload-touch-download round-trip. Reports GB/s.
 
 #![cfg(feature = "gpu")]
 
@@ -36,8 +25,6 @@ struct Params { len: u32, _p0: u32, _p1: u32, _p2: u32 };
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     if (i >= params.len) { return; }
-    // Single ALU op so the upload can't be optimized away. Result still lands
-    // in the buffer so the subsequent readback verifies the round-trip path.
     buf[i] = buf[i] ^ 0x5a5a5a5au;
 }
 "#;
@@ -54,8 +41,6 @@ pub(crate) fn run(
         Err(e) => return run_unsupported(format!("gpu_pcie acquire failed: {e}"), cancel, tx, started_at),
     };
 
-    // Buffer size: respect memory_cap_mb, but cap at 256 MiB so a single
-    // round-trip doesn't dominate the tick interval on slow links.
     let cap_bytes = (memory_cap_mb.max(4).min(256)) * 1024 * 1024;
     let buffer_bytes = cap_bytes.max(MIN_BUFFER_BYTES);
     let element_bytes = 4u64;
@@ -121,10 +106,8 @@ pub(crate) fn run(
     let mut bytes_in_tick: u64 = 0;
 
     while !cancel.load(Ordering::Relaxed) {
-        // Upload — CPU → GPU
         ctx.queue.write_buffer(&gpu_buf, 0, bytemuck::cast_slice(&staging_upload));
 
-        // Touch pass + readback copy in one submission
         let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gpu_pcie encoder"),
         });
@@ -140,7 +123,6 @@ pub(crate) fn run(
         encoder.copy_buffer_to_buffer(&gpu_buf, 0, &readback_buf, 0, buffer_bytes);
         ctx.queue.submit(std::iter::once(encoder.finish()));
 
-        // Download — GPU → CPU
         let slice = readback_buf.slice(..);
         let (tx_map, rx_map) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |res| {
@@ -149,7 +131,6 @@ pub(crate) fn run(
         let _ = ctx.device.poll(wgpu::PollType::Wait);
         match rx_map.recv() {
             Ok(Ok(())) => {
-                // Touch one byte so the mapping isn't elided.
                 let view = slice.get_mapped_range();
                 std::hint::black_box(view[0]);
                 drop(view);
@@ -161,7 +142,7 @@ pub(crate) fn run(
             }
         }
 
-        bytes_in_tick += buffer_bytes * 2; // upload + download
+        bytes_in_tick += buffer_bytes * 2;
 
         if last_tick.elapsed() >= TICK {
             let dt = last_tick.elapsed().as_secs_f64().max(f64::EPSILON);
