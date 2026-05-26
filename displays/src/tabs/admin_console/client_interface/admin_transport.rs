@@ -178,6 +178,9 @@ impl AdminTransport {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn signal_relaunch_pending(&mut self, _grace_secs: u64) {}
+
     pub fn kind(&self) -> TransportKind {
         self.kind
     }

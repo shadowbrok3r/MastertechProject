@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 
-use crate::{app_state::SharedContext, ui_tools::toasts::ToastStyle};
+use crate::{app_state::SharedContext, ui_tools::{theme, toasts::ToastStyle}};
 use database::schema::LiveTaskPayload;
 use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
-use eframe::egui::{Button, Color32, FontId, Margin, RichText, Ui, Widget};
+use eframe::egui::{Button, FontId, Margin, RichText, Ui, Widget};
 use log::info;
 use regex::Regex;
 use database::live_data::Action;
 
 impl SharedContext {
-    pub fn receive_notification(&mut self) {
+    pub fn receive_notification(&mut self, ctx: &eframe::egui::Context) {
         if let Ok((action, notification)) = self.live_notification_rx.try_recv() {
             // Test text
             let mut inputs = BTreeSet::new();
@@ -62,7 +62,7 @@ impl SharedContext {
                                         "Notification\n\n{}",
                                         notification.notification_description
                                     ))
-                                    .color(Color32::LIGHT_GREEN)
+                                    .color(theme::success_ctx(ctx))
                                     .font(FontId::monospace(15.))
                                     .into(),
                                     options: ToastOptions::default().duration(None),
@@ -151,7 +151,7 @@ pub fn show_notification(
                         // Show the task name in a different color (e.g., blue)
                         if Button::new(
                             RichText::new(task_name)
-                                .color(Color32::from_rgba_premultiplied(42, 222, 192, 60)),
+                                .color(theme::accent(ui)),
                         )
                         .ui(ui)
                         .clicked()
