@@ -20,12 +20,13 @@ RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.22.0-beta.1
     mv trunk /usr/local/bin/
 
 # Copy source files
-COPY .cargo .cargo
 COPY Cargo.toml Cargo.toml
-COPY vendor vendor
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
+COPY tcp_protocol tcp_protocol
+
+RUN sed -i 's|^members = .*|members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]|' Cargo.toml
 
 # Must match MtechServer2.0/.cargo/config.toml (single-threaded wasm for wasm-bindgen)
 ENV RUSTFLAGS="-C target-feature=+bulk-memory,+mutable-globals \
