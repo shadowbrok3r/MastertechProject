@@ -569,7 +569,7 @@ fn render_plugin_ui_entries(ui: &mut eframe::egui::Ui, entries: &[super::PluginU
 
     for entry in entries {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&entry.json) else {
-            ui.colored_label(egui::Color32::RED, format!("⚠ Bad UI entry: {}", &entry.json[..entry.json.len().min(80)]));
+            ui.colored_label(ui.style().visuals.error_fg_color, format!("⚠ Bad UI entry: {}", &entry.json[..entry.json.len().min(80)]));
             continue;
         };
         let entry_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("text");

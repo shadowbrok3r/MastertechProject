@@ -14,6 +14,7 @@ pub mod toasts;
 pub mod tokyo_dark;
 pub mod rerun_mtech;
 pub mod theme;
+pub mod theme_chrome;
 pub mod theme_config;
 pub mod notification_center;
 pub mod egui_logger;

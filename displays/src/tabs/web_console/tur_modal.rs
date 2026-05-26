@@ -145,7 +145,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
             }
 
             if let Some(error) = &state.error {
-                ui.colored_label(Color32::RED, error);
+                ui.colored_label(ui.style().visuals.error_fg_color, error);
                 ui.add_space(8.0);
             }
 

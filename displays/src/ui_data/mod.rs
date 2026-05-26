@@ -211,7 +211,7 @@ impl crate::app_state::SharedContext {
             },
             Err(e) => {
                 log::error!("Error setting theme config: {e:?}");
-                crate::ui_tools::theme_config::apply_default_theme(ctx);
+                crate::ui_tools::theme_config::apply_shipped_style(ctx);
             },
         }
 

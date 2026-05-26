@@ -1,5 +1,5 @@
 use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
-use crate::{ui_tools::{encode_style, rerun_mtech::RerunMtech, tokyo_dark::{TokyoNight, TokyoNightStorm}}, PlatformSpawner, Spawner};
+use crate::{ui_tools::{encode_style, rerun_mtech::{RerunMtech, RerunMtechOled}, theme_chrome::{default_egui_chrome, legacy_classic_chrome, shipped_chrome}, tokyo_dark::{TokyoNight, TokyoNightStorm}}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use derivative::Derivative;
@@ -7,7 +7,7 @@ use database::schema::User;
 use serde_json::to_vec;
 use std::sync::Arc;
 
-use super::carl_dark::{Aesthetix, CarlDark};
+use super::carl_dark::{paint_aesthetix_colors, Aesthetix, CarlDark};
 
 #[derive(Serialize, Clone, Deserialize, Debug, Derivative)]
 #[derivative(PartialEq)]
@@ -113,19 +113,116 @@ impl Default for ThemeConfig {
             rounding: eframe::egui::CornerRadius::same(4),
             font: FontFamily::Proportional,
             font_size: 14.0,
-            preset_style: PresetStyles::RerunMtech,
+            preset_style: PresetStyles::ShippedClassic,
         }
     }
 }
 
-/// Default desktop theme (Rerun MTech preset).
+/// Default desktop theme (shipped monospace chrome from [`crate::STYLE`]).
 pub fn default_app_style() -> Arc<Style> {
-    Arc::new(RerunMtech.custom_style())
+    Arc::new(style_for_preset(PresetStyles::ShippedClassic))
 }
 
-/// Applies the Rerun MTech preset and semantic accent colors to a context.
+/// Applies the shipped [`crate::STYLE`] preset at startup.
+pub fn apply_shipped_style(ctx: &Context) {
+    apply_preset(ctx, PresetStyles::ShippedClassic);
+}
+
+/// Applies the shipped [`crate::STYLE`] preset.
 pub fn apply_default_theme(ctx: &Context) {
-    RerunMtech.apply_to_ctx(ctx);
+    apply_shipped_style(ctx);
+}
+
+pub fn style_for_preset(preset: PresetStyles) -> Style {
+    match preset {
+        PresetStyles::ShippedClassic => shipped_chrome(),
+        PresetStyles::LegacyClassic => legacy_classic_chrome(),
+        PresetStyles::DefaultEgui => default_egui_chrome(),
+        PresetStyles::CarlDarkColors => colors_only(&CarlDark),
+        PresetStyles::CarlDarkFull => CarlDark.custom_style(),
+        PresetStyles::TokyoNightStormColors => colors_only(&TokyoNightStorm),
+        PresetStyles::TokyoNightStormFull => TokyoNightStorm.custom_style(),
+        PresetStyles::TokyoNightColors => colors_only(&TokyoNight),
+        PresetStyles::TokyoNightFull => TokyoNight.custom_style(),
+        PresetStyles::RerunMtechColors => colors_only(&RerunMtech),
+        PresetStyles::RerunMtechFull => RerunMtech.custom_style(),
+        PresetStyles::RerunMtechOledColors => colors_only(&RerunMtechOled),
+        PresetStyles::RerunMtechOledFull => RerunMtechOled.custom_style(),
+        PresetStyles::Custom => ThemeConfig::default().to_style(),
+    }
+}
+
+fn colors_only(theme: &dyn Aesthetix) -> Style {
+    let mut style = legacy_classic_chrome();
+    paint_aesthetix_colors(&mut style, theme);
+    style
+}
+
+pub fn semantic_colors_for_preset(preset: PresetStyles) -> (Color32, Color32) {
+    match preset {
+        PresetStyles::ShippedClassic | PresetStyles::LegacyClassic | PresetStyles::DefaultEgui => (
+            Color32::from_rgb(42, 172, 170),
+            Color32::from_rgb(56, 114, 238),
+        ),
+        PresetStyles::CarlDarkColors | PresetStyles::CarlDarkFull => {
+            (CarlDark.fg_success_text_color_visuals(), CarlDark.secondary_accent_color_visuals())
+        }
+        PresetStyles::TokyoNightStormColors | PresetStyles::TokyoNightStormFull => (
+            TokyoNightStorm.fg_success_text_color_visuals(),
+            TokyoNightStorm.secondary_accent_color_visuals(),
+        ),
+        PresetStyles::TokyoNightColors | PresetStyles::TokyoNightFull => (
+            TokyoNight.fg_success_text_color_visuals(),
+            TokyoNight.secondary_accent_color_visuals(),
+        ),
+        PresetStyles::RerunMtechColors | PresetStyles::RerunMtechFull => (
+            RerunMtech.fg_success_text_color_visuals(),
+            RerunMtech.secondary_accent_color_visuals(),
+        ),
+        PresetStyles::RerunMtechOledColors | PresetStyles::RerunMtechOledFull => (
+            RerunMtechOled.fg_success_text_color_visuals(),
+            RerunMtechOled.secondary_accent_color_visuals(),
+        ),
+        PresetStyles::Custom => (Color32::from_rgb(72, 199, 142), Color32::from_rgb(191, 33, 101)),
+    }
+}
+
+pub fn apply_preset(ctx: &Context, preset: PresetStyles) {
+    ctx.set_global_style(Arc::new(style_for_preset(preset)));
+    let (success, accent2) = semantic_colors_for_preset(preset);
+    crate::ui_tools::theme::set_success_color(ctx, success);
+    crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
+}
+
+fn sync_config_from_style(config: &mut ThemeConfig, style: &Style) {
+    config.background_color = style.visuals.window_fill;
+    config.text_color = style.visuals.override_text_color.unwrap_or(Color32::WHITE);
+    config.faint_bg_color = style.visuals.faint_bg_color;
+    config.extreme_bg_color = style.visuals.extreme_bg_color;
+    config.code_bg_color = style.visuals.code_bg_color;
+    config.warn_color = style.visuals.warn_fg_color;
+    config.error_color = style.visuals.error_fg_color;
+    config.link_color = style.visuals.hyperlink_color;
+    config.window_stroke_color = style.visuals.window_stroke.color;
+    config.rounding = style.visuals.window_corner_radius;
+    config.selection_bg_fill = style.visuals.selection.bg_fill;
+    config.selection_stroke_color = style.visuals.selection.stroke.color;
+    config.widget_bg_fill = style.visuals.widgets.noninteractive.bg_fill;
+    config.widget_weak_bg_fill = style.visuals.widgets.noninteractive.weak_bg_fill;
+    config.widget_bg_stroke_color = style.visuals.widgets.noninteractive.bg_stroke.color;
+    config.widget_fg_stroke_color = style.visuals.widgets.noninteractive.fg_stroke.color;
+    config.hovered_bg_fill = style.visuals.widgets.hovered.bg_fill;
+    config.hovered_weak_bg_fill = style.visuals.widgets.hovered.weak_bg_fill;
+    config.hovered_bg_stroke_color = style.visuals.widgets.hovered.bg_stroke.color;
+    config.hovered_fg_stroke_color = style.visuals.widgets.hovered.fg_stroke.color;
+    config.active_bg_fill = style.visuals.widgets.active.bg_fill;
+    config.active_weak_bg_fill = style.visuals.widgets.active.weak_bg_fill;
+    config.active_bg_stroke_color = style.visuals.widgets.active.bg_stroke.color;
+    config.active_fg_stroke_color = style.visuals.widgets.active.fg_stroke.color;
+    config.open_bg_fill = style.visuals.widgets.open.bg_fill;
+    config.open_weak_bg_fill = style.visuals.widgets.open.weak_bg_fill;
+    config.open_bg_stroke_color = style.visuals.widgets.open.bg_stroke.color;
+    config.open_fg_stroke_color = style.visuals.widgets.open.fg_stroke.color;
 }
 
 impl ThemeConfig {
@@ -157,78 +254,44 @@ impl ThemeConfig {
 
                 ui.add_space(10.);
 
-                let selection = &mut self.preset_style;
-                let current = selection.clone();
+                let current = self.preset_style;
 
                 ComboBox::new("Style Preset", "")
-                .selected_text(selection.as_str())
+                .selected_text(self.preset_style.as_str())
+                .width(280.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(selection, PresetStyles::CarlDark, "Carl Dark");
-                    ui.selectable_value(selection, PresetStyles::TokyoNightStorm, "TokyoNight Storm");
-                    ui.selectable_value(selection, PresetStyles::TokyoNight, "TokyoNight");
-                    ui.selectable_value(selection, PresetStyles::RerunMtech, "Rerun MTech");
-                    ui.selectable_value(selection, PresetStyles::Custom, "Custom");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::ShippedClassic, "Shipped Classic");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::LegacyClassic, "Legacy Classic");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::DefaultEgui, "Default Egui");
+                    ui.separator();
+                    ui.label("Colors only · legacy widgets");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::CarlDarkColors, "Carl Dark · Colors");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightStormColors, "TokyoNight Storm · Colors");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightColors, "TokyoNight · Colors");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechColors, "Rerun MTech · Colors");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechOledColors, "Rerun MTech OLED · Colors");
+                    ui.separator();
+                    ui.label("Colors + widget chrome");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::CarlDarkFull, "Carl Dark · Full");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightStormFull, "TokyoNight Storm · Full");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::TokyoNightFull, "TokyoNight · Full");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechFull, "Rerun MTech · Full");
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::RerunMtechOledFull, "Rerun MTech OLED · Full");
+                    ui.separator();
+                    ui.selectable_value(&mut self.preset_style, PresetStyles::Custom, "Custom");
                 });
 
 
-                if *selection != current {
-                    log::info!("Fire once");
-                    let style = match *selection {
-                        PresetStyles::CarlDark => CarlDark.custom_style(),
-                        PresetStyles::TokyoNightStorm => TokyoNightStorm.custom_style(),
-                        PresetStyles::TokyoNight => TokyoNight.custom_style(),
-                        PresetStyles::RerunMtech => RerunMtech.custom_style(),
-                        PresetStyles::Custom => return,
-                    };
-
-                    // Non-widget fields
-                    self.background_color = style.visuals.window_fill;
-                    self.text_color = style.visuals.override_text_color.unwrap_or(Color32::WHITE); // Default to WHITE if None
-                    self.faint_bg_color = style.visuals.faint_bg_color;
-                    self.extreme_bg_color = style.visuals.extreme_bg_color;
-                    self.code_bg_color = style.visuals.code_bg_color;
-                    self.warn_color = style.visuals.warn_fg_color;
-                    self.error_color = style.visuals.error_fg_color;
-                    self.link_color = style.visuals.hyperlink_color;
-                    self.window_stroke_color = style.visuals.window_stroke.color;
-                    self.rounding = style.visuals.window_corner_radius; // Assuming Rounding::same for consistency
-
-                    // Selection fields
-                    self.selection_bg_fill = style.visuals.selection.bg_fill;
-                    self.selection_stroke_color = style.visuals.selection.stroke.color;
-
-                    // Widget fields (using noninteractive as the source for shared fields)
-                    self.widget_bg_fill = style.visuals.widgets.noninteractive.bg_fill;
-                    self.widget_weak_bg_fill = style.visuals.widgets.noninteractive.weak_bg_fill;
-                    self.widget_bg_stroke_color = style.visuals.widgets.noninteractive.bg_stroke.color;
-                    self.widget_fg_stroke_color = style.visuals.widgets.noninteractive.fg_stroke.color;
-
-                    // Hovered widget fields
-                    self.hovered_bg_fill = style.visuals.widgets.hovered.bg_fill;
-                    self.hovered_weak_bg_fill = style.visuals.widgets.hovered.weak_bg_fill;
-                    self.hovered_bg_stroke_color = style.visuals.widgets.hovered.bg_stroke.color;
-                    self.hovered_fg_stroke_color = style.visuals.widgets.hovered.fg_stroke.color;
-
-                    // Active widget fields
-                    self.active_bg_fill = style.visuals.widgets.active.bg_fill;
-                    self.active_weak_bg_fill = style.visuals.widgets.active.weak_bg_fill;
-                    self.active_bg_stroke_color = style.visuals.widgets.active.bg_stroke.color;
-                    self.active_fg_stroke_color = style.visuals.widgets.active.fg_stroke.color;
-
-                    // Open widget fields
-                    self.open_bg_fill = style.visuals.widgets.open.bg_fill;
-                    self.open_weak_bg_fill = style.visuals.widgets.open.weak_bg_fill;
-                    self.open_bg_stroke_color = style.visuals.widgets.open.bg_stroke.color;
-                    self.open_fg_stroke_color = style.visuals.widgets.open.fg_stroke.color;
+                if self.preset_style != current {
+                    if self.preset_style == PresetStyles::Custom {
+                        return;
+                    }
+                    let chosen = self.preset_style;
+                    let style = style_for_preset(chosen);
+                    sync_config_from_style(self, &style);
                     let s = Arc::new(style);
-                    ctx.set_global_style((s).clone());
-                    let (success_c, accent2) = match *selection {
-                        PresetStyles::CarlDark => (CarlDark.fg_success_text_color_visuals(), CarlDark.secondary_accent_color_visuals()),
-                        PresetStyles::TokyoNightStorm => (TokyoNightStorm.fg_success_text_color_visuals(), TokyoNightStorm.secondary_accent_color_visuals()),
-                        PresetStyles::TokyoNight => (TokyoNight.fg_success_text_color_visuals(), TokyoNight.secondary_accent_color_visuals()),
-                        PresetStyles::RerunMtech => (RerunMtech.fg_success_text_color_visuals(), RerunMtech.secondary_accent_color_visuals()),
-                        PresetStyles::Custom => return,
-                    };
+                    ctx.set_global_style(s.clone());
+                    let (success_c, accent2) = semantic_colors_for_preset(chosen);
                     crate::ui_tools::theme::set_success_color(ctx, success_c);
                     crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
                 }
@@ -252,14 +315,11 @@ impl ThemeConfig {
                             }
                         });
                         let style = match self.preset_style {
-                            PresetStyles::CarlDark => CarlDark.custom_style(),
-                            PresetStyles::TokyoNightStorm => TokyoNightStorm.custom_style(),
-                            PresetStyles::TokyoNight => TokyoNight.custom_style(),
-                            PresetStyles::RerunMtech => RerunMtech.custom_style(),
                             PresetStyles::Custom => return,
+                            preset => style_for_preset(preset),
                         };
 
-                        ret = (true, style.clone().into());
+                        ret = (true, Arc::new(style));
                     }
 
                     ui.add_space(5.);
@@ -718,111 +778,78 @@ impl ThemeConfig {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PresetStyles {
-    CarlDark,
-    TokyoNightStorm,
-    TokyoNight,
-    RerunMtech,
-    #[default]
-    Custom
+    ShippedClassic,
+    LegacyClassic,
+    DefaultEgui,
+    CarlDarkColors,
+    CarlDarkFull,
+    TokyoNightStormColors,
+    TokyoNightStormFull,
+    TokyoNightColors,
+    TokyoNightFull,
+    RerunMtechColors,
+    RerunMtechFull,
+    RerunMtechOledColors,
+    RerunMtechOledFull,
+    Custom,
+}
+
+impl Default for PresetStyles {
+    fn default() -> Self {
+        Self::ShippedClassic
+    }
 }
 
 impl PresetStyles {
     pub fn as_str(&self) -> &str {
         match self {
-            PresetStyles::CarlDark => "Carl Dark",
-            PresetStyles::TokyoNightStorm => "TokyoNight Storm",
-            PresetStyles::TokyoNight => "TokyoNight",
-            PresetStyles::RerunMtech => "Rerun MTech",
+            PresetStyles::ShippedClassic => "Shipped Classic",
+            PresetStyles::LegacyClassic => "Legacy Classic",
+            PresetStyles::DefaultEgui => "Default Egui",
+            PresetStyles::CarlDarkColors => "Carl Dark · Colors",
+            PresetStyles::CarlDarkFull => "Carl Dark · Full",
+            PresetStyles::TokyoNightStormColors => "TokyoNight Storm · Colors",
+            PresetStyles::TokyoNightStormFull => "TokyoNight Storm · Full",
+            PresetStyles::TokyoNightColors => "TokyoNight · Colors",
+            PresetStyles::TokyoNightFull => "TokyoNight · Full",
+            PresetStyles::RerunMtechColors => "Rerun MTech · Colors",
+            PresetStyles::RerunMtechFull => "Rerun MTech · Full",
+            PresetStyles::RerunMtechOledColors => "Rerun MTech OLED · Colors",
+            PresetStyles::RerunMtechOledFull => "Rerun MTech OLED · Full",
             PresetStyles::Custom => "Custom",
         }
     }
 
     pub fn from_str(str: &str) -> Self {
         match str {
-            "Carl Dark" => Self::CarlDark,
-            "TokyoNight Storm" => Self::TokyoNightStorm,
-            "TokyoNight" => Self::TokyoNight,
-            "Rerun MTech" => Self::RerunMtech,
+            "Shipped Classic" => Self::ShippedClassic,
+            "Legacy Classic" => Self::LegacyClassic,
+            "Default Egui" => Self::DefaultEgui,
+            "Carl Dark · Colors" | "Carl Dark" => Self::CarlDarkColors,
+            "Carl Dark · Full" => Self::CarlDarkFull,
+            "TokyoNight Storm · Colors" | "TokyoNight Storm" => Self::TokyoNightStormColors,
+            "TokyoNight Storm · Full" => Self::TokyoNightStormFull,
+            "TokyoNight · Colors" | "TokyoNight" => Self::TokyoNightColors,
+            "TokyoNight · Full" => Self::TokyoNightFull,
+            "Rerun MTech · Colors" | "Rerun MTech" => Self::RerunMtechColors,
+            "Rerun MTech · Full" => Self::RerunMtechFull,
+            "Rerun MTech OLED · Colors" => Self::RerunMtechOledColors,
+            "Rerun MTech OLED · Full" => Self::RerunMtechOledFull,
             "Custom" => Self::Custom,
-            _ => Self::Custom
+            _ => Self::Custom,
         }
     }
 }
 
 pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
-    match config.preset_style {
-        PresetStyles::CarlDark => {
-            let mut custom_style = CarlDark.custom_style();
-            // Font settings
-            let mut font = FontId::default();
-            font.size = config.font_size;
-            // font.family = FontFamily::Proportional;
-            font.family = config.font.clone();
+    if config.preset_style != PresetStyles::Custom {
+        return Arc::new(style_for_preset(config.preset_style));
+    }
 
-            // Assign custom font
-            custom_style.override_font_id = Some(font);
-
-            // Adjust spacing and interactions
-            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
-            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-            custom_style.spacing.combo_height = 200.0;
-            custom_style.spacing.combo_width = 100.0;
-            custom_style.interaction.selectable_labels = true;
-            custom_style.interaction.interact_radius = 10.0;
-            custom_style.interaction.show_tooltips_only_when_still = false;
-            custom_style.interaction.tooltip_delay = 0.1;
-            Arc::new(custom_style)
-        },
-        PresetStyles::TokyoNightStorm => {
-            let mut custom_style = TokyoNightStorm.custom_style();
-            // Font settings
-            let mut font = FontId::default();
-            font.size = config.font_size;
-            // font.family = FontFamily::Proportional;
-            font.family = config.font.clone();
-
-            // Assign custom font
-            custom_style.override_font_id = Some(font);
-
-            // Adjust spacing and interactions
-            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
-            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-            custom_style.spacing.combo_height = 200.0;
-            custom_style.spacing.combo_width = 100.0;
-            custom_style.interaction.selectable_labels = true;
-            custom_style.interaction.interact_radius = 10.0;
-            custom_style.interaction.show_tooltips_only_when_still = false;
-            custom_style.interaction.tooltip_delay = 0.1;
-            Arc::new(custom_style)
-        },
-        PresetStyles::TokyoNight => {
-            let mut custom_style = TokyoNight.custom_style();
-            // Font settings
-            let mut font = FontId::default();
-            font.size = config.font_size;
-            // font.family = FontFamily::Proportional;
-            font.family = config.font.clone();
-
-            // Assign custom font
-            custom_style.override_font_id = Some(font);
-
-            // Adjust spacing and interactions
-            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
-            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-            custom_style.spacing.combo_height = 200.0;
-            custom_style.spacing.combo_width = 100.0;
-            custom_style.interaction.selectable_labels = true;
-            custom_style.interaction.interact_radius = 10.0;
-            custom_style.interaction.show_tooltips_only_when_still = false;
-            custom_style.interaction.tooltip_delay = 0.1;
-            Arc::new(custom_style)
-        },
-        PresetStyles::RerunMtech => default_app_style(),
-        PresetStyles::Custom => {
-            let theme = CarlDark;
-            let mut custom_style: Style = theme.custom_style();
+    let theme = CarlDark;
+    let mut custom_style: Style = theme.custom_style();
             // Font settings
             let mut font = FontId::default();
             font.size = config.font_size;
@@ -918,9 +945,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 ..Default::default()
             };
 
-            Arc::new(custom_style)
-        },
-    }
+    Arc::new(custom_style)
 }
 
 // -------------------------------------------------------------------------------------------------

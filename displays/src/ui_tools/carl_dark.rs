@@ -484,6 +484,69 @@ pub trait Aesthetix {
     }
 }
 
+/// Swaps palette colors onto an existing style without changing spacing, fonts, or widget chrome flags.
+pub fn paint_aesthetix_colors(style: &mut egui::Style, theme: &dyn Aesthetix) {
+    use egui::style::WidgetVisuals;
+
+    let v = &mut style.visuals;
+    let text = theme.fg_primary_text_color_visuals();
+    let fg = text.unwrap_or(v.override_text_color.unwrap_or(egui::Color32::WHITE));
+    let selection = theme.custom_selection_visual();
+
+    v.override_text_color = text;
+    v.panel_fill = theme.bg_primary_color_visuals();
+    v.window_fill = theme.bg_primary_color_visuals();
+    v.faint_bg_color = theme.bg_secondary_color_visuals();
+    v.extreme_bg_color = theme.bg_triage_color_visuals();
+    v.code_bg_color = theme.bg_auxiliary_color_visuals();
+    v.warn_fg_color = theme.fg_warn_text_color_visuals();
+    v.error_fg_color = theme.fg_error_text_color_visuals();
+    v.hyperlink_color = theme.fg_info_color_visuals();
+    v.window_stroke.color = theme.bg_contrast_color_visuals();
+    v.selection.bg_fill = selection.bg_fill;
+    v.selection.stroke.color = selection.stroke.color;
+
+    let paint = |wv: &mut WidgetVisuals, bg: egui::Color32, weak: egui::Color32, stroke: egui::Color32| {
+        wv.bg_fill = bg;
+        wv.weak_bg_fill = weak;
+        if wv.bg_stroke.width > 0.0 {
+            wv.bg_stroke.color = stroke;
+        }
+        wv.fg_stroke.color = fg;
+    };
+
+    paint(
+        &mut v.widgets.noninteractive,
+        theme.bg_auxiliary_color_visuals(),
+        theme.bg_auxiliary_color_visuals(),
+        theme.bg_auxiliary_color_visuals(),
+    );
+    paint(
+        &mut v.widgets.inactive,
+        theme.bg_auxiliary_color_visuals(),
+        theme.bg_auxiliary_color_visuals(),
+        theme.bg_triage_color_visuals(),
+    );
+    paint(
+        &mut v.widgets.hovered,
+        theme.bg_auxiliary_color_visuals(),
+        theme.bg_auxiliary_color_visuals(),
+        theme.bg_triage_color_visuals(),
+    );
+    paint(
+        &mut v.widgets.active,
+        theme.bg_primary_color_visuals(),
+        theme.primary_accent_color_visuals(),
+        theme.bg_primary_color_visuals(),
+    );
+    paint(
+        &mut v.widgets.open,
+        theme.bg_secondary_color_visuals(),
+        theme.bg_secondary_color_visuals(),
+        theme.bg_triage_color_visuals(),
+    );
+}
+
 impl std::fmt::Debug for dyn Aesthetix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name())

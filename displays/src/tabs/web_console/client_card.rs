@@ -459,9 +459,9 @@ impl ClientCard {
                                 let color = if secs < 10 {
                                     Color32::from_rgb(50, 205, 50)
                                 } else if secs < 20 {
-                                    Color32::YELLOW
+                                    theme::warn(ui)
                                 } else {
-                                    Color32::RED
+                                    ui.style().visuals.error_fg_color
                                 };
                                 ui.label(RichText::new(format!("{}s", secs)).size(10.0).color(color));
                             } else {
