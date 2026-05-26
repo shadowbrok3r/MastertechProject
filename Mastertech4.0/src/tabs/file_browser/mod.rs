@@ -353,7 +353,7 @@ impl FileBrowser {
             //     color = Color32::LIGHT_GREEN;
             //     display_text = "Copied files to clipboard.".to_string();
             // }else if paste{
-            //     color = Color32::RED;
+            //     color = ui.style().visuals.error_fg_color;
             //     display_text = format!("File Copy In Progress: {:?} / {:?}", self.progress as u64 / MB_FROM_BYTES, self.source_dir_size / MB_FROM_BYTES as u64);
             // }
             // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -500,7 +500,7 @@ impl FileBrowser {
                                 let l = Arc::new(job);
                                 let x = WidgetText::LayoutJob(l)
                                     .small()
-                                    .background_color(Color32::RED);
+                                    .background_color(ui.style().visuals.error_fg_color);
                                 ui.add_space(ui.available_size_before_wrap().x - 100.0);
                                 ui.add(Label::new(x));
                             }
@@ -574,7 +574,7 @@ impl FileBrowser {
 
                     let x = WidgetText::LayoutJob(Arc::new(job))
                         .small()
-                        .background_color(Color32::RED);
+                        .background_color(ui.style().visuals.error_fg_color);
                     ui.add_space(ui.available_size_before_wrap().x - 100.0);
                     ui.add(Label::new(x));
                 }

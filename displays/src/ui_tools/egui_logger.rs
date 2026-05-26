@@ -251,7 +251,7 @@ impl LoggerUi {
         if let Ok(ref mut logger_ui) = self.log_ui().lock() {
             logger_ui.ui(ui);
         } else {
-            ui.colored_label(Color32::RED, "Something went wrong loading the log");
+            ui.colored_label(ui.style().visuals.error_fg_color, "Something went wrong loading the log");
         }
     }
 

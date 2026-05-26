@@ -9,7 +9,7 @@ use egui_data_table::{
 };
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
-use crate::{Cmd, RegistryEdit, RegistryKeyInfo, RegistryValueEntry};
+use crate::{Cmd, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, ui_tools::theme};
 use std::collections::{BTreeMap, BTreeSet};
 
 const NUM_VALUE_COLUMNS: usize = 3;
@@ -389,11 +389,11 @@ impl RegistryEditor {
                                             .unwrap_or("<new>");
                                         ui.label(RichText::new(format!("#{} SET {} [{}]", i + 1, name, kind)).strong());
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Before:").color(Color32::RED));
+                                            ui.label(RichText::new("Before:").color(ui.style().visuals.error_fg_color));
                                             ui.label(original);
                                         });
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("After:").color(Color32::GREEN));
+                                            ui.label(RichText::new("After:").color(Color32::LIGHT_GREEN));
                                             ui.label(data);
                                         });
                                     }
@@ -402,14 +402,14 @@ impl RegistryEditor {
                                             .find(|v| v.name == *name)
                                             .map(|v| v.data.as_str())
                                             .unwrap_or("?");
-                                        ui.label(RichText::new(format!("#{} DELETE {}", i + 1, name)).strong().color(Color32::RED));
+                                        ui.label(RichText::new(format!("#{} DELETE {}", i + 1, name)).strong().color(ui.style().visuals.error_fg_color));
                                         ui.label(format!("Value: {}", original));
                                     }
                                     RegistryEdit::CreateKey { path } => {
-                                        ui.label(RichText::new(format!("#{} CREATE KEY {}", i + 1, path)).strong().color(Color32::GREEN));
+                                        ui.label(RichText::new(format!("#{} CREATE KEY {}", i + 1, path)).strong().color(Color32::LIGHT_GREEN));
                                     }
                                     RegistryEdit::DeleteKey { path } => {
-                                        ui.label(RichText::new(format!("#{} DELETE KEY {}", i + 1, path)).strong().color(Color32::RED));
+                                        ui.label(RichText::new(format!("#{} DELETE KEY {}", i + 1, path)).strong().color(ui.style().visuals.error_fg_color));
                                     }
                                 }
                             });
@@ -419,7 +419,7 @@ impl RegistryEditor {
 
                     ui.add_space(8.);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Confirm & Apply").color(Color32::GREEN)).clicked() {
+                        if ui.button(RichText::new("Confirm & Apply").color(Color32::LIGHT_GREEN)).clicked() {
                             self.show_diff_modal = false;
                             self.backup_pending = true;
                             let _ = cmd_tx.try_send(Cmd::BackupRegistryKey(self.selected_key.clone()));
@@ -445,23 +445,23 @@ impl RegistryEditor {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some((msg, success)) = &self.status_message {
-                    let color = if *success { Color32::GREEN } else { Color32::RED };
+                    let color = if *success { Color32::LIGHT_GREEN } else { ui.style().visuals.error_fg_color };
                     ui.colored_label(color, msg);
                 }
 
                 let has_edits = !self.pending_edits.is_empty();
                 if has_edits {
-                    ui.label(RichText::new(format!("{} pending", self.pending_edits.len())).color(Color32::YELLOW));
+                    ui.label(RichText::new(format!("{} pending", self.pending_edits.len())).color(theme::warn(ui)));
                 }
 
                 let submit_btn = ui.add_enabled(has_edits, egui::Button::new(
-                    RichText::new("Submit Changes").color(if has_edits { Color32::GREEN } else { Color32::GRAY })
+                    RichText::new("Submit Changes").color(if has_edits { Color32::LIGHT_GREEN } else { theme::weak_text(ui) })
                 ));
                 if submit_btn.clicked() {
                     self.show_diff_modal = true;
                 }
 
-                if has_edits && ui.button(RichText::new("Discard").color(Color32::RED).small()).clicked() {
+                if has_edits && ui.button(RichText::new("Discard").color(ui.style().visuals.error_fg_color).small()).clicked() {
                     self.pending_edits.clear();
                 }
             });

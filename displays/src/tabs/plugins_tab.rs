@@ -37,7 +37,7 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) 
     let mut mgr = match plugin_manager.write() {
         Ok(g) => g,
         Err(e) => {
-            ui.colored_label(Color32::RED, format!("Plugin manager lock poisoned: {e}"));
+            ui.colored_label(ui.style().visuals.error_fg_color, format!("Plugin manager lock poisoned: {e}"));
             return;
         }
     };
@@ -75,9 +75,9 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) 
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let status = if info.enabled {
-                            RichText::new("●").color(Color32::GREEN)
+                            RichText::new("●").color(Color32::LIGHT_GREEN)
                         } else {
-                            RichText::new("●").color(Color32::RED)
+                            RichText::new("●").color(ui.style().visuals.error_fg_color)
                         };
                         ui.label(status);
 

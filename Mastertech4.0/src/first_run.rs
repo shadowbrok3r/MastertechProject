@@ -1,8 +1,8 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
-use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}, theme_config::apply_default_theme}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}, theme_config::{apply_shipped_style, semantic_colors_for_preset, PresetStyles}}, STYLE};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, Database, WS_CLIENT_URL};
 use database::schema::GetKeysResponse;
-use eframe::egui::{Context};
+use eframe::egui::{Context, Style};
 use database::schema::RecordId;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,7 +23,18 @@ static TCP_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 impl MasterTechApp {
     pub fn first_run(&mut self, ctx: &Context) {
         self.context.shared_ctx.first_run = false;
-        apply_default_theme(ctx);
+        match serde_json::from_str::<Style>(STYLE) {
+            Ok(theme) => {
+                ctx.set_global_style(Arc::new(theme));
+                let (success, accent2) = semantic_colors_for_preset(PresetStyles::ShippedClassic);
+                displays::ui_tools::theme::set_success_color(ctx, success);
+                displays::ui_tools::theme::set_accent_secondary(ctx, accent2);
+            }
+            Err(e) => {
+                log::error!("Failed to parse displays::STYLE: {e:?}");
+                apply_shipped_style(ctx);
+            }
+        }
 
         match load_encrypted_user_data(HASH) {
             Some(login) => {

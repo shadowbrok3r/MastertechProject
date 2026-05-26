@@ -685,7 +685,7 @@ impl RemoteExplorer {
             eframe::egui::Panel::bottom("RemoteExplorerError")
                 .exact_size(25.)
                 .show_inside(ui, |ui| {
-                    ui.colored_label(Color32::RED, error.clone());
+                    ui.colored_label(ui.style().visuals.error_fg_color, error.clone());
                 });
         }
         
@@ -1070,7 +1070,7 @@ impl RemoteExplorer {
             ui.spinner();
             ui.label("Loading preview...");
         } else if let Some(error) = &self.preview.error {
-            ui.colored_label(Color32::RED, error.clone());
+            ui.colored_label(ui.style().visuals.error_fg_color, error.clone());
         } else if let Some(content) = &mut self.preview.text_content.clone() {
             // Text preview with editing
             ScrollArea::both()

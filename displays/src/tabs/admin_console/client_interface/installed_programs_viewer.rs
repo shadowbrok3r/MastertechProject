@@ -278,7 +278,7 @@ impl InstalledProgramsViewer {
             ui.checkbox(&mut self.viewer.uninstallable_only, "Uninstallable only");
 
             if let Some((msg, success)) = &self.status_message {
-                let color = if *success { Color32::GREEN } else { Color32::RED };
+                let color = if *success { Color32::LIGHT_GREEN } else { ui.style().visuals.error_fg_color };
                 ui.colored_label(color, msg);
             }
         });

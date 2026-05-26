@@ -1,7 +1,19 @@
-use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{ToastStyle, Toast, ToastKind, ToastOptions}, theme_config::{apply_default_theme, set_custom_style}}};
+use displays::{
+    app_state::AppState,
+    tabs::{
+        admin_console::{AdminConsole, SessionLayout},
+        admin_console::client_interface::TransportKind,
+        ai_playground::ChatThread,
+    },
+    ui_tools::{
+        decode_style, encode_style,
+        theme_config::{apply_shipped_style, default_app_style, semantic_colors_for_preset, set_custom_style, PresetStyles},
+        toasts::{Toast, ToastKind, ToastOptions, ToastStyle},
+    },
+};
 use eframe::{egui::{Color32, Context, Margin, Stroke, Style, Vec2, Window}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use wasm_bindgen_futures::spawn_local;
 use egui_dock::DockState;
 use database::DATABASE;
@@ -12,7 +24,18 @@ impl MtechServer {
     pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
         self.shared_ctx.first_run = false;
         let current_version = env!("CARGO_PKG_VERSION");
-        apply_default_theme(ctx);
+        match serde_json::from_str::<Style>(displays::STYLE) {
+            Ok(theme) => {
+                ctx.set_global_style(std::sync::Arc::new(theme));
+                let (success, accent2) = semantic_colors_for_preset(PresetStyles::ShippedClassic);
+                displays::ui_tools::theme::set_success_color(ctx, success);
+                displays::ui_tools::theme::set_accent_secondary(ctx, accent2);
+            }
+            Err(e) => {
+                gloo_console::error!(format!("Failed to parse displays::STYLE: {e:?}"));
+                apply_shipped_style(ctx);
+            }
+        }
         
         if let Some(storage) = frame.storage_mut() {
             gloo_console::info!("We have Storage Mut Access");
@@ -45,12 +68,12 @@ impl MtechServer {
 
             if let Some(user) = self.shared_ctx.current_user.as_ref() {
                 ctx.set_global_style(
-                    decode_style(&user.get_color_scheme()
-                )
-                .unwrap_or_else(|e| {
-                    log::error!("Error setting theme: {e:?}");
-                    (*displays::ui_tools::theme_config::default_app_style()).clone()
-                }));
+                    decode_style(&user.get_color_scheme())
+                        .unwrap_or_else(|e| {
+                            log::error!("Error setting theme: {e:?}");
+                            (*default_app_style()).clone()
+                        }),
+                );
                 gloo_console::info!("2 We have a user");
                 let user_version = user.get_version();
                 gloo_console::info!(format!("2 current_version: {current_version}\nuser_version: {user_version}"));
@@ -81,7 +104,7 @@ impl MtechServer {
                 }
             } else {
                 let custom_style = set_custom_style(&self.shared_ctx.theme_config);
-                ctx.set_global_style((*custom_style).clone());
+                ctx.set_global_style(custom_style);
             }
             
             if let Some(version) = storage.get_string("version") {
@@ -320,7 +343,10 @@ impl MtechServer {
                         log::info!("7");
                         let usr = self.shared_ctx.current_user.clone();
                         if let Some(user) = usr {
-                            ctx.set_global_style(decode_style(&user.get_color_scheme()).unwrap_or_default());
+                            ctx.set_global_style(
+                                decode_style(&user.get_color_scheme())
+                                    .unwrap_or_else(|_| (*default_app_style()).clone()),
+                            );
                             self.shared_ctx.load_data(ctx, &user);
                             let _ = self.shared_ctx.app_state_tx.try_send(AppState::Authenticated(displays::app_state::MainPages::Tasks));
                             let toast = &mut self.shared_ctx.toasts;

@@ -95,7 +95,7 @@ impl WebSocketClient {
                     }
                     ui.separator();
                     if self.live_stats_active {
-                        if ui.button(RichText::new("■ Stop Charts").color(Color32::RED)).clicked() {
+                        if ui.button(RichText::new("■ Stop Charts").color(ui.style().visuals.error_fg_color)).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             self.live_stats_active = false;
                             ui.close();
@@ -107,7 +107,7 @@ impl WebSocketClient {
                         ui.close();
                     }
                     if self.egui_viewer_active {
-                        if ui.button(RichText::new("■ Stop Viewer").color(Color32::RED)).clicked() {
+                        if ui.button(RichText::new("■ Stop Viewer").color(ui.style().visuals.error_fg_color)).clicked() {
                             self.egui_viewer_active = false;
                             let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: false });
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
@@ -121,7 +121,7 @@ impl WebSocketClient {
                     }
                     if self.interactive {
                         ui.separator();
-                        if ui.button(RichText::new("Quit interactive shell").color(Color32::RED)).clicked() {
+                        if ui.button(RichText::new("Quit interactive shell").color(ui.style().visuals.error_fg_color)).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             ui.close();
                         }
@@ -346,7 +346,7 @@ impl WebSocketClient {
                             "Connected (awaiting activity)",
                         )
                     } else {
-                        (Color32::RED, "✖", "Disconnected")
+                        (ui.style().visuals.error_fg_color, "✖", "Disconnected")
                     };
 
                     ui.colored_label(status_color, status_text)
