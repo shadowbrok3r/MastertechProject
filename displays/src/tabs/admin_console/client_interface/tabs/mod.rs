@@ -4,3 +4,5 @@ pub mod command_shell;
 pub mod terminal_viewer;
 #[cfg(feature="tokio")]
 pub mod egui_viewer;
+#[cfg(feature="tokio")]
+pub mod beta_terminal;

@@ -15,6 +15,7 @@ use database::schema::{ComputerData, ConnectedClient, RecordIdExt, User};
 use eframe::egui::{
     Align, Button, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Ui, Vec2,
 };
+use crate::ui_tools::theme;
 use std::collections::HashMap;
 
 /// A card component displaying a single connected client
@@ -44,13 +45,13 @@ impl ClientCard {
         let bg_color = if is_selected {
             Color32::from_rgb(30, 35, 45)
         } else {
-            Color32::from_rgb(20, 22, 28)
+            theme::bg_surface(ui)
         };
 
         let stroke = if is_selected {
             Stroke::new(2.0_f32, Color32::from_rgb(100, 149, 237)) // Cornflower blue
         } else {
-            Stroke::new(1.0_f32, Color32::from_rgb(50, 55, 65))
+            Stroke::new(1.0_f32, theme::border(ui))
         };
 
         Frame::NONE
@@ -100,7 +101,7 @@ impl ClientCard {
                         RichText::new(&name)
                             .size(14.0)
                             .strong()
-                            .color(Color32::from_rgb(220, 225, 235)),
+                            .color(theme::strong_text(ui)),
                     );
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -128,7 +129,7 @@ impl ClientCard {
                 ui.label(
                     RichText::new(&client.connection_string)
                         .size(10.0)
-                        .color(Color32::from_rgb(130, 135, 145)),
+                        .color(theme::weak_text(ui)),
                 );
 
                 ui.add_space(8.0);
@@ -138,7 +139,7 @@ impl ClientCard {
                     ui.label(
                         RichText::new("User:")
                             .size(11.0)
-                            .color(Color32::from_rgb(160, 165, 175)),
+                            .color(theme::weak_text(ui)),
                     );
 
                     let user_name = client
@@ -173,7 +174,7 @@ impl ClientCard {
                         ui.label(
                             RichText::new(format!("Last seen: {}", formatted))
                                 .size(10.0)
-                                .color(Color32::from_rgb(100, 105, 115)),
+                                .color(theme::weak_text(ui)),
                         );
                     }
                 }
@@ -219,7 +220,7 @@ impl ClientCard {
                     let shell_btn = Button::new(
                         RichText::new("🖥")
                             .size(14.0)
-                            .color(Color32::from_rgb(100, 200, 255)),
+                            .color(theme::info(ui)),
                     )
                     .min_size(btn_size)
                     .fill(Color32::from_rgb(35, 40, 50));
@@ -300,7 +301,7 @@ impl ClientCard {
                         let delete_btn = Button::new(
                             RichText::new("🗑")
                                 .size(14.0)
-                                .color(Color32::from_rgb(255, 100, 100)),
+                                .color(theme::error(ui)),
                         )
                         .min_size(btn_size)
                         .fill(Color32::from_rgb(45, 30, 35));
@@ -329,7 +330,7 @@ impl ClientCard {
                 ui.label(
                     RichText::new(&os_short)
                         .size(9.0)
-                        .color(Color32::from_rgb(180, 180, 200)),
+                        .color(theme::weak_text(ui)),
                 );
                 ui.label(RichText::new("•").size(9.0).color(Color32::DARK_GRAY));
             }
@@ -339,7 +340,7 @@ impl ClientCard {
                 ui.label(
                     RichText::new(&computer.ram)
                         .size(9.0)
-                        .color(Color32::from_rgb(180, 180, 200)),
+                        .color(theme::weak_text(ui)),
                 );
             }
         });
@@ -354,7 +355,7 @@ impl ClientCard {
             ui.label(
                 RichText::new(&cpu_short)
                     .size(9.0)
-                    .color(Color32::from_rgb(150, 155, 165)),
+                    .color(theme::weak_text(ui)),
             );
         }
     }
@@ -444,7 +445,7 @@ impl ClientCard {
                             ui.label(
                                 RichText::new(&last_update_str)
                                     .size(10.0)
-                                    .color(Color32::from_rgb(130, 135, 145)),
+                                    .color(theme::weak_text(ui)),
                             );
                         },
                     );

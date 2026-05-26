@@ -23,7 +23,7 @@ use stress_runner::RunStage;
 /// and tagged with `"preset:qc-benchmark"` for cross-machine queries.
 pub const QC_BENCHMARK_PRESET: &str = "qc-mcp:benchmark-v1";
 
-pub const GPU_PROBE_PRESET: &str = "qc-mcp:gpu-probe-v1";
+pub use stress_runner::{gpu_probe_stages, GPU_PROBE_PRESET};
 
 /// Build the 8-stage QC benchmark, scaled by `mult` (clamped at the caller).
 ///
@@ -51,26 +51,6 @@ pub fn qc_benchmark_stages(mult: f32) -> Vec<RunStage> {
         mk("branch", Stressor::Branch, 20),
         mk("memory", Stressor::Memory, 20),
         mk("vm",     Stressor::Vm,     20),
-    ]
-}
-
-pub fn gpu_probe_stages(mult: f32) -> Vec<RunStage> {
-    fn dur(base: u64, mult: f32) -> u64 {
-        ((base as f32) * mult).round().max(1.0) as u64
-    }
-    let mk = |label: &str, stressor: Stressor, base_secs: u64, mem_mb: u64| RunStage {
-        label: label.to_string(),
-        stressor,
-        threads: 0,
-        duration_secs: dur(base_secs, mult),
-        memory_cap_mb: mem_mb,
-        disk_file_mb: 16,
-    };
-    vec![
-        mk("gpu_compute", Stressor::Gpu,       30, 256),
-        mk("gpu_matmul",  Stressor::GpuMatmul, 30, 256),
-        mk("gpu_vram",    Stressor::GpuVram,   45, 1024),
-        mk("gpu_pcie",    Stressor::GpuPcie,   20, 64),
     ]
 }
 

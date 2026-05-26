@@ -1866,7 +1866,7 @@ if (Test-Path $path) {{
                 }
             }
 
-            Cmd::RunRemoteScripts { scripts, service_number, customer_email } => {
+            Cmd::RunRemoteScripts { scripts, service_number, customer_email, diagnostic_session_id } => {
                 log::info!("websockets -> RunRemoteScripts: {} scripts, SO={}", scripts.len(), service_number);
 
                 // Spawn the script loop so the TCP session loop can continue
@@ -2421,88 +2421,85 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                         }
 
                         "Run GPU Probe" => {
-                            use stress_kit::{
-                                scenario::{FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage},
-                                StressConfig, Stressor,
-                            };
-                            send_log(&tx, "GPU probe: compute → matmul → VRAM → PCIe".into());
+                            use std::sync::Arc;
+                            use stress_kit::telemetry::TelemetryAgent;
+                            use stress_runner::{drive_blocking, gpu_probe_spec, RunResult, RunUpdate};
+
+                            send_log(&tx, "GPU probe: compute → matmul → VRAM → PCIe (persisted)".into());
 
                             enum ProbeMsg {
                                 Log(String),
                                 Done(bool),
                             }
 
-                            let stages = vec![
-                                ScenarioStage {
-                                    label: "gpu_compute".into(),
-                                    config: StressConfig { stressor: Stressor::Gpu, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
-                                    duration_secs: 30,
-                                },
-                                ScenarioStage {
-                                    label: "gpu_matmul".into(),
-                                    config: StressConfig { stressor: Stressor::GpuMatmul, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
-                                    duration_secs: 30,
-                                },
-                                ScenarioStage {
-                                    label: "gpu_vram".into(),
-                                    config: StressConfig { stressor: Stressor::GpuVram, threads: 0, timeout: None, memory_cap_mb: 1024, disk_file_mb: 16 },
-                                    duration_secs: 45,
-                                },
-                                ScenarioStage {
-                                    label: "gpu_pcie".into(),
-                                    config: StressConfig { stressor: Stressor::GpuPcie, threads: 0, timeout: None, memory_cap_mb: 64, disk_file_mb: 16 },
-                                    duration_secs: 20,
-                                },
-                            ];
-
+                            let service_number_probe = service_number.clone();
+                            let diag_session_probe = diagnostic_session_id.clone();
                             let (probe_tx, probe_rx) = crossbeam::channel::unbounded::<ProbeMsg>();
-                            std::thread::spawn(move || {
-                                let runner = ScenarioRunner::start(ScenarioDefinition {
-                                    stages,
-                                    total_wall_secs: None,
-                                    repeat_until_total: false,
-                                });
-                                let mut current_stage = String::new();
-                                let mut last_throughput = 0.0f64;
-                                let mut last_error: Option<String> = None;
 
-                                loop {
-                                    for ev in runner.try_recv_all() {
-                                        match ev {
-                                            ScenarioEvent::StageStarted { index, label, stage_count } => {
-                                                current_stage = label.clone();
-                                                let _ = probe_tx.send(ProbeMsg::Log(format!(
-                                                    "Stage {}/{}: {label}", index + 1, stage_count
-                                                )));
-                                            }
-                                            ScenarioEvent::Tick { metrics, .. } => {
-                                                last_throughput = metrics.throughput;
-                                                if let Some(err) = metrics.last_error.as_ref() {
-                                                    if last_error.as_deref() != Some(err.as_str()) {
-                                                        let _ = probe_tx.send(ProbeMsg::Log(format!("{current_stage}: {err}")));
-                                                        last_error = Some(err.clone());
-                                                    }
-                                                }
-                                            }
-                                            ScenarioEvent::StageFinished { .. } => {
-                                                let _ = probe_tx.send(ProbeMsg::Log(format!(
-                                                    "{current_stage}: finished (last throughput {:.2})", last_throughput
-                                                )));
-                                            }
-                                            ScenarioEvent::Finished { reason, total_elapsed_secs } => {
-                                                let success = matches!(reason, FinishReason::Completed) && last_error.is_none();
-                                                let _ = probe_tx.send(ProbeMsg::Log(format!(
-                                                    "GPU probe {} in {:.1}s",
-                                                    if success { "PASSED" } else { "FAILED" },
-                                                    total_elapsed_secs
-                                                )));
-                                                let _ = probe_tx.send(ProbeMsg::Done(success));
-                                                return;
-                                            }
+                            std::thread::spawn(move || {
+                                let client = crate::filesystem::get_client_hash();
+                                let telemetry = Arc::new(TelemetryAgent::start(1000));
+                                let mut spec = gpu_probe_spec(
+                                    client.computer.clone().expect("get_client_hash sets computer"),
+                                    1.0,
+                                );
+                                spec.tags.push("origin:remote_scripts".into());
+                                spec.hostname = std::env::var("COMPUTERNAME")
+                                    .or_else(|_| std::env::var("HOSTNAME"))
+                                    .ok();
+                                spec.machine_id = Some(client.client_hash.clone());
+                                if !service_number_probe.is_empty() {
+                                    spec.service_order = Some(database::schema::RecordId::new(
+                                        database::schema::TICKET_TABLE,
+                                        service_number_probe,
+                                    ));
+                                }
+                                if !diag_session_probe.is_empty() {
+                                    spec.session_ref = Some(
+                                        database::schema::entity_link::parse_record_id(
+                                            &diag_session_probe,
+                                            database::schema::DIAGNOSTIC_SESSION_TABLE,
+                                        ),
+                                    );
+                                }
+
+                                let mut success = false;
+                                drive_blocking(spec, telemetry, |update| match update {
+                                    RunUpdate::Started { run_id } => {
+                                        use database::schema::RecordIdExt;
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                            "stress_test_run id: {}",
+                                            run_id.key_string()
+                                        )));
+                                    }
+                                    RunUpdate::StageStarted { index, label, stage_count } => {
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                            "Stage {}/{}: {label}", index + 1, stage_count
+                                        )));
+                                    }
+                                    RunUpdate::Tick { metrics, stage_label, .. } => {
+                                        if let Some(err) = metrics.last_error.as_ref() {
+                                            let stage = stage_label.unwrap_or_else(|| "gpu".into());
+                                            let _ = probe_tx.send(ProbeMsg::Log(format!("{stage}: {err}")));
                                         }
                                     }
-                                    std::thread::sleep(std::time::Duration::from_millis(100));
-                                }
+                                    RunUpdate::StageFinished { .. } => {}
+                                    RunUpdate::Finished(v) => {
+                                        success = v.result == RunResult::Pass;
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                            "GPU probe {} in {:.1}s (run persisted)",
+                                            if success { "PASSED" } else { "FAILED" },
+                                            v.duration_secs
+                                        )));
+                                    }
+                                    RunUpdate::Warning { message } => {
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!("GPU probe warning: {message}")));
+                                    }
+                                    RunUpdate::Error { message } => {
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!("GPU probe error: {message}")));
+                                    }
+                                });
+                                let _ = probe_tx.send(ProbeMsg::Done(success));
                             });
 
                             let mut final_success: Option<bool> = None;

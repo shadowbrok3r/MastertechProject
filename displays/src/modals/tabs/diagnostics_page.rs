@@ -7,6 +7,7 @@ use database::schema::{DiagnosticEntry, DiagnosticSession, RecordId, RecordIdExt
 use eframe::egui::{
     CollapsingHeader, Color32, Grid, RichText, ScrollArea, Spinner, Ui, Vec2, Widget,
 };
+use crate::ui_tools::theme;
 use serde::{Deserialize, Serialize};
 
 /// One session paired with all of its entries. Built by
@@ -37,7 +38,7 @@ pub fn display_diagnostics_page(
         ui.collapsing("Check-in Notes", |ui| {
             if checkin_notes.trim().is_empty() {
                 ui.colored_label(
-                    Color32::from_rgb(150, 150, 150),
+                    theme::weak_text(ui),
                     "No check-in notes recorded.",
                 );
             } else {
@@ -63,14 +64,14 @@ pub fn display_diagnostics_page(
                 });
 
                 if let Some(err) = error {
-                    ui.colored_label(Color32::from_rgb(220, 90, 90), err);
+                    ui.colored_label(theme::error(ui), err);
                 }
 
                 ui.separator();
 
                 if sessions.is_empty() && !loading {
                     ui.colored_label(
-                        Color32::from_rgb(150, 150, 150),
+                        theme::weak_text(ui),
                         "No diagnostics recorded for this task or computer yet.",
                     );
                     return;
@@ -170,7 +171,7 @@ fn render_session(
 
             if view.entries.is_empty() {
                 ui.colored_label(
-                    Color32::from_rgb(150, 150, 150),
+                    theme::weak_text(ui),
                     "No entries recorded in this session.",
                 );
             } else {
@@ -189,12 +190,12 @@ fn render_session(
 fn render_entry(ui: &mut Ui, entry: &DiagnosticEntry, idx: usize) {
     let cat_str = entry.category.as_str();
     let cat_color = match cat_str {
-        "finding" => Color32::from_rgb(255, 200, 50),
-        "action" => Color32::from_rgb(42, 195, 222),
-        "error" => Color32::from_rgb(255, 80, 80),
+        "finding" => theme::warn(ui),
+        "action" => theme::info(ui),
+        "error" => theme::error(ui),
         "security_alert" => Color32::from_rgb(255, 80, 200),
         "performance_note" => Color32::from_rgb(200, 150, 255),
-        "recommendation" => Color32::from_rgb(120, 230, 120),
+        "recommendation" => theme::success(ui),
         _ => Color32::GRAY,
     };
 
@@ -220,7 +221,7 @@ fn render_entry(ui: &mut Ui, entry: &DiagnosticEntry, idx: usize) {
                 ui.label(
                     RichText::new(format!("{}::{}", usage.plugin_id, usage.tool_name))
                         .small()
-                        .color(Color32::from_rgb(170, 170, 220)),
+                        .color(theme::weak_text(ui)),
                 );
             }
         });

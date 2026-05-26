@@ -32,3 +32,12 @@ DEFINE FIELD specs            ON hardware_component TYPE none | object         P
 DEFINE FIELD first_seen       ON hardware_component TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD last_seen        ON hardware_component TYPE datetime DEFAULT time::now() PERMISSIONS FULL;
 DEFINE FIELD occurrence_count ON hardware_component TYPE number   DEFAULT 0    PERMISSIONS FULL;
+-- 768-dim embedding auto-computed by SurrealDB on every write.
+DEFINE FIELD embedding        ON hardware_component
+    TYPE array<float>
+    VALUE fn::embed_text(string::concat(kind ?? '', ' ', vendor ?? '', ' ', model ?? '', ' ', display_name ?? ''))
+    PERMISSIONS FULL;
+DEFINE FIELD embedding.*      ON hardware_component TYPE float                 PERMISSIONS FULL;
+
+DEFINE INDEX hw_component_embedding ON hardware_component FIELDS embedding
+    HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;

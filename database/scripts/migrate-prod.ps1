@@ -78,9 +78,9 @@ $ConnArgs = @(
 # ---------------------------------------------------------------------------
 if (-not $RolloutId) {
     $PendingManifest = Get-ChildItem "$RolloutsDir/*.toml" -ErrorAction SilentlyContinue |
-        Where-Object { (Get-Content $_.FullName -Raw) -match 'state = "(planned|ready_to_complete)"' } |
+        Where-Object { (Get-Content $_.FullName -Raw) -match '(?m)^state = "(planned|ready_to_complete)"' } |
         Sort-Object Name |
-        Select-Object -Last 1
+        Select-Object -First 1
 
     if (-not $PendingManifest) {
         Write-Host "No pending rollout manifests found in $RolloutsDir/. Nothing to do."
@@ -97,7 +97,7 @@ if (-not (Test-Path $ManifestPath)) { Die "Manifest not found: $ManifestPath" }
 # Read current state from manifest
 # ---------------------------------------------------------------------------
 $ManifestContent = Get-Content $ManifestPath -Raw
-if ($ManifestContent -match 'state = "([^"]+)"') {
+if ($ManifestContent -match '(?m)^state = "([^"]+)"') {
     $CurrentState = $Matches[1]
 } else {
     Die "Could not read state from $ManifestPath"

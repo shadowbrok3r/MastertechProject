@@ -131,6 +131,8 @@ pub struct ScriptsTab<'a> {
     /// channel and is resolved either by a matching `checklist_completion_rx`
     /// signal or by timeout. See `process_mcp_requests` / `process_mcp_completions`.
     pending_mcp_runs: Vec<TerminalMcpPendingRun>,
+    /// diagnostic_session id from the latest MCP scripts_run request.
+    mcp_diagnostic_session_id: Option<String>,
 
     // ---- stress-runner integration (Phase 3) ----
     /// Active stress run, if any.  Polled from `receive()` each frame; the
@@ -157,16 +159,7 @@ pub struct ScriptsTab<'a> {
 /// When the operator enters a service number, follow-up code can re-link the
 /// run record to the customer's actual computer.
 fn local_computer_record() -> database::schema::RecordId {
-    // Avoid a new dep on `hostname` — fall back through env vars.  On
-    // Windows `COMPUTERNAME` is always set; on Linux `HOSTNAME` is set in
-    // most shells.  Worst case we use an empty string and the run still gets
-    // a stable record (just less informative).
-    let hostname = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default();
-    let cpu_brand = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default();
-    let id = stress_runner::compute_machine_id(&hostname, &cpu_brand);
-    database::schema::RecordId::new(database::schema::COMPUTER_TABLE, id)
+    crate::filesystem::local_computer_record()
 }
 
 /// Tracks one in-flight MCP-initiated script run inside the terminal `ScriptsTab`.
@@ -375,6 +368,7 @@ impl<'a> ScriptsTab<'a> {
             effect_stage: RefCell::new(EffectStage::default()),
             effects_init: RefCell::new(false),
             pending_mcp_runs: Vec::new(),
+            mcp_diagnostic_session_id: None,
             stress_run: RefCell::new(None),
             stress_telemetry: RefCell::new(None),
             stress_choice: RefCell::new(Stressor::Cpu),
@@ -423,6 +417,10 @@ impl<'a> ScriptsTab<'a> {
                 self.customer_email = em.to_string();
             }
         }
+        self.mcp_diagnostic_session_id = req
+            .diagnostic_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty());
 
         let request_id = req.request_id.clone();
         let script_name = req.script_name.clone();

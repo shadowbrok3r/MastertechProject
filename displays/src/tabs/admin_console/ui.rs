@@ -9,6 +9,7 @@ use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
 use super::SessionLayout;
 use crate::get_database_users;
+use crate::ui_tools::theme;
 use crate::{PlatformSpawner, Spawner};
 use log::info;
 
@@ -191,7 +192,7 @@ impl AdminConsole {
             Layout::top_down(Align::Min),
             |ui| {
                 Frame::default()
-                    .fill(Color32::from_rgb(13, 13, 15))
+                    .fill(theme::bg_surface(ui))
                     .inner_margin(Margin::same(4))
                     .outer_margin(Margin::ZERO)
                     .corner_radius(eframe::egui::CornerRadius::same(5))
@@ -340,9 +341,9 @@ impl AdminConsole {
                         }
                     };
                     let relink_color = if client.customer_locked {
-                        Color32::from_rgb(120, 200, 255)
+                        theme::info(ui)
                     } else {
-                        Color32::from_rgb(199, 202, 245)
+                        theme::weak_text(ui)
                     };
                     let (relink_label, relink_tip) = if client.customer_locked {
                         (
@@ -487,7 +488,7 @@ fn client_details_grid(
                 ui.label(
                     RichText::new("🔒 locked")
                         .small()
-                        .color(Color32::from_rgb(120, 200, 255)),
+                        .color(theme::info(ui)),
                 )
                 .on_hover_text(
                     "Customer was manually re-linked. \
@@ -565,7 +566,7 @@ fn client_details_grid(
                 ui.label(
                     RichText::new(&cust_label)
                         .small()
-                        .color(fk_color(cust_ok, client.customer.is_some())),
+                        .color(fk_color(ui, cust_ok, client.customer.is_some())),
                 );
                 if !cust_ok {
                     if ui.small_button("Link").clicked() {
@@ -585,7 +586,7 @@ fn client_details_grid(
                 ui.label(
                     RichText::new(&comp_label)
                         .small()
-                        .color(fk_color(comp_ok, client.computer.is_some())),
+                        .color(fk_color(ui, comp_ok, client.computer.is_some())),
                 );
                 if !comp_ok {
                     if ui.small_button("Link").clicked() {
@@ -610,13 +611,13 @@ fn row(ui: &mut Ui, key: &str, val: &str, value_max_w: f32) {
     ui.end_row();
 }
 
-fn fk_color(exists: bool, has_fk: bool) -> Color32 {
+fn fk_color(ui: &Ui, exists: bool, has_fk: bool) -> Color32 {
     if !has_fk {
-        Color32::from_rgb(220, 120, 120)
+        theme::error(ui)
     } else if exists {
-        Color32::from_rgb(120, 220, 140)
+        theme::success(ui)
     } else {
-        Color32::from_rgb(255, 200, 100)
+        theme::warn(ui)
     }
 }
 

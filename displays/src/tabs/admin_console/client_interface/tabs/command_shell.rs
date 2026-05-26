@@ -54,6 +54,112 @@ impl WebSocketClient {
     }
 
     pub fn show_shell(&mut self, ui: &mut Ui) {
+        #[cfg(not(target_arch="wasm32"))]
+        {
+            let beta_toggle_color = if self.use_beta_terminal {
+                Color32::from_rgb(255, 121, 178)
+            } else {
+                Color32::from_rgb(166, 173, 200)
+            };
+            ui.horizontal(|ui| {
+                ui.add_space(4.);
+                let resp = ui.checkbox(
+                    &mut self.use_beta_terminal,
+                    RichText::new("🧪 Beta: Terminal View").color(beta_toggle_color).strong(),
+                );
+                if resp.changed() && self.use_beta_terminal {
+                    let host = self
+                        .client
+                        .friendly_name
+                        .clone()
+                        .unwrap_or_else(|| self.client.connection_string.clone());
+                    let ip = self
+                        .client
+                        .local_ip
+                        .clone()
+                        .unwrap_or_else(|| self.client.connection_string.clone());
+                    self.beta_terminal.set_session_info(&host, &ip);
+                    self.beta_terminal.reset_history_cursor(self.history.len());
+                    self.beta_terminal.request_focus_next_frame();
+                }
+                ui.label(
+                    RichText::new("ratatui shell rendering (preview)")
+                        .small()
+                        .color(Color32::DARK_GRAY),
+                );
+            });
+
+            if self.use_beta_terminal {
+                let host = self
+                    .client
+                    .friendly_name
+                    .clone()
+                    .unwrap_or_else(|| self.client.connection_string.clone());
+                let ip = self
+                    .client
+                    .local_ip
+                    .clone()
+                    .unwrap_or_else(|| self.client.connection_string.clone());
+                self.beta_terminal.set_session_info(&host, &ip);
+
+                let completions: Vec<String> = self
+                    .command_suggestions
+                    .iter()
+                    .map(|c| c.completion.clone())
+                    .collect();
+                self.beta_terminal.set_completions(completions);
+
+                self.beta_terminal.sync_from_history(&self.history);
+                let action = self.beta_terminal.ui(ui, self.interactive);
+                if let Some(action) = action {
+                    use crate::tabs::admin_console::client_interface::tabs::beta_terminal::BetaTerminalAction;
+                    match action {
+                        BetaTerminalAction::Send(line) => {
+                            self.history.push(History {
+                                from: "You".to_string(),
+                                message: line.clone(),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                            self.my_command_history.push(History {
+                                from: "You".to_string(),
+                                message: line.clone(),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                            self.transport.send(WsMessage::Text(line));
+                            self.loading = true;
+                        }
+                        BetaTerminalAction::SendInteractive(line) => {
+                            self.history.push(History {
+                                from: "You".to_string(),
+                                message: line.clone(),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                            self.my_command_history.push(History {
+                                from: "You".to_string(),
+                                message: line.clone(),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                            match encode_to_vec(&Cmd::InteractiveInput(line), standard()) {
+                                Ok(bytes) => self.transport.send(WsMessage::Binary(bytes)),
+                                Err(e) => self.history.push(History {
+                                    from: "Client".to_string(),
+                                    message: e.to_string(),
+                                    timestamp: chrono::Local::now().to_rfc3339(),
+                                }),
+                            }
+                        }
+                        BetaTerminalAction::Quit => {
+                            let _ = self.send_cmd_tx.try_send(Cmd::Quit);
+                        }
+                        BetaTerminalAction::RequestCompletion(partial) => {
+                            self.get_ai_completions_for(&partial);
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
         let b_panel_marg = Margin::symmetric(5, 10);
 
         let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
@@ -548,7 +654,18 @@ impl WebSocketClient {
     fn get_ai_command_completions(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let partial_command = self.input.clone();
+            let partial = self.input.clone();
+            self.get_ai_completions_for(&partial);
+        }
+    }
+
+    /// Same as `get_ai_command_completions` but with an explicit partial,
+    /// so callers that hold the typed text outside `self.input` (the beta
+    /// terminal) can drive the same pipeline.
+    pub fn get_ai_completions_for(&mut self, partial: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let partial_command = partial.to_string();
             if partial_command.is_empty() || !self.ai_completion_enabled {
                 return;
             }

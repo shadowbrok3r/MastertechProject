@@ -1,5 +1,5 @@
 use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, ComboBox, Context, CursorIcon, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
-use crate::{ui_tools::{encode_style, tokyo_dark::{TokyoNight, TokyoNightStorm}}, PlatformSpawner, Spawner};
+use crate::{ui_tools::{encode_style, rerun_mtech::RerunMtech, tokyo_dark::{TokyoNight, TokyoNightStorm}}, PlatformSpawner, Spawner};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use derivative::Derivative;
@@ -156,6 +156,7 @@ impl ThemeConfig {
                     ui.selectable_value(selection, PresetStyles::CarlDark, "Carl Dark");
                     ui.selectable_value(selection, PresetStyles::TokyoNightStorm, "TokyoNight Storm");
                     ui.selectable_value(selection, PresetStyles::TokyoNight, "TokyoNight");
+                    ui.selectable_value(selection, PresetStyles::RerunMtech, "Rerun MTech");
                     ui.selectable_value(selection, PresetStyles::Custom, "Custom");
                 });
 
@@ -166,6 +167,7 @@ impl ThemeConfig {
                         PresetStyles::CarlDark => CarlDark.custom_style(),
                         PresetStyles::TokyoNightStorm => TokyoNightStorm.custom_style(),
                         PresetStyles::TokyoNight => TokyoNight.custom_style(),
+                        PresetStyles::RerunMtech => RerunMtech.custom_style(),
                         PresetStyles::Custom => return,
                     };
 
@@ -210,6 +212,15 @@ impl ThemeConfig {
                     self.open_fg_stroke_color = style.visuals.widgets.open.fg_stroke.color;
                     let s = Arc::new(style);
                     ctx.set_global_style((s).clone());
+                    let (success_c, accent2) = match *selection {
+                        PresetStyles::CarlDark => (CarlDark.fg_success_text_color_visuals(), CarlDark.secondary_accent_color_visuals()),
+                        PresetStyles::TokyoNightStorm => (TokyoNightStorm.fg_success_text_color_visuals(), TokyoNightStorm.secondary_accent_color_visuals()),
+                        PresetStyles::TokyoNight => (TokyoNight.fg_success_text_color_visuals(), TokyoNight.secondary_accent_color_visuals()),
+                        PresetStyles::RerunMtech => (RerunMtech.fg_success_text_color_visuals(), RerunMtech.secondary_accent_color_visuals()),
+                        PresetStyles::Custom => return,
+                    };
+                    crate::ui_tools::theme::set_success_color(ctx, success_c);
+                    crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -234,6 +245,7 @@ impl ThemeConfig {
                             PresetStyles::CarlDark => CarlDark.custom_style(),
                             PresetStyles::TokyoNightStorm => TokyoNightStorm.custom_style(),
                             PresetStyles::TokyoNight => TokyoNight.custom_style(),
+                            PresetStyles::RerunMtech => RerunMtech.custom_style(),
                             PresetStyles::Custom => return,
                         };
 
@@ -701,6 +713,7 @@ pub enum PresetStyles {
     CarlDark,
     TokyoNightStorm,
     TokyoNight,
+    RerunMtech,
     #[default]
     Custom
 }
@@ -711,6 +724,7 @@ impl PresetStyles {
             PresetStyles::CarlDark => "Carl Dark",
             PresetStyles::TokyoNightStorm => "TokyoNight Storm",
             PresetStyles::TokyoNight => "TokyoNight",
+            PresetStyles::RerunMtech => "Rerun MTech",
             PresetStyles::Custom => "Custom",
         }
     }
@@ -720,6 +734,7 @@ impl PresetStyles {
             "Carl Dark" => Self::CarlDark,
             "TokyoNight Storm" => Self::TokyoNightStorm,
             "TokyoNight" => Self::TokyoNight,
+            "Rerun MTech" => Self::RerunMtech,
             "Custom" => Self::Custom,
             _ => Self::Custom
         }
@@ -784,6 +799,24 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
             custom_style.override_font_id = Some(font);
 
             // Adjust spacing and interactions
+            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
+            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+            custom_style.spacing.combo_height = 200.0;
+            custom_style.spacing.combo_width = 100.0;
+            custom_style.interaction.selectable_labels = true;
+            custom_style.interaction.interact_radius = 10.0;
+            custom_style.interaction.show_tooltips_only_when_still = false;
+            custom_style.interaction.tooltip_delay = 0.1;
+            Arc::new(custom_style)
+        },
+        PresetStyles::RerunMtech => {
+            let mut custom_style = RerunMtech.custom_style();
+            let mut font = FontId::default();
+            font.size = config.font_size;
+            font.family = config.font.clone();
+
+            custom_style.override_font_id = Some(font);
+
             custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
             custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
             custom_style.spacing.combo_height = 200.0;

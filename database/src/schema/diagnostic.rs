@@ -1,6 +1,7 @@
 use crate::DATABASE;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::{Datetime, RecordId, SurrealValue};
+use surrealdb_types::{Kind, Value};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, SurrealValue)]
 pub struct PluginUsageRef {
@@ -10,8 +11,7 @@ pub struct PluginUsageRef {
 
 /// Structured category for a `DiagnosticEntry`. Replaces the old freeform
 /// category string so the AI is constrained to a known vocabulary.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, SurrealValue)]
-#[surreal(untagged)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiagnosticCategory {
     /// A discovered issue (errors found, anomalies, root causes)
     Finding,
@@ -37,6 +37,42 @@ pub enum DiagnosticCategory {
 
 impl Default for DiagnosticCategory {
     fn default() -> Self { Self::Note }
+}
+
+impl Serialize for DiagnosticCategory {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for DiagnosticCategory {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from_str(&s))
+    }
+}
+
+impl SurrealValue for DiagnosticCategory {
+    fn kind_of() -> Kind {
+        Kind::String
+    }
+
+    fn into_value(self) -> Value {
+        Value::String(self.as_str().to_string())
+    }
+
+    fn from_value(value: Value) -> Result<Self, surrealdb::Error>
+    where
+        Self: Sized,
+    {
+        match value {
+            Value::String(s) => Ok(Self::from_str(&s)),
+            other => Err(surrealdb::Error::validation(
+                format!("DiagnosticCategory expected string, got {other:?}"),
+                None,
+            )),
+        }
+    }
 }
 
 impl DiagnosticCategory {
@@ -146,16 +182,8 @@ pub struct DiagnosticEntry {
     pub detail: String,
     pub data: Option<serde_json::Value>,
     pub plugins_used: Vec<PluginUsageRef>,
-    /// Server-side vector for semantic similarity search across past
-    /// diagnostics (HNSW index lives on the SurrealDB side — see the
-    /// surrealdb-vector workspace skill).  The schema declares this as
-    /// a non-nullable `array`, so omitting it on insert yields:
-    /// `Couldn't coerce value for field 'embedding'… Expected 'array'
-    /// but found 'NONE'`.  We ship an empty array by default so writes
-    /// succeed before an embedding model has run; an offline backfill
-    /// job (or a future MCP "compute_embedding" tool) fills the real
-    /// vector in afterwards.  `#[serde(default)]` so older rows that
-    /// don't have the field round-trip cleanly through reads.
+    /// 768-dim vector from `fn::embed_text(title + detail)` on insert
+    /// (`DiagnosticEntry::create`). Populated on read; not sent empty on write.
     #[serde(default)]
     pub embedding: Vec<f32>,
 }
@@ -356,6 +384,10 @@ impl DiagnosticSession {
 }
 
 impl DiagnosticEntry {
+    fn embed_source(&self) -> String {
+        format!("{} {}", self.title.trim(), self.detail.trim())
+    }
+
     pub async fn list_all(start: i32) -> anyhow::Result<Vec<Self>> {
         let entries: Vec<Self> = DATABASE
             .query("SELECT * FROM diagnostic_entry ORDER BY timestamp DESC LIMIT 200 START $start")
@@ -370,11 +402,30 @@ impl DiagnosticEntry {
         e.id = super::random_record_id(super::DIAGNOSTIC_ENTRY_TABLE);
         e.timestamp = chrono::Utc::now().into();
 
-        let created: Option<Self> = DATABASE
-            .create(e.id.clone())
-            .content(e.clone())
+        DATABASE
+            .query(
+                "CREATE $id CONTENT {
+                    session_ref: $session_ref,
+                    timestamp: $timestamp,
+                    category: $category,
+                    title: $title,
+                    detail: $detail,
+                    data: $data,
+                    plugins_used: $plugins_used,
+                    embedding: fn::embed_text($embed_source)
+                }",
+            )
+            .bind(("id", e.id.clone()))
+            .bind(("session_ref", e.session_ref.clone()))
+            .bind(("timestamp", e.timestamp))
+            .bind(("category", e.category))
+            .bind(("title", e.title.clone()))
+            .bind(("detail", e.detail.clone()))
+            .bind(("data", e.data.clone()))
+            .bind(("plugins_used", e.plugins_used.clone()))
+            .bind(("embed_source", e.embed_source()))
             .await?;
 
-        Ok(created.map(|c| c.id).unwrap_or(e.id))
+        Ok(e.id)
     }
 }

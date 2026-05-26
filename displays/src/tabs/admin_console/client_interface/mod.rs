@@ -21,6 +21,7 @@ use web_time::Instant;
 use {
     tabs::terminal_viewer::RemoteTerminal,
     tabs::egui_viewer::InlineEguiViewer,
+    tabs::beta_terminal::BetaTerminal,
     crate::mcp::{CommandCompletion, DiagnosticResponse, McpService},
     crate::{PlatformSpawner, Spawner},
 };
@@ -97,6 +98,9 @@ pub struct WebSocketClient {
     remote_terminal: RemoteTerminal,
     #[cfg(not(target_arch="wasm32"))]
     pub egui_viewer: InlineEguiViewer,
+    #[cfg(not(target_arch="wasm32"))]
+    pub beta_terminal: BetaTerminal,
+    pub use_beta_terminal: bool,
     #[cfg(not(target_arch="wasm32"))]
     stop_tx: Option<crossbeam::channel::Sender<()>>,
     #[cfg(not(target_arch="wasm32"))]
@@ -235,6 +239,9 @@ Get-WmiObject")
             remote_terminal,
             #[cfg(not(target_arch="wasm32"))]
             egui_viewer: InlineEguiViewer::new(),
+            #[cfg(not(target_arch="wasm32"))]
+            beta_terminal: BetaTerminal::new(),
+            use_beta_terminal: false,
             #[cfg(not(target_arch="wasm32"))]
             stop_tx: if cfg!(not(target_arch="wasm32")) { Some(stop_tx) } else { None },
             client,

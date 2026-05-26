@@ -5,7 +5,6 @@ use sysinfo::{Components, Disks, Motherboard, Networks, Product, System};
 use num_format::{Locale, ToFormattedString};
 use crossbeam::channel::Sender;
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 use database::schema::RecordId;
 use log::{error, info};
 use reqwest::Client;
@@ -606,15 +605,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
 // Function to generate client ID
 pub fn generate_client_id(hostname: String, cpu: String) -> String {
-    let cpu_id = env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
-    let combined = format!("{}-{}-{}", hostname, cpu, cpu_id);
-    info!("Filesystem -> generate_client_id -> combined: {}", combined.clone());
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let result = hasher.finalize();
-    let hex_string = hex::encode(result);
-    info!("Filesystem -> generate_client_id -> hex_string: {}", hex_string.clone());
-    hex_string
+    stress_runner::generate_client_hash(&hostname, &cpu)
 }
 
 pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{

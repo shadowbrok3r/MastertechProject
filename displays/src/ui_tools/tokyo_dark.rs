@@ -52,6 +52,10 @@ impl Aesthetix for TokyoNight {
         eframe::egui::Color32::from_rgb(229, 46, 47)
     }
 
+    fn fg_info_color_visuals(&self) -> eframe::egui::Color32 {
+        eframe::egui::Color32::from_rgb(113, 189, 251)
+    }
+
     fn dark_mode_visuals(&self) -> bool {
         true
     }

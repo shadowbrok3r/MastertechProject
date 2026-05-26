@@ -8,6 +8,7 @@ use eframe::egui::{
     Align, Button, Color32, Context, CornerRadius, Frame, Grid, Layout, Margin, RichText,
     ScrollArea, TextEdit, Vec2, Window,
 };
+use crate::ui_tools::theme;
 use serde::{Deserialize, Serialize};
 
 /// State for the TUR creation modal
@@ -158,7 +159,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                 ui.add_space(8.0);
 
                 Frame::NONE
-                    .fill(Color32::from_rgb(25, 28, 35))
+                    .fill(theme::bg_surface(ui))
                     .inner_margin(Margin::same(12))
                     .corner_radius(CornerRadius::same(6))
                     .show(ui, |ui| {
@@ -170,7 +171,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // Hostname
                                 ui.label(
                                     RichText::new("Hostname:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.hostname)
@@ -181,7 +182,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // OS
                                 ui.label(
                                     RichText::new("Operating System:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.operating_system)
@@ -191,7 +192,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
 
                                 // CPU
                                 ui.label(
-                                    RichText::new("CPU:").color(Color32::from_rgb(160, 165, 175)),
+                                    RichText::new("CPU:").color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.cpu).desired_width(300.0),
@@ -200,7 +201,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
 
                                 // GPU
                                 ui.label(
-                                    RichText::new("GPU:").color(Color32::from_rgb(160, 165, 175)),
+                                    RichText::new("GPU:").color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.gpu).desired_width(300.0),
@@ -209,7 +210,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
 
                                 // RAM
                                 ui.label(
-                                    RichText::new("RAM:").color(Color32::from_rgb(160, 165, 175)),
+                                    RichText::new("RAM:").color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.ram).desired_width(300.0),
@@ -219,7 +220,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // Drives
                                 ui.label(
                                     RichText::new("Drives:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.drives).desired_width(300.0),
@@ -229,7 +230,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // Serial
                                 ui.label(
                                     RichText::new("Serial Number:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.device_serial)
@@ -240,7 +241,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // Product Name
                                 ui.label(
                                     RichText::new("Product Name:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::singleline(&mut state.product_name)
@@ -257,7 +258,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                 ui.add_space(8.0);
 
                 Frame::NONE
-                    .fill(Color32::from_rgb(25, 28, 35))
+                    .fill(theme::bg_surface(ui))
                     .inner_margin(Margin::same(12))
                     .corner_radius(CornerRadius::same(6))
                     .show(ui, |ui| {
@@ -268,7 +269,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // Service Number
                                 ui.label(
                                     RichText::new("Service Number: *")
-                                        .color(Color32::from_rgb(255, 200, 100)),
+                                        .color(theme::warn(ui)),
                                 );
                                 ui.horizontal(|ui| {
                                     ui.add(
@@ -289,7 +290,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                                 // Notes
                                 ui.label(
                                     RichText::new("Notes:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.add(
                                     TextEdit::multiline(&mut state.notes)
@@ -308,14 +309,14 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                     ui.add_space(8.0);
 
                     Frame::NONE
-                        .fill(Color32::from_rgb(25, 28, 35))
+                        .fill(theme::bg_surface(ui))
                         .inner_margin(Margin::same(12))
                         .corner_radius(CornerRadius::same(6))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Name:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.label(
                                     RichText::new(&customer.name)
@@ -325,14 +326,14 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Phone:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.label(&customer.phone_number);
                             });
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new("Email:")
-                                        .color(Color32::from_rgb(160, 165, 175)),
+                                        .color(theme::weak_text(ui)),
                                 );
                                 ui.label(&customer.email);
                             });
@@ -362,7 +363,7 @@ pub fn show_tur_modal(ctx: &Context, state: &mut TurModalState) -> TurModalResul
                     )
                     .min_size(Vec2::new(140.0, 32.0))
                     .fill(if can_create {
-                        Color32::from_rgb(50, 150, 80)
+                        theme::success(ui)
                     } else {
                         Color32::from_rgb(60, 65, 75)
                     });

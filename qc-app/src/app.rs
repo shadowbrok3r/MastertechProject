@@ -29,9 +29,10 @@ fn local_computer_record() -> database::schema::RecordId {
     static CACHED: OnceLock<database::schema::RecordId> = OnceLock::new();
     CACHED
         .get_or_init(|| {
-            let id = crate::reporting::machine_id();
-            log::info!("qc-app: local computer record cached as computer:{id}");
-            database::schema::RecordId::new(database::schema::COMPUTER_TABLE, id)
+            let (hostname, cpu) = crate::reporting::host_name_and_cpu_brand();
+            let key = stress_runner::computer_record_key(&hostname, &cpu);
+            log::info!("qc-app: local computer record cached as computer:{key}");
+            database::schema::RecordId::new(database::schema::COMPUTER_TABLE, key)
         })
         .clone()
 }

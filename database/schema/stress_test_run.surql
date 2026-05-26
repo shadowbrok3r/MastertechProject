@@ -109,13 +109,10 @@ DEFINE FIELD tags                ON stress_test_run TYPE array<string> DEFAULT [
 DEFINE FIELD tags.*              ON stress_test_run TYPE string                                     PERMISSIONS FULL;
 
 -- --- Semantic similarity ---
--- 768-dim sentence-transformer embedding (matches the HNSW `strun_embedding`
--- index above). Required `array<float>` rather than `option<array<float>>`
--- because the HNSW index needs a populated vector to insert into the graph;
--- `DEFAULT []` keeps writes from failing before an embedding model has run,
--- and the Rust struct ships an empty Vec by default for the same reason
--- (mirrors the `diagnostic_entry.embedding` pattern). An offline backfill
--- job — or a future MCP "compute_embedding" tool — fills the real vector
--- in afterwards.
-DEFINE FIELD embedding           ON stress_test_run TYPE array<float> DEFAULT []                   PERMISSIONS FULL;
+-- `none | array<float>` so stress tests created offline (no Ollama available)
+-- store NONE and the HNSW simply skips those rows. The Rust struct sends no
+-- field when the Vec is empty (`skip_serializing_if = "Vec::is_empty"`), so
+-- SurrealDB receives nothing and stores NONE. A backfill job or AI review pass
+-- populates embeddings for completed runs.
+DEFINE FIELD embedding           ON stress_test_run TYPE none | array<float>                       PERMISSIONS FULL;
 DEFINE FIELD embedding.*         ON stress_test_run TYPE float                                     PERMISSIONS FULL;

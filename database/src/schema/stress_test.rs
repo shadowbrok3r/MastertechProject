@@ -101,6 +101,10 @@ pub struct HardwareComponent {
     /// How many `computer` records reference this component. Bumped by
     /// the normalizer when it links a new machine.
     pub occurrence_count: u64,
+    /// 768-dim embedding computed by `fn::embed_text(kind + vendor + model + display_name)`.
+    /// `VALUE` in the DB schema means SurrealDB always overwrites this on insert/update.
+    #[serde(default)]
+    pub embedding: Vec<f32>,
 }
 
 impl HardwareComponent {
@@ -146,6 +150,7 @@ impl HardwareComponent {
             first_seen: now.clone(),
             last_seen: now,
             occurrence_count: 0,
+            embedding: Vec::new(),
         }
     }
 
@@ -758,8 +763,9 @@ pub struct StressTestRun {
     pub tech: Option<String>,
     /// Convenience copy of `computer.hostname` at run-time.
     pub hostname: Option<String>,
-    /// Convenience copy of qc-app's persisted `machine_id` (sha256 hash
-    /// of hostname+CPU brand). Lets us correlate runs across DB resets.
+    /// Convenience copy of the full `generate_client_id` SHA-256 hex
+    /// (`client_hash` on `ConnectedClient`). The `computer` FK uses
+    /// `{hostname}:{hash[..9]}` instead.
     pub machine_id: Option<String>,
     pub ambient_temp_c: Option<f32>,
     pub environment_notes: Option<String>,
@@ -793,19 +799,12 @@ pub struct StressTestRun {
     pub ai_assessment: Option<serde_json::Value>,
     pub tags: Vec<String>,
 
-    /// Server-side 768-dim vector for "find runs that look like this one"
-    /// (root-cause triage, regression hunts, anomaly clustering). The
-    /// HNSW index lives on the SurrealDB side (`strun_embedding`, see
-    /// `database/schema/stress_test_run.surql`). Mirrors the
-    /// `DiagnosticEntry.embedding` pattern: the schema declares this
-    /// non-nullable, so omitting it on insert yields `Couldn't coerce
-    /// value for field 'embedding'… Expected 'array' but found 'NONE'`.
-    /// We ship an empty array by default so writes succeed before an
-    /// embedding model has run; an offline backfill job (or a future
-    /// MCP "compute_embedding" tool) fills the real vector in afterwards.
-    /// `#[serde(default)]` so older rows that don't have the field
-    /// round-trip cleanly through reads.
-    #[serde(default)]
+    /// 768-dim embedding for semantic similarity search. `none | array<float>`
+    /// in the DB so stress tests created offline (no Ollama) store NONE and
+    /// the HNSW index simply skips them. `skip_serializing_if` prevents Rust
+    /// from sending `[]` on insert, which would hit the HNSW dimension check.
+    /// A backfill job or AI review pass populates embeddings for completed runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embedding: Vec<f32>,
 }
 
@@ -874,6 +873,20 @@ impl StressTestRun {
             .content(run.clone())
             .await?;
         Ok(created.map(|c| c.id).unwrap_or_else(|| run.id.clone()))
+    }
+
+    /// Insert a completed run and linked events (backfill / hung-run recovery).
+    pub async fn create_completed(
+        run: &Self,
+        events: &[StressTestEvent],
+    ) -> anyhow::Result<RecordId> {
+        let id = Self::create(run).await?;
+        for event in events {
+            let mut e = event.clone();
+            e.run_ref = id.clone();
+            StressTestEvent::create(&e).await?;
+        }
+        Ok(id)
     }
 
     /// Finalize: write summary, verdict, finish reason, and ended_at in

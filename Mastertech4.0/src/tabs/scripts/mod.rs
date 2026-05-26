@@ -128,6 +128,8 @@ pub struct EguiScriptsTab {
     /// can time it out. Resolved when a Success / Error / Warning log entry
     /// for the matching script_name lands in `state.logs`.
     pub pending_mcp_runs: Vec<McpPendingRun>,
+    /// diagnostic_session id from the latest MCP scripts_run request.
+    pub mcp_diagnostic_session_id: Option<String>,
 }
 
 /// Tracks one in-flight MCP-initiated script run inside `EguiScriptsTab`.
@@ -184,6 +186,7 @@ impl EguiScriptsTab {
             selected_sources: Vec::new(),
             selected_destination: None,
             pending_mcp_runs: Vec::new(),
+            mcp_diagnostic_session_id: None,
         }
     }
 
@@ -212,6 +215,10 @@ impl EguiScriptsTab {
                 self.customer_email = Some(em.to_string());
             }
         }
+        self.mcp_diagnostic_session_id = req
+            .diagnostic_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty());
 
         let log_start_index = self.state.logs.len();
         self.log_info(
@@ -578,115 +585,117 @@ impl EguiScriptsTab {
         category: ScriptCategory,
         script_name: String,
     ) {
-        use stress_kit::{
-            scenario::{FinishReason, ScenarioDefinition, ScenarioEvent, ScenarioRunner, ScenarioStage},
-            StressConfig, Stressor,
-        };
+        use std::sync::Arc;
+        use stress_kit::telemetry::TelemetryAgent;
+        use stress_runner::{drive_blocking, gpu_probe_spec, RunResult, RunUpdate};
+
         let _ = log_tx.try_send(ScriptLogEntry::info(
             category.clone(),
             &script_name,
             "Starting 4-stage GPU probe (compute → matmul → VRAM → PCIe)",
         ));
 
-        let stages = vec![
-            ScenarioStage {
-                label: "gpu_compute".into(),
-                config: StressConfig { stressor: Stressor::Gpu, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
-                duration_secs: 30,
-            },
-            ScenarioStage {
-                label: "gpu_matmul".into(),
-                config: StressConfig { stressor: Stressor::GpuMatmul, threads: 0, timeout: None, memory_cap_mb: 256, disk_file_mb: 16 },
-                duration_secs: 30,
-            },
-            ScenarioStage {
-                label: "gpu_vram".into(),
-                config: StressConfig { stressor: Stressor::GpuVram, threads: 0, timeout: None, memory_cap_mb: 1024, disk_file_mb: 16 },
-                duration_secs: 45,
-            },
-            ScenarioStage {
-                label: "gpu_pcie".into(),
-                config: StressConfig { stressor: Stressor::GpuPcie, threads: 0, timeout: None, memory_cap_mb: 64, disk_file_mb: 16 },
-                duration_secs: 20,
-            },
-        ];
-
+        let client = crate::filesystem::get_client_hash();
+        let service_number = self.service_number_input.clone();
+        let diagnostic_session_id = self.mcp_diagnostic_session_id.clone().unwrap_or_default();
         let log_tx2 = log_tx.clone();
-        let script_name2 = script_name.clone();
         let category2 = category.clone();
-        std::thread::spawn(move || {
-            let runner = ScenarioRunner::start(ScenarioDefinition {
-                stages,
-                total_wall_secs: None,
-                repeat_until_total: false,
-            });
-            let mut last_throughput = 0.0f64;
-            let mut last_error: Option<String> = None;
-            let mut current_stage = String::new();
+        let script_name2 = script_name.clone();
 
-            loop {
-                let events = runner.try_recv_all();
-                for ev in events {
-                    match ev {
-                        ScenarioEvent::StageStarted { index, label, stage_count } => {
-                            current_stage = label.clone();
-                            let _ = log_tx2.try_send(ScriptLogEntry::info(
-                                category2.clone(),
-                                &script_name2,
-                                format!("Stage {}/{}: {label}", index + 1, stage_count),
-                            ));
-                        }
-                        ScenarioEvent::Tick { stage_index: _, metrics } => {
-                            last_throughput = metrics.throughput;
-                            if let Some(err) = metrics.last_error.as_ref() {
-                                if last_error.as_deref() != Some(err.as_str()) {
-                                    let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                                        category2.clone(),
-                                        &script_name2,
-                                        format!("{current_stage}: {err}"),
-                                    ));
-                                    last_error = Some(err.clone());
-                                }
-                            }
-                        }
-                        ScenarioEvent::StageFinished { index: _ } => {
-                            let _ = log_tx2.try_send(ScriptLogEntry::info(
-                                category2.clone(),
-                                &script_name2,
-                                format!("{current_stage}: finished (last throughput {:.2})", last_throughput),
-                            ));
-                        }
-                        ScenarioEvent::Finished { reason, total_elapsed_secs } => {
-                            let level_success = matches!(reason, FinishReason::Completed) && last_error.is_none();
-                            let msg = format!(
-                                "GPU probe {} in {:.1}s",
-                                if level_success { "passed" } else { "completed with issues" },
-                                total_elapsed_secs
-                            );
-                            if level_success {
-                                let _ = log_tx2.try_send(ScriptLogEntry::success(
-                                    category2.clone(),
-                                    &script_name2,
-                                    msg,
-                                ));
-                            } else if let Some(err) = last_error.clone() {
-                                let _ = log_tx2.try_send(ScriptLogEntry::error(
-                                    category2.clone(),
-                                    &script_name2,
-                                    format!("{msg} — {err}"),
-                                ));
-                            } else {
-                                let _ = log_tx2.try_send(ScriptLogEntry::warning(
-                                    category2.clone(),
-                                    &script_name2,
-                                    format!("{msg} (reason: {})", reason.label()),
-                                ));
-                            }
-                            return;
-                        }
+        std::thread::spawn(move || {
+            let telemetry = Arc::new(TelemetryAgent::start(1000));
+            let mut spec = gpu_probe_spec(
+                client.computer.clone().expect("get_client_hash sets computer"),
+                1.0,
+            );
+            spec.tags.push("origin:scripts".into());
+            spec.hostname = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .ok();
+            spec.machine_id = Some(client.client_hash.clone());
+            if !service_number.is_empty() {
+                spec.service_order = Some(database::schema::RecordId::new(
+                    database::schema::TICKET_TABLE,
+                    service_number,
+                ));
+            }
+            if !diagnostic_session_id.is_empty() {
+                spec.session_ref = Some(database::schema::entity_link::parse_record_id(
+                    &diagnostic_session_id,
+                    database::schema::DIAGNOSTIC_SESSION_TABLE,
+                ));
+            }
+
+            let verdict = drive_blocking(spec, telemetry, |update| match update {
+                RunUpdate::Started { run_id } => {
+                    use database::schema::RecordIdExt;
+                    let _ = log_tx2.try_send(ScriptLogEntry::info(
+                        category2.clone(),
+                        &script_name2,
+                        format!("stress_test_run id: {}", run_id.key_string()),
+                    ));
+                }
+                RunUpdate::StageStarted { index, label, stage_count } => {
+                    let _ = log_tx2.try_send(ScriptLogEntry::info(
+                        category2.clone(),
+                        &script_name2,
+                        format!("Stage {}/{}: {label}", index + 1, stage_count),
+                    ));
+                }
+                RunUpdate::Tick { metrics, stage_label, .. } => {
+                    if let Some(err) = metrics.last_error.as_ref() {
+                        let stage = stage_label.unwrap_or_else(|| "gpu".into());
+                        let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                            category2.clone(),
+                            &script_name2,
+                            format!("{stage}: {err}"),
+                        ));
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                RunUpdate::StageFinished { .. } => {}
+                RunUpdate::Finished(v) => {
+                    let msg = format!(
+                        "GPU probe {} in {:.1}s (run persisted)",
+                        match v.result {
+                            RunResult::Pass => "passed",
+                            RunResult::Fail => "failed",
+                            RunResult::Aborted => "aborted",
+                            RunResult::Inconclusive => "inconclusive",
+                            RunResult::InProgress => "in progress",
+                        },
+                        v.duration_secs
+                    );
+                    let entry = if v.result == RunResult::Pass {
+                        ScriptLogEntry::success(category2.clone(), &script_name2, msg)
+                    } else if v.result == RunResult::Aborted {
+                        ScriptLogEntry::warning(category2.clone(), &script_name2, msg)
+                    } else {
+                        ScriptLogEntry::error(category2.clone(), &script_name2, msg)
+                    };
+                    let _ = log_tx2.try_send(entry);
+                }
+                RunUpdate::Warning { message } => {
+                    let _ = log_tx2.try_send(ScriptLogEntry::warning(
+                        category2.clone(),
+                        &script_name2,
+                        message,
+                    ));
+                }
+                RunUpdate::Error { message } => {
+                    let _ = log_tx2.try_send(ScriptLogEntry::error(
+                        category2.clone(),
+                        &script_name2,
+                        message,
+                    ));
+                }
+            });
+
+            if verdict.is_none() {
+                let _ = log_tx2.try_send(ScriptLogEntry::error(
+                    category2,
+                    &script_name2,
+                    "GPU probe exited without a verdict",
+                ));
             }
         });
     }

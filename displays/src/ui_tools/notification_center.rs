@@ -2,7 +2,7 @@ use database::schema::{utilities::NotificationMod, Notification};
 use database::live_data::{handle_live_delete, update_or_insert_anything};
 use eframe::egui::*;
 
-use crate::{PlatformSpawner, Spawner};
+use crate::{ui_tools::theme, PlatformSpawner, Spawner};
 
 /// Known notification categories
 pub const NOTIFICATION_CATEGORIES: &[&str] = &[
@@ -85,7 +85,7 @@ impl NotificationCenter {
                 
                 // Color alert category differently
                 let cat_color = if cat == "ALERT" {
-                    Color32::from_rgb(243, 139, 168) // Red-ish for alerts
+                    theme::error(ui)
                 } else if is_selected {
                     Color32::from_rgb(42, 222, 192)
                 } else {

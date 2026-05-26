@@ -2,7 +2,7 @@ id = "20260523190000__slice7_run_embedding"
 name = "slice7_run_embedding"
 # Required by `database/scripts/migrate-local.{ps1,sh}` — the apply script
 # greps for `state = "planned"` to find the latest pending manifest.
-state = "planned"
+state = "completed"
 # Source: slice6's target hash. Slice6 is the previous pending rollout in
 # `state = "planned"` (relaxes bios_settings + driver_versions). If slice6
 # hasn't been applied yet on this environment, surrealkit will still pick

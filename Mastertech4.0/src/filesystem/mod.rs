@@ -87,6 +87,13 @@ pub fn get_client_hash() -> ConnectedClient {
         .clone()
 }
 
+/// Cached `computer` record id — same key as `ConnectedClient.computer`.
+pub fn local_computer_record() -> RecordId {
+    get_client_hash()
+        .computer
+        .expect("get_client_hash always sets computer")
+}
+
 static MACHINE_INSTANCE: std::sync::OnceLock<std::sync::Arc<machine::Machine>> = std::sync::OnceLock::new();
 
 pub async fn get_machine_instance() -> Result<&'static std::sync::Arc<machine::Machine>, nvml_wrapper::error::NvmlError> {

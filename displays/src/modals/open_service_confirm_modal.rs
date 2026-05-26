@@ -17,6 +17,7 @@
 //!      to read.
 
 use crate::open_service_suggestions::OpenServiceSuggestion;
+use crate::ui_tools::theme;
 use database::schema::service_match::{OpenServiceCandidate, PrestaSpecsSnapshot};
 use eframe::egui::{
     Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText,
@@ -48,12 +49,12 @@ impl SpecSource {
             SpecSource::Manual => "EDIT",
         }
     }
-    fn badge_color(self) -> Color32 {
+    fn badge_color(self, ui: &Ui) -> Color32 {
         match self {
-            SpecSource::Live => Color32::from_rgb(120, 220, 140),
-            SpecSource::Presta => Color32::from_rgb(255, 215, 120),
-            SpecSource::Empty => Color32::from_rgb(140, 140, 145),
-            SpecSource::Manual => Color32::from_rgb(180, 200, 230),
+            SpecSource::Live => theme::success(ui),
+            SpecSource::Presta => theme::warn(ui),
+            SpecSource::Empty => theme::weak_text(ui),
+            SpecSource::Manual => theme::info(ui),
         }
     }
 }
@@ -324,7 +325,7 @@ impl OpenServiceConfirmModal {
             Some(c) => c,
             None => {
                 ui.colored_label(
-                    Color32::from_rgb(220, 100, 100),
+                    theme::error(ui),
                     "Candidate index out of range — close and try again.",
                 );
                 return;
@@ -355,7 +356,7 @@ impl OpenServiceConfirmModal {
         ui.label(RichText::new("Check-in Notes").heading().strong());
         ui.add_space(4.0);
         Frame::default()
-            .fill(Color32::from_rgb(28, 28, 32))
+            .fill(theme::bg_extreme(ui))
             .stroke(ui.style().visuals.window_stroke)
             .corner_radius(eframe::egui::CornerRadius::same(4))
             .inner_margin(Margin::same(8))
@@ -401,7 +402,7 @@ impl OpenServiceConfirmModal {
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 let badge = RichText::new(f.source.badge_label())
-                                    .color(f.source.badge_color())
+                                    .color(f.source.badge_color(ui))
                                     .strong()
                                     .small();
                                 ui.label(badge);
@@ -445,7 +446,7 @@ impl OpenServiceConfirmModal {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if Button::new(
                     RichText::new("Confirm & bind")
-                        .color(Color32::from_rgb(80, 200, 120))
+                        .color(theme::success(ui))
                         .strong(),
                 )
                 .ui(ui)
@@ -460,7 +461,7 @@ impl OpenServiceConfirmModal {
                 ui.add_space(6.0);
                 if Button::new(
                     RichText::new("Reject")
-                        .color(Color32::from_rgb(220, 120, 120))
+                        .color(theme::error(ui))
                         .strong(),
                 )
                 .ui(ui)

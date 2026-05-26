@@ -5,7 +5,7 @@
 
 use database::schema::{
     random_record_id, CoreSampleRow, DiskRateRow, NetworkRateRow, RecordId, StressKitStressor,
-    StressTestMetric, TargetKind, STRESS_TEST_METRIC_TABLE,
+    StressTestMetric, TargetKind, COMPUTER_TABLE, STRESS_TEST_METRIC_TABLE,
 };
 use stress_kit::{
     telemetry::TelemetrySnapshot,
@@ -176,15 +176,48 @@ fn snapshot_to_datetime(unix_ms: u64) -> database::schema::Datetime {
         .into()
 }
 
-/// Stable per-machine ID used to correlate runs across DB resets. Mirrors the
-/// qc-app `reporting::machine_id` formula (sha256 of hostname + CPU brand) so
-/// runs persisted from both apps collapse to the same machine string.
-pub fn compute_machine_id(hostname: &str, cpu_brand: &str) -> String {
+/// `hostname-cpu-PROCESSOR_IDENTIFIER` → SHA-256 hex. Matches Mastertech
+/// `filesystem::system_info::generate_client_id` and qc-app `reporting`.
+pub fn generate_client_hash(hostname: &str, cpu_brand: &str) -> String {
     use sha2::{Digest, Sha256};
+    let cpu_id = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
+    let combined = format!("{}-{}-{}", hostname, cpu_brand.trim(), cpu_id);
     let mut hasher = Sha256::new();
-    hasher.update(hostname.trim().to_ascii_lowercase().as_bytes());
-    hasher.update(b"|");
-    hasher.update(cpu_brand.trim().to_ascii_lowercase().as_bytes());
-    let digest = hasher.finalize();
-    hex::encode(&digest[..16])
+    hasher.update(combined.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Record key for `computer` / `connected_client` (`HOSTNAME:hash_prefix`).
+pub fn computer_record_key(hostname: &str, cpu_brand: &str) -> String {
+    let hash = generate_client_hash(hostname, cpu_brand);
+    format!("{}:{}", hostname, &hash[..9])
+}
+
+/// Full client hash stored on `StressTestRun.machine_id` for correlation.
+pub fn compute_machine_id(hostname: &str, cpu_brand: &str) -> String {
+    generate_client_hash(hostname, cpu_brand)
+}
+
+/// Stable `computer:<HOSTNAME:hash9>` for the local host.
+pub fn local_computer_record() -> RecordId {
+    use std::sync::OnceLock;
+    use sysinfo::{CpuRefreshKind, RefreshKind, System};
+
+    static CACHED: OnceLock<RecordId> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            let hostname = System::host_name().unwrap_or_default();
+            let mut sys = System::new_with_specifics(
+                RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
+            );
+            sys.refresh_cpu_list(CpuRefreshKind::everything());
+            let cpu = sys
+                .cpus()
+                .first()
+                .map(|c| c.brand().trim().to_string())
+                .unwrap_or_default();
+            let key = computer_record_key(&hostname, &cpu);
+            RecordId::new(COMPUTER_TABLE, key)
+        })
+        .clone()
 }
