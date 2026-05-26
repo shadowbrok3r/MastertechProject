@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use log::info;
 
 use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions};
+use crate::ui_tools::theme;
 
 impl Displayable for LiveTaskPayload {
     fn display_cards(
@@ -173,13 +174,10 @@ pub fn date_colors(ui: &mut Ui, due_date: DateTime<Utc>, _complete: bool) -> Col
     let due_secs = due_date_naive.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
 
     if due_secs < current_secs {
-        // Overdue - red
-        ui.style().visuals.error_fg_color
+        theme::error(ui)
     } else if due_secs <= current_secs + three_days_secs {
-        // Today to 3 days from now - warning color (orange/yellow)
-        Color32::from_rgb(217, 255, 0)
+        theme::warn(ui)
     } else {
-        // Beyond 3 days - green
-        Color32::from_rgb(11,244,192)
+        theme::success(ui)
     }
 }
