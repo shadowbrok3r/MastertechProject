@@ -1,10 +1,10 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole}, ui_tools::{notification_center::NotificationCenter, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, pages::{account_settings::UserPreferences, login_page::Login, signup_page::Signup}, tabs::{admin_console::AdminConsole, ai_playground::AiPlayground, database_viewer::DatabaseEditor, dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession}, github::{GithubIssue, GithubRelease}, koth::Koth, presta_order::PrestashopOrderForm, raw_queries::QueryEditor, resource_monitor::ResourceMonitor, sales_tracker::SalesTracker, stock::StockTable, task_audit::TaskAuditViewer, tasks::task_layout::{LayoutConfig, TaskLayout}, user_chat::UserChat, web_console::WebConsole, TabId}, ui_tools::{notification_center::NotificationCenter, theme_config::{apply_default_theme, set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions, Spawner};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, CarboniteResponse, ConnectedClient, LiveTaskPayload, Notification, Status, Store, TaskNotePayload, TaskNoteRead, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
-use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{live_data::Action, schema::RecordId};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
+use egui_dock::NodeIndex;
 use serde::{Deserialize, Serialize};
 use anyhow::Error;
 // `Spawner` (the trait carrying `spawn`) is already pulled in via the
@@ -49,7 +49,7 @@ impl Default for AppState {
 #[derive(Serialize)]
 pub struct SharedContext {
     pub state: AppState,
-    pub tree: DockState<String>,
+    pub dock: DockSession,
     // User and Client Related Fields
     /// {Sends users from database}
     #[serde(skip)]
@@ -303,19 +303,20 @@ pub struct SharedContext {
     pub user_settings: UserSettings,
     pub update_settings: bool,
     pub get_settings: bool,
-    /// {Open tabs in the UI}
-    pub open_tabs: HashSet<String>,
     #[serde(skip)]
-    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
+    pub added_nodes: Vec<(egui_dock::SurfaceIndex, NodeIndex)>,
     /// Tabs requested to be added from TabViewer::add_popup; applied after DockArea::show
     #[serde(skip)]
-    pub pending_tab_adds: Vec<(SurfaceIndex, NodeIndex, String)>,
+    pub pending_tab_adds: Vec<(egui_dock::SurfaceIndex, NodeIndex, TabId)>,
     /// Tabs requested to be removed from TabViewer::add_popup; applied after DockArea::show
     #[serde(skip)]
-    pub pending_tab_removes: Vec<String>,
-    /// Tab name to activate after DockArea draws to avoid mutating a stale DockState
+    pub pending_tab_removes: Vec<TabId>,
+    /// Tab to activate after DockArea draws to avoid mutating a stale DockState
     #[serde(skip)]
-    pub pending_activate_tab: Option<String>,
+    pub pending_activate_tab: Option<TabId>,
+    /// Tabs to open on the focused leaf after DockArea::show
+    #[serde(skip)]
+    pub pending_tab_opens: Vec<TabId>,
     /// Tracks when task notes were last read by the current user (task_id -> last_read_at)
     pub last_read_notes: HashMap<RecordId, chrono::DateTime<chrono::Utc>>,
     /// {Read-state rows fetched from SurrealDB on initial load (task_note_read table)}
@@ -510,18 +511,19 @@ impl SharedContext {
             crossbeam::channel::bounded::<Vec<FleetAgentSummary>>(1);
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
+        apply_default_theme(&cc.egui_ctx);
         let web_console_layout = AdminConsole::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
         
 
-        let tree = if cfg!(target_arch="wasm32") {
-            default_tree_wasm()
+        let dock = if cfg!(target_arch = "wasm32") {
+            default_dock_session_wasm()
         } else {
-            default_tree()
+            default_dock_session_native()
         };
 
         Self {
-            tree: tree.0,
+            dock,
             prestashop_order_form: PrestashopOrderForm::new(),
             koth: Koth::default(),
             first_run: true,
@@ -610,11 +612,11 @@ impl SharedContext {
             search_input: String::new(),
             total_download_size: 0.0,
             download_progress: 0.0,
-            open_tabs: tree.1,
-            added_nodes: Vec::new(),
             pending_tab_adds: Vec::new(),
             pending_tab_removes: Vec::new(),
             pending_activate_tab: None,
+            pending_tab_opens: Vec::new(),
+            added_nodes: Vec::new(),
             last_read_notes: HashMap::new(),
             read_state_tx, read_state_rx,
             pending_admin_console_focus: None,
@@ -1035,79 +1037,18 @@ fn setup_custom_fonts(ctx: &Context) {
     ctx.set_fonts(fonts);
 }
 
-pub fn default_tree_wasm() -> (DockState<String>, HashSet<String>) {
-    let mut open_tabs = HashSet::new();
-    let mut tree = DockState::new(vec![
-        "Store Tasks".to_owned(),
-        "Completed Tasks".to_owned(),
-        "Inventory".to_owned(),
-        "Logs".to_owned(),
-    ]);
-
-    let [_, _] = tree.main_surface_mut().split_below(// .split_left(
-        NodeIndex::root(), // b,
-        0.6,
-        vec![
-            "My Tasks".to_owned(),
-            "Bug Report".to_owned(),
-            "Task Audit".to_owned(),
-        ],
-    );
-
-    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-
-    for node in tree[SurfaceIndex::main()].iter() {
-        if let Node::Leaf(tabs) = node {
-            for tab in &tabs.tabs {
-                open_tabs.insert(tab.clone());
-            }
-        }
-    }
-
-    (tree, open_tabs)
+pub fn default_tree() -> DockSession {
+    default_dock_session_native()
 }
 
-pub fn default_tree() -> (DockState<String>, HashSet<String>) {
-    let mut tree = DockState::new(vec![
-        "TUR Sheet".to_owned(),
-        "My Tasks".to_owned(),
-        "Store Tasks".to_owned(),
-        "Completed Tasks".to_owned(),
-        // "Minidump Analysis".to_owned(),
-        "Downloads".to_owned(),
-        "Inventory".to_owned(),
-        // "Ai".to_owned(),
-    ]);
-    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+pub fn default_tree_wasm() -> DockSession {
+    default_dock_session_wasm()
+}
 
-    let [_a, _b] = tree.main_surface_mut().split_left(
-        NodeIndex::root(),
-        0.30,
-        vec!["File Browser 📂".to_owned(), "Logs".to_owned()],
-    );
-    let [_a, b] = tree.main_surface_mut().split_below(
-        NodeIndex::root(),
-        0.65,
-        vec!["Websockets".to_owned()],
-    );
-    let [_, _] = tree.main_surface_mut().split_left(
-        b,
-        0.45,
-        vec!["SysInfo".to_owned(), "Bug Tracker".to_owned(), "Resource Monitor".to_owned()],
-    );
-    let [_, _] = tree.main_surface_mut().split_left(
-        b,
-        0.20,
-        vec!["Scripts".to_owned(), "My Tools".to_owned()],
-    );
-
-    let mut open_tabs = HashSet::new();
-    for node in tree[SurfaceIndex::main()].iter() {
-        if let Node::Leaf(leafs)= node {
-            for tab in leafs.tabs.iter() {
-                open_tabs.insert(tab.clone());
-            }
-        }
+pub fn default_dock_session() -> DockSession {
+    if cfg!(target_arch = "wasm32") {
+        default_dock_session_wasm()
+    } else {
+        default_dock_session_native()
     }
-    (tree, open_tabs)
 }

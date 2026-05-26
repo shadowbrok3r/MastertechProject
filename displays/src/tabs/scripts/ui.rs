@@ -16,6 +16,7 @@ fn category_anchor_slug(category: &ScriptCategory) -> String {
         ScriptCategory::Tuneup => "tuneup".to_string(),
         ScriptCategory::Informational => "informational".to_string(),
         ScriptCategory::JunkwareRemoval => "junkware".to_string(),
+        ScriptCategory::StressTests => "stress_tests".to_string(),
         ScriptCategory::UserScripts(name) => format!("user.{}", slugify(name)),
         ScriptCategory::Custom(name) => format!("custom.{}", slugify(name)),
     }

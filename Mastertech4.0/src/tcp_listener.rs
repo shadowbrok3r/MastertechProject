@@ -94,6 +94,45 @@ pub fn broadcast_term_frame(bytes: Vec<u8>) {
 /// OS-assigned ephemeral port and publish whatever we got to the DB.
 pub const PREFERRED_PORT: u16 = 9101;
 
+const SELF_UPDATE_CHILD_ENV: &str = "MASTERTECH_SELF_UPDATE_CHILD";
+
+/// True when this process was spawned by a remote self-update relaunch.
+pub fn is_self_update_child() -> bool {
+    std::env::var(SELF_UPDATE_CHILD_ENV)
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// Waits until the preferred TCP port can be bound (old process released it).
+pub async fn wait_for_preferred_port_available() {
+    use tokio::net::TcpListener;
+
+    const MAX_WAIT: Duration = Duration::from_secs(60);
+    const STEP: Duration = Duration::from_millis(250);
+    let deadline = tokio::time::Instant::now() + MAX_WAIT;
+    while tokio::time::Instant::now() < deadline {
+        match TcpListener::bind(format!("0.0.0.0:{PREFERRED_PORT}")).await {
+            Ok(l) => {
+                drop(l);
+                log::info!(
+                    "tcp_listener -> preferred port {PREFERRED_PORT} free after self-update wait"
+                );
+                return;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::time::sleep(STEP).await;
+            }
+            Err(e) => {
+                log::warn!("tcp_listener -> bind probe error while waiting for port: {e}");
+                tokio::time::sleep(STEP).await;
+            }
+        }
+    }
+    log::warn!(
+        "tcp_listener -> preferred port {PREFERRED_PORT} still busy after {MAX_WAIT:?}"
+    );
+}
+
 /// Hard cap on a single inbound frame so a malicious or buggy peer can't
 /// allocate gigabytes by sending a giant length prefix.
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024; // 64 MiB
@@ -562,6 +601,10 @@ async fn writer_task(
 pub async fn spawn_direct_tcp_listener(client_uuid: database::schema::RecordId) {
     use crate::utilities::network::{detect_local_ipv4, try_add_firewall_rule};
     use database::DATABASE;
+
+    if is_self_update_child() {
+        wait_for_preferred_port_available().await;
+    }
 
     let local_ip = match detect_local_ipv4() {
         Some(ip) => ip,

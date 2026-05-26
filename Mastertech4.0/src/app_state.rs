@@ -1,8 +1,8 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, CarboniteResponse, ComputerData, CustomerData, DuplicateCheckResult, GetKeysResponse, LiveTaskPayload, TaskNotePayload, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}};
-use crate::{tabs::{file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}}};
-use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
-use std::{collections::HashSet,path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
-use egui_dock::{DockState, NodeIndex, SurfaceIndex};
+use crate::{tabs::{file_browser::{FileBrowser, FilesPanelMode}, github::self_updater::GithubRelease, scripts::EguiScriptsTab, tur_sheet::{get_ticket::SendRequest,scaffold::{self, HardwareTest}}}};
+use displays::{app_state::{default_tree, SharedContext}, channel_manager::ChannelManager, modals::{DuplicateMergeModal, task_modal::SpecialPartOrder}, plugins::{DefaultEventDispatcher, PluginClientCommand, PluginManager}, tabs::DockSession, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use std::{path::PathBuf,sync::{atomic::AtomicBool, Arc, Mutex, RwLock}};
+use egui_dock::{NodeIndex, SurfaceIndex};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::RecordId;
 use chrono::{DateTime, Utc};
@@ -15,7 +15,7 @@ use crate::tabs::minidump::MiniDumpApp;
 
 pub struct MasterTechApp {
     pub context: MastertechContext,
-    pub tree: DockState<String>,
+    pub dock: DockSession,
 }
 
 pub struct MastertechContext {
@@ -33,6 +33,7 @@ pub struct MastertechContext {
     #[cfg(target_os = "windows")]
     pub minidump_app: MiniDumpApp,
     pub file_browser: Arc<Mutex<FileBrowser>>,
+    pub files_panel_mode: FilesPanelMode,
     pub keys: GetKeysResponse,
     pub client: reqwest::Client,
     /// Sends requests and retrieves data from scaffold
@@ -46,7 +47,6 @@ pub struct MastertechContext {
     pub hdd_test_cbox: HardwareTest,
     pub ssd_test_cbox: HardwareTest,
     pub rx: Receiver<String>,
-    pub open_tabs: HashSet<String>,
 
     pub date: DateTime<Utc>,
 
@@ -73,6 +73,10 @@ pub struct MastertechContext {
     pub github_issue_user: String,
 
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
+    pub pending_tab_adds: Vec<(SurfaceIndex, NodeIndex, displays::tabs::TabId)>,
+    pub pending_tab_removes: Vec<displays::tabs::TabId>,
+    pub pending_activate_tab: Option<displays::tabs::TabId>,
+    pub pending_tab_opens: Vec<displays::tabs::TabId>,
 
     pub prestashop_api_rx: Receiver<PrestashopPayload>,
     pub prestashop_api_tx: Sender<PrestashopPayload>,
@@ -146,7 +150,7 @@ pub struct PendingTurData {
 
 impl MasterTechApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let tree = default_tree();
+        let dock = default_tree();
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
@@ -237,6 +241,7 @@ impl MasterTechApp {
             scaffold_request: SendRequest { tx: tx_scaffold },
             client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
+            files_panel_mode: FilesPanelMode::default(),
             current_antivirus: "".to_string(),
             opened_file: None,
             open_file_dialog: None,
@@ -254,9 +259,6 @@ impl MasterTechApp {
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
-            // ctx: Context::default(),
-            open_tabs: tree.1,
-
             date: chrono::offset::Utc::now(),
 
             send_specs,
@@ -267,6 +269,10 @@ impl MasterTechApp {
             read_notifications: false,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             added_nodes: Default::default(),
+            pending_tab_adds: Vec::new(),
+            pending_tab_removes: Vec::new(),
+            pending_activate_tab: None,
+            pending_tab_opens: Vec::new(),
 
             prestashop_api_tx, prestashop_api_rx,
             bytes_tx, bytes_rx,
@@ -310,7 +316,7 @@ impl MasterTechApp {
 
         Self {
             context,
-            tree: tree.0,
+            dock,
         }
     }
 }

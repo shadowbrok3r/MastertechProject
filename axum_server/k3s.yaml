@@ -39,7 +39,7 @@ spec:
         - name: SERVER_PORT
           value: "8082"
         - name: RUST_LOG
-          value: "mtech_srv=info,axum_middleware=info"
+          value: "mtech_srv=info,axum_server=info"
         ports:
         - containerPort: 8082
       imagePullSecrets:

@@ -4,12 +4,33 @@ pub mod signup_page;
 pub mod login_page;
 pub mod menu_bar;
 
+use crate::tabs::{TabContext, TabId};
+
+pub fn view_menu(
+    ui: &mut Ui,
+    session: &mut crate::tabs::DockSession,
+    tab_ctx: TabContext,
+    mut anchor: Option<&mut dyn FnMut(TabId, Rect)>,
+) {
+    for &tab in TabId::visible_for(tab_ctx) {
+        let label = tab.title(tab_ctx);
+        let item = ui.selectable_label(session.is_open(tab), label);
+        if let Some(push) = anchor.as_deref_mut() {
+            push(tab, item.rect);
+        }
+        if item.clicked() {
+            session.toggle(tab);
+            ui.close_kind(UiKind::Menu);
+        }
+    }
+}
+
 impl crate::app_state::SharedContext {
-    pub fn main_page(&mut self, ctx: &Context){ // , tab_viewer: &mut impl egui_dock::TabViewer<Tab = String>
-       let mut style = egui_dock::Style::from_egui(&ctx.global_style());
+    pub fn main_page(&mut self, ctx: &Context) {
+        let mut style = egui_dock::Style::from_egui(&ctx.global_style());
         style.overlay.selection_color = Color32::from_additive_luminance(255);
-        style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
-        style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
+        style.separator.color_hovered = Color32::from_rgba_premultiplied(50, 93, 80, 77);
+        style.separator.color_dragged = Color32::from_rgba_premultiplied(189, 189, 189, 130);
         style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
         style.main_surface_border_rounding.nw = 10;
         style.main_surface_border_rounding.ne = 10;
@@ -28,8 +49,8 @@ impl crate::app_state::SharedContext {
             ..Default::default()
         };
         let mut tree = std::mem::replace(
-            &mut self.tree,
-            egui_dock::DockState::new(Vec::<String>::new()),
+            &mut self.dock.tree,
+            egui_dock::DockState::new(Vec::<TabId>::new()),
         );
 
         egui_dock::DockArea::new(&mut tree)
@@ -40,32 +61,30 @@ impl crate::app_state::SharedContext {
             .draggable_tabs(true)
             .show(ctx, self);
 
-        // Apply any pending add/remove requests queued from TabViewer to avoid double-borrowing
         if !self.pending_tab_removes.is_empty() || !self.pending_tab_adds.is_empty() {
-            // First remove tabs
-            for name in self.pending_tab_removes.drain(..) {
-                if let Some(index) = tree.find_tab(&name) {
+            for tab in self.pending_tab_removes.drain(..) {
+                if let Some(index) = tree.find_tab(&tab) {
                     tree.remove_tab(index);
                 }
-                self.open_tabs.remove(&name);
             }
-            // Then add tabs to focused leaf
-            for (surface, node, name) in self.pending_tab_adds.drain(..) {
-                // Focus the target location before pushing
+            for (surface, node, tab) in self.pending_tab_adds.drain(..) {
                 tree.set_focused_node_and_surface((surface, node));
-                tree.push_to_focused_leaf(name.clone());
-                self.open_tabs.insert(name);
+                tree.push_to_focused_leaf(tab);
             }
         }
 
-        // Apply any pending tab activation now that we have the latest DockState
-        if let Some(name) = self.pending_activate_tab.take() {
-            if let Some((surface_index, node_index, tab_index)) = tree.find_tab(&name) {
+        for tab in self.pending_tab_opens.drain(..) {
+            if tree.find_tab(&tab).is_none() {
+                tree.push_to_focused_leaf(tab);
+            }
+        }
+
+        if let Some(tab) = self.pending_activate_tab.take() {
+            if let Some((surface_index, node_index, tab_index)) = tree.find_tab(&tab) {
                 tree.set_active_tab((surface_index, node_index, tab_index));
             }
         }
 
-        self.tree = tree;
-
+        self.dock.tree = tree;
     }
 }

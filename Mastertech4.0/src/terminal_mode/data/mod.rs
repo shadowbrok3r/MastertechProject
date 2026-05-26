@@ -1,11 +1,10 @@
 
-use database::schema::{helper_traits::parse_email_user, prestashop_schema::{PrestashopPayload, ServiceOrder}, utilities::{check_for_duplicates, create_full_task_payload, get_prestashop_payload, get_prestashop_payload_from_phone}, ComputerData, CustomerData, DuplicateResolution, TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE};
+use database::schema::{prestashop_schema::PrestashopPayload, utilities::{check_for_duplicates, create_full_task_payload}, ComputerData, CustomerData, DuplicateResolution, EntityDraft, OrderLookup, PrestaMapMode, PrestaMapOptions, TaskNotePayload, TaskPayload, TicketPayload, fetch_prestashop_order, apply_prestashop_payload};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use displays::remote_viewer::ratagui::TerminalEvent;
 use crate::filesystem::system_info::ComputerInfo;
 use crossbeam::channel::Receiver;
 use egui::{Key, Modifiers};
-use database::schema::{random_record_id, RecordId};
 use chrono::Utc;
 
 use super::events::action_handler::{get_event_sender, ApiEvent, WidgetEvent};
@@ -57,116 +56,56 @@ impl ServiceData {
 
     pub fn receive(&mut self, presta_data: PrestashopPayload) {
         log::info!("{:?}", serde_json::to_value(&presta_data).unwrap_or_default());
-        let customer = &mut self.customer_data;
-        let ticket = &mut self.ticket_data;
-        let task = &mut self.task_data;
-        let task_notes = &mut self.task_notes;
-        let computer = &mut self.computer_data;
 
-        task.id = random_record_id(TASK_TABLE);
-        let service_details = presta_data.order.associations.order_service.clone();
-        let mut services: Vec<RecordId> = Vec::new();
-
-        let device_details: Vec<ServiceOrder> = presta_data
-            .order
-            .associations
-            .order_service
-            .iter()
-            .map(|o| {
-                ServiceOrder {
-                    device_name: o.device_name.clone(),
-                    device_mfg: o.device_mfg.clone(),
-                    device_model: o.device_model.clone(),
-                    device_serial: o.device_serial.clone(),
-                    device_password: o.device_password.clone(),
-                    device_power_supply: o.device_power_supply.clone(),
-                    check_in_notes: o.check_in_notes.clone(),
-                    ..Default::default()
-                }
-            }
-        ).collect();
-
-        let device = device_details.get(0).cloned().unwrap_or_default();
-        let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
-        let split_rep = presta_data.split_rep.clone().unwrap_or_default();
-
-        let email = parse_email_user(&sales_rep.email).to_string();
-        let email_split_rep = parse_email_user(&split_rep.email).to_string();
-
-        for msg in presta_data.task_notes.iter() {
-            task_notes.push(TaskNotePayload {
-                task_id: Some(task.id.clone()),
-                ..msg.clone()
-            });
-        }
-
-        task.task_note = task_notes.clone();
-        customer.id = presta_data.customer.id.clone();
-        customer.cust_code = presta_data.customer.cust_code.clone();
-        customer.email = presta_data.customer.email.clone();
-        customer.name = presta_data.customer.name.clone();
-        customer.phone_number = presta_data.customer.phone_number.clone();
-        ticket.salesman = if email_split_rep.is_empty() && !email.is_empty() { email.clone() } else { email_split_rep };
-        ticket.sales_rep = email.clone();
-        ticket.tech = email.clone();
-        ticket.customer = Some(customer.clone());
-        ticket.checkin_rep = email;
-        ticket.terms = presta_data.order.payment.clone();
-        ticket.ticket_total = presta_data.order.total_products_wt.clone();
-        ticket.doc_alias = presta_data.order.order_type.clone();
-        ticket.service_number = presta_data.order.id.clone();
-        ticket.id = RecordId::new(
-            TICKET_TABLE.to_string(),
-            ticket.service_number.clone(),
+        let mut draft = EntityDraft {
+            customer: self.customer_data.clone(),
+            ticket: self.ticket_data.clone().into(),
+            computer: self.computer_data.clone(),
+            task: self.task_data.clone().into(),
+            task_notes: self.task_notes.clone(),
+        };
+        apply_prestashop_payload(
+            &presta_data,
+            &mut draft,
+            &PrestaMapOptions {
+                mode: PrestaMapMode::Bench,
+                ..Default::default()
+            },
         );
 
-
-        
-        services.push(ticket.id.clone());
-        
-        if !service_details.is_empty() {
-            if service_details.len() == 1 {
-                let svc = service_details.get(0);
-                if let Some(service) = svc {
-                    ticket.checkin_notes = service.check_in_notes.clone();
-                }
-            } else {
-                log::info!("Theres a couple.... {:?}", service_details);
-            }
-        }
-
-        *computer = ComputerData {
-            device_name: Some(device.device_name),
-            device_mfg: Some(device.device_mfg),
-            device_model: Some(device.device_model),
-            device_serial: Some(device.device_serial),
-            customer: Some(customer.id.clone()),
-            ..computer.clone()
+        self.customer_data = draft.customer;
+        self.ticket_data = TicketPayload {
+            customer: Some(self.customer_data.clone()),
+            computer: Some(draft.computer.clone()),
+            ..draft.ticket.into()
         };
-
-        ticket.computer = Some(computer.clone());
-        log::warn!("Ticket.Computer.SEB: {:#?}", computer.seb_info);
-        task.service_ticket = Some(ticket.clone());
+        self.computer_data = draft.computer;
+        self.task_notes = draft.task_notes;
+        self.task_data = TaskPayload {
+            service_ticket: Some(self.ticket_data.clone()),
+            task_note: self.task_notes.clone(),
+            ..draft.task.into()
+        };
+        self.task_data.task_note = self.task_notes.clone();
     }
     
     pub fn get_ticket(&self) {
         let input = self.ticket_data.service_number.clone();
         let phone = self.customer_data.phone_number.clone();
-        if !input.is_empty() {
-            let tx = get_event_sender();
-            tokio::spawn(async move {
-                let prestashop_order = get_prestashop_payload(&input).await?;
-                tx.try_send(WidgetEvent::Api(ApiEvent::GetTicketResponse(prestashop_order)))?;
-                Ok::<(), anyhow::Error>(())
-            });
+        let lookup = if !input.is_empty() {
+            Some(OrderLookup::ServiceNumber(input))
         } else if !phone.is_empty() {
-            let tx = get_event_sender();
-            tokio::spawn(async move {
-                let prestashop_order = get_prestashop_payload_from_phone(&phone).await?;
-                tx.try_send(WidgetEvent::Api(ApiEvent::GetTicketResponse(prestashop_order)))?;
-                Ok::<(), anyhow::Error>(())
-            });
-        }
+            Some(OrderLookup::Phone(phone))
+        } else {
+            None
+        };
+        let Some(lookup) = lookup else { return };
+        let tx = get_event_sender();
+        tokio::spawn(async move {
+            let prestashop_order = fetch_prestashop_order(lookup).await?;
+            tx.try_send(WidgetEvent::Api(ApiEvent::GetTicketResponse(prestashop_order)))?;
+            Ok::<(), anyhow::Error>(())
+        });
     }
 
     /// First step: Check for duplicates before submitting

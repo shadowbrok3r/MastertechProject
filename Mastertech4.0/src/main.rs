@@ -60,10 +60,6 @@ impl eframe::App for app_state::MasterTechApp {
 
         self.receive_logic(ctx, frame);
 
-        // Fleet dashboard pipeline. Both calls are cheap no-ops after the
-        // first frame the URL is set; `ensure_fleet_poller` short-circuits
-        // on `fleet_poller_running`, `drain_fleet_updates` is one try_recv.
-        self.context.shared_ctx.ensure_fleet_poller();
         self.context.shared_ctx.drain_fleet_updates();
 
         // Handle "Already connected" state recovery in logic phase

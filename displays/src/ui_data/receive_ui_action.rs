@@ -1,4 +1,4 @@
-use crate::{PlatformSpawner, Spawner, TaskUiActions, chats::ChatView, modals::{ModalType, create_task_modal::{CreateTaskModal, Tur}, task_modal::TaskModal}};
+use crate::{PlatformSpawner, Spawner, TaskUiActions, chats::ChatView, modals::{ModalType, create_task_modal::{CreateTaskModal, Tur}, task_modal::TaskModal}, tabs::TabId};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use database::schema::{RecordIdExt, TaskNotePayload, TaskNoteRead};
 use crate::app_state::SharedContext;
@@ -206,8 +206,8 @@ impl SharedContext {
                 },
                 TaskUiActions::OpenAdminConsole(connection_string) => {
                     info!("receive_ui_action -> OpenAdminConsole: {connection_string}");
-                    self.open_tabs.insert("Admin Console".to_string());
-                    self.pending_activate_tab = Some("Admin Console".to_string());
+                    self.pending_tab_opens.push(TabId::AdminConsole);
+                    self.pending_activate_tab = Some(TabId::AdminConsole);
                     // Surface which client to focus once the tab is active.
                     self.pending_admin_console_focus = Some(connection_string);
                 }

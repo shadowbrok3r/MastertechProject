@@ -577,21 +577,26 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         self.process_mcp_requests();
         self.receive();
         self.process_mcp_completions();
-        self.filesystem.receive();
+        if self.filesystem.receive() {
+            self.user_scripts_bucket_loaded = true;
+        }
         self.insert_user_scripts();
 
         let mut init = self.init.borrow_mut();
         if *init {
             if self.filesystem.user.get_name().len() > 0 {
                 log::info!("We have a user, requesting contents");
-                log::info!("Contents: {:?}", self.filesystem.root);
+                let _ = self.filesystem.request_contents("/");
+                self.user_scripts_bucket_loaded = false;
+                self.check_for_scripts = true;
             } else {
                 log::info!("We need a user");
                 let user = get_current_user_from_auth();
                 match user {
                     Some(usr) => {
                         let _ = self.filesystem.set_user(usr);
-                        log::info!("insert_user_scripts");
+                        let _ = self.filesystem.request_contents("/");
+                        self.user_scripts_bucket_loaded = false;
                         self.check_for_scripts = true;
                     },
                     None => log::info!("Could not retrieve user."),
@@ -618,9 +623,11 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         let right_half = main_chunks[1];
 
         const SCRIPT_BUTTONS_ROW_HEIGHT: u16 = 3;
-        // 12 slots: 11 existing + 1 stress_test_btn appended at slot 11 (below run_btn).
-        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 12;
-        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = SCRIPT_BUTTONS_SLOT_COUNT * SCRIPT_BUTTONS_ROW_HEIGHT; // 36
+        // Slots: tuneup, informational, user_scripts, stress_tests, service_number,
+        // current_script, progress, update progress, fs progress, transfers (split into two slots),
+        // run, stress_test cycle.
+        const SCRIPT_BUTTONS_SLOT_COUNT: u16 = 13;
+        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = SCRIPT_BUTTONS_SLOT_COUNT * SCRIPT_BUTTONS_ROW_HEIGHT;
 
         let left_side_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -715,7 +722,10 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             f.render_widget(&self.user_scripts_btn, shrink_slot(slot_rects[2], 2, 1));
         }
         if slot_rects[3].height > 0 {
-            f.render_widget(&self.service_number_field, shrink_slot(slot_rects[3], 2, 1));
+            f.render_widget(&self.stress_tests_btn, shrink_slot(slot_rects[3], 2, 1));
+        }
+        if slot_rects[4].height > 0 {
+            f.render_widget(&self.service_number_field, shrink_slot(slot_rects[4], 2, 1));
         }
 
         let current_script = self.current_script.borrow().clone();
@@ -732,8 +742,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .style(Style::default().fg(CATPPUCCIN.sky))
             );
 
-        if slot_rects[4].height > 0 {
-            f.render_widget(script_textarea, shrink_slot(slot_rects[4], 4, 1));
+        if slot_rects[5].height > 0 {
+            f.render_widget(script_textarea, shrink_slot(slot_rects[5], 4, 1));
         }
 
         let mut progress_mut = self.progress.borrow_mut();
@@ -744,8 +754,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(progress.0 as f64 / progress.1 as f64);
 
-            if slot_rects[5].height > 0 {
-                f.render_widget(&gauge, shrink_slot(slot_rects[5], 2, 1));
+            if slot_rects[6].height > 0 {
+                f.render_widget(&gauge, shrink_slot(slot_rects[6], 2, 1));
             }
 
             if progress.0 == progress.1 {
@@ -764,8 +774,8 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                 .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                 .ratio(update_progress as f64 / 100.0);
 
-            if slot_rects[6].height > 0 {
-                f.render_widget(&gauge, shrink_slot(slot_rects[6], 2, 1));
+            if slot_rects[7].height > 0 {
+                f.render_widget(&gauge, shrink_slot(slot_rects[7], 2, 1));
             }
 
             if update_progress == 100 {
@@ -787,18 +797,18 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     .gauge_style(Style::new().fg(CATPPUCCIN.pink).bg(CATPPUCCIN.base))
                     .ratio(ratio as f64);
 
-                if slot_rects[7].height > 0 {
-                    f.render_widget(&gauge, shrink_slot(slot_rects[7], 2, 1));
+                if slot_rects[8].height > 0 {
+                    f.render_widget(&gauge, shrink_slot(slot_rects[8], 2, 1));
                 }
             }
         }
 
-        if slot_rects[8].height > 0 {
+        if slot_rects[9].height > 0 {
             if self.loading {
                 let throbber = crate::terminal_mode::widgets::throbber_widgets_tui::Throbber::default()
                     .label("Scanning Directories..")
                     .throbber_set(crate::terminal_mode::widgets::throbber_widgets_tui::VERTICAL_BLOCK);
-                f.render_widget(throbber, shrink_slot(slot_rects[8], 0, 1));
+                f.render_widget(throbber, shrink_slot(slot_rects[9], 0, 1));
             } else {
                 let active_processes = self.active_robocopy_processes.borrow();
                 if !active_processes.is_empty() {
@@ -843,16 +853,16 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                         .block(transfer_block)
                         .wrap(Wrap { trim: false });
 
-                    let combined_height = slot_rects[8].height.saturating_add(slot_rects[9].height);
-                    let combined_area = if slot_rects[9].height > 0 && combined_height >= 2 {
+                    let combined_height = slot_rects[9].height.saturating_add(slot_rects[10].height);
+                    let combined_area = if slot_rects[10].height > 0 && combined_height >= 2 {
                         Rect::new(
-                            slot_rects[8].x,
-                            slot_rects[8].y,
-                            slot_rects[8].width,
+                            slot_rects[9].x,
+                            slot_rects[9].y,
+                            slot_rects[9].width,
                             combined_height,
                         )
                     } else {
-                        slot_rects[8]
+                        slot_rects[9]
                     };
                     f.render_widget(transfer_list, shrink_slot(combined_area, 0, 1));
                 }
@@ -860,19 +870,15 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
         }
 
         self.run_btn.set_disabled(self.run_button_should_be_disabled());
-        if slot_rects[10].height > 0 {
-            f.render_widget(&self.run_btn, shrink_slot(slot_rects[10], 4, 1));
+        if slot_rects[11].height > 0 {
+            f.render_widget(&self.run_btn, shrink_slot(slot_rects[11], 4, 1));
         }
 
-        // ---- Slot 11: stress test button (stress-runner integration) ----
-        // The button label is updated on right-click in `cycle_stress_choice`.
-        // If a run is active, render a small "Running" indicator alongside the
-        // button so the operator sees live progress without having to scroll
-        // to the reports panel.
-        if slot_rects[11].height > 0 {
-            // Disable the button while a run is in flight to avoid double-starts.
+        // Quick single-stressor cycle button kept for live throughput preview;
+        // the new category-style Stress Tests button at slot 3 is the catalog path.
+        if slot_rects[12].height > 0 {
             self.stress_test_btn.set_disabled(self.stress_run.borrow().is_some());
-            f.render_widget(&self.stress_test_btn, shrink_slot(slot_rects[11], 4, 1));
+            f.render_widget(&self.stress_test_btn, shrink_slot(slot_rects[12], 4, 1));
         }
 
         // Script buttons column scrollbar — only when content overflows
@@ -938,7 +944,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
             MouseEventKind::ScrollDown => {
                 if let Some(viewport) = *self.script_buttons_viewport.borrow() {
                     if viewport.contains(mouse_position) {
-                        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 33;
+                        const SCRIPT_BUTTONS_VIRTUAL_HEIGHT: u16 = 13 * 3;
                         let max_offset = SCRIPT_BUTTONS_VIRTUAL_HEIGHT.saturating_sub(viewport.height);
                         let mut offset = *self.script_buttons_scroll_offset.borrow();
                         offset = (offset + 1).min(max_offset);
@@ -1136,6 +1142,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             let buttons = [
                                 &self.tuneup_btn,
                                 &self.informational_btn,
+                                &self.stress_tests_btn,
                             ];
             
                             for button in buttons.iter() {
@@ -1207,6 +1214,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                             let buttons = [
                                 ("Tuneup / QC", &self.tuneup_btn),
                                 ("Informational", &self.informational_btn),
+                                ("Stress Tests", &self.stress_tests_btn),
                             ];
         
                             for (widget_id, button) in buttons.iter() {
@@ -1275,6 +1283,7 @@ impl<'a> HandleWidget<'_> for ScriptsTab<'_> {
                     
                     self.tuneup_btn.handle_mouse_event(&mouse_event);
                     self.informational_btn.handle_mouse_event(&mouse_event);
+                    self.stress_tests_btn.handle_mouse_event(&mouse_event);
                     self.run_btn.handle_mouse_event(&mouse_event);
                     self.user_scripts_btn.handle_mouse_event(&mouse_event);
 

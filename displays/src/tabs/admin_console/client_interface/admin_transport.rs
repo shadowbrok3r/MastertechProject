@@ -29,7 +29,7 @@ use crate::Spawner;
 use crossbeam::channel::{Receiver as XReceiver, Sender as XSender, TryRecvError};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -83,6 +83,9 @@ enum AdminTransportInner {
         /// `shutdown_aware_sleep`) so a `close()` is honored within
         /// ~200 ms even if we're mid-sleep between dial attempts.
         shutdown: Arc<AtomicBool>,
+        /// Wall-clock ms until which relaxed ping/read deadlines apply
+        /// while waiting for a client to relaunch after self-update.
+        relaunch_grace_until_ms: Arc<AtomicU64>,
     },
 }
 
@@ -128,6 +131,8 @@ impl AdminTransport {
         // could only end an already-connected session).
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_session = shutdown.clone();
+        let relaunch_grace_until_ms = Arc::new(AtomicU64::new(0));
+        let relaunch_grace_for_session = relaunch_grace_until_ms.clone();
 
         // Use the `displays` crate's existing PlatformSpawner abstraction
         // so we don't have to assume a specific runtime is available.
@@ -138,6 +143,7 @@ impl AdminTransport {
                 out_rx,
                 in_tx_dial,
                 shutdown_for_session,
+                relaunch_grace_for_session,
             )
             .await;
         });
@@ -148,8 +154,27 @@ impl AdminTransport {
                 in_rx,
                 closed: false,
                 shutdown,
+                relaunch_grace_until_ms,
             },
             kind: TransportKind::Tcp,
+        }
+    }
+
+    /// Extend ping/connect deadlines while a remote client relaunches after
+    /// self-update. `grace_secs` is added to the current wall clock.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn signal_relaunch_pending(&mut self, grace_secs: u64) {
+        if let AdminTransportInner::Tcp {
+            relaunch_grace_until_ms,
+            ..
+        } = &mut self.inner
+        {
+            let until = now_millis().saturating_add(grace_secs.saturating_mul(1000));
+            relaunch_grace_until_ms.store(until, Ordering::Relaxed);
+            log::info!(
+                "admin_transport -> relaunch grace active for {grace_secs}s \
+                 (until epoch_ms={until})"
+            );
         }
     }
 
@@ -246,20 +271,22 @@ impl AdminTransport {
 /// running (i.e. while we're failing to reach an unreachable peer).
 #[cfg(not(target_arch = "wasm32"))]
 async fn run_tcp_session(
-    target_addr: String,
+    mut target_addr: String,
     connection_string: String,
     out_rx: XReceiver<TcpFrame>,
     in_tx: XSender<WsEvent>,
     shutdown: Arc<AtomicBool>,
+    relaunch_grace_until_ms: Arc<AtomicU64>,
 ) {
     use std::sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::Ordering,
         Mutex,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+    const CONNECT_TIMEOUT_RELAUNCH: Duration = Duration::from_secs(10);
     const RETRY_INTERVAL: Duration = Duration::from_secs(3);
     /// How often the master probes the agent's liveness.
     const PING_INTERVAL: Duration = Duration::from_secs(15);
@@ -267,10 +294,12 @@ async fn run_tcp_session(
     /// session dead. 30 s = 2× the ping interval, so a single dropped
     /// packet doesn't yank a healthy session.
     const PONG_DEADLINE_MS: u64 = 30_000;
+    const PONG_DEADLINE_RELAUNCH_MS: u64 = 120_000;
     /// Per-frame read idle timeout. With pings at 15 s, a healthy session
     /// always sees a pong inside this window. If 45 s elapses with nothing
     /// inbound, treat the socket as dead and let the outer loop redial.
     const READ_IDLE: Duration = Duration::from_secs(45);
+    const READ_IDLE_RELAUNCH: Duration = Duration::from_secs(120);
 
     // Wrap the receiver so the writer task can borrow it each session
     // without taking ownership, allowing reconnect on drop+redial.
@@ -282,10 +311,39 @@ async fn run_tcp_session(
             return;
         }
 
-        log::info!("admin_transport -> dialing {target_addr}");
+        if let Some(fresh) = fetch_tcp_target(&connection_string).await {
+            if fresh != target_addr {
+                log::info!(
+                    "admin_transport -> refreshed dial target {target_addr} -> {fresh}"
+                );
+                target_addr = fresh;
+            }
+        }
+
+        let relaunch_grace_active = in_relaunch_grace(&relaunch_grace_until_ms);
+        let connect_timeout = if relaunch_grace_active {
+            CONNECT_TIMEOUT_RELAUNCH
+        } else {
+            CONNECT_TIMEOUT
+        };
+        let pong_deadline_ms = if relaunch_grace_active {
+            PONG_DEADLINE_RELAUNCH_MS
+        } else {
+            PONG_DEADLINE_MS
+        };
+        let read_idle = if relaunch_grace_active {
+            READ_IDLE_RELAUNCH
+        } else {
+            READ_IDLE
+        };
+
+        log::info!(
+            "admin_transport -> dialing {target_addr} \
+             (relaunch_grace={relaunch_grace_active})"
+        );
 
         // ---- Dial ----
-        let stream = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&target_addr)).await {
+        let stream = match tokio::time::timeout(connect_timeout, TcpStream::connect(&target_addr)).await {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
                 log::warn!("admin_transport -> connect to {target_addr} failed: {e}; retrying in {RETRY_INTERVAL:?}");
@@ -355,6 +413,7 @@ async fn run_tcp_session(
         {
             let last_pong_at = last_pong_at.clone();
             let in_tx_pinger = in_tx.clone();
+            let relaunch_grace = relaunch_grace_until_ms.clone();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(PING_INTERVAL);
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -374,15 +433,20 @@ async fn run_tcp_session(
                     // Skipping the first one means a fresh session always
                     // gets at least one round-trip before we'd time it out.
                     if seq >= 2 {
+                        let deadline_ms = if in_relaunch_grace(&relaunch_grace) {
+                            PONG_DEADLINE_RELAUNCH_MS
+                        } else {
+                            PONG_DEADLINE_MS
+                        };
                         let last = last_pong_at.load(Ordering::Relaxed);
-                        if now_millis().saturating_sub(last) > PONG_DEADLINE_MS {
+                        if now_millis().saturating_sub(last) > deadline_ms {
                             log::warn!(
                                 "admin_transport -> pong deadline exceeded \
-                                 (last pong {}ms ago); declaring dead",
+                                 (last pong {}ms ago, limit {deadline_ms}ms); declaring dead",
                                 now_millis().saturating_sub(last)
                             );
                             let _ = in_tx_pinger.send(WsEvent::Error(
-                                "ping timeout (no pong in 30s, retrying…)".to_string(),
+                                format!("ping timeout (no pong in {deadline_ms}ms, retrying…)"),
                             ));
                             break;
                         }
@@ -481,7 +545,7 @@ async fn run_tcp_session(
             // (peer crashed without a FIN, NAT path fell over without RST,
             // etc.). The TCP keepalive set in `apply_tcp_options` is the
             // belt; this is the suspenders.
-            let total_len = match tokio::time::timeout(READ_IDLE, read_half.read_u32_le()).await {
+            let total_len = match tokio::time::timeout(read_idle, read_half.read_u32_le()).await {
                 Ok(Ok(n)) => n,
                 Ok(Err(e)) => {
                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -494,7 +558,7 @@ async fn run_tcp_session(
                 }
                 Err(_) => {
                     log::warn!(
-                        "admin_transport -> read idle {READ_IDLE:?} with no traffic; declaring dead"
+                        "admin_transport -> read idle {read_idle:?} with no traffic; declaring dead"
                     );
                     let _ = in_tx.send(WsEvent::Error(
                         "read idle timeout (retrying…)".to_string(),
@@ -572,6 +636,9 @@ async fn run_tcp_session(
 
         // Session ended (peer closed / read error) — wait and redial
         log::info!("admin_transport -> session ended; reconnecting in {RETRY_INTERVAL:?}");
+        let _ = in_tx.send(WsEvent::Error(
+            "peer disconnected (reconnecting…)".to_string(),
+        ));
         if shutdown_aware_sleep(&shutdown, RETRY_INTERVAL).await {
             let _ = in_tx.send(WsEvent::Closed);
             return;
@@ -602,6 +669,33 @@ async fn shutdown_aware_sleep(shutdown: &Arc<AtomicBool>, dur: Duration) -> bool
         tokio::time::sleep(step).await;
     }
     shutdown.load(Ordering::Relaxed)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_tcp_target(connection_string: &str) -> Option<String> {
+    use database::DATABASE;
+
+    let mut response = DATABASE
+        .query(
+            "SELECT local_ip, tcp_port FROM connected_client \
+             WHERE connection_string = $cs LIMIT 1",
+        )
+        .bind(("cs", connection_string.to_string()))
+        .await
+        .ok()?;
+    let rows: Vec<serde_json::Value> = response.take(0).ok()?;
+    let row = rows.into_iter().next()?;
+    let ip = row.get("local_ip")?.as_str()?.to_string();
+    if ip.is_empty() {
+        return None;
+    }
+    let port = row.get("tcp_port")?.as_u64()? as u16;
+    Some(format!("{ip}:{port}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn in_relaunch_grace(relaunch_grace_until_ms: &AtomicU64) -> bool {
+    now_millis() < relaunch_grace_until_ms.load(Ordering::Relaxed)
 }
 
 /// Wall-clock epoch milliseconds. Wraps `SystemTime` so callers don't have

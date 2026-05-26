@@ -32,6 +32,7 @@ pub struct ScriptsTab<'a> {
     tuneup_btn: Button<'a>,
     user_scripts_btn: Button<'a>,
     informational_btn: Button<'a>,
+    stress_tests_btn: Button<'a>,
     run_btn: Button<'a>,
     /// Launches a stress run via `stress_runner::RunController`.  Left-click
     /// starts a single-stressor run for the currently-selected stressor;
@@ -110,6 +111,7 @@ pub struct ScriptsTab<'a> {
     has_scrolled_manually: RefCell<bool>,
     init: RefCell<bool>,
     check_for_scripts: bool,
+    user_scripts_bucket_loaded: bool,
     client: Client,
     customer_email: String,
     ctx: Arc<Mutex<TerminalContext>>,
@@ -177,7 +179,7 @@ pub struct TerminalMcpPendingRun {
 
 impl<'a> ScriptsTab<'a> {
     pub const ROBOCOPY_DISPLAY_LINES: usize = 15; // Adjust as needed
-    pub const CHECKLIST_ORDERED: [&'static str;3] = ["Tuneup / QC", "Informational", "Junkware Removal"];
+    pub const CHECKLIST_ORDERED: [&'static str;4] = ["Tuneup / QC", "Informational", "Junkware Removal", "Stress Tests"];
     
     pub fn new(client: Client, ctx: Arc<Mutex<TerminalContext>>) -> Self {
         #[cfg(target_os="windows")]
@@ -279,6 +281,19 @@ impl<'a> ScriptsTab<'a> {
                 ],
             },
         );
+        let stress_items: Vec<TodoItem> = std::iter::once("QC Benchmark")
+            .chain(stress_runner::STRESS_SCRIPT_NAMES.iter().copied())
+            .map(|name| TodoItem::new(name, Category::StressTests))
+            .collect();
+        checklists.insert(
+            "Stress Tests".to_string(),
+            TodoList {
+                name: "Stress Tests".to_string(),
+                state: ListState::default(),
+                items: stress_items,
+            },
+        );
+
         // Sync popup_items with checklists
         let mut popup_items = HashMap::new();
         popup_items.insert(
@@ -289,6 +304,10 @@ impl<'a> ScriptsTab<'a> {
             "Informational".to_string(),
             checklists.get("Informational").unwrap().items.clone(),
         );
+        popup_items.insert(
+            "Stress Tests".to_string(),
+            checklists.get("Stress Tests").unwrap().items.clone(),
+        );
 
         Self {
             service_number_field: InputField::new("Service #", WidgetId("ServiceNumberScriptsPage".to_string())),
@@ -296,6 +315,7 @@ impl<'a> ScriptsTab<'a> {
             tuneup_btn: Button::new("Tuneup / QC =>", WidgetId("Tuneup / QC".to_owned())).theme(CATPPUCCINTHEME),
             user_scripts_btn: Button::new("User Scripts =>", WidgetId("UserScripts".to_owned())).theme(CATPPUCCINTHEME),
             informational_btn: Button::new("Informational =>", WidgetId("Informational".to_owned())).theme(CATPPUCCINTHEME),
+            stress_tests_btn: Button::new("Stress Tests =>", WidgetId("Stress Tests".to_owned())).theme(CATPPUCCINTHEME),
             run_btn: Button::new("Run Selected", WidgetId("Run".to_owned())).theme(DEEPPINK),
             stress_test_btn: Button::new(
                 "Stress Test (RC=cycle)",
@@ -355,6 +375,7 @@ impl<'a> ScriptsTab<'a> {
             has_scrolled_manually: RefCell::new(false),
             init: RefCell::new(true),
             check_for_scripts: false,
+            user_scripts_bucket_loaded: false,
             client,
             customer_email: String::new(),
             ctx,
@@ -394,6 +415,7 @@ impl<'a> ScriptsTab<'a> {
             displays::scripts::ScriptCategory::Tuneup => Category::Tuneup,
             displays::scripts::ScriptCategory::Informational => Category::Informational,
             displays::scripts::ScriptCategory::JunkwareRemoval => Category::JunkwareRemoval,
+            displays::scripts::ScriptCategory::StressTests => Category::StressTests,
             other => {
                 let _ = displays::scripts::script_run_result_sender().send(
                     displays::scripts::ScriptRunResult {
@@ -447,6 +469,9 @@ impl<'a> ScriptsTab<'a> {
                 }
                 Category::JunkwareRemoval => {
                     self.handle_junkware_removal(&script_name, &Category::JunkwareRemoval)
+                }
+                Category::StressTests => {
+                    self.handle_stress_tests(&script_name, &Category::StressTests)
                 }
                 Category::UserScripts(_) => {
                     let _ = displays::scripts::script_run_result_sender().send(
@@ -818,12 +843,20 @@ impl<'a> ScriptsTab<'a> {
             .collect()
     }
 
-    /// Scripts that require a service number to run (activation scripts).
+    /// Activation scripts that require a service number to fetch CPS keys.
     const SCRIPTS_REQUIRING_SERVICE_NUMBER: &'static [&'static str] = &[
         "Activate Webroot",
         "Activate SuperAnti",
         "Activate SEB",
     ];
+
+    /// True if `item_text` requires a service number to run. Activation scripts plus every
+    /// StressTests catalog entry (so `stress_test_run` rows always carry service_order /
+    /// customer / computer linkage).
+    pub fn script_requires_service_number(item_text: &str) -> bool {
+        Self::SCRIPTS_REQUIRING_SERVICE_NUMBER.contains(&item_text)
+            || stress_runner::is_stress_script(item_text)
+    }
 
     /// True when "Run Selected" should be disabled: any selected script requires a service number
     /// but none is provided (neither in the field nor in `service_number`).
@@ -831,7 +864,7 @@ impl<'a> ScriptsTab<'a> {
         let selected = self.get_selected_scripts();
         let any_requires_sn = selected
             .iter()
-            .any(|s| Self::SCRIPTS_REQUIRING_SERVICE_NUMBER.contains(&s.text.as_str()));
+            .any(|s| Self::script_requires_service_number(s.text.as_str()));
         if !any_requires_sn {
             return false;
         }
@@ -859,56 +892,46 @@ impl<'a> ScriptsTab<'a> {
     }
 
     pub fn insert_user_scripts(&mut self) {
-        if self.check_for_scripts {
-            let current_folder = self.filesystem.get_current_folder();
-            if let Some(node) = current_folder {
-                match node {
-                    database::schema::Node::Folder(_, children) => {
-                        if !children.is_empty() {
-                            // log::info!("Children of {path}: {:?}", children);
-                            let todo_items: Vec<TodoItem> = children
-                            .values()
-                            .flat_map(|node| {
-                                match node {
-                                    Node::Folder(name, child) => {
-                                        log::info!("Folder => NAME: {name} CHILD: {child:?}");
-                                        child
-                                            .iter()
-                                            .filter_map(|(_, node)| {
-                                                if let Node::File((full_path, name)) = node {
-                                                    Some(TodoItem::new(name, Category::UserScripts(full_path.to_string())))
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .collect::<Vec<_>>()
-                                    }
-                                    _ => vec![TodoItem::default()],
-                                }
-                            })
-                            .collect();
-
-                            self.checklists.insert("User Scripts".to_string(), 
-                                TodoList {
-                                    name: "User Scripts".to_string(),
-                                    state: ListState::default(),
-                                    items: todo_items.clone()
-                                }
-                            );
-                            self.popup_items.borrow_mut().insert(
-                                "UserScripts".to_string(),
-                                todo_items
-                            );
-                            self.check_for_scripts = false;
-                        }
-                        // todo_items.push(value);
-                    },
-                    database::schema::Node::File(file) => {
-                        log::info!("file: {:?}", file);
-                    },
-                }
-            }
+        if !self.check_for_scripts || !self.user_scripts_bucket_loaded {
+            return;
         }
+        let current_folder = self.filesystem.get_current_folder();
+        let Some(database::schema::Node::Folder(_, children)) = current_folder else {
+            return;
+        };
+
+        let todo_items: Vec<TodoItem> = children
+            .values()
+            .flat_map(|node| match node {
+                Node::File((full_path, name)) => {
+                    vec![TodoItem::new(name, Category::UserScripts(full_path.to_string()))]
+                }
+                Node::Folder(_, child) => child
+                    .values()
+                    .filter_map(|node| {
+                        if let Node::File((full_path, name)) = node {
+                            Some(TodoItem::new(name, Category::UserScripts(full_path.to_string())))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect();
+
+        self.checklists.insert(
+            "User Scripts".to_string(),
+            TodoList {
+                name: "User Scripts".to_string(),
+                state: ListState::default(),
+                items: todo_items.clone(),
+            },
+        );
+        self.popup_items
+            .borrow_mut()
+            .insert("UserScripts".to_string(), todo_items);
+        self.check_for_scripts = false;
     }
 
     fn remove_button(&mut self, id: &str) {

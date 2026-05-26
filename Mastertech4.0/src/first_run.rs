@@ -1,8 +1,8 @@
 use super::{filesystem::system_info::generate_client_id, utilities::load_encrypted_user_data, app_state::MasterTechApp, tabs::github::get_github_releases};
-use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}}};
+use displays::{app_state::AppState, pages::login_page::HASH, ui_tools::{encode_style, toasts::{Toast, ToastKind, ToastOptions}, theme_config::apply_default_theme}};
 use database::{schema::{CustomerData, ExtendedSeb, LiveTaskPayload, LocalSebData, TicketData, CONNECTED_CLIENT_TABLE}, websocket_url_with_room, Database, WS_CLIENT_URL};
 use database::schema::GetKeysResponse;
-use eframe::egui::{Context, Style};
+use eframe::egui::{Context};
 use database::schema::RecordId;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,14 +23,7 @@ static TCP_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 impl MasterTechApp {
     pub fn first_run(&mut self, ctx: &Context) {
         self.context.shared_ctx.first_run = false;
-        // let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        match serde_json::from_str::<Style>(displays::STYLE) {
-            Ok(theme) => {
-                let style = Arc::new(theme);
-                ctx.set_style(style);
-            }
-            Err(e) => log::error!("Error setting theme: {e:?}")
-        };
+        apply_default_theme(ctx);
 
         match load_encrypted_user_data(HASH) {
             Some(login) => {
@@ -120,7 +113,12 @@ impl MasterTechApp {
                 // a chance to upsert the connected_client row before we publish
                 // local_ip + tcp_port. The publish step also retries with
                 // exponential back-off, so this sleep is belt-and-suspenders.
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let head_start = if crate::tcp_listener::is_self_update_child() {
+                    std::time::Duration::from_millis(500)
+                } else {
+                    std::time::Duration::from_secs(3)
+                };
+                tokio::time::sleep(head_start).await;
                 spawn_direct_tcp_listener(client_uuid).await;
             });
         }
@@ -186,9 +184,14 @@ impl MasterTechApp {
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;
-                match serde_json::from_value::<egui_dock::DockState<String>>(user.get_user_settings().get_ui_layout_mastertech()){
-                    Ok(tree) => self.tree = tree,
-                    Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
+                let layout = user.get_user_settings().get_ui_layout_mastertech();
+                if let Ok(tree) = serde_json::from_value::<egui_dock::DockState<displays::tabs::TabId>>(layout.clone()) {
+                    self.dock.tree = tree;
+                } else {
+                    match serde_json::from_value::<egui_dock::DockState<String>>(layout) {
+                        Ok(legacy) => self.dock = displays::tabs::DockSession::from_legacy_tree(legacy),
+                        Err(e) => log::error!("Could not get UI layout from user: {e:?}"),
+                    }
                 }
                 #[cfg(target_os = "windows")]
                 {

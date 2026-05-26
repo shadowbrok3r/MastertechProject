@@ -124,6 +124,7 @@ pub enum Category {
     Tuneup,
     Informational,
     JunkwareRemoval, // For "Junkware Removal" checklist
+    StressTests, // Stress-runner persisted scripts
     UserScripts(String), // For flexibility
 }
 
@@ -133,7 +134,8 @@ impl<'a> super::ScriptsTab<'a> {
             Category::Tuneup => "Tuneup / QC",
             Category::Informational => "Informational",
             Category::JunkwareRemoval => "Junkware Removal",
-            Category::UserScripts(ref name) => name,
+            Category::StressTests => "Stress Tests",
+            Category::UserScripts(_) => "User Scripts",
         };
 
         if let Some(todo_list) = self.checklists.get_mut(category_str) {

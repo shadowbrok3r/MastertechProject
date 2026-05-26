@@ -1813,53 +1813,23 @@ if (Test-Path $path) {{
 
             Cmd::GetRemoteScriptList => {
                 log::info!("websockets -> GetRemoteScriptList");
-                let builtin = |name: &str, cat: &str| RemoteScriptItem {
-                    name: name.into(), category: cat.into(), content: None,
-                };
-                let categories = vec![
-                    ("Tuneup / QC".to_string(), vec![
-                        builtin("Data Transfer", "Tuneup / QC"),
-                        builtin("Activate Webroot", "Tuneup / QC"),
-                        builtin("Activate SuperAnti", "Tuneup / QC"),
-                        builtin("Activate SEB", "Tuneup / QC"),
-                        builtin("Install Windows Updates", "Tuneup / QC"),
-                        builtin("Disable Sleep / Hibernation", "Tuneup / QC"),
-                        builtin("Run SuperAntiSpyware Scan", "Tuneup / QC"),
-                        builtin("Run Webroot Scan", "Tuneup / QC"),
-                        builtin("Run Tron", "Tuneup / QC"),
-                        builtin("Install LibreOffice", "Tuneup / QC"),
-                        builtin("Disable proxy settings", "Tuneup / QC"),
-                        builtin("Disable Notifications", "Tuneup / QC"),
-                        builtin("Change SuperAntiSpyware settings", "Tuneup / QC"),
-                        builtin("Disable Startup Apps", "Tuneup / QC"),
-                        builtin("Unpin Copilot", "Tuneup / QC"),
-                        builtin("Align Taskbar to left", "Tuneup / QC"),
-                    ]),
-                    ("Informational".to_string(), vec![
-                        builtin("Is SuperEasyBackup installed?", "Informational"),
-                        builtin("Is Webroot installed?", "Informational"),
-                        builtin("Is SuperAntiSpyware installed?", "Informational"),
-                        builtin("Are there scheduled tasks for it?", "Informational"),
-                        builtin("Is Windows Activated?", "Informational"),
-                        builtin("Is Hibernation/Sleep enabled?", "Informational"),
-                        builtin("Any Recent Blue Screens?", "Informational"),
-                        builtin("When Was The Last Service Date?", "Informational"),
-                        builtin("Windows Version", "Informational"),
-                        builtin("Check Updates", "Informational"),
-                        builtin("Run Prechecks", "Informational"),
-                    ]),
-                    ("Junkware Removal".to_string(), vec![
-                        builtin("OneLaunch", "Junkware Removal"),
-                        builtin("WebNavigator Browser", "Junkware Removal"),
-                        builtin("Wave Browser", "Junkware Removal"),
-                        builtin("Clear Browser", "Junkware Removal"),
-                        builtin("Shift Browser", "Junkware Removal"),
-                        builtin("Avast Browser", "Junkware Removal"),
-                        builtin("Mcaffee Safe", "Junkware Removal"),
-                        builtin("Driver Support", "Junkware Removal"),
-                        builtin("Winzip", "Junkware Removal"),
-                    ]),
-                ];
+                let all = displays::scripts::get_all_categories();
+                let categories: Vec<(String, Vec<RemoteScriptItem>)> = displays::scripts::CATEGORY_ORDER
+                    .iter()
+                    .filter_map(|cat| {
+                        let cat_label = format!("{}", cat);
+                        let items = all.get(cat)?;
+                        let entries = items
+                            .iter()
+                            .map(|s| RemoteScriptItem {
+                                name: s.name.clone(),
+                                category: cat_label.clone(),
+                                content: None,
+                            })
+                            .collect();
+                        Some((cat_label, entries))
+                    })
+                    .collect();
                 let response = Cmd::RemoteScriptListResponse { categories };
                 if let Ok(payload) = encode_to_vec(&response, standard()) {
                     sender.send(WsMessage::Binary(payload));
@@ -2420,12 +2390,23 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                             send_result(&tx, &script.name, RemoteScriptStatus::Failed);
                         }
 
-                        "Run GPU Probe" => {
+                        name if stress_runner::is_stress_script(name) => {
                             use std::sync::Arc;
                             use stress_kit::telemetry::TelemetryAgent;
-                            use stress_runner::{drive_blocking, gpu_probe_spec, RunResult, RunUpdate};
+                            use stress_runner::{build_stress_script_spec, drive_blocking, RunResult, RunUpdate};
 
-                            send_log(&tx, "GPU probe: compute → matmul → VRAM → PCIe (persisted)".into());
+                            if service_number.trim().is_empty() {
+                                send_log(
+                                    &tx,
+                                    format!(
+                                        "{name}: service_number is required so stress_test_run carries service_order / customer / computer linkage — aborting."
+                                    ),
+                                );
+                                send_result(&tx, &script.name, RemoteScriptStatus::Failed);
+                                continue;
+                            }
+
+                            send_log(&tx, format!("{name}: running via stress-runner (persisted)"));
 
                             enum ProbeMsg {
                                 Log(String),
@@ -2434,15 +2415,33 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
 
                             let service_number_probe = service_number.clone();
                             let diag_session_probe = diagnostic_session_id.clone();
+                            let script_name = script.name.clone();
+                            let label = script.name.clone();
                             let (probe_tx, probe_rx) = crossbeam::channel::unbounded::<ProbeMsg>();
 
                             std::thread::spawn(move || {
                                 let client = crate::filesystem::get_client_hash();
+                                let computer = match client.computer.clone() {
+                                    Some(c) => c,
+                                    None => {
+                                        let _ = probe_tx.send(ProbeMsg::Log(
+                                            "get_client_hash returned no computer record".into(),
+                                        ));
+                                        let _ = probe_tx.send(ProbeMsg::Done(false));
+                                        return;
+                                    }
+                                };
+                                let mut spec = match build_stress_script_spec(&script_name, computer, 60) {
+                                    Some(s) => s,
+                                    None => {
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                            "Unknown stress script '{}'", script_name
+                                        )));
+                                        let _ = probe_tx.send(ProbeMsg::Done(false));
+                                        return;
+                                    }
+                                };
                                 let telemetry = Arc::new(TelemetryAgent::start(1000));
-                                let mut spec = gpu_probe_spec(
-                                    client.computer.clone().expect("get_client_hash sets computer"),
-                                    1.0,
-                                );
                                 spec.tags.push("origin:remote_scripts".into());
                                 spec.hostname = std::env::var("COMPUTERNAME")
                                     .or_else(|_| std::env::var("HOSTNAME"))
@@ -2472,31 +2471,39 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                                             run_id.key_string()
                                         )));
                                     }
-                                    RunUpdate::StageStarted { index, label, stage_count } => {
-                                        let _ = probe_tx.send(ProbeMsg::Log(format!(
-                                            "Stage {}/{}: {label}", index + 1, stage_count
-                                        )));
+                                    RunUpdate::StageStarted { index, label: stage_label, stage_count } => {
+                                        if stage_count > 1 {
+                                            let _ = probe_tx.send(ProbeMsg::Log(format!(
+                                                "Stage {}/{}: {stage_label}", index + 1, stage_count
+                                            )));
+                                        }
                                     }
                                     RunUpdate::Tick { metrics, stage_label, .. } => {
                                         if let Some(err) = metrics.last_error.as_ref() {
-                                            let stage = stage_label.unwrap_or_else(|| "gpu".into());
+                                            let stage = stage_label.unwrap_or_else(|| "single".into());
                                             let _ = probe_tx.send(ProbeMsg::Log(format!("{stage}: {err}")));
                                         }
                                     }
                                     RunUpdate::StageFinished { .. } => {}
                                     RunUpdate::Finished(v) => {
                                         success = v.result == RunResult::Pass;
+                                        let result_str = match v.result {
+                                            RunResult::Pass => "PASSED",
+                                            RunResult::Fail => "FAILED",
+                                            RunResult::Aborted => "ABORTED",
+                                            RunResult::Inconclusive => "INCONCLUSIVE",
+                                            RunResult::InProgress => "IN_PROGRESS",
+                                        };
                                         let _ = probe_tx.send(ProbeMsg::Log(format!(
-                                            "GPU probe {} in {:.1}s (run persisted)",
-                                            if success { "PASSED" } else { "FAILED" },
+                                            "{label} {result_str} in {:.1}s (run persisted)",
                                             v.duration_secs
                                         )));
                                     }
                                     RunUpdate::Warning { message } => {
-                                        let _ = probe_tx.send(ProbeMsg::Log(format!("GPU probe warning: {message}")));
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!("{label} warning: {message}")));
                                     }
                                     RunUpdate::Error { message } => {
-                                        let _ = probe_tx.send(ProbeMsg::Log(format!("GPU probe error: {message}")));
+                                        let _ = probe_tx.send(ProbeMsg::Log(format!("{label} error: {message}")));
                                     }
                                 });
                                 let _ = probe_tx.send(ProbeMsg::Done(success));
@@ -2868,7 +2875,21 @@ if ($anyEnabled) { Write-Output 'Sleep/Hibernation: ENABLED on at least one sett
                 );
                 if let Some(bytes) = self.self_update_buffer.push(chunk_index, total_chunks, data) {
                     log::info!("[self-update] all {} chunks received — applying…", total_chunks);
-                    let (success, message) = crate::remote_self_update::apply_and_relaunch(bytes);
+                    const RECONNECT_HINT_SECS: u32 = 15;
+                    let relaunch_cmd = displays::Cmd::MastertechSelfUpdateRelaunching {
+                        reconnect_hint_secs: RECONNECT_HINT_SECS,
+                    };
+                    if let Ok(payload) = encode_to_vec(&relaunch_cmd, standard()) {
+                        sender.send(WsMessage::Binary(payload));
+                    }
+                    let apply_result = tokio::task::spawn_blocking(move || {
+                        crate::remote_self_update::apply_and_relaunch(bytes)
+                    })
+                    .await;
+                    let (success, message) = match apply_result {
+                        Ok(pair) => pair,
+                        Err(e) => (false, format!("apply task failed: {e}")),
+                    };
                     log::info!("[self-update] result: success={success} message={message}");
                     let result_cmd = displays::Cmd::MastertechSelfUpdateResult { success, message };
                     if let Ok(payload) = encode_to_vec(&result_cmd, standard()) {

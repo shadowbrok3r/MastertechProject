@@ -138,11 +138,6 @@ impl SurrealDbFetcher {
             }
         }
 
-        if clean_prefix.is_empty() {
-            root_children.entry("Scripts".to_string())
-                .or_insert_with(|| Node::Folder("Scripts".to_string(), HashMap::new()));
-        }
-
         Ok(Node::Folder(folder_path.to_string(), root_children))
     }
     
@@ -466,10 +461,12 @@ impl FileSystem {
         self
     }
 
-    pub fn receive(&mut self) { // , ctx: &Context
+    pub fn receive(&mut self) -> bool {
+        let mut bucket_updated = false;
         if let Ok(new_node) = self.paths_channel.1.try_recv() {
             info!("Filesystem received a new node");
             let _ = self.insert_node(new_node);
+            bucket_updated = true;
         }
 
         while let Ok(x) = self.bytes_rx.try_recv() {
@@ -503,6 +500,7 @@ impl FileSystem {
         // if self.selected_items.borrow().is_empty() {
         //     self.previewed_file = None;
         // }
+        bucket_updated
     }
     
     pub fn set_user(&mut self, user: User) -> &mut Self {

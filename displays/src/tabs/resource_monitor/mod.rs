@@ -1,48 +1,77 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, RichText, ScrollArea, Ui, Vec2, Widget};
+use eframe::egui::{
+    Align, Button, CentralPanel, Color32, ComboBox, FontId, Layout, RichText, ScrollArea, Ui,
+    Vec2, Widget,
+};
 use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
-use line_plot::LinePlot;
-use metric_plot::MetricPlot;
-use std::collections::HashMap;
-use web_time::Instant;
 use database::schema::SystemInformation;
-pub mod process_table;
-pub mod line_plot;
-pub mod metric_plot;
-pub mod bar_chart;
 
-#[derive(Default, PartialEq, Eq)]
+pub mod hw_tables;
+pub mod machine_info;
+pub mod process_table;
+#[cfg(feature = "native-telemetry")]
+pub mod sysinfo_convert;
+
+pub use machine_info::{MachineDriveRow, MachineInfo};
+
+#[cfg(feature = "native-telemetry")]
+use stress_kit::telemetry::TelemetrySnapshot;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ResourceMonitorState {
     #[default]
-    Cpu,
-    Ram,
-    Gpu,
+    AllCharts,
     Processes,
-    Network,
-    Temperatures,
     RequestingData,
-    Drives,
-    Stop
+    Stop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum HwView {
+    #[default]
+    Cores,
+    Memory,
+    Disks,
+    Networks,
+    Whea,
+    Gpus,
+    Machine,
+}
+
+impl HwView {
+    pub const ALL: [Self; 7] = [
+        Self::Cores,
+        Self::Memory,
+        Self::Disks,
+        Self::Networks,
+        Self::Whea,
+        Self::Gpus,
+        Self::Machine,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cores => "CPU cores",
+            Self::Memory => "Memory",
+            Self::Disks => "Disks",
+            Self::Networks => "Networks",
+            Self::Whea => "WHEA",
+            Self::Gpus => "GPUs",
+            Self::Machine => "Machine",
+        }
+    }
 }
 
 pub struct ResourceMonitor {
     pub state: ResourceMonitorState,
     pub sysinfo_channel: (Sender<SystemInformation>, Receiver<SystemInformation>),
-    cpu_usage_chart: MetricPlot,
-    cpu_clock_chart: MetricPlot,
-    ram_usage_chart: MetricPlot,
-    gpu_temp_chart: MetricPlot,
-    gpu_mem_chart: MetricPlot,
-    component_temp_plot: LinePlot,
-    disk_usage_plot: LinePlot,
-    network_interface_plot: LinePlot,
-    start_time: Instant,
-    /// Process table viewer for displaying running processes
+    hw_view: HwView,
+    filter: String,
+    #[cfg(feature = "native-telemetry")]
+    telemetry: TelemetrySnapshot,
+    machine_info: Option<MachineInfo>,
     pub process_table_viewer: ProcessTableViewer,
-    /// Most recent `SystemInformation` snapshot received from the client.
-    /// Read by the connected-client cards in the My Tasks column to show
-    /// live CPU/RAM/GPU stats without subscribing to the chart channels.
     pub latest_sysinfo: Option<SystemInformation>,
 }
 
@@ -51,16 +80,12 @@ impl Default for ResourceMonitor {
         let sysinfo_channel = SystemInformation::create_unbounded_channel();
         Self {
             sysinfo_channel,
-            cpu_usage_chart: MetricPlot::new("Time (s)", "CPU Usage (%)"),
-            cpu_clock_chart: MetricPlot::new("Time (s)", "CPU Clock (MHz)"),
-            ram_usage_chart: MetricPlot::new("Time (s)", "RAM Usage (GB)"),
-            gpu_temp_chart: MetricPlot::new("Time (s)", "GPU Temp (C)"),
-            gpu_mem_chart: MetricPlot::new("Time (s)", "GPU Memory"),
-            component_temp_plot: LinePlot::new(50),
-            disk_usage_plot: LinePlot::new(50),
-            network_interface_plot: LinePlot::new(50),
-            start_time: Instant::now(), // Initialize the timer
             state: ResourceMonitorState::default(),
+            hw_view: HwView::default(),
+            filter: String::new(),
+            #[cfg(feature = "native-telemetry")]
+            telemetry: TelemetrySnapshot::default(),
+            machine_info: None,
             process_table_viewer: ProcessTableViewer::new(),
             latest_sysinfo: None,
         }
@@ -68,93 +93,33 @@ impl Default for ResourceMonitor {
 }
 
 impl ResourceMonitor {
+    #[cfg(feature = "native-telemetry")]
+    pub fn set_telemetry(&mut self, snapshot: TelemetrySnapshot) {
+        self.telemetry = snapshot;
+    }
+
+    pub fn set_machine_info(&mut self, info: MachineInfo) {
+        self.machine_info = Some(info);
+    }
+
     fn receive(&mut self) {
         if let Ok(sysinfo) = self.sysinfo_channel.1.try_recv() {
             self.set_sysinfo(sysinfo);
         }
-
-        // Clean up old data for MetricPlots
-        // self.cpu_usage_chart.clean_old_data(50);
-        // self.cpu_clock_chart.clean_old_data(50);
-        // self.ram_usage_chart.clean_old_data(50);
-        // self.gpu_temp_chart.clean_old_data(50);
-        // self.gpu_mem_chart.clean_old_data(50);
-            // Clean up old data for LinePlots
-        for points in self.disk_usage_plot.data.values_mut() {
-            while points.len() > self.disk_usage_plot.max_points {
-                points.pop_front();
-            }
-        }
-        for points in self.network_interface_plot.data.values_mut() {
-            while points.len() > self.network_interface_plot.max_points {
-                points.pop_front();
-            }
-        }
     }
 
     pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) {
-        // Always cache the latest snapshot so external readers (e.g. the
-        // connected-client cards on My Tasks) see current stats even when
-        // the chart pipeline is paused.
         self.latest_sysinfo = Some(sysinfo.clone());
 
-        // When in RequestingData state, clear old data and switch to normal update mode
         if matches!(self.state, ResourceMonitorState::RequestingData) {
-            self.cpu_usage_chart.data.clear();
-            self.cpu_clock_chart.data.clear();
-            self.ram_usage_chart.data.clear();
-            self.gpu_temp_chart.data.clear();
-            self.gpu_mem_chart.data.clear();
-            self.component_temp_plot.data.clear();
-            self.disk_usage_plot.data.clear();
-            self.network_interface_plot.data.clear();
-            // Switch to Cpu state to start updating
-            self.state = ResourceMonitorState::Cpu;
+            self.state = ResourceMonitorState::AllCharts;
         }
-        
-        // Only update charts if not stopped
-        if !matches!(self.state, ResourceMonitorState::Stop) {
-            let wrapped_time = self.start_time.elapsed().as_secs_f32();
 
-            // Update charts with continuous time
-            let continuous_time = wrapped_time;
-
-            self.cpu_usage_chart.update(sysinfo.cpu_percentage);
-            // Normalize MHz
-            self.cpu_clock_chart.update(normalize(sysinfo.cpu_clock, 0.0, 100.0));
-            // Convert MB to GB
-            self.ram_usage_chart.update(if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); 
-
-            // Update component temperatures
-            for (component, &temp) in &sysinfo.component_temps {
-                self.component_temp_plot.update_line(component, continuous_time, temp);
-            }
-
-            for (gpu, gpu_usage) in sysinfo.gpu_info.card.iter().zip(sysinfo.gpu_info.usage.iter()) {
-                self.gpu_temp_chart.update(gpu.temperature as f32);
-                self.gpu_mem_chart.update(gpu_usage.memory_usage as f32);
-            }
-
-            // Update disk usage
-            for disk_info in &sysinfo.disks {
-                let used = if disk_info.available_space > 0 {
-                    disk_info.total_space as f32 / disk_info.available_space as f32
-                } else {
-                    0.0
-                };
-                self.disk_usage_plot.update_line(&disk_info.device_name, continuous_time, used);
-            }
-
-            // Update network interfaces
-            for interface in &sysinfo.network_interfaces {
-                log::debug!("interface: {interface:?}");
-                let rx_gb = interface.total_received as f32;
-                let tx_gb = interface.total_transmitted as f32;
-                self.network_interface_plot.update_line(&interface.interface_name, continuous_time, rx_gb + tx_gb);
-            }
+        #[cfg(feature = "native-telemetry")]
+        {
+            self.telemetry = sysinfo_convert::sysinfo_to_telemetry(&sysinfo);
         }
-        
-        // Always update process table (unless stopped)
+
         if !matches!(self.state, ResourceMonitorState::Stop) {
             self.process_table_viewer.set_data(sysinfo.processes);
         }
@@ -163,206 +128,183 @@ impl ResourceMonitor {
     pub fn display(&mut self, ui: &mut Ui) {
         self.receive();
 
-        ui.ctx().request_repaint(); // .request_repaint_after_secs(2.);
-        eframe::egui::Panel::top("Resource Monitor Top Panel").exact_size(25.).show_inside(ui, |ui| {
-            eframe::egui::MenuBar::new().ui(ui, |ui| {
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
-                    let button_stroke = ui.style().visuals.window_stroke;
-                    let button_size = Vec2::new(120.0, 15.0);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
 
-                    let all_charts_selected = !matches!(self.state, ResourceMonitorState::Processes | ResourceMonitorState::Stop | ResourceMonitorState::RequestingData);
-                    
-                    if Button::new("📊 All Charts")
-                        .min_size(button_size)
-                        .frame(true)
-                        .stroke(button_stroke)
-                        .fill(if all_charts_selected { 
-                            ui.style().visuals.selection.bg_fill 
-                        } else { 
-                            Color32::TRANSPARENT 
-                        })
-                        .ui(ui)
-                        .clicked() 
-                    {
-                        self.state = ResourceMonitorState::Cpu; // Default to show all charts
-                    }
+        eframe::egui::Panel::top("Resource Monitor Top Panel")
+            .exact_size(25.)
+            .show_inside(ui, |ui| {
+                eframe::egui::MenuBar::new().ui(ui, |ui| {
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let button_stroke = ui.style().visuals.window_stroke;
+                        let button_size = Vec2::new(120.0, 15.0);
 
-                    ui.add_space(10.);
+                        let all_charts_selected = matches!(
+                            self.state,
+                            ResourceMonitorState::AllCharts | ResourceMonitorState::RequestingData
+                        );
 
-                    if Button::new("📋 Processes")
-                        .min_size(button_size)
-                        .stroke(button_stroke)
-                        .fill(if matches!(self.state, ResourceMonitorState::Processes) { 
-                            ui.style().visuals.selection.bg_fill 
-                        } else { 
-                            Color32::TRANSPARENT 
-                        })
-                        .ui(ui)
-                        .clicked() 
-                    {
-                        self.state = ResourceMonitorState::Processes
-                    }
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui | {
-                    ui.add_space(2.);
-                    let button_stroke = ui.style().visuals.window_stroke;
-                    let button_size = Vec2::new(60.0, 15.0);
-                    if Button::new("Refresh").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        self.state = ResourceMonitorState::RequestingData;
-                        self.start_time = Instant::now();
-                    }
-
-                    ui.add_space(5.);
-                    if let ResourceMonitorState::Stop = self.state {
-                    } else {
-                        if Button::new("Stop").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                            self.state = ResourceMonitorState::Stop;
+                        if Button::new("📊 All Charts")
+                            .min_size(button_size)
+                            .frame(true)
+                            .stroke(button_stroke)
+                            .fill(if all_charts_selected {
+                                ui.style().visuals.selection.bg_fill
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .ui(ui)
+                            .clicked()
+                        {
+                            self.state = ResourceMonitorState::AllCharts;
                         }
-                    }
 
-                    ui.add_space(ui.available_width()/1.5);
+                        ui.add_space(10.);
 
-                    ui.label(
-                        RichText::new("Resource monitor")
-                            .color(Color32::LIGHT_RED)
-                            .heading()
-                            .font(FontId::monospace(20.))
-                    );
+                        if Button::new("📋 Processes")
+                            .min_size(button_size)
+                            .stroke(button_stroke)
+                            .fill(if matches!(self.state, ResourceMonitorState::Processes) {
+                                ui.style().visuals.selection.bg_fill
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .ui(ui)
+                            .clicked()
+                        {
+                            self.state = ResourceMonitorState::Processes;
+                        }
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add_space(2.);
+                        let button_stroke = ui.style().visuals.window_stroke;
+                        let button_size = Vec2::new(60.0, 15.0);
+                        if Button::new("Refresh")
+                            .min_size(button_size)
+                            .stroke(button_stroke)
+                            .ui(ui)
+                            .clicked()
+                        {
+                            self.state = ResourceMonitorState::RequestingData;
+                        }
+
+                        ui.add_space(5.);
+                        if !matches!(self.state, ResourceMonitorState::Stop) {
+                            if Button::new("Stop")
+                                .min_size(button_size)
+                                .stroke(button_stroke)
+                                .ui(ui)
+                                .clicked()
+                            {
+                                self.state = ResourceMonitorState::Stop;
+                            }
+                        }
+
+                        ui.add_space(ui.available_width() / 1.5);
+
+                        ui.label(
+                            RichText::new("Resource monitor")
+                                .color(Color32::LIGHT_RED)
+                                .heading()
+                                .font(FontId::monospace(20.)),
+                        );
+                    });
                 });
             });
-        });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            ScrollArea::vertical().show(ui, |ui| {
-                // New line charts
-                let mut colors = HashMap::new();
-                colors.insert("Component Temps".to_string(), Color32::from_rgb(235, 12, 38));
-                colors.insert("Disk Usage".to_string(), Color32::from_rgb(12, 235, 97));
-                colors.insert("Network Usage".to_string(), Color32::from_rgb(240, 141, 55));
-
-                match self.state {
-                    ResourceMonitorState::Stop => {},
-                    ResourceMonitorState::RequestingData => {
-                        ui.vertical_centered(|ui| {
-                            ui.label(
-                                RichText::new("Loading system data...")
+            match self.state {
+                ResourceMonitorState::Stop => {}
+                ResourceMonitorState::RequestingData => {
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("Loading system data...")
                                 .color(ui.style().visuals.warn_fg_color)
-                                .heading()
-                            );
-                        });
-                    },
-                    ResourceMonitorState::Processes => {
-                        self.process_table_viewer.show(ui);
-                    },
-                    _ => {
-                        // Show all charts in a grid layout
-                        ui.columns(2, |columns| {
-                            // Left column
-                            columns[0].group(|ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        RichText::new("CPU Performance")
-                                        .underline()
-                                        .color(ui.style().visuals.error_fg_color)
-                                        .heading()
-                                        .font(FontId::monospace(18.))
-                                    );
-                                    ui.add_space(20.);
-                                    
-                                    // CPU Usage Chart
-                                    self.cpu_usage_chart.ui(ui, "CPU Usage", Color32::from_rgb(62, 7, 242));
-                                    ui.add_space(10.);
-                                    
-                                    // CPU Clock Chart
-                                    self.cpu_clock_chart.ui(ui, "CPU Clock", Color32::from_rgb(7, 242, 176));
-                                    ui.add_space(20.);
-                                    
-                                    // RAM Usage Chart
-                                    ui.label(
-                                        RichText::new("Memory Usage")
-                                        .underline()
-                                        .color(ui.style().visuals.error_fg_color)
-                                        .heading()
-                                        .font(FontId::monospace(18.))
-                                    );
-                                    ui.add_space(10.);
-                                    self.ram_usage_chart.ui(ui, "RAM Usage", Color32::from_rgb(242, 7, 179));
-                                });
-                            });
-
-                            // Right column
-                            columns[1].group(|ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        RichText::new("GPU Performance")
-                                        .underline()
-                                        .color(ui.style().visuals.error_fg_color)
-                                        .heading()
-                                        .font(FontId::monospace(18.))
-                                    );
-                                    ui.add_space(20.);
-                                    
-                                    // GPU Temperature Chart
-                                    self.gpu_temp_chart.ui(ui, "GPU Temperature", Color32::from_rgb(7, 242, 176));
-                                    ui.add_space(10.);
-                                    
-                                    // GPU Memory Chart
-                                    self.gpu_mem_chart.ui(ui, "GPU Memory Usage", Color32::from_rgb(62, 7, 242));
-                                    ui.add_space(20.);
-                                    
-                                    // Component Temperatures
-                                    ui.label(
-                                        RichText::new("System Temperatures")
-                                        .underline()
-                                        .color(ui.style().visuals.error_fg_color)
-                                        .heading()
-                                        .font(FontId::monospace(18.))
-                                    );
-                                    ui.add_space(10.);
-                                    self.component_temp_plot.ui(ui, "Component Temps", &mut colors.clone());
-                                });
-                            });
-                        });
-                        
-                        ui.add_space(20.);
-                        
-                        // Bottom row for Disk and Network usage
-                        ui.columns(2, |columns| {
-                            columns[0].group(|ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        RichText::new("Disk Usage")
-                                        .underline()
-                                        .color(ui.style().visuals.error_fg_color)
-                                        .heading()
-                                        .font(FontId::monospace(18.))
-                                    );
-                                    ui.add_space(10.);
-                                    self.disk_usage_plot.ui(ui, "Disk Usage", &mut colors.clone());
-                                });
-                            });
-                            
-                            columns[1].group(|ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        RichText::new("Network Activity")
-                                        .underline()
-                                        .color(ui.style().visuals.error_fg_color)
-                                        .heading()
-                                        .font(FontId::monospace(18.))
-                                    );
-                                    ui.add_space(10.);
-                                    self.network_interface_plot.ui(ui, "Network Usage", &mut colors.clone());
-                                });
-                            });
-                        });
-                    }
+                                .heading(),
+                        );
+                    });
                 }
-            });
+                ResourceMonitorState::Processes => {
+                    self.process_table_viewer.show(ui);
+                }
+                ResourceMonitorState::AllCharts => {
+                    self.show_all_charts(ui);
+                }
+            }
         });
     }
-}
 
-fn normalize(value: f32, min: f32, max: f32) -> f32 {
-    (value - min) / (max - min)
+    fn show_all_charts(&mut self, ui: &mut Ui) {
+        #[allow(deprecated)]
+        eframe::egui::Panel::top("resource_monitor_hw_view")
+            .exact_size(34.0)
+            .show_inside(ui, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ComboBox::from_id_salt("resource_monitor_hw_view")
+                        .selected_text(self.hw_view.label())
+                        .show_ui(ui, |ui| {
+                            for view in HwView::ALL {
+                                ui.selectable_value(&mut self.hw_view, view, view.label());
+                            }
+                        });
+
+                    ui.add_space(8.0);
+
+                    if matches!(
+                        self.hw_view,
+                        HwView::Cores | HwView::Disks | HwView::Networks
+                    ) {
+                        let _ = ui.add(
+                            eframe::egui::TextEdit::singleline(&mut self.filter)
+                                .hint_text("Filter…")
+                                .desired_width(200.0),
+                        );
+                    }
+
+                    #[cfg(feature = "native-telemetry")]
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "captured @ {}",
+                                hw_tables::fmt_captured_at(self.telemetry.captured_at_unix_ms)
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                    });
+                });
+            });
+
+        ScrollArea::vertical().show(ui, |ui| {
+            if self.hw_view == HwView::Machine {
+                if let Some(info) = self.machine_info.clone() {
+                    info.show(ui);
+                } else {
+                    ui.colored_label(Color32::GRAY, "Machine info not available.");
+                }
+                return;
+            }
+
+            #[cfg(feature = "native-telemetry")]
+            match self.hw_view {
+                HwView::Cores => hw_tables::show_cores(ui, &self.telemetry, &self.filter),
+                HwView::Memory => hw_tables::show_memory(ui, &self.telemetry.memory),
+                HwView::Disks => hw_tables::show_disks(ui, &self.telemetry.disks, &self.filter),
+                HwView::Networks => {
+                    hw_tables::show_networks(ui, &self.telemetry.networks, &self.filter)
+                }
+                HwView::Whea => hw_tables::show_whea(ui, &self.telemetry.whea),
+                HwView::Gpus => hw_tables::show_gpus(ui, &self.telemetry.gpus),
+                HwView::Machine => {}
+            }
+
+            #[cfg(not(feature = "native-telemetry"))]
+            {
+                ui.colored_label(
+                    Color32::GRAY,
+                    "Live telemetry tables require the native build.",
+                );
+            }
+        });
+    }
 }

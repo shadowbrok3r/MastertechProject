@@ -109,10 +109,8 @@ DEFINE FIELD tags                ON stress_test_run TYPE array<string> DEFAULT [
 DEFINE FIELD tags.*              ON stress_test_run TYPE string                                     PERMISSIONS FULL;
 
 -- --- Semantic similarity ---
--- `none | array<float>` so stress tests created offline (no Ollama available)
--- store NONE and the HNSW simply skips those rows. The Rust struct sends no
--- field when the Vec is empty (`skip_serializing_if = "Vec::is_empty"`), so
--- SurrealDB receives nothing and stores NONE. A backfill job or AI review pass
--- populates embeddings for completed runs.
+-- `none | array<float>` on environments with slice10; older DBs may still
+-- require `array<float>`. Rust CREATE always sets `embedding` via
+-- `fn::embed_text` so the HNSW index receives a 768-dim vector.
 DEFINE FIELD embedding           ON stress_test_run TYPE none | array<float>                       PERMISSIONS FULL;
 DEFINE FIELD embedding.*         ON stress_test_run TYPE float                                     PERMISSIONS FULL;

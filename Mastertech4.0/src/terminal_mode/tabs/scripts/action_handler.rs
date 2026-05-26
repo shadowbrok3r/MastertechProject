@@ -14,6 +14,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
             WidgetId("Tuneup / QC".to_string()),
             WidgetId("Informational".to_string()),
             WidgetId("UserScripts".to_string()),
+            WidgetId("Stress Tests".to_string()),
             WidgetId("ServiceNumberScriptsPage".to_string()),
             WidgetId("CustomPath".to_string()),
         ];
@@ -33,8 +34,10 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 let widget_button = match widget_id.0.as_str() {
                     "Tuneup / QC" => Some(&self.tuneup_btn),
                     "Informational" => Some(&self.informational_btn),
+                    "Stress Tests" => Some(&self.stress_tests_btn),
                     "UserScripts" => {
                         let _ = self.filesystem.request_contents("/");
+                        self.user_scripts_bucket_loaded = false;
                         self.check_for_scripts = true;
                         Some(&self.user_scripts_btn)
                     },
@@ -70,7 +73,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                 match id {
                     "Run" => {
                         if self.run_button_should_be_disabled() {
-                            self.log_message("Provide a service number to run Activate Webroot, Activate SuperAnti, or Activate SEB.");
+                            self.log_message("Provide a service number — required for Activate Webroot / SuperAnti / SEB and every Stress Tests script (so stress_test_run rows carry service_order / customer / computer linkage).");
                             return;
                         }
                         let text_area_input = self.service_number_field.input.borrow().clone();
@@ -101,6 +104,7 @@ impl<'a> ActionHandler for ScriptsTab<'a> {
                     },
                     "Tuneup / QC" => {}
                     "Informational" => {}
+                    "Stress Tests" => {}
                     "UserScripts" => {}
                     "Continue" => {}
                     "CustomPath" => { }

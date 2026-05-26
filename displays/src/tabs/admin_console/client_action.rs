@@ -150,23 +150,6 @@ impl AdminConsole {
                 #[cfg(not(target_arch="wasm32"))]
                 ws_client.start_receiving_buffers();
 
-                // Automatically start the resource monitor stream so live
-                // CPU/RAM/GPU stats appear in both the admin console and the
-                // My Tasks connected-client cards without the admin needing to
-                // manually click the "Charts" button.
-                let _ = ws_client.send_cmd_tx.try_send(Cmd::LiveData);
-                ws_client.live_stats_active = true;
-
-                // Slice 2 trigger: kick off a one-shot security
-                // inventory gather. The client will WMI-enumerate
-                // SecurityCenter2 + walk the registry uninstall keys
-                // and reply with `Cmd::SecurityInventoryResponse`.
-                // The receive handler pushes through the global
-                // channel, where `AdminConsole::receive` caches it
-                // by connection_string AND upserts it onto the
-                // linked `computer` row.
-                let _ = ws_client.send_cmd_tx.try_send(Cmd::GatherSecurityInventory);
-
                 self.ws_clients
                     .entry(client.connection_string.clone())
                     .or_insert(ws_client);
@@ -182,6 +165,11 @@ impl AdminConsole {
                 self.relink_popup = Some(super::RelinkClientPopup::new(client));
             },
             ClientUiAction::LinkComputer(client) => {
+                // Fire a fresh hardware-spec request through the active session
+                // so open_service_suggestions is populated before the modal polls.
+                if let Some(ws) = self.ws_clients.get(&client.connection_string) {
+                    let _ = ws.send_cmd_tx.try_send(Cmd::RequestOpenServiceCandidates { refresh: false });
+                }
                 submit_admin_entity_link(&client, "computer");
             }
             ClientUiAction::LinkCustomer(client) => {

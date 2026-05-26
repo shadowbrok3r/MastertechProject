@@ -112,10 +112,20 @@ impl Default for ThemeConfig {
             window_stroke_color: Color32::from_rgb(42, 195, 222),
             rounding: eframe::egui::CornerRadius::same(4),
             font: FontFamily::Proportional,
-            font_size: 12.0,
-            preset_style: PresetStyles::Custom,
+            font_size: 14.0,
+            preset_style: PresetStyles::RerunMtech,
         }
     }
+}
+
+/// Default desktop theme (Rerun MTech preset).
+pub fn default_app_style() -> Arc<Style> {
+    Arc::new(RerunMtech.custom_style())
+}
+
+/// Applies the Rerun MTech preset and semantic accent colors to a context.
+pub fn apply_default_theme(ctx: &Context) {
+    RerunMtech.apply_to_ctx(ctx);
 }
 
 impl ThemeConfig {
@@ -809,24 +819,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
             custom_style.interaction.tooltip_delay = 0.1;
             Arc::new(custom_style)
         },
-        PresetStyles::RerunMtech => {
-            let mut custom_style = RerunMtech.custom_style();
-            let mut font = FontId::default();
-            font.size = config.font_size;
-            font.family = config.font.clone();
-
-            custom_style.override_font_id = Some(font);
-
-            custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
-            custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-            custom_style.spacing.combo_height = 200.0;
-            custom_style.spacing.combo_width = 100.0;
-            custom_style.interaction.selectable_labels = true;
-            custom_style.interaction.interact_radius = 10.0;
-            custom_style.interaction.show_tooltips_only_when_still = false;
-            custom_style.interaction.tooltip_delay = 0.1;
-            Arc::new(custom_style)
-        },
+        PresetStyles::RerunMtech => default_app_style(),
         PresetStyles::Custom => {
             let theme = CarlDark;
             let mut custom_style: Style = theme.custom_style();

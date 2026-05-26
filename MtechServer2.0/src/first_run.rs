@@ -1,5 +1,4 @@
-use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{ToastStyle, Toast, ToastKind, ToastOptions}}};
-use displays::{tabs::admin_console::{AdminConsole, SessionLayout}, tabs::admin_console::client_interface::TransportKind, ui_tools::theme_config::set_custom_style};
+use displays::{app_state::AppState, tabs::ai_playground::ChatThread, ui_tools::{decode_style, encode_style, toasts::{ToastStyle, Toast, ToastKind, ToastOptions}, theme_config::{apply_default_theme, set_custom_style}}};
 use eframe::{egui::{Color32, Context, Margin, Stroke, Style, Vec2, Window}, Frame};
 use crate::{app_state::MtechServer, webworker::decode_task_payload};
 use std::{collections::HashMap, sync::Arc};
@@ -13,13 +12,7 @@ impl MtechServer {
     pub fn first_run(&mut self, ctx: &Context, frame: &mut Frame) {
         self.shared_ctx.first_run = false;
         let current_version = env!("CARGO_PKG_VERSION");
-        match serde_json::from_str::<Style>(displays::STYLE) {
-            Ok(theme) => {
-                let style = Arc::new(theme);
-                ctx.set_global_style(style);
-            }
-            Err(e) => log::error!("Error setting theme: {e:?}")
-        };
+        apply_default_theme(ctx);
         
         if let Some(storage) = frame.storage_mut() {
             gloo_console::info!("We have Storage Mut Access");
@@ -56,7 +49,7 @@ impl MtechServer {
                 )
                 .unwrap_or_else(|e| {
                     log::error!("Error setting theme: {e:?}");
-                    serde_json::from_str::<Style>(displays::STYLE).unwrap_or_default()
+                    (*displays::ui_tools::theme_config::default_app_style()).clone()
                 }));
                 gloo_console::info!("2 We have a user");
                 let user_version = user.get_version();
@@ -557,9 +550,20 @@ impl MtechServer {
         if let Some(user) = &self.shared_ctx.current_user {
             if self.shared_ctx.get_settings {
                 self.shared_ctx.get_settings = false;
-                match serde_json::from_value::<DockState<String>>(user.get_user_settings().get_ui_layout_mtechserver()){
-                    Ok(tree) => self.shared_ctx.tree = tree,
-                    Err(e) => log::error!("Could not get UI layout from user: {e:?}: {:#?}", user.get_user_settings().get_ui_layout_mtechserver()),
+                let layout = user.get_user_settings().get_ui_layout_mtechserver();
+                if let Ok(tree) = serde_json::from_value::<egui_dock::DockState<displays::tabs::TabId>>(layout.clone()) {
+                    self.shared_ctx.dock.tree = tree;
+                } else {
+                    match serde_json::from_value::<DockState<String>>(layout) {
+                        Ok(legacy) => {
+                            self.shared_ctx.dock =
+                                displays::tabs::DockSession::from_legacy_tree(legacy)
+                        }
+                        Err(e) => log::error!(
+                            "Could not get UI layout from user: {e:?}: {:#?}",
+                            user.get_user_settings().get_ui_layout_mtechserver()
+                        ),
+                    }
                 }
             } 
         }

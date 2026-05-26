@@ -1,8 +1,7 @@
-use database::schema::{ComputerData, CustomerData, TASK_TABLE, TICKET_TABLE, TaskNotePayload, TaskPayload, TicketPayload, User, get_data::get_services_by_status, helper_traits::{EmployeeHelper, parse_email_user}, prestashop::OrderState, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}};
+use database::schema::{TaskNotePayload, User, get_data::get_services_by_status, helper_traits::EmployeeHelper, prestashop::OrderState, prestashop_schema::{self, Employee, MissedCallOrder, PrestashopOrderType, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload}};
 use crossbeam::channel::Sender;
 use egui_data_table::DataTable;
 use itertools::Itertools;
-use database::schema::RecordId;
 use chrono::Utc;
 
 use crate::{PlatformSpawner, Spawner};
@@ -275,90 +274,35 @@ impl TaskRowViewer {
 
     pub async fn get_prestashop_order(service_number: String) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
         log::info!("Did not have a task, creating");
-        let mut value = get_prestashop_payload(&service_number).await?;
-        let mut customer = CustomerData::default();
-        let mut ticket = TicketPayload::default();
-        let mut task: TaskPayload = TaskPayload::default();
-        let mut task_notes = Vec::new();
+        let value = get_prestashop_payload(&service_number).await?;
 
-        let service_details = value.order.associations.order_service.clone();
-        let mut services: Vec<RecordId> = Vec::new();
-
-        let sales_rep = value.sales_rep.clone().unwrap_or_default();
-        let split_rep = value.split_rep.clone().unwrap_or_default();
-        let email = parse_email_user(&sales_rep.email);
-        let email_split_rep = parse_email_user(&split_rep.email);
-
-        customer.id = value.customer.id.clone();
-        customer.cust_code = value.customer.cust_code.clone();
-        customer.email = value.customer.email.clone();
-        customer.name = value.customer.name.clone();
-        customer.phone_number = value.customer.phone_number.clone();
-        ticket.salesman = email_split_rep.to_string();
-        ticket.sales_rep = email.to_string();
-        ticket.tech = email.to_string();
-        log::info!(
-            "Salesman: {:?}\nTech: {:?}",
-            ticket.salesman.clone(),
-            ticket.tech.clone()
+        let mut draft = database::schema::EntityDraft::default();
+        database::schema::apply_prestashop_payload(
+            &value,
+            &mut draft,
+            &database::schema::PrestaMapOptions {
+                mode: database::schema::PrestaMapMode::Audit,
+                task_id_strategy: database::schema::TaskIdStrategy::MatchServiceNumber,
+                ..Default::default()
+            },
         );
-        ticket.customer = Some(customer.clone());
-        ticket.checkin_rep = email.to_string();
-        ticket.terms = value.order.payment.clone();
-        ticket.ticket_total = value.order.total_products_wt.clone();
-        ticket.doc_alias = value.order.order_type.clone();
-        ticket.service_number = value.order.id.clone();
-        ticket.id = RecordId::new(
-            TICKET_TABLE,
-            ticket.service_number.clone(),
-        );
-        task.id = RecordId::new(
-            TASK_TABLE,
-            ticket.service_number.clone(),
-        );
-
-        for note in value.task_notes.iter_mut() {
-            note.task_id = Some(task.id.clone());
-
-            task_notes.push(note.clone());
-        }
-        task.task_note = task_notes.clone();
-        task.due_date = Utc::now().into();
-
-        services.push(ticket.id.clone());
-        let mut computer_data = ComputerData::default();
-        if !service_details.is_empty() {
-            if service_details.len() == 1 {
-                let svc = service_details.get(0);
-                if let Some(service) = svc {
-                    ticket.checkin_notes = service.check_in_notes.clone();
-                    computer_data.device_name = Some(service.device_name.clone());
-                    computer_data.device_mfg = Some(service.device_mfg.clone());
-                    computer_data.device_model = Some(service.device_model.clone());
-                    computer_data.device_serial = Some(service.device_serial.clone());
-                }
-            } else {
-                log::info!("Theres a couple.... {:?}", service_details);
-            }
-        }
-
-        task.service_ticket = Some(ticket.clone());
-
-        task.task_name = format!(
+        draft.task.due_date = Utc::now().into();
+        draft.task.task_name = format!(
             "{} - {}",
-            &customer.name,
-            ticket.service_number.clone()
+            draft.customer.name,
+            draft.ticket.service_number
         );
 
         create_full_task_payload(
-            ticket.into(), 
-            customer, 
-            computer_data, 
-            task.clone().into(), 
-            task.clone().task_note, 
+            draft.ticket,
+            draft.customer,
+            draft.computer,
+            draft.task,
+            draft.task_notes,
             false,
             false,
-        ).await;
+        )
+        .await;
 
         Ok(value)
     }

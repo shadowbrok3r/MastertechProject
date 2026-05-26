@@ -32,12 +32,14 @@ mod gpu_probe;
 mod hardware;
 mod mapping;
 mod runtime;
+mod script_catalog;
 
 pub use hardware::ensure_components_from_snapshot;
 
 pub use controller::{RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict};
 pub use drive::drive_blocking;
 pub use gpu_probe::{gpu_probe_spec, gpu_probe_stages, GPU_PROBE_PRESET};
+pub use script_catalog::{build_stress_script_spec, is_stress_script, STRESS_SCRIPT_NAMES};
 pub use mapping::{
     compute_machine_id, computer_record_key, default_target_kind, generate_client_hash,
     local_computer_record, metric_from_snapshot, stressor_from_db, stressor_to_db,

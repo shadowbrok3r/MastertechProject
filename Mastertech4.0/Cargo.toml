@@ -26,7 +26,7 @@ inline = []
 
 [dependencies]
 eframe = { version="0.34", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false }
-displays = { path="../displays", features = ["tokio", "wasm-plugins"] }
+displays = { path="../displays", features = ["tokio", "wasm-plugins", "native-telemetry"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "cookies", "brotli", "native-tls-vendored", "form", "charset", "http2", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 ewebsock = { git = "https://github.com/shadowbrok3r/ewebsock.git", features = ["tokio", "tls", "rustls_ring"]}
