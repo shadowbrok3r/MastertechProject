@@ -49,6 +49,7 @@ pub enum ScriptCategory {
     Tuneup,
     Informational,
     JunkwareRemoval,
+    StressTests,
     UserScripts(String),
     Custom(String),
 }
@@ -59,6 +60,7 @@ impl Display for ScriptCategory {
             ScriptCategory::Tuneup => write!(f, "Tuneup / QC"),
             ScriptCategory::Informational => write!(f, "Informational"),
             ScriptCategory::JunkwareRemoval => write!(f, "Junkware Removal"),
+            ScriptCategory::StressTests => write!(f, "Stress Tests"),
             ScriptCategory::UserScripts(name) => write!(f, "User: {}", name),
             ScriptCategory::Custom(name) => write!(f, "{}", name),
         }

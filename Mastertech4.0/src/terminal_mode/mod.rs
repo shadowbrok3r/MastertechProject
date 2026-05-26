@@ -243,7 +243,12 @@ impl <'a>TerminalApp<'a> {
         join_handles.push(tokio::spawn(async move {
             // Give the WS sender a head start on creating / updating the DB
             // row before we try to publish local_ip + tcp_port to that row.
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            let head_start = if crate::tcp_listener::is_self_update_child() {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(3)
+            };
+            tokio::time::sleep(head_start).await;
             crate::tcp_listener::spawn_direct_tcp_listener(tcp_client_id).await;
         }));
         loop {

@@ -877,15 +877,15 @@ pub struct ScriptsListParams {}
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct ScriptsRunParams {
     #[schemars(
-        description = "Script category. One of: 'Tuneup', 'Informational', 'JunkwareRemoval'."
+        description = "Script category. One of: 'Tuneup', 'Informational', 'JunkwareRemoval', 'StressTests'."
     )]
     pub category: String,
     #[schemars(
-        description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Disable OneDrive Startup')."
+        description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Disable OneDrive Startup', 'GPU Stress Test', 'Stress: CPU')."
     )]
     pub script_name: String,
     #[schemars(
-        description = "Optional service number override. Required for activation scripts (Webroot, SuperAnti, SEB)."
+        description = "Service number. Required for activation scripts (Webroot, SuperAnti, SEB) and for EVERY StressTests script — populates stress_test_run.service_order so the run is linked to the customer / computer / ticket."
     )]
     pub service_number: Option<String>,
     #[schemars(
@@ -898,7 +898,7 @@ pub struct ScriptsRunParams {
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
     #[schemars(
-        description = "Optional diagnostic_session id (from create_diagnostic_session). Links stress_test_run.session_ref when running Run GPU Probe."
+        description = "Optional diagnostic_session id (from create_diagnostic_session). Links stress_test_run.session_ref when running any StressTests script."
     )]
     pub diagnostic_session_id: Option<String>,
 }
@@ -907,11 +907,11 @@ pub struct ScriptsRunParams {
 pub struct ScriptsRunRemoteParams {
     #[schemars(description = "Web Console connection_string of the remote client (from remote_egui_list_targets).")]
     pub connection_string: String,
-    #[schemars(description = "Script category. One of: 'Tuneup', 'Informational', 'JunkwareRemoval'.")]
+    #[schemars(description = "Script category. One of: 'Tuneup', 'Informational', 'JunkwareRemoval', 'StressTests'.")]
     pub category: String,
-    #[schemars(description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Activate SEB').")]
+    #[schemars(description = "Display name of the script as listed by scripts_list (e.g. 'Activate Webroot', 'Activate SEB', 'GPU Stress Test', 'Stress: CPU').")]
     pub script_name: String,
-    #[schemars(description = "Service order number. Required for activation scripts (Webroot, SuperAnti, SEB).")]
+    #[schemars(description = "Service order number. Required for activation scripts (Webroot, SuperAnti, SEB) and for EVERY StressTests script — populates stress_test_run.service_order so the run is linked to the customer / computer / ticket.")]
     pub service_number: Option<String>,
     #[schemars(description = "Customer email. Required for SuperEasyBackup activation.")]
     pub customer_email: Option<String>,
@@ -919,7 +919,7 @@ pub struct ScriptsRunRemoteParams {
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
     #[schemars(
-        description = "Optional diagnostic_session id (from create_diagnostic_session). Auto-resolved from the open session for connection_string when omitted. Links stress_test_run.session_ref on Run GPU Probe."
+        description = "Optional diagnostic_session id (from create_diagnostic_session). Auto-resolved from the open session for connection_string when omitted. Links stress_test_run.session_ref on any StressTests script."
     )]
     pub diagnostic_session_id: Option<String>,
 }
@@ -2822,7 +2822,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "scripts_list",
-        description = "List every script available in the host Mastertech Scripts tab catalog (Tuneup / QC, Informational, Junkware Removal). Use the returned `category` + `script_name` values verbatim with scripts_run. Works whether or not the host is currently running — it's a static catalog."
+        description = "List every script available in the host Mastertech Scripts tab catalog (Tuneup / QC, Informational, Junkware Removal, Stress Tests). Use the returned `category` + `script_name` values verbatim with scripts_run. Works whether or not the host is currently running — it's a static catalog. The Stress Tests category exposes 25 persisted stress runs (GPU Stress Test, QC Benchmark, and singles for every stress-kit stressor)."
     )]
     async fn scripts_list(
         &self,
@@ -2837,11 +2837,13 @@ impl PluginToolProvider {
             ScriptCategory::Tuneup,
             ScriptCategory::Informational,
             ScriptCategory::JunkwareRemoval,
+            ScriptCategory::StressTests,
         ] {
             let cat_name = match cat_key {
                 ScriptCategory::Tuneup => "Tuneup",
                 ScriptCategory::Informational => "Informational",
                 ScriptCategory::JunkwareRemoval => "JunkwareRemoval",
+                ScriptCategory::StressTests => "StressTests",
                 _ => continue,
             };
             if let Some(scripts) = cats.get(&cat_key) {
@@ -2873,7 +2875,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "scripts_run",
-        description = "Run a single named script on the local host (Mastertech4.0 in egui or terminal mode). For stress tests use script_name 'Run GPU Probe' only — it persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Plugin burn_* tools do NOT persist. Returns stress_test_persistence verification for GPU Probe."
+        description = "Run a single named script on the local host (Mastertech4.0 in egui or terminal mode). For stress tests use category 'StressTests' with any catalog entry ('GPU Stress Test', 'QC Benchmark', or any 'Stress: …' single) — every entry persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Plugin burn_* tools do NOT persist. Returns stress_test_persistence verification for every StressTests script."
     )]
     async fn scripts_run(
         &self,
@@ -2885,12 +2887,22 @@ impl PluginToolProvider {
             "Tuneup" | "tuneup" | "Tuneup / QC" => ScriptCategory::Tuneup,
             "Informational" | "informational" => ScriptCategory::Informational,
             "JunkwareRemoval" | "junkware" | "Junkware Removal" => ScriptCategory::JunkwareRemoval,
+            "StressTests" | "stresstests" | "Stress Tests" | "stress" => ScriptCategory::StressTests,
             other => {
                 return Err(to_internal(format!(
-                    "Unknown category '{other}'. Expected one of: Tuneup, Informational, JunkwareRemoval."
+                    "Unknown category '{other}'. Expected one of: Tuneup, Informational, JunkwareRemoval, StressTests."
                 )));
             }
         };
+
+        if category == ScriptCategory::StressTests
+            && p.service_number.as_deref().map(str::trim).unwrap_or("").is_empty()
+        {
+            return Err(to_internal(format!(
+                "service_number is required for StressTests scripts (so stress_test_run carries service_order / customer / computer linkage). Pass service_number with script '{}'.",
+                p.script_name
+            )));
+        }
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let req = ScriptRunRequest {
@@ -2947,7 +2959,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "scripts_run_remote",
-        description = "Run a named script on a REMOTE Mastertech client connected via the admin Web Console. For GPU stress on customer machines use script_name 'Run GPU Probe' (Tuneup) — persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component on the client via stress-runner. Do NOT use call_remote_plugin_tool burn_cpu/burn_memory/burn_disk for persisted stress tests. Returns stress_test_persistence verification after GPU Probe."
+        description = "Run a named script on a REMOTE Mastertech client connected via the admin Web Console. For persisted stress tests use category 'StressTests' with any catalog entry ('GPU Stress Test', 'QC Benchmark', or any 'Stress: …' single) — every entry persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component on the client via stress-runner. Do NOT use call_remote_plugin_tool burn_cpu/burn_memory/burn_disk for persisted stress tests. Returns stress_test_persistence verification after StressTests scripts."
     )]
     async fn scripts_run_remote(
         &self,
@@ -2962,6 +2974,13 @@ impl PluginToolProvider {
             .clone()
             .filter(|s| !s.trim().is_empty())
             .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+
+        if stress_runner::is_stress_script(&p.script_name) && service_number.trim().is_empty() {
+            return Err(to_internal(format!(
+                "service_number is required for StressTests scripts (so stress_test_run carries service_order / customer / computer linkage). Pass service_number with script '{}'.",
+                p.script_name
+            )));
+        }
 
         // Build the RunRemoteScripts command with a single named script.
         let cmd = Cmd::RunRemoteScripts {
@@ -3389,14 +3408,14 @@ When using `query_surrealdb` for plugin work, the ONLY valid tables are:
   - `build_job`           — remote-compile work queue (rows written by `plugin_compile_remote`).
   - `connected_client`    — every running Mastertech / plugin_builder process. Filter `WHERE client_kind = 'build_worker'` for build workers; use `list_build_workers` for the curated view.
   - `diagnostic_session` / `diagnostic_entry` — AI diagnostic work product; manage via the diagnostic tools (`create_diagnostic_session`, `log_diagnostic_entry`, …), NOT raw SQL.
-  - `stress_test_run` / `stress_test_metric` / `stress_test_event` / `hardware_component` — stress-runner telemetry; created automatically by `Run GPU Probe` and qc-app stress tools. Backfill with `record_stress_test_run` when a hang prevents finalize.
+  - `stress_test_run` / `stress_test_metric` / `stress_test_event` / `hardware_component` — stress-runner telemetry; created automatically by every `scripts_run`/`scripts_run_remote` call in the `StressTests` category (GPU Stress Test, QC Benchmark, 23 single-stressor scripts) and by qc-app stress tools. Backfill with `record_stress_test_run` when a hang prevents finalize.
 **There is NO `client_plugin` table.** A query against it returns "The table 'client_plugin' does not exist". If you wanted "plugins installed on a connected client", call `list_plugins` against the remote MCP via `call_remote_plugin_tool` or read `plugin_registry` for what's been published.
 
 === Known Plugins in Registry ===
 Always check search_plugins before building new plugins. Current registry (as of last sync):
 - **com.mastertech.hw-diag** ("HW Diagnostics") — system_info, bsod_events, critical_events, whea_errors, disk_health, reliability_records, tdr_gpu_events, driver_errors, disk_errors, wer_hardware, list_software, uninstall_armoury_crate, uninstall_ryzen_master, download_ddu, check_ddu_status, find_ryzen_master, remove_ryzen_master_remnants, analyze_minidumps, night_light_status, display_connections, **webroot_license**, **sas_license** (CPS / Webroot + SuperAntiSpyware activation and days-remaining when those tools are published on the remote build). Use for GPU/display/BSOD/crash/Night Light diagnostics and CPS license checks.
 - **com.mastertech.repair** ("System Repair") — dism_restore_health, sfc_scannow, uninstall_superantispyware, chkdsk_schedule, run_command (arbitrary PowerShell). Use for Windows system file repair.
-- **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. **Do NOT use burn_cpu / burn_memory / burn_disk / burn_combined / stress_and_monitor for persisted stress tests** — they do not write stress_test_run / stress_test_event / hardware_component rows. Use scripts_run_remote script_name 'Run GPU Probe' instead.
+- **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. **Do NOT use burn_cpu / burn_memory / burn_disk / burn_combined / stress_and_monitor for persisted stress tests** — they do not write stress_test_run / stress_test_event / hardware_component rows. Use scripts_run_remote with category 'StressTests' (e.g. 'GPU Stress Test', 'QC Benchmark', 'Stress: CPU') instead.
 - **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
 
 When in doubt, call search_plugins with relevant keywords — the registry is the source of truth.
@@ -3607,8 +3626,11 @@ Every stress test you run through MCP MUST land rows in SurrealDB so bench histo
 baselines, and AI triage work. This is enforced automatically for the approved paths below.
 
 **Approved tools (persist automatically via stress-runner on the executing host):**
-  - `scripts_run_remote` with `script_name: "Run GPU Probe"` (Tuneup) on a connected customer
-    client — preferred for remote GPU diagnostics. Creates:
+  - `scripts_run_remote` with `category: "StressTests"` on a connected customer client — preferred
+    for remote diagnostics. The catalog has 25 entries (GPU Stress Test 4-stage preset,
+    QC Benchmark 8-stage preset, and a `Stress: <name>` single for every stress-kit stressor
+    including CPU, Matrix, FP/FMA, Cache, Stream, Memory, Disk, GPU Compute, GPU VRAM, etc.).
+    Every entry creates:
       * `hardware_component` rows (CPU + GPU upserted from telemetry snapshot)
       * `stress_test_run` (created at run start, finalized on completion or hang recovery)
       * `stress_test_metric` (~1 Hz telemetry samples while the machine stays up)
@@ -3620,8 +3642,8 @@ baselines, and AI triage work. This is enforced automatically for the approved p
   - `call_remote_plugin_tool` … `burn_cpu`, `burn_memory`, `burn_disk`, `burn_combined`,
     `stress_and_monitor` on com.mastertech.diagnostics — ephemeral plugin stress only.
 
-**After every GPU Probe (remote or local):**
-  1. Ensure a diagnostic_session is open (`create_diagnostic_session`) before running GPU Probe.
+**After every StressTests run (remote or local):**
+  1. Ensure a diagnostic_session is open (`create_diagnostic_session`) before running the script.
      `scripts_run_remote` auto-links the run: pass `diagnostic_session_id` explicitly, or omit it and
      the MCP server resolves the open session for `connection_string`.
   2. Read `stress_test_persistence` in the tool response (`verified`, `run_id`, `session_linked`,
@@ -3651,10 +3673,10 @@ back synchronously.
 
 Tools:
 - scripts_list — returns the catalog of every available script grouped by category
-  (Tuneup, Informational, JunkwareRemoval). No host required; the catalog is static.
+  (Tuneup, Informational, JunkwareRemoval, StressTests). No host required; the catalog is static.
 - scripts_run — runs ONE named script on the LOCAL admin machine. Args:
-    category       : "Tuneup" | "Informational" | "JunkwareRemoval"
-    script_name    : exact display name from scripts_list (e.g. "Activate Webroot")
+    category       : "Tuneup" | "Informational" | "JunkwareRemoval" | "StressTests"
+    script_name    : exact display name from scripts_list (e.g. "Activate Webroot", "Stress: CPU")
     service_number : required for Activate Webroot, Activate SuperAnti, Activate SEB
     customer_email : required for Activate SEB
     timeout_secs   : default 600. Bump for Windows Updates / full AV scans.
@@ -3667,7 +3689,7 @@ Tools:
   All other args (category, script_name, service_number, customer_email, timeout_secs,
   diagnostic_session_id) work identically to scripts_run. Returns { script, success, results[], logs[],
   diagnostic_session_id?, stress_test_persistence? }.
-  For `Run GPU Probe`, always inspect `stress_test_persistence.verified` — if false after a hang,
+  For any StressTests script, always inspect `stress_test_persistence.verified` — if false after a hang,
   call `record_stress_test_run` to backfill before closing the diagnostic session.
   Use this for ALL QC / Tuneup activation steps on customer machines.
 
@@ -3768,18 +3790,15 @@ Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → 
 - TUR Sheet — Service intake / walk-in form (customer, tech, notes, recommendations). Use for sales handoff after service/diag work.
 - KOTH — Store “king of the hill” / display board.
 - Sales Tracker — Sales totals and tracking.
-- Scene Editor — Scene/layout tools (dock tab).
 - Scripts — Saved scripts and tooling.
-- File Browser 📂 — File browser / workspace files.
-- SysInfo — Machine and environment summary.
+- File Browser 📂 — File browser / workspace files (includes My Tools via combobox).
 - Minidump Analysis — Crash dump analysis (Windows; when enabled).
 - Ai — AI playground (models, prompts).
-- Resource Monitor — Processes and resource usage.
+- Resource Monitor — Live hardware telemetry, machine info, and processes.
 - My Tasks — Personal task queue layout.
 - Store Tasks — Store-wide open tasks layout.
 - Completed Tasks — Completed task layout.
 - Bug Tracker — GitHub issue tracking.
-- Websockets — WebSocket sessions and messaging.
 - Admin Console — Remote clients: shell, files, viewers (connect to agents here).
 - Web Console — In-app web/shell console.
 - Inventory — Stock / inventory tables.
@@ -3790,7 +3809,7 @@ Flow: remote_egui_list_targets → optional remote_egui_get_last_frame_meta → 
 - Threads — Operator chat threads.
 - Logs — Egui log viewer (filters/categories).
 
-Other dock tabs (context menus / layouts, not all in View list): Part Order, My Tools, QC, Query Editor (admins). Use dock UI or existing flows to open them.
+Other dock tabs (context menus / layouts, not all in View list): Part Order, QC, Query Editor (admins). Use dock UI or existing flows to open them.
 
 === Remote egui pitfalls ===
 Do not skip notifications/initialized. Prefer perform_steps with sleep_ms between opening View menu and clicking nav.tab.*. If click_anchor fails with unknown key, call list_widget_anchors again (stale frame)."#;

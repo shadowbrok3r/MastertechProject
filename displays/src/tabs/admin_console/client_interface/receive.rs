@@ -265,26 +265,23 @@ impl WebSocketClient {
                     }
                 },
                 WsEvent::Opened => {
+                    let is_redial = self.is_connected;
                     self.is_connected = true;
                     self.connection_status = "Connected".to_string();
-                    self.history.push(History {
-                        from: "Client".to_string(),
-                        message: "Connection opened".to_string(),
-                        timestamp:  chrono::Local::now().to_rfc3339()
-                    });
-                    self.notifications += 1;
-
-                    // Stage 3: ask the client for its cached
-                    // open-service-order suggestions so the connected-
-                    // client card can render the badge/chip without
-                    // the operator hunting through menus.  Cheap pull
-                    // (refresh = false) — the client serves from the
-                    // in-memory cache populated by first_run.rs; the
-                    // explicit "Refresh suggestions" button below will
-                    // send refresh = true to force a PrestaShop
-                    // re-fetch.
-                    let req = Cmd::RequestOpenServiceCandidates { refresh: false };
-                    self.transport.send(WsMessage::Binary(serialize_command(&req)));
+                    if !is_redial {
+                        self.history.push(History {
+                            from: "Client".to_string(),
+                            message: "Connection opened".to_string(),
+                            timestamp:  chrono::Local::now().to_rfc3339()
+                        });
+                        self.notifications += 1;
+                    } else {
+                        log::debug!(
+                            "Transport re-opened for {} (TCP redial — skipping duplicate history)",
+                            self.client.connection_string
+                        );
+                    }
+                    self.bootstrap_connected_session();
                 },
                 WsEvent::Closed => {
                     // Loud log so the operator (and us, reading logs)
@@ -312,18 +309,25 @@ impl WebSocketClient {
                     self.notifications += 1;
                 },
                 WsEvent::Error(err) => {
+                    let soft = err.contains("retrying")
+                        || err.contains("reconnecting")
+                        || err.contains("Reconnecting");
                     log::warn!(
                         "admin transport ERROR for {}: {err}",
                         self.client.connection_string
                     );
-                    self.is_connected = false;
-                    self.connection_status = format!("Error: {}", err);
-                    self.history.push(History {
-                        from: "Client".to_string(),
-                        message: format!("Connection error: {}", err),
-                        timestamp:  chrono::Local::now().to_rfc3339()
-                    });
-                    self.notifications += 1;
+                    if soft {
+                        self.connection_status = "Reconnecting…".to_string();
+                    } else {
+                        self.is_connected = false;
+                        self.connection_status = format!("Error: {err}");
+                        self.history.push(History {
+                            from: "Client".to_string(),
+                            message: format!("Connection error: {err}"),
+                            timestamp:  chrono::Local::now().to_rfc3339()
+                        });
+                        self.notifications += 1;
+                    }
                 },
             }
         }
@@ -708,9 +712,31 @@ impl WebSocketClient {
                             timestamp: chrono::Local::now().to_rfc3339(),
                         });
                         self.notifications += 1;
+                    } else if let Cmd::MastertechSelfUpdateRelaunching { reconnect_hint_secs } = cmd {
+                        log::info!(
+                            "Remote self-update relaunching; reconnect hint {reconnect_hint_secs}s"
+                        );
+                        let grace_secs = reconnect_hint_secs as u64 + 10;
+                        self.transport.signal_relaunch_pending(grace_secs);
+                        self.mark_session_rebootstrap_pending();
+                        self.connection_status =
+                            format!("Client relaunching (~{reconnect_hint_secs}s)…");
+                        self.history.push(History {
+                            from: "System".to_string(),
+                            message: format!(
+                                "Remote update applying — reconnect expected in ~{reconnect_hint_secs}s"
+                            ),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
+                        self.notifications += 1;
                     } else if let Cmd::MastertechSelfUpdateResult { success, message } = cmd {
                         log::info!("Remote self-update result: success={success} {message}");
                         self.file_transfer_progress = None;
+                        if success {
+                            self.transport.signal_relaunch_pending(20);
+                            self.mark_session_rebootstrap_pending();
+                            self.connection_status = "Client relaunching (reconnecting…)".to_string();
+                        }
                         let toast_msg = if success {
                             "Remote update applied — client is relaunching.".to_string()
                         } else {

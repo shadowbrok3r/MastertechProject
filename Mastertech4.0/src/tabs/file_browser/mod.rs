@@ -25,13 +25,48 @@ pub mod context_menu;
 pub mod file_copy;
 pub mod io;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FilesPanelMode {
+    #[default]
+    FileBrowser,
+    MyTools,
+}
+
 impl MastertechContext {
     pub fn file_browse(&mut self, ui: &mut Ui) {
-        if !self.show_deferred_viewport.load(Ordering::Relaxed) {
-            // Lock the Mutex and show the GUI
-            let file_browser_clone = Arc::clone(&self.file_browser);
-            let mut file_browser = file_browser_clone.lock().unwrap();
-            file_browser.show(ui, self.copied_items_tx.clone());
+        eframe::egui::Panel::top("file_browser_mode_panel")
+            .exact_size(28.0)
+            .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    eframe::egui::ComboBox::from_id_salt("files_panel_mode")
+                        .selected_text(match self.files_panel_mode {
+                            FilesPanelMode::FileBrowser => "File Browser",
+                            FilesPanelMode::MyTools => "My Tools",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.files_panel_mode,
+                                FilesPanelMode::FileBrowser,
+                                "File Browser",
+                            );
+                            ui.selectable_value(
+                                &mut self.files_panel_mode,
+                                FilesPanelMode::MyTools,
+                                "My Tools",
+                            );
+                        });
+                });
+            });
+
+        match self.files_panel_mode {
+            FilesPanelMode::FileBrowser => {
+                if !self.show_deferred_viewport.load(Ordering::Relaxed) {
+                    let file_browser_clone = Arc::clone(&self.file_browser);
+                    let mut file_browser = file_browser_clone.lock().unwrap();
+                    file_browser.show(ui, self.copied_items_tx.clone());
+                }
+            }
+            FilesPanelMode::MyTools => self.shared_ctx.filesystem.display(ui),
         }
     }
 }

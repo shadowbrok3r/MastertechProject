@@ -1,4 +1,5 @@
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, FilterLiveTasks, Store};
+use displays::tabs::{TabContext, TabId};
 use egui_dock::{tab_viewer::OnCloseResponse, NodeIndex, SurfaceIndex, TabViewer};
 use crate::app_state::MastertechContext;
 use eframe::egui::{Ui, WidgetText};
@@ -22,105 +23,98 @@ pub mod system_information;
 pub mod tur_sheet;
 pub mod egui_file_dialog;
 
-// pub const TABS: [&str; 16] = [
-//     "Lil menu",
-//     "My Tools",
-//     "Store Tasks",
-//     "My Tasks",
-//     "Ai",
-//     "Admin Console",
-//     "Completed Tasks",
-//     "Bug Report",
-//     "Logs",
-//     "Database Editor",
-//     "Json Viewer",
-//     "Inventory",
-//     "SEB Lookup",
-//     "Task Audit",
-//     "Customers",
-// ];
-
-
 impl MastertechContext {
+    pub fn tab_context(&self) -> TabContext {
+        TabContext::MastertechNative
+    }
+
     pub fn file_browser_popup(&mut self, ui: &mut Ui) {
         let current_state = self.show_deferred_viewport.load(Ordering::Relaxed);
-        let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
+        let new_state = !current_state;
 
         if current_state {
             if ui.button("Attach File Browser").clicked() {
                 self.show_deferred_viewport
                     .store(new_state, Ordering::Relaxed);
             }
-        } else {
-            if ui.button("Detach File Browser").clicked() {
-                self.show_deferred_viewport
-                    .store(new_state, Ordering::Relaxed);
-            }
+        } else if ui.button("Detach File Browser").clicked() {
+            self.show_deferred_viewport
+                .store(new_state, Ordering::Relaxed);
         }
     }
-
-    // `websocket_menu` was removed along with the GUI-side WS-relay
-    // (`tabs/websockets/mod.rs`).  The "Attach/Detach Websocket
-    // Console" toggle only made sense when there was a separate
-    // viewport for the relay UI; the direct-TCP path has no
-    // operator-visible window of its own, so this menu became dead.
 }
 
 impl TabViewer for MastertechContext {
-    type Tab = String;
+    type Tab = TabId;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "KOTH" => self.shared_ctx.koth.ui(ui),
-            "Database" => self.shared_ctx.database_viewer.ui(ui, self.shared_ctx.current_user.clone()),
-            "Scripts" => self.scripts(ui),
-            "My Tools" => self.shared_ctx.filesystem.display(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "SysInfo" => self.system_information(ui),
+        match *tab {
+            TabId::TurSheet => self.tur_sheet(ui),
+            TabId::PartOrder => self.special_part_order(ui),
+            TabId::Koth => self.shared_ctx.koth.ui(ui),
+            TabId::DatabaseEditor => {
+                self.shared_ctx
+                    .database_viewer
+                    .ui(ui, self.shared_ctx.current_user.clone())
+            }
+            TabId::Scripts => self.scripts(ui),
+            TabId::MyTools | TabId::FileBrowser => self.file_browse(ui),
+            TabId::SysInfo | TabId::ResourceMonitor => self.show_resource_monitor(ui),
             #[cfg(target_os = "windows")]
-            "Minidump Analysis" => self.mini_dump(ui),
-            "QC ☑️" => self.quality_check(ui),
-            // "Ai" => self.shared_ctx.ai_playground(ui),
-            "Store Tasks" => self.shared_ctx.render_layout(ui, "Store Tasks"),
-            "My Tasks" => self.shared_ctx.render_layout(ui, "My Tasks"),
-            "Completed Tasks" => self.shared_ctx.render_layout(ui, "Completed Tasks"),
-            "Bug Tracker" => self.github(ui),
-            "Downloads" => self.downloads_page(ui),
-            "Task Audit" => self.shared_ctx.task_table_viewer(ui, self.shared_ctx.ui_actions_tx.clone()),
-            "Inventory" => self.shared_ctx.stock_tables.ui(ui),
-            "Sales Tracker" => self.shared_ctx.sales_tracker.ui(ui),
-            "Web Console" => self.shared_ctx.web_console.ui(ui),
-            "Logs" => displays::ui_tools::egui_logger::logger_ui()
+            TabId::MinidumpAnalysis => self.mini_dump(ui),
+            #[cfg(not(target_os = "windows"))]
+            TabId::MinidumpAnalysis => {}
+            TabId::Qc => self.quality_check(ui),
+            TabId::Ai => self.shared_ctx.ai_playground(ui),
+            TabId::StoreTasks => {
+                self.shared_ctx
+                    .render_layout(ui, TabId::StoreTasks.layout_page_name())
+            }
+            TabId::MyTasks => {
+                self.shared_ctx
+                    .render_layout(ui, TabId::MyTasks.layout_page_name())
+            }
+            TabId::CompletedTasks => {
+                self.shared_ctx
+                    .render_layout(ui, TabId::CompletedTasks.layout_page_name())
+            }
+            TabId::BugReport => self.github(ui),
+            TabId::Downloads => self.downloads_page(ui),
+            TabId::TaskAudit => self
+                .shared_ctx
+                .task_table_viewer(ui, self.shared_ctx.ui_actions_tx.clone()),
+            TabId::Inventory => self.shared_ctx.stock_tables.ui(ui),
+            TabId::SalesTracker => self.shared_ctx.sales_tracker.ui(ui),
+            TabId::WebConsole => self.shared_ctx.web_console.ui(ui),
+            TabId::Logs => displays::ui_tools::egui_logger::logger_ui()
                 .log_levels([true, true, true, false, false])
-                .warn_color(Color32::from_rgb(94, 215, 221)) 
+                .warn_color(Color32::from_rgb(94, 215, 221))
                 .error_color(Color32::from_rgb(255, 55, 102))
                 .enable_category("eframe".to_string(), false)
                 .enable_category("eframe::native::glow_integration".to_string(), false)
                 .enable_category("egui_glow::shader_version".to_string(), false)
                 .enable_category("egui_glow::painter".to_string(), false)
                 .show(ui),
-            "Resource Monitor" => self.show_resource_monitor(ui),
-            "Admin Console" => self.shared_ctx.admin_console(ui),
-            "Fleet Dashboard" => self.shared_ctx.fleet_dashboard(ui),
-            "Query Editor" => if let Some(usr) = &self.shared_ctx.current_user {
-                if usr.is_admin() {
-                    self.shared_ctx.query_editor.ui(ui)
-                } else {
-                    return;
+            TabId::AdminConsole => self.shared_ctx.admin_console(ui),
+            TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),
+            TabId::QueryEditor => {
+                if let Some(usr) = &self.shared_ctx.current_user {
+                    if usr.is_admin() {
+                        self.shared_ctx.query_editor.ui(ui);
+                    }
                 }
-            } else {
-                return;
-            },
-            "Create Prestashop Order" => self.shared_ctx.prestashop_order_form.ui(ui),
-            "Threads" => self.shared_ctx.user_chat.ui(ui),
-            "Plugins" => displays::tabs::plugins_tab::plugins_tab_ui(ui, &self.plugin_manager),
+            }
+            TabId::CreatePrestashopOrder => self.shared_ctx.prestashop_order_form.ui(ui),
+            TabId::Threads => self.shared_ctx.user_chat.ui(ui),
+            TabId::Plugins => {
+                displays::tabs::plugins_tab::plugins_tab_ui(ui, &self.plugin_manager)
+            }
             _ => {}
         }
     }
 
     fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
-        [false, false] // No scroll bars by default
+        [false, false]
     }
 
     fn context_menu(
@@ -130,21 +124,20 @@ impl TabViewer for MastertechContext {
         _surface_index: SurfaceIndex,
         _node_index: NodeIndex,
     ) {
-        match tab.as_str() {
-            "File Browser 📂" => self.file_browser_popup(ui),
+        match *tab {
+            TabId::FileBrowser => self.file_browser_popup(ui),
             _ => {
-                ui.label(tab.to_string());
+                ui.label(tab.title(self.tab_context()));
                 ui.label("This is a context menu");
             }
         }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
+        tab.title(self.tab_context()).into()
     }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
-        self.open_tabs.remove(tab);
+    fn on_close(&mut self, _tab: &mut Self::Tab) -> OnCloseResponse {
         OnCloseResponse::Close
     }
 
@@ -154,41 +147,46 @@ impl TabViewer for MastertechContext {
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &eframe::egui::Response) {
         if response.clicked() {
-            match tab.as_str() {
-                "Completed Tasks" => {
-                    // First, make sure there are no completed tasks loaded.
-                    // If there no completed tasks, then load them.
-                    // Otherwise, make sure the tasks that are completed 
-                    // are for the correct selected store. 
-                    if self.shared_ctx.tasks.filter_by_completion(true).is_empty() {
+            match *tab {
+                TabId::CompletedTasks => {
+                    if self
+                        .shared_ctx
+                        .tasks
+                        .filter_by_completion(true)
+                        .is_empty()
+                    {
                         let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
                         let store_sel = self.shared_ctx.store_selection;
-                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
-                        
+                        let store_selection =
+                            std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+
                         spawn(async move {
-                            let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store_selection).await;
+                            let get_completed_tasks_for_store =
+                                get_completed_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
                         });
                     }
-                    
-                },
-                "Store Tasks" => {
-                    // First, make sure there are no store tasks loaded.
-                    // If there no store tasks, then load them.
-                    // Otherwise, make sure the tasks that are loaded 
-                    // for the selected store are for the CORRECT selected store. 
-                    if self.shared_ctx.tasks.filter_by_completion(false).is_empty() {
+                }
+                TabId::StoreTasks => {
+                    if self
+                        .shared_ctx
+                        .tasks
+                        .filter_by_completion(false)
+                        .is_empty()
+                    {
                         let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
                         let store_sel = self.shared_ctx.store_selection;
-                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
-                        
+                        let store_selection =
+                            std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+
                         spawn(async move {
-                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
+                            let get_tasks_for_store =
+                                get_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_tasks_for_store: {get_tasks_for_store:?}");
                         });
                     }
-                },
-                "Downloads" => {
+                }
+                TabId::Downloads => {
                     let github_tx = self.github_releases_channel.0.clone();
                     let client = self.client.clone();
                     spawn(async move {
@@ -196,14 +194,12 @@ impl TabViewer for MastertechContext {
                             Ok(_) => info!("get_github_releases ran ok"),
                             Err(e) => error!("Error getting github releases: {e:?}"),
                         }
-        
+
                         Ok::<(), Error>(())
                     });
                 }
                 _ => {}
             }
-            
         }
-
     }
 }

@@ -350,13 +350,21 @@ fn worker(
             memory_cap_mb,
             disk_file_mb,
         } => {
+            let label = stressor.label().to_string();
             send(
                 &update_tx,
                 RunUpdate::StageStarted {
                     index: 0,
-                    label: stressor.label().to_string(),
+                    label: label.clone(),
                     stage_count: 1,
                 },
+            );
+            persist_event(
+                &run_id_clone,
+                DbEventKind::StageStarted,
+                "stress-kit",
+                Some(label.clone()),
+                None,
             );
 
             let config = StressConfig {
@@ -382,6 +390,13 @@ fn worker(
                 started_at,
             );
 
+            persist_event(
+                &run_id_clone,
+                DbEventKind::StageFinished,
+                "stress-kit",
+                Some(label),
+                None,
+            );
             send(&update_tx, RunUpdate::StageFinished { index: 0 });
         }
 

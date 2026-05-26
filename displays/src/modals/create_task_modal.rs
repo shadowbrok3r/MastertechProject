@@ -1,7 +1,8 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType},DATABASE};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
-use database::schema::utilities::{get_prestashop_payload, create_full_task_payload};
+use database::schema::utilities::create_full_task_payload;
+use database::schema::{fetch_prestashop_order, OrderLookup};
 use super::{tabs::{display_ticket_page, display_computer_page}, task_modal::ModalAction};
 use database::schema::Datetime;
 use chrono::Utc;
@@ -405,7 +406,7 @@ impl CreateTaskModal {
                     // If service number is entered but data wasn't pulled, pull it now
                     if needs_pull {
                         info!("Service number entered but order not pulled, fetching now: {}", service_number);
-                        match get_prestashop_payload(&service_number).await {
+                        match fetch_prestashop_order(OrderLookup::ServiceNumber(service_number.clone())).await {
                             Ok(presta_data) => {
                                 info!("Successfully fetched prestashop data for order {}", service_number);
                                 // Update payload with fetched data
@@ -616,13 +617,14 @@ impl Tur {
     }
 
     pub fn presta_api(prestashop_api_tx: Sender<PrestashopPayload>, input: String) {
-        let input = input.clone();
         let tx = prestashop_api_tx.clone();
         if !input.is_empty() {
             PlatformSpawner::spawn(async move {
-                let _ = tx.try_send(
-                    get_prestashop_payload(&input.clone()).await.unwrap_or_default()
-                );
+                if let Ok(payload) =
+                    fetch_prestashop_order(OrderLookup::ServiceNumber(input)).await
+                {
+                    let _ = tx.try_send(payload);
+                }
             });
         }
     }

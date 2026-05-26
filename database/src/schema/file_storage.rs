@@ -358,7 +358,7 @@ pub async fn list_files(bucket: &str, prefix: &str) -> anyhow::Result<Vec<FileEn
     let file_entries: Vec<FileEntry> = entries
         .into_iter()
         .filter_map(|entry| {
-            let key = entry.file.key.clone();
+            let key = entry.file.key.trim_start_matches('/').to_string();
             if !clean_prefix.is_empty() && !key.starts_with(clean_prefix) {
                 return None;
             }

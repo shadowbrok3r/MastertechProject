@@ -51,7 +51,7 @@ services:
     environment:
       SERVER_URL: "0.0.0.0"
       SERVER_PORT: "8082"
-      RUST_LOG: "mtech_srv=info,axum_middleware=info"
+      RUST_LOG: "mtech_srv=info,axum_server=info"
 
   pluginbuilder:
     image: shadowbrok3r/plugin_builder:beta

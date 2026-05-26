@@ -97,6 +97,7 @@ pub fn apply_and_relaunch(bytes: Vec<u8>) -> (bool, String) {
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     let spawn_result = std::process::Command::new(&temp_path)
         .args(&args)
+        .env("MASTERTECH_SELF_UPDATE_CHILD", "1")
         .creation_flags(DETACHED_PROCESS)
         .spawn();
 

@@ -550,6 +550,12 @@ pub enum Cmd {
         data: Vec<u8>,
     },
 
+    /// Sent by the remote client before apply/relaunch so the admin can pause
+    /// ping deadlines and expect a brief disconnect.
+    MastertechSelfUpdateRelaunching {
+        reconnect_hint_secs: u32,
+    },
+
     /// Sent by the remote client back to the admin after the update either
     /// completed (binary replaced + relaunch spawned) or failed.
     MastertechSelfUpdateResult {

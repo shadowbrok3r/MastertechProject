@@ -568,7 +568,7 @@ impl EguiScriptsTab {
             "Disable BitLocker" => {
                 self.execute_disable_bitlocker(log_tx, category, script_name);
             },
-            "Run GPU Probe" => {
+            "GPU Stress Test" => {
                 self.execute_gpu_probe(log_tx, category, script_name);
             },
             _ => {

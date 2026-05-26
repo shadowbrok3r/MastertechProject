@@ -43,7 +43,7 @@ RUN sed -i 's/members = \[.*\]/members = [ "database", "axum_server" ]/' Cargo.t
 COPY database/ ./database/
 COPY axum_server/ ./axum_server/
 
-RUN cargo build --release --package axum_middleware
+RUN cargo build --release --package axum_server
 RUN ls -la /app/target/release/
 
 # Stage 3: Minimal runtime image
@@ -52,6 +52,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/axum_middleware /axum_middleware
+COPY --from=builder /app/target/release/axum_server /axum_server
 EXPOSE 8082
-ENTRYPOINT ["/axum_middleware"]
+ENTRYPOINT ["/axum_server"]

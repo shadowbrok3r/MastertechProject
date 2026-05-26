@@ -2,29 +2,12 @@ use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layou
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
-use displays::{app_state::{default_tree, AppState, MainPages}, plugins::push_widget_anchor, ui_tools::theme, TaskUiActions};
+use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::TabContext, ui_tools::theme, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
 use log::{error, info};
 use tokio::spawn;
 
-/// Stable MCP / remote-egui anchor for a View-menu tab label (see `nav.menu.view` + click).
-fn nav_tab_anchor_key(tab: &str) -> String {
-    let slug: String = tab
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let slug = slug
-        .trim_matches('_')
-        .replace("__", "_");
-    format!("nav.tab.{slug}")
-}
 
 impl MasterTechApp {
     pub fn menu_bar(&mut self, ctx: &Context) {
@@ -42,51 +25,18 @@ impl MasterTechApp {
             )
             .ui(ui, |ui| {
                 if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
-                    let view_menu = ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
-                        // allow certain tabs to be toggled
-                        for tab in &[
-                            &"TUR Sheet".to_string(),
-                            &"KOTH".to_string(),
-                            &"Sales Tracker".to_string(),
-                            &"Scene Editor".to_string(),
-                            &"Scripts".to_string(),
-                            &"File Browser 📂".to_string(),
-                            &"SysInfo".to_string(),
-                            &"Minidump Analysis".to_string(),
-                            &"Database".to_string(),
-                            &"Ai".to_string(),
-                            &"Resource Monitor".to_string(),
-                            &"Fleet Dashboard".to_string(),
-                            &"My Tasks".to_string(),
-                            &"Store Tasks".to_string(),
-                            &"Completed Tasks".to_string(),
-                            &"Bug Tracker".to_string(),
-                            &"Websockets".to_string(),
-                            &"Admin Console".to_string(),
-                            &"Web Console".to_string(),
-                            &"Inventory".to_string(),
-                            &"Task Audit".to_string(),
-                            &"Create Prestashop Order".to_string(),
-                            &"Plugins".to_string(),
-                            &"Downloads".to_string(),
-                            &"Threads".to_string(),
-                            &"Logs".to_string(),
-                        ] {
-                            let item = ui.selectable_label(self.context.open_tabs.contains(*tab), *tab);
-                            push_widget_anchor(nav_tab_anchor_key(tab), item.rect);
-                            if item.clicked() {
-                                if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                                    self.tree.remove_tab(index);
-                                    self.context.open_tabs.remove(*tab);
-                                } else {
-                                    self.context.open_tabs.insert(tab.to_string());
-                                    self.tree.push_to_focused_leaf(tab.to_string());
-                                }
-                                ui.close_kind(UiKind::Menu);
-                            }
-                        }
+                    let view_menu_button = ui.menu_button(RichText::new("View").color(ui.style().visuals.error_fg_color).heading().underline(), |ui| {
+                        let mut anchor = |tab: displays::tabs::TabId, rect: eframe::egui::Rect| {
+                            push_widget_anchor(format!("nav.tab.{}", tab.slug()), rect);
+                        };
+                        view_menu(
+                            ui,
+                            &mut self.dock,
+                            TabContext::MastertechNative,
+                            Some(&mut anchor),
+                        );
                     });
-                    push_widget_anchor("nav.menu.view", view_menu.response.rect);
+                    push_widget_anchor("nav.menu.view", view_menu_button.response.rect);
                     
                     // Global task search
                     ui.add_space(20.0);
@@ -378,13 +328,12 @@ impl MasterTechApp {
                                 let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
                                 ui.add_space(5.0);
                                 let reset_mem = Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui);
-                                let tree = default_tree();
+                                let default_dock = default_tree();
                                 if reset_ui.clicked() {
-                                    let default_layout = serde_json::to_value(&tree).unwrap();
+                                    let default_layout = serde_json::to_value(&default_dock.tree).unwrap();
                                     usr.set_ui_layout_mastertech(default_layout.clone());
-                                    
-                                    self.tree = tree.0;
-                                    self.context.open_tabs = tree.1;
+
+                                    self.dock = default_dock;
                                     let mut user = usr.clone();
                                     spawn(async move {
                                         match user.save_mtechserver_ui_layout(default_layout.clone()).await {
@@ -394,7 +343,7 @@ impl MasterTechApp {
                                     });
                                 }
                                 if submit.clicked() {
-                                    let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
+                                    let val = serde_json::to_value(self.dock.tree.clone()).unwrap_or_default();
                                     usr.set_ui_layout_mastertech(val.clone());
 
                                     let mut user = usr.clone();

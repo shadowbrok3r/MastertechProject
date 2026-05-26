@@ -4,7 +4,6 @@
 pub mod app_state;
 pub mod first_run;
 pub mod mtechserver;
-// pub mod tabs;
 pub mod workers;
 
 pub use workers::*;

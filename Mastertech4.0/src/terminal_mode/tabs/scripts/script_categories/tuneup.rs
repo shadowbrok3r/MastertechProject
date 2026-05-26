@@ -40,101 +40,12 @@ impl <'a> ScriptsTab <'a> {
             "Install Windows Updates" => self.install_windows_updates(item_text, category),
             "Change Timezone to Mountain" => self.change_timezone_to_mountain(item_text, category),
             "Disable BitLocker" => self.disable_bitlocker(item_text, category),
-            "Run GPU Probe" => self.run_gpu_probe(item_text, category),
             _ => {
                 self.log_message(&format!("Unknown Tuneup script: {}", item_text));
             }
         }
     }
 
-    pub fn run_gpu_probe(&mut self, item_text: &str, category: &Category) {
-        use std::sync::Arc;
-        use stress_kit::telemetry::TelemetryAgent;
-        use stress_runner::{drive_blocking, gpu_probe_spec, RunResult, RunUpdate};
-
-        self.log_message("Starting GPU probe (compute → matmul → VRAM → PCIe)…");
-
-        let client = crate::filesystem::get_client_hash();
-        let telemetry = {
-            let mut guard = self.stress_telemetry.borrow_mut();
-            if guard.is_none() {
-                *guard = Some(Arc::new(TelemetryAgent::start(1000)));
-            }
-            guard.as_ref().unwrap().clone()
-        };
-
-        let service_number = self.service_number.clone();
-        let diagnostic_session_id = self.mcp_diagnostic_session_id.clone().unwrap_or_default();
-        let log_tx = self.script_log_tx.clone();
-        let checklist_tx = self.checklist_completion_tx.clone();
-        let category_clone = category.clone();
-        let item_clone = item_text.to_string();
-
-        std::thread::spawn(move || {
-            let mut spec = gpu_probe_spec(
-                client.computer.clone().expect("get_client_hash sets computer"),
-                1.0,
-            );
-            spec.tags.push("origin:scripts".into());
-            spec.hostname = std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .ok();
-            spec.machine_id = Some(client.client_hash.clone());
-            if !service_number.is_empty() {
-                spec.service_order = Some(database::schema::RecordId::new(
-                    database::schema::TICKET_TABLE,
-                    service_number,
-                ));
-            }
-            if !diagnostic_session_id.is_empty() {
-                spec.session_ref = Some(database::schema::entity_link::parse_record_id(
-                    &diagnostic_session_id,
-                    database::schema::DIAGNOSTIC_SESSION_TABLE,
-                ));
-            }
-
-            let mut success = false;
-            drive_blocking(spec, telemetry, |update| match update {
-                RunUpdate::Started { run_id } => {
-                    use database::schema::RecordIdExt;
-                    let _ = log_tx.try_send(format!(
-                        "GPU probe stress_test_run id: {}",
-                        run_id.key_string()
-                    ));
-                }
-                RunUpdate::StageStarted { index, label, stage_count } => {
-                    let _ = log_tx.try_send(format!(
-                        "GPU probe stage {}/{}: {label}",
-                        index + 1,
-                        stage_count
-                    ));
-                }
-                RunUpdate::Tick { metrics, stage_label, .. } => {
-                    if let Some(err) = metrics.last_error.as_ref() {
-                        let stage = stage_label.unwrap_or_else(|| "gpu".into());
-                        let _ = log_tx.try_send(format!("GPU probe {stage}: {err}"));
-                    }
-                }
-                RunUpdate::StageFinished { .. } => {}
-                RunUpdate::Finished(v) => {
-                    success = v.result == RunResult::Pass;
-                    let _ = log_tx.try_send(format!(
-                        "GPU probe {} in {:.1}s (run persisted)",
-                        if success { "PASSED" } else { "FAILED" },
-                        v.duration_secs
-                    ));
-                }
-                RunUpdate::Warning { message } => {
-                    let _ = log_tx.try_send(format!("GPU probe warning: {message}"));
-                }
-                RunUpdate::Error { message } => {
-                    let _ = log_tx.try_send(format!("GPU probe error: {message}"));
-                }
-            });
-            let _ = checklist_tx.try_send((category_clone, item_clone, success));
-        });
-    }
-    
     // Tuneup Items
     pub fn disable_sleep_hibernation(&mut self, item_text: &str, category: &Category) {
         match disable_hibernation_and_sleep() {

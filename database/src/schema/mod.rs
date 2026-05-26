@@ -37,6 +37,7 @@ pub mod stress_test;
 pub mod service_match;
 pub mod entity_link;
 pub mod fleet;
+pub mod task_creation;
 
 pub use task::*;
 pub use task_note::*;
@@ -58,6 +59,7 @@ pub use diagnostic::*;
 pub use service_match::*;
 pub use entity_link::*;
 pub use stress_test::*;
+pub use task_creation::*;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";

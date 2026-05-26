@@ -4,7 +4,7 @@ use database::schema::{RecordId, COMPUTER_TABLE, STRESS_TEST_RUN_TABLE};
 
 /// Scripts that must persist via `stress-runner` (not plugin `burn_*` tools).
 pub fn is_persisted_stress_script(script_name: &str) -> bool {
-    matches!(script_name, "Run GPU Probe")
+    stress_runner::is_stress_script(script_name)
 }
 
 /// Parse `stress_test_run id:` from client log lines.
@@ -85,8 +85,9 @@ pub async fn verify_stress_test_persistence(
             "verified": false,
             "warnings": warnings,
             "remediation": "No stress_test_run row found. If the client hung, call record_stress_test_run \
-                to backfill. Do NOT use plugin burn_cpu/burn_memory/burn_disk for GPU stress — use \
-                scripts_run_remote with script_name 'Run GPU Probe' on a client build with stress-runner persistence."
+                to backfill. Do NOT use plugin burn_cpu/burn_memory/burn_disk — use \
+                scripts_run_remote with category 'StressTests' (e.g. 'GPU Stress Test', 'QC Benchmark', \
+                'Stress: CPU') on a client build with stress-runner persistence."
         });
     };
 
@@ -162,7 +163,7 @@ pub async fn verify_stress_test_persistence(
         "warnings": warnings,
         "remediation": if verified { serde_json::Value::Null } else {
             serde_json::json!("Call record_stress_test_run to backfill missing rows, or re-run on a \
-                client with current MasterTech (GPU Probe uses stress-runner). Never substitute \
+                client with current MasterTech (StressTests category uses stress-runner). Never substitute \
                 plugin burn_* tools — they do not write stress_test_* tables.")
         }
     })

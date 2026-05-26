@@ -1,8 +1,6 @@
 use database::{live_data::listen_data_filtered, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User}};
 use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
-use eframe::egui::Style;
-use std::sync::Arc;
 
 pub mod receive_notes;
 pub mod receive_notifications;
@@ -206,20 +204,14 @@ impl crate::app_state::SharedContext {
         );
 
         self.stock_tables.first_run();
-        match decode_style(&user.get_color_scheme()) {
+                match decode_style(&user.get_color_scheme()) {
             Ok(color_settings) => {
                 ctx.set_global_style(color_settings);
                 ctx.request_repaint();
             },
             Err(e) => {
                 log::error!("Error setting theme config: {e:?}");
-                match serde_json::from_str::<Style>(crate::STYLE) {
-                    Ok(theme) => {
-                        let style = Arc::new(theme);
-                        ctx.set_global_style(style);
-                    }
-                    Err(e) => log::error!("Error setting theme: {e:?}")
-                };
+                crate::ui_tools::theme_config::apply_default_theme(ctx);
             },
         }
 

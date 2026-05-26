@@ -3,6 +3,8 @@ use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 use eframe::egui::*;
 use log::info;
 
+pub mod dock_session;
+pub mod tab_id;
 pub mod tasks;
 pub mod task_audit;
 pub mod stock;
@@ -24,239 +26,19 @@ pub mod fleet_dashboard;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
 
-pub enum Tabs {
-    #[cfg(not(target_arch="wasm32"))]
-    Mastertech(MastertechTabs),
-    Shared(SharedTabs)
-}
-
-pub enum MastertechTabs {
-    TurSheet,
-    PartOrder,
-    Scripts,
-    FileBrowser,
-    SysInfo,
-    MinidumpAnalysis,
-    Qc,
-    Ai,
-    Websockets,
-    Downloads,
-}
-
-pub enum SharedTabs {
-    MyTasks,
-    StoreTasks,
-    CompletedTasks,
-    SalesTracker,
-    Inventory,
-    TaskAudit,
-    Threads,
-    BugReport,
-    MyTools,
-    AdminConsole,
-    WebConsole,
-    DatabaseEditor,
-    ResourceMonitor,
-    QueryEditor,
-    Koth,
-    CreatePrestashopOrder,
-    Logs,
-    Plugins,
-}
-
-impl Tabs {
-    pub fn as_str(&self) -> &str {
-        match self {
-            #[cfg(not(target_arch="wasm32"))]
-            Tabs::Mastertech(mastertech_tabs) => {
-                match mastertech_tabs {
-                    MastertechTabs::TurSheet => "Tur Sheet",
-                    MastertechTabs::PartOrder => "Part Order",
-                    MastertechTabs::Scripts => "Scripts",
-                    MastertechTabs::FileBrowser => "File Browser 📂",
-                    MastertechTabs::SysInfo => "SysInfo",
-                    MastertechTabs::MinidumpAnalysis => "Minidump Analysis",
-                    MastertechTabs::Qc => "Qc",
-                    MastertechTabs::Ai => "Ai",
-                    MastertechTabs::Websockets => "Websockets",
-                    MastertechTabs::Downloads => "Downloads",
-                }
-            },
-            Tabs::Shared(shared_tabs) => {
-                match shared_tabs {
-                    SharedTabs::MyTasks => "My Tasks",
-                    SharedTabs::StoreTasks => "Store Tasks",
-                    SharedTabs::CompletedTasks => "Completed Tasks",
-                    SharedTabs::SalesTracker => "Sales Tracker",
-                    SharedTabs::Inventory => "Inventory",
-                    SharedTabs::TaskAudit => "TaskAudit",
-                    SharedTabs::Threads => "Threads",
-                    SharedTabs::BugReport => "BugReport",
-                    SharedTabs::MyTools => "My Tools",
-                    SharedTabs::AdminConsole => "Admin Console",
-                    SharedTabs::WebConsole => "Web Console",
-                    SharedTabs::DatabaseEditor => "Database Editor",
-                    SharedTabs::ResourceMonitor => "Resource Monitor",
-                    SharedTabs::QueryEditor => "Query Editor",
-                    SharedTabs::Koth => "Koth",
-                    SharedTabs::CreatePrestashopOrder => "Create Prestashop Order",
-                    SharedTabs::Logs => "Logs",
-                    SharedTabs::Plugins => "Plugins",
-                }
-            },
-        }
-    }
-
-    pub fn from_str(tab: &str) -> Self {
-        match tab {
-            "My Tasks" => Self::Shared(SharedTabs::MyTasks),
-            "Store Tasks" => Self::Shared(SharedTabs::StoreTasks),
-            "Completed Tasks" => Self::Shared(SharedTabs::CompletedTasks),
-            "Database Editor" => Self::Shared(SharedTabs::DatabaseEditor),
-            "KOTH" => Self::Shared(SharedTabs::Koth),
-            "My Tools" => Self::Shared(SharedTabs::MyTools),
-            "Task Audit" => Self::Shared(SharedTabs::TaskAudit),
-            "Inventory" => Self::Shared(SharedTabs::Inventory),
-            "Sales Tracker" => Self::Shared(SharedTabs::SalesTracker),
-            "Logs" => Self::Shared(SharedTabs::Logs),
-            "Resource Monitor" => Self::Shared(SharedTabs::ResourceMonitor),
-            "Admin Console" => Self::Shared(SharedTabs::AdminConsole),
-            "Web Console" => Self::Shared(SharedTabs::WebConsole),
-            "Query Editor" => Self::Shared(SharedTabs::QueryEditor),
-            "Create Prestashop Order" => Self::Shared(SharedTabs::CreatePrestashopOrder),
-            "Threads" => Self::Shared(SharedTabs::Threads),
-            "Bug Tracker" => Self::Shared(SharedTabs::BugReport),
-            "Plugins" => Self::Shared(SharedTabs::Plugins),
-            #[cfg(not(target_arch="wasm32"))]
-            "TUR Sheet" => Self::Mastertech(MastertechTabs::TurSheet),
-            #[cfg(not(target_arch="wasm32"))]
-            "Part Order" => Self::Mastertech(MastertechTabs::PartOrder),
-            #[cfg(not(target_arch="wasm32"))]
-            "Scripts" => Self::Mastertech(MastertechTabs::Scripts),
-            #[cfg(not(target_arch="wasm32"))]
-            "File Browser 📂" => Self::Mastertech(MastertechTabs::FileBrowser),
-            #[cfg(not(target_arch="wasm32"))]
-            "SysInfo" => Self::Mastertech(MastertechTabs::SysInfo),
-            #[cfg(not(target_arch="wasm32"))]
-            "Minidump Analysis" => Self::Mastertech(MastertechTabs::MinidumpAnalysis),
-            #[cfg(not(target_arch="wasm32"))]
-            "QC ☑️" => Self::Mastertech(MastertechTabs::Qc),
-            #[cfg(not(target_arch="wasm32"))]
-            "Ai" => Self::Mastertech(MastertechTabs::Ai),
-            #[cfg(not(target_arch="wasm32"))]
-            "Websockets" => Self::Mastertech(MastertechTabs::Websockets),
-            #[cfg(not(target_arch="wasm32"))]
-            "Downloads" => Self::Mastertech(MastertechTabs::Downloads),
-            &_ => Self::Shared(SharedTabs::MyTasks),
-        }
-
-    }
-}
-
-/// All tabs available to frontline / general users (WASM build).
-///
-/// Warehouse employees get [`WAREHOUSE_TABS_WASM`] instead, which is a
-/// stripped-down set focused on fleet health and QC status.
-#[cfg(target_arch="wasm32")]
-pub const TABS: [&str; 16] = [
-    "My Tasks",
-    "Store Tasks",
-    "Completed Tasks",
-    "Sales Tracker",
-    "Inventory",
-    "Task Audit",
-    "Threads",
-    "Bug Report",
-    "My Tools",
-    "Logs",
-    "Admin Console",
-    "Web Console",
-    "Database Editor",
-    "Query Editor",
-    "KOTH",
-    "Create Prestashop Order",
-];
-
-/// All tabs available to frontline / general users (native build).
-#[cfg(not(target_arch="wasm32"))]
-pub const TABS: [&str; 27] = [
-    "TUR Sheet",
-    "Part Order",
-    "KOTH",
-    "Scripts",
-    "My Tools",
-    "File Browser 📂",
-    "SysInfo",
-    "Minidump Analysis",
-    "QC ☑️",
-    "Ai",
-    "Store Tasks",
-    "My Tasks",
-    "Completed Tasks",
-    "Bug Tracker",
-    "Websockets",
-    "Downloads",
-    "Task Audit",
-    "Inventory",
-    "Sales Tracker",
-    "Logs",
-    "Resource Monitor",
-    "Admin Console",
-    "Web Console",
-    "Query Editor",
-    "Create Prestashop Order",
-    "Threads",
-    "Plugins",
-];
-
-// ── Warehouse tab sets ────────────────────────────────────────────────────────
-
-/// Tabs shown to warehouse employees in the WASM (web) build.
-///
-/// Excludes POS-oriented tabs (sales, Prestashop orders) and exposes the
-/// fleet dashboard and QC-specific views instead.
-#[cfg(target_arch="wasm32")]
-pub const WAREHOUSE_TABS: &[&str] = &[
-    "Fleet Dashboard",
-    "Admin Console",
-    "Logs",
-    "My Tools",
-    "Threads",
-];
-
-/// Tabs shown to warehouse employees in the native build.
-#[cfg(not(target_arch="wasm32"))]
-pub const WAREHOUSE_TABS: &[&str] = &[
-    "Fleet Dashboard",
-    "Admin Console",
-    "Web Console",
-    "Resource Monitor",
-    "Logs",
-    "My Tools",
-    "Scripts",
-    "Plugins",
-    "Threads",
-];
-
-/// Default tabs that open automatically when a warehouse user first logs in.
-pub const WAREHOUSE_DEFAULT_OPEN: &[&str] = &[
-    "Fleet Dashboard",
-    "Admin Console",
-];
-
-/// Convenience helper — returns the correct tab list for a user based on role.
-///
-/// Call this at login time to configure the initial `open_tabs` set and to
-/// populate the View → tab menu.
-pub fn tabs_for_role(is_warehouse: bool) -> &'static [&'static str] {
-    if is_warehouse {
-        WAREHOUSE_TABS
-    } else {
-        &TABS
-    }
-}
+pub use dock_session::{default_dock_session_native, default_dock_session_wasm, DockSession};
+pub use tab_id::{TabContext, TabId, WAREHOUSE_DEFAULT_OPEN};
 
 impl SharedContext {
+    pub fn tab_context(&self) -> TabContext {
+        TabContext::for_user(
+            self.current_user
+                .as_ref()
+                .map(|u| u.is_warehouse())
+                .unwrap_or(false),
+        )
+    }
+
     pub fn store_selection_menu(&mut self, ui: &mut Ui) {
         let selected = &mut self.store_selection;
         let current = selected.clone();
@@ -277,11 +59,10 @@ impl SharedContext {
             let store_users_tx = self.store_users_tx.clone();
             let store_selection = Store::from_presta_store_id(&selected.to_string());
 
-            // Signal store switch
             self.pending_store = Some(store_selection.clone());
             self.store_users.clear();
             self.tasks.clear();
-            self.layout_configs = None; // Force reinitialization
+            self.layout_configs = None;
             info!("Switching to store: {:?}", store_selection.as_str());
             PlatformSpawner::spawn(async move {
                 let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
@@ -292,58 +73,79 @@ impl SharedContext {
                 info!("get_store_users: {get_store_users:?}");
             });
         }
-    
     }
 }
 
-
 impl egui_dock::TabViewer for SharedContext {
-    type Tab = String;
+    type Tab = TabId;
 
     fn ui(&mut self, ui: &mut egui_dock::egui::Ui, tab: &mut Self::Tab) {
-        let is_admin = self.current_user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
-        match tab.as_str() {
-            "My Tasks" => self.render_layout(ui, "My Tasks"),
-            "Store Tasks" => self.render_layout(ui, "Store Tasks"),
-            "Completed Tasks" => self.render_layout(ui, "Completed Tasks"),
-            "Sales Tracker" => self.sales_tracker.ui(ui),
-            "Inventory" => self.stock_tables.ui(ui),
-            "Task Audit" => self.task_table_viewer(ui, self.ui_actions_tx.clone()),
-            "Threads" => self.user_chat.ui(ui),
-            "Bug Report" => self.github(ui),
-            "My Tools" => self.filesystem.display(ui),
-            "Fleet Dashboard" => if is_admin { self.fleet_dashboard(ui) },
-            "Logs" => crate::ui_tools::egui_logger::logger_ui()
-                .warn_color(Color32::from_rgb(94, 215, 221)) 
-                .error_color(Color32::from_rgb(255, 55, 102)) 
+        let is_admin = self
+            .current_user
+            .as_ref()
+            .map(|u| u.is_admin())
+            .unwrap_or(false);
+        let ctx = self.tab_context();
+        match *tab {
+            TabId::MyTasks => self.render_layout(ui, TabId::MyTasks.layout_page_name()),
+            TabId::StoreTasks => self.render_layout(ui, TabId::StoreTasks.layout_page_name()),
+            TabId::CompletedTasks => {
+                self.render_layout(ui, TabId::CompletedTasks.layout_page_name())
+            }
+            TabId::SalesTracker => self.sales_tracker.ui(ui),
+            TabId::Inventory => self.stock_tables.ui(ui),
+            TabId::TaskAudit => self.task_table_viewer(ui, self.ui_actions_tx.clone()),
+            TabId::Threads => self.user_chat.ui(ui),
+            TabId::BugReport => self.github(ui),
+            TabId::MyTools | TabId::FileBrowser => self.filesystem.display(ui),
+            TabId::FleetDashboard => {
+                if is_admin {
+                    self.fleet_dashboard(ui);
+                }
+            }
+            TabId::Logs => crate::ui_tools::egui_logger::logger_ui()
+                .warn_color(Color32::from_rgb(94, 215, 221))
+                .error_color(Color32::from_rgb(255, 55, 102))
                 .log_levels([true, true, true, false, false])
-                // there should be a way to set default false...
                 .enable_category("eframe".to_string(), false)
                 .enable_category("eframe::native::glow_integration".to_string(), false)
                 .enable_category("egui_glow::shader_version".to_string(), false)
                 .enable_category("egui_glow::painter".to_string(), false)
                 .show(ui),
-            "Admin Console" => self.admin_console(ui),
-            "Web Console" => self.web_console.ui(ui),
-            "Database Editor" => self.database_viewer.ui(ui, self.current_user.clone()),
-            "Query Editor" => if is_admin { self.query_editor.ui(ui) },
-            "KOTH" => self.koth.ui(ui),
-            "Create Prestashop Order" => self.prestashop_order_form.ui(ui),
+            TabId::AdminConsole => self.admin_console(ui),
+            TabId::WebConsole => self.web_console.ui(ui),
+            TabId::DatabaseEditor => self.database_viewer.ui(ui, self.current_user.clone()),
+            TabId::QueryEditor => {
+                if is_admin {
+                    self.query_editor.ui(ui);
+                }
+            }
+            TabId::Koth => self.koth.ui(ui),
+            TabId::CreatePrestashopOrder => self.prestashop_order_form.ui(ui),
+            TabId::ResourceMonitor => self.resource_mon.display(ui),
+            TabId::Scripts => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label("Scripts are available in the desktop application.");
+                });
+            }
             #[cfg(not(target_arch = "wasm32"))]
-            "Plugins" => {
+            TabId::Plugins => {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
                     ui.label("Plugin management is available in the desktop application.");
                 });
-            },
+            }
             #[cfg(target_arch = "wasm32")]
-            "Plugins" => {
+            TabId::Plugins => {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
                     ui.label("Plugin management is not available in web mode.");
                 });
-            },
-            _ => {}
+            }
+            _ => {
+                let _ = ctx;
+            }
         }
     }
 
@@ -354,18 +156,20 @@ impl egui_dock::TabViewer for SharedContext {
         _surface_index: egui_dock::SurfaceIndex,
         _node_index: egui_dock::NodeIndex,
     ) {
-        match tab.as_str() {
-            "Store Tasks" => self.store_selection_menu(ui),
+        let ctx = self.tab_context();
+        match *tab {
+            TabId::StoreTasks => self.store_selection_menu(ui),
             _ => {
-                ui.label(tab.as_str());
+                ui.label(tab.title(ctx));
             }
         }
     }
 
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText { tab.as_str().into() }
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.title(self.tab_context()).into()
+    }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
-        self.open_tabs.remove(tab.as_str());
+    fn on_close(&mut self, _tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
         egui_dock::tab_viewer::OnCloseResponse::Close
     }
 
@@ -373,20 +177,24 @@ impl egui_dock::TabViewer for SharedContext {
         self.added_nodes.push((surface_index, node_index));
     }
 
-    fn add_popup(&mut self, ui: &mut Ui, surface_index: egui_dock::SurfaceIndex, node_index: egui_dock::NodeIndex) {
+    fn add_popup(
+        &mut self,
+        ui: &mut Ui,
+        surface_index: egui_dock::SurfaceIndex,
+        node_index: egui_dock::NodeIndex,
+    ) {
         ui.set_width(100.0);
-        let is_warehouse = self.current_user.as_ref().map(|u| u.is_warehouse()).unwrap_or(false);
-        let visible = tabs_for_role(is_warehouse);
-        for tab in visible {
-            if ui
-                .selectable_label(self.open_tabs.contains(*tab), *tab)
-                .clicked()
-            {
-                if !self.open_tabs.contains(*tab) {
+        let tab_ctx = self.tab_context();
+        for &tab in TabId::visible_for(tab_ctx) {
+            let label = tab.title(tab_ctx);
+            let open = self.dock.is_open(tab);
+            if ui.selectable_label(open, label).clicked() {
+                if !open {
                     self.on_add(surface_index, node_index);
-                    self.pending_tab_adds.push((surface_index, node_index, tab.to_string()));
+                    self.pending_tab_adds
+                        .push((surface_index, node_index, tab));
                 } else {
-                    self.pending_tab_removes.push(tab.to_string());
+                    self.pending_tab_removes.push(tab);
                 }
                 ui.close_kind(UiKind::Menu);
             }
@@ -395,19 +203,19 @@ impl egui_dock::TabViewer for SharedContext {
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &Response) {
         if response.clicked() {
-            match tab.as_str() {
-                "Completed Tasks" => {
-                    // First, make sure there are no completed tasks loaded.
-                    // If there no completed tasks, then load them.
-                    // Otherwise, make sure the tasks that are completed 
-                    // are for the correct selected store. 
+            match *tab {
+                TabId::CompletedTasks => {
                     if self.tasks.filter_by_completion(true).is_empty() {
                         let tasks_tx = self.initial_tasks_tx.clone();
                         let store_sel = self.store_selection;
-                        let store_selection = Store::from_presta_store_id(&store_sel.to_string()).as_str().to_string();
+                        let store_selection =
+                            Store::from_presta_store_id(&store_sel.to_string())
+                                .as_str()
+                                .to_string();
                         log::info!("Pulling completed tasks for store: {store_selection}");
                         PlatformSpawner::spawn(async move {
-                            let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store_selection).await;
+                            let get_completed_tasks_for_store =
+                                get_completed_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
                         });
                         self.task_layouts
@@ -415,33 +223,31 @@ impl egui_dock::TabViewer for SharedContext {
                             .filter(|(page, _)| *page == "Completed Tasks")
                             .for_each(|(_, layout)| {
                                 layout.loading = true;
-                        });
+                            });
                     }
-                    
-                },
-                "Store Tasks" => {
-                    // First, make sure there are no store tasks loaded.
-                    // If there no store tasks, then load them.
-                    // Otherwise, make sure the tasks that are loaded 
-                    // for the selected store are for the CORRECT selected store. 
+                }
+                TabId::StoreTasks => {
                     if self.tasks.filter_by_completion(false).is_empty() {
                         let tasks_tx = self.initial_tasks_tx.clone();
                         let store_sel = self.store_selection;
-                        let store_selection = Store::from_presta_store_id(&store_sel.to_string()).as_str().to_string();
+                        let store_selection =
+                            Store::from_presta_store_id(&store_sel.to_string())
+                                .as_str()
+                                .to_string();
                         log::info!("Pulling tasks for store: {store_selection}");
                         PlatformSpawner::spawn(async move {
-                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
+                            let get_tasks_for_store =
+                                get_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_tasks_for_store: {get_tasks_for_store:?}");
                         });
                     }
-                    
-                },
+                }
                 _ => {}
-            }   
+            }
         }
     }
 
     fn scroll_bars(&self, _tab: &Self::Tab) -> [bool; 2] {
-        [false, false] // No scroll bars by default
+        [false, false]
     }
 }

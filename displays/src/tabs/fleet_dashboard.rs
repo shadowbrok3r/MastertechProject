@@ -92,7 +92,7 @@ pub fn start_fleet_poller(base_url: String, tx: Sender<Vec<FleetAgentSummary>>) 
                             Err(e) => log::warn!("[fleet_poller] decode failed: {e}"),
                         }
                     }
-                    Ok(resp) => log::warn!("[fleet_poller] HTTP {} from {url}", resp.status()),
+                    Ok(resp) => log::debug!("[fleet_poller] HTTP {} from {url}", resp.status()),
                     Err(e) => log::debug!("[fleet_poller] request error (will retry): {e}"),
                 }
             }
@@ -112,7 +112,7 @@ pub fn start_fleet_poller(base_url: String, tx: Sender<Vec<FleetAgentSummary>>) 
                             Err(e) => log::warn!("[fleet_poller] decode failed: {e}"),
                         }
                     }
-                    Ok(Ok(resp)) => log::warn!("[fleet_poller] HTTP {} from {url}", resp.status()),
+                    Ok(Ok(resp)) => log::debug!("[fleet_poller] HTTP {} from {url}", resp.status()),
                     Ok(Err(e)) => log::debug!("[fleet_poller] request error (will retry): {e}"),
                     Err(_) => log::debug!("[fleet_poller] request timed out (will retry)"),
                 }
@@ -138,14 +138,14 @@ impl SharedContext {
     }
 
     /// Idempotently start the poller against `database::orchestrator_url()`.
-    /// Safe to call every frame; `fleet_poller_running` is the no-op guard.
-    pub fn ensure_fleet_poller(&mut self) {
+    /// Called manually from the Fleet Dashboard UI — not auto-started at launch.
+    pub fn start_fleet_poller_manual(&mut self) {
         if self.fleet_poller_running {
             return;
         }
         let url = database::orchestrator_url().to_string();
         if url.is_empty() {
-            self.fleet_poller_running = true;
+            log::info!("[fleet_poller] no orchestrator URL configured");
             return;
         }
         start_fleet_poller(url, self.fleet_agents_tx.clone());
@@ -156,14 +156,35 @@ impl SharedContext {
 impl SharedContext {
     /// Render the "Fleet Dashboard" tab for warehouse employees.
     pub fn fleet_dashboard(&mut self, ui: &mut Ui) {
+        self.drain_fleet_updates();
+
         ui.heading("Fleet Dashboard");
         ui.add_space(4.0);
         ui.label(
             RichText::new(
-                "Live QC machine status.  Use the Admin Console tab to connect to a specific machine.",
+                "Live QC machine status. Use the Admin Console tab to connect to a specific machine.",
             )
             .weak(),
         );
+        ui.add_space(6.0);
+
+        let url = database::orchestrator_url();
+        ui.horizontal(|ui| {
+            if url.is_empty() {
+                ui.colored_label(
+                    Color32::GRAY,
+                    "Orchestrator URL not configured — set ORCHESTRATOR_URL in .env.",
+                );
+            } else if self.fleet_poller_running {
+                ui.colored_label(Color32::LIGHT_GREEN, format!("Connected to {url}"));
+                if ui.button("Refresh now").clicked() {
+                    // Poller already running; next poll within 15 s.
+                }
+            } else if ui.button("Connect to orchestrator").clicked() {
+                self.start_fleet_poller_manual();
+            }
+        });
+
         ui.separator();
         ui.add_space(8.0);
 
@@ -209,20 +230,17 @@ impl SharedContext {
                         ui.end_row();
                     }
                 });
+        } else if !self.fleet_poller_running {
+            ui.colored_label(
+                Color32::GRAY,
+                "Click Connect to orchestrator to load fleet data.",
+            );
         } else {
             let url = database::orchestrator_url();
-            if url.is_empty() {
-                ui.colored_label(
-                    Color32::GRAY,
-                    "Fleet reporting disabled: `ORCHESTRATOR_URL` / `ORCHESTRATOR_URL_DEV` \
-                     is empty in .env. Set it and rebuild to see live fleet data.",
-                );
-            } else {
-                ui.colored_label(
-                    Color32::GRAY,
-                    format!("Waiting for first /api/v1/qc/agents response from {url} …"),
-                );
-            }
+            ui.colored_label(
+                Color32::GRAY,
+                format!("Waiting for first /api/v1/qc/agents response from {url} …"),
+            );
         }
     }
 }

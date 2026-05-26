@@ -28,6 +28,26 @@ use super::{
     STRESS_TEST_EVENT_TABLE, STRESS_TEST_METRIC_TABLE, STRESS_TEST_RUN_TABLE,
 };
 
+/// SurrealDB CREATE content. Strips empty `embedding` arrays (HNSW rejects len 0).
+/// Record ids stay in SurrealValue form — same pattern as `DiagnosticSession::create`.
+fn surreal_create_content<T: Clone + SurrealValue>(
+    record: &T,
+    strip_empty_embedding: bool,
+) -> surrealdb::types::Value {
+    let mut value = record.clone().into_value();
+    if strip_empty_embedding {
+        if let surrealdb::types::Value::Object(obj) = &mut value {
+            if matches!(
+                obj.get("embedding"),
+                Some(surrealdb::types::Value::Array(a)) if a.is_empty()
+            ) {
+                obj.remove("embedding");
+            }
+        }
+    }
+    value
+}
+
 // ============================================================
 // Hardware catalog
 // ============================================================
@@ -867,12 +887,41 @@ impl StressTestRun {
         self.failure_mode = failure_mode;
     }
 
+    /// Text passed to `fn::embed_text` when the run row has no local embedding.
+    pub fn embed_source(&self) -> String {
+        format!(
+            "{} {} {} {}",
+            self.tool_label,
+            self.preset_label.as_deref().unwrap_or(""),
+            self.target_kind.as_str(),
+            self.hostname.as_deref().unwrap_or(""),
+        )
+    }
+
     pub async fn create(run: &Self) -> anyhow::Result<RecordId> {
-        let created: Option<Self> = DATABASE
-            .create(run.id.clone())
-            .content(run.clone())
-            .await?;
-        Ok(created.map(|c| c.id).unwrap_or_else(|| run.id.clone()))
+        let content = surreal_create_content(run, run.embedding.is_empty());
+        let mut response = if run.embedding.is_empty() {
+            DATABASE
+                .query(
+                    "CREATE $id CONTENT $content SET embedding = fn::embed_text($embed_src)",
+                )
+                .bind(("id", run.id.clone()))
+                .bind(("content", content))
+                .bind(("embed_src", run.embed_source()))
+                .await?
+        } else {
+            DATABASE
+                .query("CREATE $id CONTENT $content")
+                .bind(("id", run.id.clone()))
+                .bind(("content", content))
+                .await?
+        };
+        let rows: Vec<Self> = response.take(0)?;
+        Ok(rows
+            .into_iter()
+            .next()
+            .map(|c| c.id)
+            .unwrap_or_else(|| run.id.clone()))
     }
 
     /// Insert a completed run and linked events (backfill / hung-run recovery).
@@ -1036,9 +1085,10 @@ impl StressTestMetric {
     }
 
     pub async fn create(metric: &Self) -> anyhow::Result<RecordId> {
+        let value = surreal_create_content(metric, false);
         let created: Option<Self> = DATABASE
             .create(metric.id.clone())
-            .content(metric.clone())
+            .content(value)
             .await?;
         Ok(created.map(|c| c.id).unwrap_or_else(|| metric.id.clone()))
     }
@@ -1164,9 +1214,10 @@ impl StressTestEvent {
     }
 
     pub async fn create(event: &Self) -> anyhow::Result<RecordId> {
+        let value = surreal_create_content(event, false);
         let created: Option<Self> = DATABASE
             .create(event.id.clone())
-            .content(event.clone())
+            .content(value)
             .await?;
         Ok(created.map(|c| c.id).unwrap_or_else(|| event.id.clone()))
     }

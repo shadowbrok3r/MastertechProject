@@ -2,16 +2,16 @@ use eframe::egui::{Color32, Context, Margin, Stroke};
 use egui_dock::{DockArea, Style};
 
 use crate::app_state::MasterTechApp;
+use displays::tabs::TabId;
 
 pub mod menu_bar;
-// pub mod login_page;
 
 impl MasterTechApp {
-    pub fn main_page(&mut self, ctx: &Context){
+    pub fn main_page(&mut self, ctx: &Context) {
         let mut style = Style::from_egui(&ctx.style());
         style.overlay.selection_color = Color32::from_additive_luminance(255);
-        style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
-        style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
+        style.separator.color_hovered = Color32::from_rgba_premultiplied(50, 93, 80, 77);
+        style.separator.color_dragged = Color32::from_rgba_premultiplied(189, 189, 189, 130);
         style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
         style.main_surface_border_rounding.nw = 15;
         style.main_surface_border_rounding.ne = 15;
@@ -29,13 +29,45 @@ impl MasterTechApp {
             bg_fill: Color32::BLACK,
             ..Default::default()
         };
-        
-        DockArea::new(&mut self.tree)
+
+        let mut tree = std::mem::replace(
+            &mut self.dock.tree,
+            egui_dock::DockState::new(Vec::<TabId>::new()),
+        );
+
+        DockArea::new(&mut tree)
             .style(style)
             .show_close_buttons(true)
             .show_add_buttons(true)
             .show_add_popup(true)
             .draggable_tabs(true)
             .show(ctx, &mut self.context);
+
+        if !self.context.pending_tab_removes.is_empty() || !self.context.pending_tab_adds.is_empty()
+        {
+            for tab in self.context.pending_tab_removes.drain(..) {
+                if let Some(index) = tree.find_tab(&tab) {
+                    tree.remove_tab(index);
+                }
+            }
+            for (surface, node, tab) in self.context.pending_tab_adds.drain(..) {
+                tree.set_focused_node_and_surface((surface, node));
+                tree.push_to_focused_leaf(tab);
+            }
+        }
+
+        for tab in self.context.pending_tab_opens.drain(..) {
+            if tree.find_tab(&tab).is_none() {
+                tree.push_to_focused_leaf(tab);
+            }
+        }
+
+        if let Some(tab) = self.context.pending_activate_tab.take() {
+            if let Some((surface_index, node_index, tab_index)) = tree.find_tab(&tab) {
+                tree.set_active_tab((surface_index, node_index, tab_index));
+            }
+        }
+
+        self.dock.tree = tree;
     }
 }

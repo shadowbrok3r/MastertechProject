@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, tabs_for_role}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, pages::view_menu, tabs::{github::get_github_releases, TabContext}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -12,27 +12,12 @@ impl SharedContext {
             )
             .ui(ui, |ui| {
                 if let Some(user) = self.current_user.as_mut() {
+                    let tab_ctx = TabContext::for_user(user.is_warehouse());
                     let mut inputs = std::collections::BTreeSet::new();
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
                         ui.menu_button(RichText::new("View").color(ui.global_style().visuals.error_fg_color).heading().underline(), |ui| {
-                            let is_warehouse = user.is_warehouse();
-                            let visible_tabs = tabs_for_role(is_warehouse);
-                            for tab in visible_tabs {
-                                if ui
-                                    .selectable_label(self.open_tabs.contains(*tab), *tab)
-                                    .clicked()
-                                {
-                                    if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                                        self.tree.remove_tab(index);
-                                        self.open_tabs.remove(*tab);
-                                    } else {
-                                        self.open_tabs.insert(tab.to_string());
-                                        self.tree.push_to_focused_leaf(tab.to_string());
-                                    }
-                                    ui.close_kind(UiKind::Menu);
-                                }
-                            }
+                            view_menu(ui, &mut self.dock, tab_ctx, None);
                         });
 
                         ui.add_space(30.0);
@@ -373,7 +358,7 @@ impl SharedContext {
                                 };
 
                                 if reset_ui.clicked() {
-                                    let default_layout = serde_json::to_value(&self.tree).unwrap();
+                                    let default_layout = serde_json::to_value(&new_tree.tree).unwrap();
                                     self.user_settings.set_ui_layout_mtechserver(default_layout.clone());
                                     user.set_ui_layout_mtechserver(default_layout.clone());
                                     #[cfg(target_arch = "wasm32")]
@@ -403,8 +388,7 @@ impl SharedContext {
                                         wasm_cookies::set("user", &encoded, &cookie_opts);
                                     }
                                     
-                                    self.tree = new_tree.0;
-                                    self.open_tabs = new_tree.1;
+                                    self.dock = new_tree;
                                     let mut user = user.clone();
                                     PlatformSpawner::spawn(async move {
                                         match user.save_mtechserver_ui_layout(default_layout.clone()).await {
@@ -416,7 +400,7 @@ impl SharedContext {
                                 }
                                 
                                 if submit.clicked() {
-                                    let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
+                                    let val = serde_json::to_value(self.dock.tree.clone()).unwrap_or_default();
                                     self.user_settings.set_ui_layout_mtechserver(val.clone());
                                     user.set_ui_layout_mtechserver(val.clone());
                                     log::debug!("user_settings: {:#?}", user.get_user_settings());
