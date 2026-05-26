@@ -1,6 +1,7 @@
 use database::{live_data::listen_data_filtered, schema::{utilities::{get_notifications, get_qcs, get_store_users, get_tasks_for_store}, RecordIdExt, TaskNotePayload, TaskNoteRead, User}};
-use crate::ui_tools::{decode_style, toasts::{Toast, ToastKind, ToastOptions, ToastStyle}};
+use crate::ui_tools::toasts::{Toast, ToastKind, ToastOptions, ToastStyle};
 use crate::{get_toast_receiver, PlatformSpawner, Spawner, ToastMessage};
+use std::sync::Arc;
 
 pub mod receive_notes;
 pub mod receive_notifications;
@@ -204,16 +205,9 @@ impl crate::app_state::SharedContext {
         );
 
         self.stock_tables.first_run();
-                match decode_style(&user.get_color_scheme()) {
-            Ok(color_settings) => {
-                ctx.set_global_style(color_settings);
-                ctx.request_repaint();
-            },
-            Err(e) => {
-                log::error!("Error setting theme config: {e:?}");
-                crate::ui_tools::theme_config::apply_shipped_style(ctx);
-            },
-        }
+        crate::ui_tools::theme_config::apply_user_color_scheme(ctx, &user.get_color_scheme());
+        self.user_theme_loaded = true;
+        ctx.request_repaint();
 
         let new_notes_tx = self.associated_notes_tx.clone();
         
@@ -244,9 +238,11 @@ impl crate::app_state::SharedContext {
     /// All channel polling and state mutations -- no UI rendering.
     /// Called from `fn logic` so it runs even when the window is hidden.
     pub fn receive_shared_logic(&mut self, frame: &mut eframe::Frame, ctx: &eframe::egui::Context) {
+        if !self.user_theme_loaded {
+            crate::ui_tools::theme_config::bootstrap_startup_theme(ctx);
+        }
+
         ctx.request_repaint_after(web_time::Duration::from_secs(1));
-
-
         if let Ok(error_msg) = self.live_query_error_rx.try_recv() {
             log::warn!("Live query connection error detected: {}", error_msg);
             let looks_transient = error_msg.contains("connection reset")
@@ -410,7 +406,7 @@ impl crate::app_state::SharedContext {
 
         if let Ok(settings) = self.settings_receiver.try_recv() {
             ctx.request_repaint();
-            ctx.set_global_style(settings);
+            ctx.set_global_style(Arc::new(settings));
         }
 
         if let Ok(thread_obj) = self.ai_thread_channel.1.try_recv() {

@@ -8,6 +8,45 @@ use serde_json::to_vec;
 use std::sync::Arc;
 
 use super::carl_dark::{paint_aesthetix_colors, Aesthetix, CarlDark};
+use super::decode_style;
+
+/// Applies shipped [`crate::STYLE`] before login or when no saved scheme exists.
+pub fn bootstrap_startup_theme(ctx: &Context) {
+    apply_preset(ctx, PresetStyles::ShippedClassic);
+}
+
+/// Applies a user-saved color scheme, falling back to shipped when missing or blank.
+pub fn apply_user_color_scheme(ctx: &Context, bytes: &[u8]) {
+    if bytes.is_empty() {
+        bootstrap_startup_theme(ctx);
+        return;
+    }
+    match decode_style(bytes) {
+        Ok(style) if is_blank_default_style(&style) => {
+            log::info!("Saved color scheme is egui default; using shipped theme");
+            bootstrap_startup_theme(ctx);
+        }
+        Ok(style) => {
+            ctx.set_global_style(Arc::new(style));
+            let (success, accent2) = semantic_colors_for_preset(PresetStyles::ShippedClassic);
+            crate::ui_tools::theme::set_success_color(ctx, success);
+            crate::ui_tools::theme::set_accent_secondary(ctx, accent2);
+        }
+        Err(e) => {
+            log::error!("Saved color scheme decode failed: {e:?}");
+            bootstrap_startup_theme(ctx);
+        }
+    }
+}
+
+fn is_blank_default_style(style: &Style) -> bool {
+    if *style == Style::default() {
+        return true;
+    }
+    let mut dark_default = Style::default();
+    dark_default.visuals = Visuals::dark();
+    *style == dark_default
+}
 
 #[derive(Serialize, Clone, Deserialize, Debug, Derivative)]
 #[derivative(PartialEq)]
@@ -125,7 +164,7 @@ pub fn default_app_style() -> Arc<Style> {
 
 /// Applies the shipped [`crate::STYLE`] preset at startup.
 pub fn apply_shipped_style(ctx: &Context) {
-    apply_preset(ctx, PresetStyles::ShippedClassic);
+    bootstrap_startup_theme(ctx);
 }
 
 /// Applies the shipped [`crate::STYLE`] preset.
@@ -239,17 +278,18 @@ impl ThemeConfig {
                 
                 if reset.clicked() {
                     PlatformSpawner::spawn(async move {
-                        let theme = Style::default();
+                        let theme = style_for_preset(PresetStyles::ShippedClassic);
                             match User::update_color_scheme(
                                 encode_style(
-                                    &theme.clone()
+                                    &theme
                                 ).unwrap_or_default().into()
                             ).await {
                                 Ok(_) => log::info!("Updated Color Settings"),
                                 Err(e) => log::error!("Error updating color settings: {e:?}"),
                             }
                     });
-                    ret = (true, Style::default().into());
+                    apply_preset(ctx, PresetStyles::ShippedClassic);
+                    ret = (true, Arc::new(style_for_preset(PresetStyles::ShippedClassic)));
                 }
 
                 ui.add_space(10.);

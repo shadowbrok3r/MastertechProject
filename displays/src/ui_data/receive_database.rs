@@ -47,7 +47,8 @@ impl crate::app_state::SharedContext {
                         log::info!("7");
                         let usr = self.current_user.clone();
                         if let Some(user) = usr {
-                            ctx.set_style(crate::ui_data::decode_style(&user.get_color_scheme()).unwrap_or_default());
+                            displays::ui_tools::theme_config::apply_user_color_scheme(ctx, &user.get_color_scheme());
+                            self.user_theme_loaded = true;
                             self.load_data(ctx, &user);
                             let _ = self.app_state_tx.try_send(crate::app_state::AppState::Authenticated(crate::app_state::MainPages::Tasks));
                             let toast = &mut self.toasts;

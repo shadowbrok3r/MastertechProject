@@ -150,6 +150,7 @@ pub struct PendingTurData {
 
 impl MasterTechApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        displays::ui_tools::theme_config::bootstrap_startup_theme(&cc.egui_ctx);
         let dock = default_tree();
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
