@@ -258,6 +258,9 @@ impl LoggerUi {
     pub(crate) fn ui(&mut self, ui: &mut eframe::egui::Ui) {
         #[cfg(feature = "puffin")]
         puffin::profile_scope!("render logger UI");
+        self.style.warn_color = crate::ui_tools::theme::warn(ui);
+        self.style.error_color = crate::ui_tools::theme::error(ui);
+        self.style.highlight_color = crate::ui_tools::theme::weak_text(ui);
         let Ok(ref mut logger) = LOGGER.lock() else {
             return;
         };

@@ -8,6 +8,7 @@
 //! and (when linked) jump to the related service task.
 
 use crate::TaskUiActions;
+use crate::ui_tools::theme;
 use crossbeam::channel::Sender;
 use database::schema::{
     client::ClientKind, ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt,
@@ -153,14 +154,14 @@ impl ClientCardData {
             // - gray   : `connected = false` (or no row) — offline.
             let fresh = recently_active(&self.client);
             let (dot_color, dot_tip) = if self.client.connected && fresh {
-                (Color32::from_rgb(50, 205, 50), "Online (heartbeat fresh)")
+                (theme::success(ui), "Online (heartbeat fresh)")
             } else if self.client.connected && !fresh {
                 (
-                    Color32::from_rgb(255, 200, 0),
+                    theme::warn(ui),
                     "Stale — no heartbeat for over 3 minutes",
                 )
             } else {
-                (Color32::from_rgb(110, 110, 118), "Offline")
+                (theme::weak_text(ui), "Offline")
             };
             let (rect, resp) = ui.allocate_exact_size(
                 Vec2::splat(10.0),
@@ -186,7 +187,7 @@ impl ClientCardData {
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new("• SESSION")
-                        .color(Color32::from_rgb(120, 220, 140))
+                        .color(theme::success(ui))
                         .strong()
                         .small(),
                 )
@@ -197,7 +198,7 @@ impl ClientCardData {
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new("• AI ACTIVE")
-                        .color(Color32::from_rgb(250, 180, 60))
+                        .color(theme::warn(ui))
                         .strong()
                         .small(),
                 );
