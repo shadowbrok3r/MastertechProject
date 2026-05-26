@@ -341,7 +341,7 @@ impl crate::app_state::SharedContext {
         self.receive_users();
         self.receive_task();
         self.receive_notes();
-        self.receive_notification();
+        self.receive_notification(ctx);
         self.stock_tables.receive(self.ui_actions_tx.clone());
         self.sales_tracker.receive();
         self.receive_client();

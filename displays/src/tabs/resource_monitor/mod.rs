@@ -7,9 +7,10 @@ use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::SystemInformation;
 
-pub mod hw_tables;
 pub mod machine_info;
 pub mod process_table;
+#[cfg(feature = "native-telemetry")]
+pub mod hw_tables;
 #[cfg(feature = "native-telemetry")]
 pub mod sysinfo_convert;
 

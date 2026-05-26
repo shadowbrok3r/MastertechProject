@@ -12,9 +12,15 @@ COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
 COPY tcp_protocol tcp_protocol
+COPY plugin_builder plugin_builder
 COPY .env .env
 
-RUN sed -i 's|^members = .*|members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]|' Cargo.toml
+# Wasm-only workspace: trim members and strip native path deps that are not
+# copied into this context (stress-kit, stress-runner). plugin_builder stays
+# because displays references it in Cargo.toml for manifest resolution.
+RUN sed -i 's|^members = .*|members = ["database", "displays", "MtechServer2.0", "tcp_protocol"]|' Cargo.toml && \
+    sed -i '/stress-kit/d; /stress-runner/d' Cargo.toml && \
+    sed -i '/stress-kit/d; /stress-runner/d; /native-telemetry/d' displays/Cargo.toml
 
 ENV RUSTFLAGS="-C target-feature=+bulk-memory,+mutable-globals --cfg getrandom_backend=\"wasm_js\""
 

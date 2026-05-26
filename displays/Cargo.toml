@@ -42,7 +42,6 @@ surrealdb.workspace = true
 egui_dock.workspace = true
 once_cell.workspace = true
 database = { workspace=true, features = ["desktop"] }
-stress-kit = { workspace = true, optional = true }
 tcp_protocol = { workspace = true }
 web-time.workspace = true
 futures.workspace = true
