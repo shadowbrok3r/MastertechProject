@@ -1,6 +1,6 @@
 id = "20260521210000__slice6_relax_run_objects"
 name = "slice6_relax_run_objects"
-state = "planned"
+state = "completed"
 # Source: post-slice5 schema (the fleet rollout's target hash). Surrealkit
 # will recompute the actual target hash from the schema files; the value
 # below will be reported in the lint error if it disagrees, just paste it back.

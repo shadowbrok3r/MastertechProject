@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Align2, Area, Button, Color32, ComboBox, Direction, FontId, Frame, Id, Layout, Margin, Order, RichText, ScrollArea, Spinner, TextEdit, Ui, UiBuilder, Vec2, Widget};
-use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, DisplayModal, Interaction, PlatformSpawner, Spawner};
+use crate::{chats::ChatView, get_current_user_from_auth, get_database_users, ui_tools::theme, DisplayModal, Interaction, PlatformSpawner, Spawner};
 use database::{SCAFFOLD_PASS, SCAFFOLD_URL, SCAFFOLD_USER, schema::{CarboniteResponse, ComputerData, CustomerData, DiagnosticSession, LiveTaskPayload, RecordId, RecordIdExt, Store, TaskHistory, TaskNotePayload, TicketData, User, utilities::{PhoneNumberFormatter, delete_task, get_prestashop_payload}}};
 use database::schema::prestashop::{Prestashop, Customer, Address};
 use database::schema::prestashop::xml::{modify_xml, remove_xml_tag};
@@ -614,7 +614,7 @@ impl TaskModal {
             .order(Order::Foreground)
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style())
-                    .fill(Color32::from_rgb(30, 30, 35))
+                    .fill(theme::bg_surface(ui))
                     .inner_margin(20.0)
                     .show(ui, |ui| {
                         ui.set_min_width(420.0);
@@ -793,7 +793,7 @@ impl TaskModal {
             .order(Order::Foreground)
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style())
-                    .fill(Color32::from_rgb(30, 30, 35))
+                    .fill(theme::bg_surface(ui))
                     .inner_margin(20.0)
                     .show(ui, |ui| {
                         ui.set_min_width(500.0);
@@ -881,7 +881,7 @@ impl TaskModal {
             .order(Order::Foreground)
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style())
-                    .fill(Color32::from_rgb(30, 30, 35))
+                    .fill(theme::bg_surface(ui))
                     .inner_margin(20.0)
                     .show(ui, |ui| {
                         ui.set_min_width(400.0);

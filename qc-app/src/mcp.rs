@@ -309,7 +309,7 @@ impl QcToolProvider {
 
     #[tool(
         name = "run_stress_scenario",
-        description = "Run a multi-stage stress scenario via stress_runner::RunController. Blocks until done; every tick lands in `stress_test_metric` + the final verdict in `stress_test_run`."
+        description = "Run a multi-stage stress scenario via stress_runner::RunController. Blocks until done. MANDATORY persistence: hardware_component upsert, stress_test_run, stress_test_metric (~1 Hz), stress_test_event. Returns run_id in the report JSON."
     )]
     async fn run_stress_scenario(
         &self,
@@ -371,7 +371,7 @@ impl QcToolProvider {
 
     #[tool(
         name = "run_stressor",
-        description = "Run a single stressor via stress_runner::RunController for `duration_secs` seconds. Persists to stress_test_run + stress_test_metric; blocks until done or cancelled."
+        description = "Run a single stressor via stress_runner::RunController for `duration_secs` seconds. MANDATORY persistence: hardware_component, stress_test_run, stress_test_metric, stress_test_event. Returns run_id in the report JSON."
     )]
     async fn run_stressor(
         &self,
@@ -613,7 +613,7 @@ impl QcToolProvider {
 
     #[tool(
         name = "run_gpu_probe",
-        description = "Run the curated 4-stage GPU probe (gpu_compute, gpu_matmul, gpu_vram, gpu_pcie) on the discrete GPU and return a pass/warn/fail verdict. Captures TDR delta + PCIe replay delta + ECC error delta across the run; any GPU VRAM mismatch, any new TDR event, or any uncorrected ECC error forces fail. ~2 min default; scale via duration_multiplier."
+        description = "Run the curated 4-stage GPU probe (gpu_compute, gpu_matmul, gpu_vram, gpu_pcie) on the discrete GPU. MANDATORY persistence via stress-runner: hardware_component, stress_test_run, stress_test_metric, stress_test_event. Returns run_id, verdict, and TDR/PCIe/ECC deltas. ~2 min default."
     )]
     async fn run_gpu_probe(
         &self,

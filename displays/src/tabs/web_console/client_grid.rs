@@ -7,6 +7,7 @@ use eframe::egui::{
     Align, Button, Color32, ComboBox, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea,
     TextEdit, Ui, Vec2,
 };
+use crate::ui_tools::theme;
 
 /// Grid/List view component for displaying clients
 pub struct ClientGrid;
@@ -35,7 +36,7 @@ impl ClientGrid {
                 ui.label(
                     RichText::new("No clients found")
                         .size(16.0)
-                        .color(Color32::from_rgb(150, 155, 165)),
+                        .color(theme::weak_text(ui)),
                 );
             });
             return;
@@ -54,7 +55,7 @@ impl ClientGrid {
     /// Render the toolbar with search, filter, and view mode controls
     fn render_toolbar(ui: &mut Ui, console: &mut WebConsole) {
         Frame::NONE
-            .fill(Color32::from_rgb(25, 28, 35))
+            .fill(theme::bg_surface(ui))
             .inner_margin(Margin::symmetric(8, 12))
             .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
@@ -63,7 +64,7 @@ impl ClientGrid {
                     let refresh_btn = Button::new(
                         RichText::new("🔄")
                             .size(14.0)
-                            .color(Color32::from_rgb(100, 180, 255)),
+                            .color(theme::info(ui)),
                     )
                     .min_size(Vec2::new(32.0, 28.0));
 
@@ -86,7 +87,7 @@ impl ClientGrid {
                     ui.label(
                         RichText::new("Filter:")
                             .size(11.0)
-                            .color(Color32::from_rgb(160, 165, 175)),
+                            .color(theme::weak_text(ui)),
                     );
 
                     ComboBox::from_id_salt("client_filter")
@@ -182,7 +183,7 @@ impl ClientGrid {
                             ui.label(
                                 RichText::new(format!("Updated: {}", time_str))
                                     .size(10.0)
-                                    .color(Color32::from_rgb(120, 125, 135)),
+                                    .color(theme::weak_text(ui)),
                             );
                         }
                     });
@@ -264,7 +265,7 @@ impl ClientGrid {
 
         // Header row
         Frame::NONE
-            .fill(Color32::from_rgb(30, 33, 40))
+            .fill(theme::bg_surface(ui))
             .inner_margin(Margin::symmetric(6, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -273,35 +274,35 @@ impl ClientGrid {
                         RichText::new("Name")
                             .size(11.0)
                             .strong()
-                            .color(Color32::from_rgb(180, 185, 195)),
+                            .color(theme::strong_text(ui)),
                     );
                     ui.add_space(120.0);
                     ui.label(
                         RichText::new("User")
                             .size(11.0)
                             .strong()
-                            .color(Color32::from_rgb(180, 185, 195)),
+                            .color(theme::strong_text(ui)),
                     );
                     ui.add_space(80.0);
                     ui.label(
                         RichText::new("Last Update")
                             .size(11.0)
                             .strong()
-                            .color(Color32::from_rgb(180, 185, 195)),
+                            .color(theme::strong_text(ui)),
                     );
                     ui.add_space(60.0);
                     ui.label(
                         RichText::new("Ping")
                             .size(11.0)
                             .strong()
-                            .color(Color32::from_rgb(180, 185, 195)),
+                            .color(theme::strong_text(ui)),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new("Actions")
                                 .size(11.0)
                                 .strong()
-                                .color(Color32::from_rgb(180, 185, 195)),
+                                .color(theme::strong_text(ui)),
                         );
                     });
                 });

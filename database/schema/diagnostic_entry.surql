@@ -1,33 +1,25 @@
 -- diagnostic_entry — AI/tech notes against a diagnostic_session.
 --
--- This file documents the field set declared in `database/src/schema/diagnostic.rs`
--- (`DiagnosticEntry`). The table itself is created lazily on first insert (no
--- `DEFINE TABLE`); these statements only declare field defaults + the embedding
--- field shape.
+-- Rust source of truth: `database::schema::DiagnosticEntry`.
+-- Table is created lazily on first insert (no DEFINE TABLE here).
 --
--- ── Why no HNSW index on `embedding` here ──────────────────────────────────────
--- The Rust struct ships `embedding: Vec::new()` by design (see the docstring on
--- `DiagnosticEntry.embedding` in diagnostic.rs). Writes must succeed before an
--- embedding model is online — embeddings are filled by an OFFLINE backfill job
--- once Ollama (or whichever model server) is wired up.
---
--- A `DEFINE INDEX diagnostic_entry_embedding ON … HNSW DIMENSION 768 …` was added
--- live to a production DB out-of-band (no source file). That index rejects the
--- default empty array with
---   "Incorrect vector dimension (0). Expected a vector of 768 dimension."
--- breaking every `log_diagnostic_entry` write whenever Ollama is unavailable.
--- See the matching pattern (and the same warning) in stress_test_run.surql:117.
---
--- The migration `database/rollouts/20260524000000__slice8_drop_diagentry_hnsw.toml`
--- removes that orphaned index. Re-add the HNSW (mirroring `strun_embedding` in
--- stress_test_run.surql:44) ONLY after:
---   1. the embedding worker is implemented + reachable, AND
---   2. a backfill has populated `embedding` on every existing row with a real
---      768-dim vector (an all-zero vector poisons KNN — don't ship that).
---
--- ── Field defaults ─────────────────────────────────────────────────────────────
--- `OVERWRITE` so this file is idempotent — re-running on an environment that
--- already has the field is a no-op.
+-- Embeddings: `DiagnosticEntry::create` sets `embedding` via
+-- `fn::embed_text(title + detail)` in the same CREATE. The FIELD `VALUE`
+-- below covers ad-hoc inserts that omit `embedding`. A CREATE-time EVENT
+-- cannot rescue rows where the client explicitly sends `embedding: []` —
+-- the HNSW index rejects dimension 0 before the event runs.
 
-DEFINE FIELD OVERWRITE embedding   ON diagnostic_entry TYPE array<float> DEFAULT [] PERMISSIONS FULL;
-DEFINE FIELD OVERWRITE embedding.* ON diagnostic_entry TYPE float                  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding ON diagnostic_entry TYPE array<float>
+  VALUE fn::embed_text(string::concat(title ?? '', ' ', detail ?? ''))
+  PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON diagnostic_entry TYPE float PERMISSIONS FULL;
+
+DEFINE INDEX OVERWRITE diag_embedding ON diagnostic_entry FIELDS embedding
+  HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+
+DEFINE EVENT OVERWRITE diagentry_reembed ON diagnostic_entry
+  WHEN $event = "UPDATE"
+    AND ($before.title != $after.title OR $before.detail != $after.detail)
+  THEN {
+    UPDATE $after.id SET embedding = fn::embed_text(string::concat($after.title, ' ', $after.detail));
+  };

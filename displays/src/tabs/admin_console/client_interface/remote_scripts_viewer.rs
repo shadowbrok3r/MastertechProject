@@ -226,6 +226,7 @@ impl RemoteScriptsViewer {
                                     scripts,
                                     service_number: self.service_number.clone(),
                                     customer_email: self.customer_email.clone(),
+                                    diagnostic_session_id: String::new(),
                                 });
                             }
                         }

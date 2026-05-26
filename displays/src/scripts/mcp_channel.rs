@@ -33,6 +33,9 @@ pub struct ScriptRunRequest {
     pub service_number: Option<String>,
     /// Optional customer email override (needed by SEB activation).
     pub customer_email: Option<String>,
+    /// Optional diagnostic_session id to link stress_test_run.session_ref.
+    #[serde(default)]
+    pub diagnostic_session_id: Option<String>,
 }
 
 /// Result published by the host back to MCP when a script finishes.

@@ -495,7 +495,13 @@ pub enum Cmd {
     // --- Remote Scripts ---
     GetRemoteScriptList,
     RemoteScriptListResponse { categories: Vec<(String, Vec<RemoteScriptItem>)> },
-    RunRemoteScripts { scripts: Vec<RemoteScriptItem>, service_number: String, customer_email: String },
+    RunRemoteScripts {
+        scripts: Vec<RemoteScriptItem>,
+        service_number: String,
+        customer_email: String,
+        #[serde(default)]
+        diagnostic_session_id: String,
+    },
     RemoteScriptLog(String),
     RemoteScriptResult { name: String, status: RemoteScriptStatus },
     RemoteScriptsComplete,

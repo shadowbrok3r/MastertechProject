@@ -1,6 +1,6 @@
 id = "20260516120000__tranche1_relax_fks"
 name = "tranche1_relax_fks"
-state = "planned"
+state = "completed"
 
 # Source: pre-Tranche-1 baseline (from database/snapshots/schema_snapshot.json)
 source_schema_hash = "9684edbb3e7180e53cda217fe5707a561942c8173e68322f1470d7f041ca93f8"

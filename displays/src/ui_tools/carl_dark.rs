@@ -143,6 +143,11 @@ pub trait Aesthetix {
     /// Error text color.
     fn fg_error_text_color_visuals(&self) -> egui::Color32;
 
+    /// Info / hyperlink text color (semantic blue/cyan).
+    fn fg_info_color_visuals(&self) -> egui::Color32 {
+        self.secondary_accent_color_visuals()
+    }
+
     /// Visual dark mode.
     /// True specifies a dark mode, false specifies a light mode.
     fn dark_mode_visuals(&self) -> bool;
@@ -420,7 +425,7 @@ pub trait Aesthetix {
                     open: self.custom_open_widget_visual(),
                 },
                 selection: self.custom_selection_visual(),
-                hyperlink_color: self.bg_contrast_color_visuals(),
+                hyperlink_color: self.fg_info_color_visuals(),
                 panel_fill: self.bg_primary_color_visuals(),
                 faint_bg_color: self.bg_secondary_color_visuals(),
                 extreme_bg_color: self.bg_triage_color_visuals(),
@@ -467,6 +472,15 @@ pub trait Aesthetix {
             explanation_tooltips: true,
             ..Default::default()
         }
+    }
+
+    /// Apply this preset to the given context: sets the global style and
+    /// stashes the semantic tokens that don't have an egui Visuals slot
+    /// (success, accent_secondary) for `theme::*` accessors to read.
+    fn apply_to_ctx(&self, ctx: &egui::Context) {
+        ctx.set_global_style(std::sync::Arc::new(self.custom_style()));
+        crate::ui_tools::theme::set_success_color(ctx, self.fg_success_text_color_visuals());
+        crate::ui_tools::theme::set_accent_secondary(ctx, self.secondary_accent_color_visuals());
     }
 }
 

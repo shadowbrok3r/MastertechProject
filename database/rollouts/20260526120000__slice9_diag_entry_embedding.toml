@@ -1,0 +1,29 @@
+id = "20260526120000__slice9_diag_entry_embedding"
+name = "slice9_diag_entry_embedding"
+state = "completed"
+# Source: slice7 target hash (slice8 cancelled — superseded by this).
+source_schema_hash = "7ecad58cdd1f1947b63c48b1cdda1c6235a507cb46c0e52ae31a77daea1d6696"
+target_schema_hash = "0fef5da159a6827c90293c80b5a4134a3f49dfb5766c2449597031b3406a7c35"
+# Drops the orphaned HNSW index that was blocking diagnostic_entry inserts
+# with "Incorrect vector dimension (0). Expected 768." when no embedding is
+# provided. fn::embed_text is not yet implemented — re-add the HNSW in a
+# future slice once Ollama is wired and a real backfill has run.
+compatibility = "phased"
+renames = []
+
+# ── Apply ──────────────────────────────────────────────────────────────────────
+# Removes all known variants of the orphaned index. OVERWRITE re-declares the
+# field so the schema stays consistent. All idempotent / IF EXISTS.
+
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+REMOVE INDEX IF EXISTS diagnostic_entry_embedding ON diagnostic_entry;
+REMOVE INDEX IF EXISTS diagentry_embedding ON diagnostic_entry;
+REMOVE INDEX IF EXISTS diag_embedding ON diagnostic_entry;
+
+DEFINE FIELD OVERWRITE embedding   ON diagnostic_entry TYPE array<float> DEFAULT [] PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON diagnostic_entry TYPE float                  PERMISSIONS FULL;
+"""

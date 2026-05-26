@@ -4,7 +4,7 @@ name = "slice5_fleet_schema"
 # this the script's `grep ... state = "planned"` filter never matches the
 # manifest and the apply silently no-ops. surrealkit itself also reads this
 # field for its lifecycle state machine.
-state = "planned"
+state = "completed"
 # Source: slice4_build_pipeline's target hash (the previous applied schema).
 source_schema_hash = "32cfc5d9c7381f23399e3f0f53905e4f5542904d60ccebbed1f73b5d1099b145"
 # Target: SHA-256 of the post-fleet schema set. surrealkit lint *does* validate

@@ -1,5 +1,5 @@
 #![allow(deprecated)]
-use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, tabs_for_role}, PlatformSpawner, Spawner, TaskUiActions};
+use crate::{app_state::{default_tree, default_tree_wasm, AppState, MainPages, SharedContext}, tabs::{github::get_github_releases, tabs_for_role}, ui_tools::theme, PlatformSpawner, Spawner, TaskUiActions};
 use database::{schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Notification, Store}, DATABASE};
 use eframe::egui::{containers::menu::MenuConfig, *};
 
@@ -158,7 +158,7 @@ impl SharedContext {
                                 .strong();
                             ui.add(
                                 Button::new(alert_badge)
-                                    .fill(Color32::from_rgb(220, 50, 50))
+                                    .fill(theme::error(ui))
                                     .corner_radius(10.0)
                                     .min_size(vec2(28.0, 18.0))
                             ).on_hover_text(format!("{} unread alerts", alert_count));
@@ -178,7 +178,7 @@ impl SharedContext {
                                 .strong();
                             ui.add(
                                 Button::new(unread_badge)
-                                    .fill(Color32::from_rgb(42, 162, 142))
+                                    .fill(theme::success(ui))
                                     .corner_radius(10.0)
                                     .min_size(vec2(28.0, 18.0))
                             ).on_hover_text(format!("{} unread notifications", unread_count));

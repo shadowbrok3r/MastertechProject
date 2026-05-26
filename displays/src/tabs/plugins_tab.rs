@@ -2,6 +2,9 @@ use eframe::egui::{self, Color32, RichText, Ui};
 use std::sync::{Arc, RwLock};
 
 #[cfg(not(target_arch = "wasm32"))]
+use crate::ui_tools::theme;
+
+#[cfg(not(target_arch = "wasm32"))]
 use crate::plugins::PluginManager;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,7 +28,7 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) 
             RichText::new("Full tool list, every View tab with a one-line description, and pitfalls are in the MCP server instructions (initialize response → instructions).")
                 .italics()
                 .small()
-                .color(Color32::from_rgb(140, 160, 180)),
+                .color(theme::weak_text(ui)),
         );
     });
     
@@ -93,7 +96,7 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) 
                             if info.tool_count > 0 {
                                 ui.label(
                                     RichText::new(format!("{} tools", info.tool_count))
-                                        .color(Color32::from_rgb(120, 160, 200))
+                                        .color(theme::info(ui))
                                         .small(),
                                 );
                             }
@@ -103,14 +106,14 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) 
                     if !info.description.is_empty() {
                         ui.label(
                             RichText::new(&info.description)
-                                .color(Color32::from_rgb(180, 180, 180))
+                                .color(theme::weak_text(ui))
                                 .small(),
                         );
                     }
 
                     ui.label(
                         RichText::new(format!("ID: {}", info.id))
-                            .color(Color32::from_rgb(120, 120, 140))
+                            .color(theme::weak_text(ui))
                             .small()
                             .monospace(),
                     );
@@ -140,9 +143,9 @@ pub fn plugins_tab_ui(ui: &mut Ui, plugin_manager: &Arc<RwLock<PluginManager>>) 
     ui.horizontal(|ui| {
         for (id, was_enabled) in &toggle_ids {
             let (btn_text, btn_color) = if *was_enabled {
-                ("Disable", Color32::from_rgb(200, 100, 100))
+                ("Disable", theme::error(ui))
             } else {
-                ("Enable", Color32::from_rgb(100, 200, 100))
+                ("Enable", theme::success(ui))
             };
             let label = format!("{btn_text} {id}");
             if ui

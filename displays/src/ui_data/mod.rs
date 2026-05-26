@@ -284,6 +284,7 @@ impl crate::app_state::SharedContext {
                         "Stream-terminated error — prompting operator to reconnect"
                     );
                     self.live_queries_active = false;
+                    self.needs_reconnect = true;
                     self.show_reload_prompt = true;
                     self.last_live_respawn_at = Some(now);
                 }
@@ -442,6 +443,7 @@ impl crate::app_state::SharedContext {
         self.handle_modals(ctx);
         self.client_diagnostics_popup_ui(ctx);
         self.drain_reachability_events();
+        #[cfg(target_arch = "wasm32")]
         self.reload_prompt_ui(ctx);
         self.toasts.show(ctx);
     }

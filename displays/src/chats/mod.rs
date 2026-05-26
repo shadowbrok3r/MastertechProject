@@ -2,7 +2,7 @@ use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Layou
 use database::{live_data::handle_live_delete, schema::{random_record_id, RecordIdExt, TaskNotePayload, User, TASK_NOTE_TABLE}};
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::{collections::{BTreeSet, HashMap, HashSet}, f32, sync::Arc};
-use crate::{get_current_user_from_auth, get_toast_sender, PlatformSpawner, Spawner, ToastMessage};
+use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::theme, PlatformSpawner, Spawner, ToastMessage};
 use crossbeam::channel::{Receiver, Sender};
 use structdiff::StructDiff;
 use eframe::emath::Vec2;
@@ -434,7 +434,7 @@ impl ChatView {
         });
 
         CentralPanel::default()
-            .frame(Frame::new().inner_margin(Margin::same(2)).fill(Color32::from_rgb(12, 12, 16)))
+            .frame(Frame::new().inner_margin(Margin::same(2)).fill(theme::bg_surface(ui)))
             .show_inside(ui, |ui| 
         {
             
@@ -568,7 +568,7 @@ impl ChatView {
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui|{
                                     ui.add_space(2.);
                                     let from_btn = Button::new(from)
-                                        .fill(Color32::from_rgb(7, 7, 9))
+                                        .fill(theme::bg_extreme(ui))
                                         .min_size(Vec2::new(30., 20.))
                                         .ui(ui);
 
@@ -591,7 +591,7 @@ impl ChatView {
                                 // ui.set_max_width(max_msg_width);
                                 let id = &item.id;
                                 ui.add_space(2.);
-                                let from_btn = Button::new(from).fill(Color32::from_rgb(7, 7, 9)).min_size(Vec2::new(30., 20.)).ui(ui);
+                                let from_btn = Button::new(from).fill(theme::bg_extreme(ui)).min_size(Vec2::new(30., 20.)).ui(ui);
                                 if from_btn.clicked(){
                                     Popup::open_id(ui.ctx(), format!("sub_menu-from-{:?}", item.id).into());
                                 }
@@ -651,7 +651,7 @@ impl ChatView {
                         }
 
                         Frame::new() // Frame for the actual note text itself // or for modifying the note
-                            .fill(Color32::from_rgb(10,10,12))
+                            .fill(theme::bg_surface(ui))
                             .stroke(style.visuals.widgets.inactive.bg_stroke)
                             .outer_margin(Margin {
                                 top: 3,

@@ -15,7 +15,7 @@ impl MasterTechApp {
         style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
         style.main_surface_border_rounding.nw = 15;
         style.main_surface_border_rounding.ne = 15;
-        style.buttons.close_tab_color = Color32::from_rgb(191, 33, 101);
+        style.buttons.close_tab_color = displays::ui_tools::theme::accent_secondary_ctx(ctx);
         style.tab_bar.hline_color = Color32::DARK_GRAY;
         style.separator.color_idle = Color32::DARK_GRAY;
         style.separator.extra_interact_width = 7.;

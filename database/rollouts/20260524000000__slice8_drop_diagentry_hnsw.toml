@@ -1,8 +1,7 @@
 id = "20260524000000__slice8_drop_diagentry_hnsw"
 name = "slice8_drop_diagentry_hnsw"
-# Required by `database/scripts/migrate-local.{ps1,sh}` — the apply script
-# greps for `state = "planned"` to find the latest pending manifest.
-state = "planned"
+# Superseded by slice9_diag_entry_embedding — kept for history only.
+state = "cancelled"
 # Source: slice7's target hash (the in-progress run_embedding migration on
 # stress_test_run). Re-lint with surrealkit to pick up the real value if it
 # has changed since this file was authored.

@@ -13,7 +13,7 @@ impl crate::app_state::SharedContext {
         style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
         style.main_surface_border_rounding.nw = 10;
         style.main_surface_border_rounding.ne = 10;
-        style.buttons.close_tab_color = Color32::from_rgb(191, 33, 101);
+        style.buttons.close_tab_color = crate::ui_tools::theme::accent_secondary_ctx(ctx);
         style.tab_bar.hline_color = Color32::DARK_GRAY;
         style.separator.color_idle = Color32::DARK_GRAY;
         style.main_surface_border_stroke = Stroke::new(0.25_f32, Color32::TRANSPARENT);

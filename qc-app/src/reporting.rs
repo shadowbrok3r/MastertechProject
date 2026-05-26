@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
-use sha2::{Digest, Sha256};
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 use crate::telemetry::{Heartbeat, QcReport};
@@ -145,18 +144,10 @@ async fn sink_task(rx: Receiver<SinkItem>, base_url: String, machine_id: Arc<Str
 /// can be called from per-frame UI code, and an `info!` would flood the
 /// terminal whenever the user moves their mouse.
 pub fn generate_client_id(hostname: String, cpu: String) -> String {
-    let cpu_id = std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
-    let combined = format!("{}-{}-{}", hostname, cpu, cpu_id);
-    log::debug!("[reporting] generate_client_id -> combined: {}", combined);
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let result = hasher.finalize();
-    let hex_string = hex::encode(result);
-    log::debug!("[reporting] generate_client_id -> hex_string: {}", hex_string);
-    hex_string
+    stress_runner::generate_client_hash(&hostname, &cpu)
 }
 
-fn host_name_and_cpu_brand() -> (String, String) {
+pub fn host_name_and_cpu_brand() -> (String, String) {
     let hostname = System::host_name().unwrap_or_else(|| "unknown-host".to_string());
     let mut sys = System::new_with_specifics(
         RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),

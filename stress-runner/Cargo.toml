@@ -15,5 +15,6 @@ log.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 once_cell.workspace = true
+sysinfo = { version = "0.39", features = ["serde", "multithread"] }
 sha2 = "0.10"
 hex = "0.4"

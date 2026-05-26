@@ -7,6 +7,7 @@
 //! - Interactive shell mode
 
 use crate::Cmd;
+use crate::ui_tools::theme;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::mcp::McpService;
 #[cfg(not(target_arch = "wasm32"))]
@@ -386,7 +387,7 @@ impl ShellView {
 
     fn render_header(&mut self, ui: &mut Ui) {
         Frame::NONE
-            .fill(Color32::from_rgb(25, 28, 35))
+            .fill(theme::bg_surface(ui))
             .inner_margin(Margin::symmetric(8, 12))
             .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
@@ -395,7 +396,7 @@ impl ShellView {
                     ui.label(
                         RichText::new("Shell:")
                             .size(12.0)
-                            .color(Color32::from_rgb(160, 165, 175)),
+                            .color(theme::weak_text(ui)),
                     );
 
                     ComboBox::from_id_salt("shell_type")
@@ -415,7 +416,7 @@ impl ShellView {
 
                     // AI toggle
                     let ai_color = if self.ai_enabled {
-                        Color32::from_rgb(100, 200, 255)
+                        theme::info(ui)
                     } else {
                         Color32::GRAY
                     };
@@ -487,7 +488,7 @@ impl ShellView {
         let available_height = ui.available_height() - 80.0; // Reserve space for input
 
         Frame::NONE
-            .fill(Color32::from_rgb(15, 17, 22))
+            .fill(theme::bg_extreme(ui))
             .inner_margin(Margin::same(8))
             .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
@@ -514,7 +515,7 @@ impl ShellView {
                                     ui.label(
                                         RichText::new(&entry.timestamp)
                                             .size(9.0)
-                                            .color(Color32::from_rgb(100, 105, 115)),
+                                            .color(theme::weak_text(ui)),
                                     );
                                 });
                             });
@@ -524,7 +525,7 @@ impl ShellView {
                                 let output_color = if entry.success {
                                     Color32::from_rgb(180, 185, 195)
                                 } else {
-                                    Color32::from_rgb(255, 120, 120)
+                                    theme::error(ui)
                                 };
                                 ui.label(
                                     RichText::new(&entry.output)
@@ -552,7 +553,7 @@ impl ShellView {
 
     fn render_input(&mut self, ui: &mut Ui) {
         Frame::NONE
-            .fill(Color32::from_rgb(25, 28, 35))
+            .fill(theme::bg_surface(ui))
             .inner_margin(Margin::same(8))
             .corner_radius(CornerRadius::same(6))
             .show(ui, |ui| {
@@ -584,7 +585,7 @@ impl ShellView {
                                             ui.label(
                                                 RichText::new(desc)
                                                     .size(10.0)
-                                                    .color(Color32::from_rgb(150, 155, 165)),
+                                                    .color(theme::weak_text(ui)),
                                             );
                                         }
 

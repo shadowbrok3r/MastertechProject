@@ -1,0 +1,47 @@
+id = "20260526130000__slice10_embeddings"
+name = "slice10_embeddings"
+state = "completed"
+# Source: slice9 target hash.
+source_schema_hash = "0fef5da159a6827c90293c80b5a4134a3f49dfb5766c2449597031b3406a7c35"
+# Verified via lint (hash of on-disk schema files after all prior slices).
+target_schema_hash = "de371240dc5fcaebab286030e703183b43eb5d5ea822eb9ff1149804ccf9ef4f"
+compatibility = "phased"
+renames = []
+
+[start]
+ddl = ""
+
+[complete]
+ddl = """
+-- stress_test_run: relax embedding to none | array<float> (removes DEFAULT []).
+DEFINE FIELD OVERWRITE embedding   ON stress_test_run TYPE none | array<float> PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON stress_test_run TYPE float PERMISSIONS FULL;
+UPDATE stress_test_run SET embedding = NONE WHERE embedding IS NOT NONE AND array::len(embedding) = 0;
+
+-- diagnostic_entry: add VALUE fn::embed_text, HNSW index, and re-embed event.
+DEFINE FIELD OVERWRITE embedding ON diagnostic_entry
+    TYPE array<float>
+    VALUE fn::embed_text(string::concat(title ?? '', ' ', detail ?? ''))
+    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON diagnostic_entry TYPE float PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE diag_embedding ON diagnostic_entry FIELDS embedding
+    HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+DEFINE EVENT OVERWRITE diagentry_reembed ON diagnostic_entry
+    WHEN $event = 'UPDATE'
+        AND ($before.title != $after.title OR $before.detail != $after.detail)
+    THEN {
+        UPDATE $after.id SET embedding = fn::embed_text(string::concat($after.title, ' ', $after.detail));
+    };
+UPDATE diagnostic_entry SET embedding = fn::embed_text(string::concat(title ?? '', ' ', detail ?? ''))
+    WHERE array::len(embedding) != 768;
+
+-- hardware_component: add embedding field + HNSW, backfill all rows.
+DEFINE FIELD OVERWRITE embedding ON hardware_component
+    TYPE array<float>
+    VALUE fn::embed_text(string::concat(kind ?? '', ' ', vendor ?? '', ' ', model ?? '', ' ', display_name ?? ''))
+    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE embedding.* ON hardware_component TYPE float PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE hw_component_embedding ON hardware_component FIELDS embedding
+    HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12 M0 24;
+UPDATE hardware_component SET embedding = fn::embed_text(string::concat(kind ?? '', ' ', vendor ?? '', ' ', model ?? '', ' ', display_name ?? ''));
+"""

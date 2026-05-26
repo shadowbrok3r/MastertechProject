@@ -2,7 +2,7 @@ use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layou
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, DATABASE};
 use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
-use displays::{app_state::{default_tree, AppState, MainPages}, plugins::push_widget_anchor, TaskUiActions};
+use displays::{app_state::{default_tree, AppState, MainPages}, plugins::push_widget_anchor, ui_tools::theme, TaskUiActions};
 use crate::app_state::MasterTechApp;
 use std::collections::BTreeSet;
 use log::{error, info};
@@ -159,7 +159,7 @@ impl MasterTechApp {
                                 .strong();
                             ui.add(
                                 Button::new(alert_badge)
-                                    .fill(Color32::from_rgb(220, 50, 50))
+                                    .fill(theme::error(ui))
                                     .corner_radius(10.0)
                                     .min_size(vec2(28.0, 18.0))
                             ).on_hover_text(format!("{} unread alerts", alert_count));
@@ -179,14 +179,14 @@ impl MasterTechApp {
                                 .strong();
                             ui.add(
                                 Button::new(unread_badge)
-                                    .fill(Color32::from_rgb(42, 162, 142))
+                                    .fill(theme::success(ui))
                                     .corner_radius(10.0)
                                     .min_size(vec2(28.0, 18.0))
                             ).on_hover_text(format!("{} unread notifications", unread_count));
                             ui.add_space(4.0);
                         }
                         
-                        let txt = RichText::new(usr.get_username()).color(Color32::from_rgb(191, 33, 101));
+                        let txt = RichText::new(usr.get_username()).color(theme::accent(ui));
 
                         MenuButton::new(txt).config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {
                             ui.set_width(300.0);

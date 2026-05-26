@@ -739,6 +739,56 @@ pub struct LogDiagnosticEntryParams {
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RecordStressTestEventParams {
+    #[schemars(description = "Event kind: stage_started, unexpected_shutdown, tdr, bsod, custom, operator_note, …")]
+    pub kind: String,
+    #[schemars(description = "Human-readable event detail")]
+    pub detail: String,
+    #[schemars(description = "ISO-8601 timestamp (defaults to now if omitted)")]
+    pub at: Option<String>,
+    #[schemars(description = "Optional vendor code (BSOD bugcheck, WHEA code, dump filename, …)")]
+    pub code: Option<String>,
+    #[schemars(description = "Event source (default: operator)")]
+    pub source: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct RecordStressTestRunParams {
+    #[schemars(description = "Computer record id (e.g. 'DESKTOP-3F0BA5T:f4ac11309')")]
+    pub computer_id: String,
+    #[schemars(description = "Optional diagnostic session id to link")]
+    pub session_id: Option<String>,
+    #[schemars(description = "Optional service order id (numeric SO or record key)")]
+    pub service_order_id: Option<String>,
+    #[schemars(description = "Target kind: cpu, gpu, memory, system, mixed, … (default gpu)")]
+    pub target_kind: Option<String>,
+    #[schemars(description = "Optional hardware_component id for target_component (GPU under test)")]
+    pub target_component_id: Option<String>,
+    #[schemars(description = "Preset label (default qc-mcp:gpu-probe-v1)")]
+    pub preset_label: Option<String>,
+    #[schemars(description = "Run result: pass, fail, aborted, inconclusive (default fail)")]
+    pub result: Option<String>,
+    #[schemars(description = "Failure kind tag: none, reboot, timeout, tdr, bsod, … (default reboot for failed GPU hangs)")]
+    pub failure_kind: Option<String>,
+    #[schemars(description = "ISO-8601 started_at (required for backfill)")]
+    pub started_at: String,
+    #[schemars(description = "ISO-8601 ended_at")]
+    pub ended_at: Option<String>,
+    #[schemars(description = "Actual duration in seconds")]
+    pub duration_actual_secs: Option<f64>,
+    #[schemars(description = "Hostname at run time")]
+    pub hostname: Option<String>,
+    #[schemars(description = "Free-form notes (symptom match, MCP timeout, dump paths, …)")]
+    pub notes: Option<String>,
+    #[schemars(description = "Tags (default includes backfill + preset:gpu-probe)")]
+    #[serde(default, deserialize_with = "deserialize_optional_string_vec")]
+    pub tags: Option<Vec<String>>,
+    #[schemars(description = "Discrete timeline events to attach to the run")]
+    #[serde(default)]
+    pub events: Vec<RecordStressTestEventParams>,
+}
+
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
 pub struct CloseDiagnosticSessionParams {
     #[schemars(description = "Session ID to close")]
     pub session_id: String,
@@ -847,6 +897,10 @@ pub struct ScriptsRunParams {
     )]
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
+    #[schemars(
+        description = "Optional diagnostic_session id (from create_diagnostic_session). Links stress_test_run.session_ref when running Run GPU Probe."
+    )]
+    pub diagnostic_session_id: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -864,6 +918,10 @@ pub struct ScriptsRunRemoteParams {
     #[schemars(description = "Timeout in seconds to wait for the script to complete on the remote. Default 600.")]
     #[serde(default, deserialize_with = "deserialize_lenient_u64")]
     pub timeout_secs: Option<u64>,
+    #[schemars(
+        description = "Optional diagnostic_session id (from create_diagnostic_session). Auto-resolved from the open session for connection_string when omitted. Links stress_test_run.session_ref on Run GPU Probe."
+    )]
+    pub diagnostic_session_id: Option<String>,
 }
 
 fn default_remote_egui_true() -> bool {
@@ -2140,6 +2198,7 @@ impl PluginToolProvider {
             .map_err(to_internal)?;
         use database::schema::RecordIdExt;
         let id_str = id.key_string();
+        super::diagnostic_session_registry::register(&session.connection_string, &id_str);
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "session_id": id_str }),
         )
@@ -2233,10 +2292,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "log_diagnostic_entry",
-        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. \
-                       \n\n\
-                       NOTE — Embedding dependency: the `diagnostic_entry.embedding` field is wired for semantic search (HNSW DIMENSION 768 DIST COSINE). The Rust default is `Vec::new()` (empty) and the schema docstring promises empty writes succeed before an embedding model has run — but if an HNSW index has been added live to the DB out-of-band, empty writes will fail with `Incorrect vector dimension (0). Expected a vector of 768 dimension.` \
-                       If you hit that, the embedding worker (Ollama) is offline AND the live DB has the strict index. Workaround: capture findings in the `close_diagnostic_session` summary instead — the session-level path doesn't traverse the vector index. The proper fix is to drop the orphaned HNSW until embeddings are wired (see `database/schema/diagnostic_entry.surql`)."
+        description = "Log an entry against an open diagnostic_session. Allowed categories: 'finding' (discovered issue), 'action' (step taken), 'note' (general observation), 'error' (tool/command failed), 'system_info', 'network_info', 'security_alert', 'performance_note', 'customer_note', 'recommendation'. Anything else is recorded as 'note'. Embeddings are computed server-side via `fn::embed_text(title + detail)` on insert (768-dim HNSW index `diag_embedding`). Requires SurrealDB embed provider + slice9 migration applied."
     )]
     async fn log_diagnostic_entry(
         &self,
@@ -2298,6 +2354,168 @@ impl PluginToolProvider {
     }
 
     #[tool(
+        name = "record_stress_test_run",
+        description = "Persist a completed stress_test_run row plus optional stress_test_event timeline entries. REQUIRED backfill when scripts_run_remote GPU Probe times out or hangs and stress_test_persistence.verified is false. Also use for third-party bench results. Creates stress_test_run + stress_test_event rows; does not write stress_test_metric samples."
+    )]
+    async fn record_stress_test_run(
+        &self,
+        Parameters(p): Parameters<RecordStressTestRunParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        use database::schema::{
+            EventKind, FailureMode, FinishReason, RecordIdExt, RunResult, RunSummary,
+            StressTestEvent, StressTestRun, TargetKind, TestTool, STRESS_TEST_RUN_TABLE,
+        };
+
+        let computer = parse_record_id(&p.computer_id, database::schema::COMPUTER_TABLE);
+        let session_ref = p
+            .session_id
+            .as_deref()
+            .map(|s| parse_record_id(s, database::schema::DIAGNOSTIC_SESSION_TABLE));
+        let service_order = p.service_order_id.as_deref().map(|s| {
+            parse_record_id(s, database::schema::TICKET_TABLE)
+        });
+        let target_component = p.target_component_id.as_deref().map(|s| {
+            parse_record_id(s, database::schema::HARDWARE_COMPONENT_TABLE)
+        });
+
+        let target_kind = match p.target_kind.as_deref().unwrap_or("gpu") {
+            "cpu" => TargetKind::Cpu,
+            "gpu" => TargetKind::Gpu,
+            "memory" => TargetKind::Memory,
+            "storage" => TargetKind::Storage,
+            "psu" => TargetKind::Psu,
+            "motherboard" => TargetKind::Motherboard,
+            "system" => TargetKind::System,
+            "mixed" => TargetKind::Mixed,
+            other => {
+                return Err(to_internal(format!(
+                    "unknown target_kind '{other}' — use cpu, gpu, memory, storage, psu, motherboard, system, or mixed"
+                )));
+            }
+        };
+
+        let preset = p
+            .preset_label
+            .clone()
+            .unwrap_or_else(|| "qc-mcp:gpu-probe-v1".into());
+        let tool = TestTool::StressKitScenario {
+            name: Some(preset.clone()),
+        };
+
+        let started_at: chrono::DateTime<chrono::Utc> = p
+            .started_at
+            .parse()
+            .map_err(|e| to_internal(format!("invalid started_at: {e}")))?;
+        let ended_at: Option<chrono::DateTime<chrono::Utc>> = match &p.ended_at {
+            Some(s) => Some(s.parse().map_err(|e| to_internal(format!("invalid ended_at: {e}")))?),
+            None => None,
+        };
+
+        let result = match p.result.as_deref().unwrap_or("fail") {
+            "pass" => RunResult::Pass,
+            "fail" => RunResult::Fail,
+            "aborted" => RunResult::Aborted,
+            "inconclusive" => RunResult::Inconclusive,
+            other => {
+                return Err(to_internal(format!(
+                    "unknown result '{other}' — use pass, fail, aborted, or inconclusive"
+                )));
+            }
+        };
+
+        let failure_mode = match p.failure_kind.as_deref().unwrap_or("reboot") {
+            "none" => FailureMode::None,
+            "reboot" => FailureMode::Reboot,
+            "timeout" => FailureMode::Timeout,
+            "tdr" => FailureMode::Tdr { count: 1 },
+            "bsod" => FailureMode::Bsod {
+                code: None,
+                bugcheck_args: None,
+            },
+            "whea_error" => FailureMode::WheaError { count: 1 },
+            "app_error" => FailureMode::AppError {
+                exit_code: None,
+                message: p.notes.clone().unwrap_or_default(),
+            },
+            other => {
+                return Err(to_internal(format!(
+                    "unknown failure_kind '{other}'"
+                )));
+            }
+        };
+
+        let mut tags = p.tags.unwrap_or_default();
+        if !tags.iter().any(|t| t == "backfill") {
+            tags.push("backfill".into());
+        }
+        if !tags.iter().any(|t| t == "preset:gpu-probe") {
+            tags.push("preset:gpu-probe".into());
+        }
+
+        let mut run = StressTestRun::new_for(computer, tool, target_kind);
+        run.id = database::schema::random_record_id(STRESS_TEST_RUN_TABLE);
+        run.service_order = service_order;
+        run.session_ref = session_ref;
+        run.target_component = target_component.clone();
+        if let Some(ref gpu) = target_component {
+            run.touched_components = vec![gpu.clone()];
+        }
+        run.preset_label = Some(preset);
+        run.started_at = started_at.into();
+        run.ended_at = ended_at.map(Into::into);
+        run.duration_planned_secs = Some(125);
+        run.duration_actual_secs = p.duration_actual_secs;
+        run.hostname = p.hostname.clone();
+        run.notes = p.notes.clone();
+        run.tags = tags;
+        run.result = result;
+        run.finish_reason = Some(FinishReason::Crashed);
+        run.set_failure_mode(failure_mode);
+        run.summary = RunSummary::default();
+
+        let mut events: Vec<StressTestEvent> = Vec::new();
+        for ev in &p.events {
+            let kind = match ev.kind.as_str() {
+                "stage_started" => EventKind::StageStarted,
+                "stage_finished" => EventKind::StageFinished,
+                "unexpected_shutdown" => EventKind::UnexpectedShutdown,
+                "tdr" => EventKind::Tdr,
+                "bsod" => EventKind::Bsod,
+                "whea_hit" => EventKind::WheaHit,
+                "operator_note" => EventKind::OperatorNote,
+                "custom" => EventKind::Custom,
+                other => {
+                    return Err(to_internal(format!("unknown event kind '{other}'")));
+                }
+            };
+            let mut row = StressTestEvent::new(run.id.clone(), kind, ev.source.as_deref().unwrap_or("operator"));
+            if let Some(at) = &ev.at {
+                row.at = at
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .map_err(|e| to_internal(format!("invalid event at: {e}")))?
+                    .into();
+            }
+            row.code = ev.code.clone();
+            row.detail = ev.detail.clone();
+            events.push(row);
+        }
+
+        let run_id = StressTestRun::create_completed(&run, &events)
+            .await
+            .map_err(to_internal)?;
+
+        Ok(CallToolResult::success(vec![Content::json(
+            serde_json::json!({
+                "run_id": run_id.key_string(),
+                "event_count": events.len(),
+                "result": run.result.as_str(),
+                "failure_kind": run.failure_kind,
+            }),
+        )
+        .map_err(to_internal)?]))
+    }
+
+    #[tool(
         name = "close_diagnostic_session",
         description = "Close a diagnostic session with a final status and AI-written summary. Status should be 'resolved', 'escalated', or 'open'."
     )]
@@ -2313,6 +2531,7 @@ impl PluginToolProvider {
         )
         .await
         .map_err(to_internal)?;
+        super::diagnostic_session_registry::clear_session(&p.session_id);
         Ok(CallToolResult::success(vec![Content::json(
             serde_json::json!({ "session_id": p.session_id, "closed": true, "status": p.status }),
         )
@@ -2654,7 +2873,7 @@ impl PluginToolProvider {
 
     #[tool(
         name = "scripts_run",
-        description = "Run a single named script on the local host (Mastertech4.0 in egui or terminal mode). Sends the request over a crossbeam channel to the running Scripts tab, which dispatches to its existing handler and reports back when done. Returns success flag, summary message, and the log lines emitted during the run. Activation scripts (Webroot, SuperAnti, SEB) require a service_number; SEB additionally needs customer_email. Use scripts_list first to see exact script_name values."
+        description = "Run a single named script on the local host (Mastertech4.0 in egui or terminal mode). For stress tests use script_name 'Run GPU Probe' only — it persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Plugin burn_* tools do NOT persist. Returns stress_test_persistence verification for GPU Probe."
     )]
     async fn scripts_run(
         &self,
@@ -2680,6 +2899,7 @@ impl PluginToolProvider {
             script_name: p.script_name.clone(),
             service_number: p.service_number.clone(),
             customer_email: p.customer_email.clone(),
+            diagnostic_session_id: p.diagnostic_session_id.clone(),
         };
 
         let rx = register_pending_script_run(request_id.clone());
@@ -2708,15 +2928,26 @@ impl PluginToolProvider {
             }
         };
 
-        Ok(CallToolResult::success(vec![Content::json(
-            serde_json::to_value(&result).map_err(to_internal)?,
-        )
-        .map_err(to_internal)?]))
+        let mut payload = serde_json::to_value(&result).map_err(to_internal)?;
+        if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
+            let run_hint = super::stress_test_verify::extract_stress_run_id_from_logs(&result.logs);
+            let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                None,
+                run_hint.as_deref(),
+                p.diagnostic_session_id.as_deref(),
+            )
+            .await;
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("stress_test_persistence".into(), persistence);
+            }
+        }
+
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     #[tool(
         name = "scripts_run_remote",
-        description = "Run a named script on a REMOTE Mastertech client that is connected via the admin Web Console. Unlike scripts_run (which drives the LOCAL host), this sends Cmd::RunRemoteScripts over the existing admin WebSocket/TCP session to the target client and waits for results. Use for any QC / Tuneup script that must execute on the customer's machine, not on the admin machine. Requires an active Web Console session (check remote_egui_list_targets). Activation scripts (Webroot, SuperAnti, SEB) require service_number; SEB additionally needs customer_email."
+        description = "Run a named script on a REMOTE Mastertech client connected via the admin Web Console. For GPU stress on customer machines use script_name 'Run GPU Probe' (Tuneup) — persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component on the client via stress-runner. Do NOT use call_remote_plugin_tool burn_cpu/burn_memory/burn_disk for persisted stress tests. Returns stress_test_persistence verification after GPU Probe."
     )]
     async fn scripts_run_remote(
         &self,
@@ -2726,6 +2957,11 @@ impl PluginToolProvider {
 
         let service_number = p.service_number.clone().unwrap_or_default();
         let customer_email = p.customer_email.clone().unwrap_or_default();
+        let diagnostic_session_id = p
+            .diagnostic_session_id
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
 
         // Build the RunRemoteScripts command with a single named script.
         let cmd = Cmd::RunRemoteScripts {
@@ -2736,6 +2972,7 @@ impl PluginToolProvider {
             }],
             service_number: service_number.clone(),
             customer_email: customer_email.clone(),
+            diagnostic_session_id: diagnostic_session_id.clone().unwrap_or_default(),
         };
         let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
             .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
@@ -2766,6 +3003,41 @@ impl PluginToolProvider {
             }
             Err(_) => {
                 let _ = REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+                if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
+                    let partial_logs = REMOTE_SCRIPT_ACCUM
+                        .lock()
+                        .ok()
+                        .map(|a| a.logs.clone())
+                        .unwrap_or_default();
+                    let run_hint = super::stress_test_verify::extract_stress_run_id_from_logs(
+                        &partial_logs,
+                    );
+                    let computer_id = super::stress_test_verify::computer_id_for_connection(
+                        &p.connection_string,
+                    )
+                    .await;
+                    let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                        computer_id.as_deref(),
+                        run_hint.as_deref(),
+                        diagnostic_session_id.as_deref(),
+                    )
+                    .await;
+                    return Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+                        "script": p.script_name,
+                        "connection_string": p.connection_string,
+                        "success": false,
+                        "timed_out": true,
+                        "message": format!(
+                            "Timed out after {}s — script may still be running or machine hung",
+                            timeout.as_secs()
+                        ),
+                        "logs": partial_logs,
+                        "computer_id": computer_id,
+                        "diagnostic_session_id": diagnostic_session_id,
+                        "stress_test_persistence": persistence,
+                    }))
+                    .map_err(to_internal)?]));
+                }
                 return Err(to_internal(format!(
                     "Timed out after {}s waiting for remote script '{}' to complete.",
                     timeout.as_secs(),
@@ -2775,14 +3047,37 @@ impl PluginToolProvider {
         };
 
         let overall_success = session.results.iter().all(|(_, s)| s == "Success" || s == "success");
-        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
+        let mut payload = serde_json::json!({
             "script": p.script_name,
             "connection_string": p.connection_string,
             "success": overall_success,
+            "diagnostic_session_id": diagnostic_session_id,
             "results": session.results.iter().map(|(n, s)| serde_json::json!({"name": n, "status": s})).collect::<Vec<_>>(),
             "logs": session.logs,
-        }))
-        .map_err(to_internal)?]))
+        });
+
+        if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
+            let run_hint =
+                super::stress_test_verify::extract_stress_run_id_from_logs(&session.logs);
+            let computer_id = super::stress_test_verify::computer_id_for_connection(
+                &p.connection_string,
+            )
+            .await;
+            let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                computer_id.as_deref(),
+                run_hint.as_deref(),
+                diagnostic_session_id.as_deref(),
+            )
+            .await;
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("stress_test_persistence".into(), persistence);
+                if let Some(cid) = computer_id {
+                    obj.insert("computer_id".into(), serde_json::json!(cid));
+                }
+            }
+        }
+
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
     }
 
     // ── Remote build workers (no local Rust toolchain required) ────────
@@ -3094,13 +3389,14 @@ When using `query_surrealdb` for plugin work, the ONLY valid tables are:
   - `build_job`           — remote-compile work queue (rows written by `plugin_compile_remote`).
   - `connected_client`    — every running Mastertech / plugin_builder process. Filter `WHERE client_kind = 'build_worker'` for build workers; use `list_build_workers` for the curated view.
   - `diagnostic_session` / `diagnostic_entry` — AI diagnostic work product; manage via the diagnostic tools (`create_diagnostic_session`, `log_diagnostic_entry`, …), NOT raw SQL.
+  - `stress_test_run` / `stress_test_metric` / `stress_test_event` / `hardware_component` — stress-runner telemetry; created automatically by `Run GPU Probe` and qc-app stress tools. Backfill with `record_stress_test_run` when a hang prevents finalize.
 **There is NO `client_plugin` table.** A query against it returns "The table 'client_plugin' does not exist". If you wanted "plugins installed on a connected client", call `list_plugins` against the remote MCP via `call_remote_plugin_tool` or read `plugin_registry` for what's been published.
 
 === Known Plugins in Registry ===
 Always check search_plugins before building new plugins. Current registry (as of last sync):
 - **com.mastertech.hw-diag** ("HW Diagnostics") — system_info, bsod_events, critical_events, whea_errors, disk_health, reliability_records, tdr_gpu_events, driver_errors, disk_errors, wer_hardware, list_software, uninstall_armoury_crate, uninstall_ryzen_master, download_ddu, check_ddu_status, find_ryzen_master, remove_ryzen_master_remnants, analyze_minidumps, night_light_status, display_connections, **webroot_license**, **sas_license** (CPS / Webroot + SuperAntiSpyware activation and days-remaining when those tools are published on the remote build). Use for GPU/display/BSOD/crash/Night Light diagnostics and CPS license checks.
 - **com.mastertech.repair** ("System Repair") — dism_restore_health, sfc_scannow, uninstall_superantispyware, chkdsk_schedule, run_command (arbitrary PowerShell). Use for Windows system file repair.
-- **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, burn_cpu, burn_memory, burn_disk, burn_combined, stability_report, stress_and_monitor, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. General-purpose system health overview, stress testing, and crash analysis.
+- **com.mastertech.diagnostics** ("Diagnostics") — system_summary, top_processes, disk_info, recent_system_errors, recent_app_crashes, stopped_auto_services, network_info, startup_programs, wifi_status, wifi_event_logs, wifi_fix, find_uninstall_targets, uninstall_msi_software, cpu_power_health, crash_deep_dive, verify_fix, detect_hardware, analyze_dump_files, disable_orphaned_drivers, kill_problematic_processes. **Do NOT use burn_cpu / burn_memory / burn_disk / burn_combined / stress_and_monitor for persisted stress tests** — they do not write stress_test_run / stress_test_event / hardware_component rows. Use scripts_run_remote script_name 'Run GPU Probe' instead.
 - **com.mastertech.status-reporter** — status_report (returns UTC clock from remote host, confirms plugin is live). Lightweight connectivity test.
 
 When in doubt, call search_plugins with relevant keywords — the registry is the source of truth.
@@ -3306,6 +3602,39 @@ After execution, log a diagnostic_session entry per finding (category 'finding' 
 removed, 'action' for scripts that ran, 'recommendation' for anything the customer should
 follow up on), link_diagnostic_to_task to the tuneup task, then close_diagnostic_session.
 
+=== Stress Test Persistence (MANDATORY for MCP-driven stress) ===
+Every stress test you run through MCP MUST land rows in SurrealDB so bench history,
+baselines, and AI triage work. This is enforced automatically for the approved paths below.
+
+**Approved tools (persist automatically via stress-runner on the executing host):**
+  - `scripts_run_remote` with `script_name: "Run GPU Probe"` (Tuneup) on a connected customer
+    client — preferred for remote GPU diagnostics. Creates:
+      * `hardware_component` rows (CPU + GPU upserted from telemetry snapshot)
+      * `stress_test_run` (created at run start, finalized on completion or hang recovery)
+      * `stress_test_metric` (~1 Hz telemetry samples while the machine stays up)
+      * `stress_test_event` (stage_started, stage_finished, errors, etc.)
+  - qc-app MCP on QC machines: `run_gpu_probe`, `run_qc_benchmark`, `run_stress_scenario`,
+    `run_stressor` — same stress-runner persistence (separate MCP server on QC hardware).
+
+**NOT persisted — do not use for stress tests that need DB history:**
+  - `call_remote_plugin_tool` … `burn_cpu`, `burn_memory`, `burn_disk`, `burn_combined`,
+    `stress_and_monitor` on com.mastertech.diagnostics — ephemeral plugin stress only.
+
+**After every GPU Probe (remote or local):**
+  1. Ensure a diagnostic_session is open (`create_diagnostic_session`) before running GPU Probe.
+     `scripts_run_remote` auto-links the run: pass `diagnostic_session_id` explicitly, or omit it and
+     the MCP server resolves the open session for `connection_string`.
+  2. Read `stress_test_persistence` in the tool response (`verified`, `run_id`, `session_linked`,
+     `event_count`, `target_component`, `hardware_component_present`).
+  3. If `verified: false` (timeout, hard hang, old client build), call `record_stress_test_run`
+     to backfill the run + timeline events. Pass the same `session_id` so `session_ref` is set.
+  4. Log a `log_diagnostic_entry` (category `action` or `finding`) citing the `run_id`.
+
+**Verification query (manual):**
+  SELECT id, result, failure_kind, target_component FROM stress_test_run
+  WHERE computer = <computer_record> ORDER BY started_at DESC LIMIT 1;
+  SELECT count() FROM stress_test_event WHERE run_ref = <run_id> GROUP ALL;
+
 === Local Scripts Execution (admin machine only — do NOT use for QC on a customer's computer) ===
 For the machine running this MCP server, prefer the dedicated script tools below
 over `remote_egui_*` clicking. They drive the local Scripts tab (egui mode) or
@@ -3335,8 +3664,11 @@ Tools:
 - scripts_run_remote — runs ONE named script on a REMOTE client over the admin
   WebSocket/TCP session. Same script catalog as scripts_run. Extra required arg:
     connection_string : from remote_egui_list_targets (e.g. "DESKTOP-HKBCJ74:ac4ebfe00")
-  All other args (category, script_name, service_number, customer_email, timeout_secs)
-  work identically to scripts_run. Returns { script, success, results[], logs[] }.
+  All other args (category, script_name, service_number, customer_email, timeout_secs,
+  diagnostic_session_id) work identically to scripts_run. Returns { script, success, results[], logs[],
+  diagnostic_session_id?, stress_test_persistence? }.
+  For `Run GPU Probe`, always inspect `stress_test_persistence.verified` — if false after a hang,
+  call `record_stress_test_run` to backfill before closing the diagnostic session.
   Use this for ALL QC / Tuneup activation steps on customer machines.
 
 Workflow integration (customer QC / New Computer build on a REMOTE client):

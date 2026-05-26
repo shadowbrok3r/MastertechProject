@@ -4,9 +4,10 @@
 //! Allows users to keep existing, use new, or merge fields from both versions.
 
 use eframe::egui::{
-    Align, Align2, Button, Color32, Context, Frame, Grid, Key, Layout, Margin, 
+    Align, Align2, Button, Color32, Context, Frame, Grid, Key, Layout, Margin,
     RichText, ScrollArea, Shadow, Ui, Vec2, Window
 };
+use crate::ui_tools::theme;
 use database::schema::{
     ComputerData, CustomerData, DuplicateCheckResult, RecordId, RecordIdExt,
     DuplicateResolution, FieldDisplay, FieldSelections, LiveTaskPayload, 
@@ -252,7 +253,7 @@ impl DuplicateMergeModal {
                 
                 if ui.selectable_label(
                     self.current_page == MergeModalPage::Preview,
-                    RichText::new("📋 Preview").strong().color(Color32::from_rgb(100, 200, 255))
+                    RichText::new("📋 Preview").strong().color(theme::info(ui))
                 ).clicked() {
                     self.current_page = MergeModalPage::Preview;
                 }
@@ -279,7 +280,7 @@ impl DuplicateMergeModal {
     fn render_task_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.task.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Task records are identical - no action needed");
+                ui.colored_label(theme::success(ui), "✅ Task records are identical - no action needed");
                 return;
             }
             let user_cache = self.user_cache.clone();
@@ -299,7 +300,7 @@ impl DuplicateMergeModal {
     fn render_service_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.service_order.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Service Order records are identical - no action needed");
+                ui.colored_label(theme::success(ui), "✅ Service Order records are identical - no action needed");
                 return;
             }
             render_ticket_field_diff(
@@ -317,7 +318,7 @@ impl DuplicateMergeModal {
     fn render_customer_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.customer.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Customer records are identical - no action needed");
+                ui.colored_label(theme::success(ui), "✅ Customer records are identical - no action needed");
                 return;
             }
             render_customer_field_diff(
@@ -335,7 +336,7 @@ impl DuplicateMergeModal {
     fn render_computer_page(&mut self, ui: &mut Ui) {
         if let Some(ref dup) = self.check_result.computer.clone() {
             if dup.is_identical {
-                ui.colored_label(Color32::from_rgb(52, 235, 171), "✅ Computer records are identical - no action needed");
+                ui.colored_label(theme::success(ui), "✅ Computer records are identical - no action needed");
                 return;
             }
             render_computer_field_diff(
@@ -379,7 +380,7 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Task"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
+                                ui.colored_label(theme::success(ui), "Identical");
                             } else {
                                 ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
@@ -393,7 +394,7 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Service Order"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
+                                ui.colored_label(theme::success(ui), "Identical");
                             } else {
                                 ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
@@ -407,7 +408,7 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Customer"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
+                                ui.colored_label(theme::success(ui), "Identical");
                             } else {
                                 ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
@@ -421,7 +422,7 @@ impl DuplicateMergeModal {
                         row.col(|ui| { ui.label("Computer"); });
                         row.col(|ui| {
                             if dup.is_identical {
-                                ui.colored_label(Color32::from_rgb(52, 235, 171), "Identical");
+                                ui.colored_label(theme::success(ui), "Identical");
                             } else {
                                 ui.colored_label(ui.global_style().visuals.warn_fg_color, "Conflict");
                             }
@@ -670,7 +671,7 @@ pub fn render_task_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
+        ui.colored_label(theme::success(ui), "No differences found.");
         return;
     }
 
@@ -721,7 +722,7 @@ pub fn render_ticket_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
+        ui.colored_label(theme::success(ui), "No differences found.");
         return;
     }
 
@@ -758,7 +759,7 @@ pub fn render_customer_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
+        ui.colored_label(theme::success(ui), "No differences found.");
         return;
     }
 
@@ -795,7 +796,7 @@ pub fn render_computer_field_diff(
     let fields = existing.get_differing_fields(new);
 
     if fields.is_empty() {
-        ui.colored_label(Color32::from_rgb(52, 235, 171), "No differences found.");
+        ui.colored_label(theme::success(ui), "No differences found.");
         return;
     }
 
