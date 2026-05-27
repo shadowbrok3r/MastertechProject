@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskCreationResult, TicketData, User, prestashop::OrderType, entity_link::computer_has_minimal_hardware},DATABASE};
 use crate::{get_current_user_from_auth, get_toast_sender, ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner, ToastMessage};
 use eframe::egui::{Align, Button, Color32, ComboBox, Frame, RichText, Spinner, Stroke, TextEdit, Ui, Vec2, Widget, vec2};
 use database::schema::utilities::create_full_task_payload;
@@ -492,13 +492,14 @@ impl CreateTaskModal {
                             );
                         }
                         
+                        let send_specs = computer_has_minimal_hardware(&payload.computer_data);
                         let create_task_result = create_full_task_payload(
                             payload.ticket_data.into(),
                             payload.customer_data.clone(),
                             payload.computer_data.clone(),
                             task.into(),
                             payload.task_notes,
-                            true,
+                            send_specs,
                             false,
                         ).await;
                         info!("create_task_result: {create_task_result:?}");
