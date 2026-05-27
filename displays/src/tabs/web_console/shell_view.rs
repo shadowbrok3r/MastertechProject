@@ -8,6 +8,7 @@
 
 use crate::Cmd;
 use crate::ui_tools::theme;
+use crate::ui_tools::icons::{self, icon_sized};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::mcp::McpService;
 #[cfg(not(target_arch = "wasm32"))]
@@ -420,7 +421,7 @@ impl ShellView {
                     } else {
                         Color32::GRAY
                     };
-                    let ai_btn = Button::new(RichText::new("🤖").size(14.0).color(ai_color))
+                    let ai_btn = Button::new(icon_sized(icons::ROBOT, 14.0).color(ai_color))
                         .fill(Color32::TRANSPARENT);
 
                     if ui
@@ -447,7 +448,7 @@ impl ShellView {
                     } else {
                         Color32::GRAY
                     };
-                    let int_btn = Button::new(RichText::new("🖥").size(14.0).color(int_color))
+                    let int_btn = Button::new(icon_sized(icons::MONITOR, 14.0).color(int_color))
                         .fill(Color32::TRANSPARENT);
 
                     if ui

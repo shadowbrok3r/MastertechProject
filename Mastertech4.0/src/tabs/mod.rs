@@ -97,6 +97,7 @@ impl TabViewer for MastertechContext {
                 .show(ui),
             TabId::AdminConsole => self.shared_ctx.admin_console(ui),
             TabId::FleetDashboard => self.shared_ctx.fleet_dashboard(ui),
+            TabId::StressLab => self.shared_ctx.stress_lab.ui(ui),
             TabId::QueryEditor => {
                 if let Some(usr) = &self.shared_ctx.current_user {
                     if usr.is_admin() {

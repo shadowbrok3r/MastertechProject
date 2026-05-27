@@ -10,6 +10,7 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, ScheduledTask};
+use crate::ui_tools::icons;
 
 const NUM_COLUMNS: usize = 7;
 
@@ -306,11 +307,11 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
             0 => {
                 let color = state_color(&row.state);
                 let icon = match row.state.as_str() {
-                    "Ready" => "✔",
-                    "Disabled" => "⊘",
-                    "Running" => "▶",
-                    "Queued" => "⏳",
-                    _ => "●",
+                    "Ready" => icons::STATUS_READY,
+                    "Disabled" => icons::STATUS_DISABLED,
+                    "Running" => icons::PLAY,
+                    "Queued" => icons::STATUS_QUEUED,
+                    _ => icons::STATUS_DOT,
                 };
                 ui.label(RichText::new(format!("{} {}", icon, row.state)).color(color));
             }
@@ -437,11 +438,11 @@ impl RowViewer<ScheduledTask> for TaskSchedulerRowViewer {
         let is_ready = first.map(|r| r.state == "Ready").unwrap_or(false);
 
         let mut items = Vec::new();
-        items.push(CustomMenuItem::new("enable", "Enable").icon("✔").enabled(has_selection && is_disabled));
-        items.push(CustomMenuItem::new("disable", "Disable").icon("⊘").enabled(has_selection && is_ready));
-        items.push(CustomMenuItem::new("run_now", "Run Now").icon("▶").enabled(has_selection && is_ready));
-        items.push(CustomMenuItem::new("detail", "View Details").icon("🔍").enabled(has_selection));
-        items.push(CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true));
+        items.push(CustomMenuItem::new("enable", "Enable").icon(icons::STATUS_READY).enabled(has_selection && is_disabled));
+        items.push(CustomMenuItem::new("disable", "Disable").icon(icons::STATUS_DISABLED).enabled(has_selection && is_ready));
+        items.push(CustomMenuItem::new("run_now", "Run Now").icon(icons::PLAY).enabled(has_selection && is_ready));
+        items.push(CustomMenuItem::new("detail", "View Details").icon("?").enabled(has_selection));
+        items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
 

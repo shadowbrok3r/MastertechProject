@@ -10,6 +10,7 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, EventLogEntry};
+use crate::ui_tools::icons;
 
 const NUM_COLUMNS: usize = 5;
 
@@ -282,12 +283,12 @@ impl RowViewer<EventLogEntry> for EventLogRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.level.as_str() {
-                    "Critical" => ("⛔", Color32::from_rgb(255, 60, 60)),
-                    "Error" => ("❌", Color32::from_rgb(255, 100, 100)),
-                    "Warning" => ("⚠", Color32::YELLOW),
-                    "Information" => ("ℹ", Color32::from_rgb(100, 180, 255)),
-                    "Verbose" => ("📋", Color32::GRAY),
-                    _ => ("●", Color32::GRAY),
+                    "Critical" => (icons::CRITICAL, Color32::from_rgb(255, 60,  60)),
+                    "Error" => (icons::STATUS_ERR, Color32::from_rgb(255, 100, 100)),
+                    "Warning" => (icons::STATUS_WARN, Color32::YELLOW),
+                    "Information" => (icons::INFO, Color32::from_rgb(100, 180, 255)),
+                    "Verbose" => (icons::CLIPBOARD, Color32::GRAY),
+                    _ => (icons::STATUS_DOT, Color32::GRAY),
                 };
                 ui.label(RichText::new(format!("{} {}", icon, row.level)).color(color));
             }

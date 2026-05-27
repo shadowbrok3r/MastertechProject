@@ -23,6 +23,7 @@ pub mod checkin_form;
 pub mod sales_tracker;
 pub mod web_console;
 pub mod fleet_dashboard;
+pub mod stress_lab;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod plugins_tab;
 
@@ -122,6 +123,7 @@ impl egui_dock::TabViewer for SharedContext {
             }
             TabId::Koth => self.koth.ui(ui),
             TabId::CreatePrestashopOrder => self.prestashop_order_form.ui(ui),
+            TabId::StressLab => self.stress_lab.ui(ui),
             TabId::ResourceMonitor => self.resource_mon.display(ui),
             TabId::Scripts => {
                 ui.vertical_centered(|ui| {
@@ -242,6 +244,7 @@ impl egui_dock::TabViewer for SharedContext {
                         });
                     }
                 }
+                TabId::StressLab => self.stress_lab.refresh_on_open(),
                 _ => {}
             }
         }

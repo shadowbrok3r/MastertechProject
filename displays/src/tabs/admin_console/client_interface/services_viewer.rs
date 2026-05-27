@@ -10,6 +10,7 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, ServiceActionType, WindowsService};
+use crate::ui_tools::icons;
 
 const NUM_COLUMNS: usize = 5;
 
@@ -296,8 +297,8 @@ impl RowViewer<WindowsService> for ServiceRowViewer {
         match column {
             0 => {
                 let (icon, color) = match row.status.as_str() {
-                    "Running" => ("▶", Color32::GREEN),
-                    "Stopped" => ("■", Color32::from_rgb(180, 80, 80)),
+                    "Running" => (icons::PLAY, Color32::GREEN),
+                    "Stopped" => (icons::STOP, Color32::from_rgb(180, 80, 80)),
                     "Paused" => ("⏸", Color32::YELLOW),
                     "StartPending" => ("⏳", Color32::YELLOW),
                     "StopPending" => ("⏳", Color32::from_rgb(255, 150, 50)),
@@ -401,13 +402,13 @@ impl RowViewer<WindowsService> for ServiceRowViewer {
         let is_stopped = first.map(|r| r.status == "Stopped").unwrap_or(false);
 
         let mut items = Vec::new();
-        items.push(CustomMenuItem::new("start", "Start").icon("▶").enabled(has_selection && is_stopped));
-        items.push(CustomMenuItem::new("stop", "Stop").icon("■").enabled(has_selection && is_running));
-        items.push(CustomMenuItem::new("restart", "Restart").icon("🔄").enabled(has_selection && is_running));
-        items.push(CustomMenuItem::new("set_auto", "Set Automatic").icon("⚡").enabled(has_selection));
-        items.push(CustomMenuItem::new("set_manual", "Set Manual").icon("🔧").enabled(has_selection));
-        items.push(CustomMenuItem::new("set_disabled", "Set Disabled").icon("🚫").enabled(has_selection));
-        items.push(CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true));
+        items.push(CustomMenuItem::new("start", "Start").icon(icons::PLAY).enabled(has_selection && is_stopped));
+        items.push(CustomMenuItem::new("stop", "Stop").icon(icons::STOP).enabled(has_selection && is_running));
+        items.push(CustomMenuItem::new("restart", "Restart").icon(icons::REFRESH).enabled(has_selection && is_running));
+        items.push(CustomMenuItem::new("set_auto", "Set Automatic").icon("A").enabled(has_selection));
+        items.push(CustomMenuItem::new("set_manual", "Set Manual").icon("M").enabled(has_selection));
+        items.push(CustomMenuItem::new("set_disabled", "Set Disabled").icon(icons::STATUS_OFF).enabled(has_selection));
+        items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
 

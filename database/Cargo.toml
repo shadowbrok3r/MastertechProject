@@ -40,5 +40,9 @@ dotenvy.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }
 
+[dev-dependencies]
+surrealdb = { workspace = true, features = ["kv-mem"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true

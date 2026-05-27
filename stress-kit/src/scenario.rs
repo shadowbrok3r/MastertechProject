@@ -196,6 +196,7 @@ fn supervisor(
                 if cancel.load(Ordering::Relaxed) {
                     stage_cancel.store(true, Ordering::SeqCst);
                     let _ = stressor_handle.join();
+                    drain_remaining_metrics(&metrics_rx, &event_tx, stage_idx);
                     event_tx.send(ScenarioEvent::StageFinished { index: stage_idx }).ok();
                     send_finish(&event_tx, FinishReason::Cancelled, &started_at);
                     return;
@@ -204,6 +205,7 @@ fn supervisor(
                 if is_total_time_exceeded(&def, &started_at) {
                     stage_cancel.store(true, Ordering::SeqCst);
                     let _ = stressor_handle.join();
+                    drain_remaining_metrics(&metrics_rx, &event_tx, stage_idx);
                     event_tx.send(ScenarioEvent::StageFinished { index: stage_idx }).ok();
                     send_finish(&event_tx, FinishReason::TotalTime, &started_at);
                     return;
@@ -222,6 +224,15 @@ fn supervisor(
                             metrics: m,
                         })
                         .ok();
+                }
+
+                // Stressor exited early (fatal error or chose to bail). Stop
+                // wasting wall time waiting for the deadline and move to the
+                // next stage. Final metrics still flow through `drain_remaining_metrics`.
+                if stressor_handle.is_finished() {
+                    let _ = stressor_handle.join();
+                    drain_remaining_metrics(&metrics_rx, &event_tx, stage_idx);
+                    break 'stage ();
                 }
 
                 thread::sleep(Duration::from_millis(50));
@@ -244,6 +255,22 @@ fn supervisor(
     }
 
     send_finish(&event_tx, FinishReason::Completed, &started_at);
+}
+
+#[inline]
+fn drain_remaining_metrics(
+    metrics_rx: &mpsc::Receiver<Metrics>,
+    event_tx: &mpsc::Sender<ScenarioEvent>,
+    stage_idx: usize,
+) {
+    while let Ok(m) = metrics_rx.try_recv() {
+        event_tx
+            .send(ScenarioEvent::Tick {
+                stage_index: stage_idx,
+                metrics: m,
+            })
+            .ok();
+    }
 }
 
 #[inline]

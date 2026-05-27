@@ -84,6 +84,23 @@ pub(super) fn emit_tick(
         elapsed_secs: started_at.elapsed().as_secs_f64(),
         throughput,
         last_error,
+        fatal: false,
+    });
+}
+
+/// Emit a final fatal tick — same shape as `emit_tick` but signals the
+/// scenario/controller to abort the current stage. Callers that hit a
+/// non-recoverable device error should send this then `return`.
+pub(super) fn emit_fatal_tick(
+    tx: &mpsc::Sender<Metrics>,
+    started_at: Instant,
+    reason: String,
+) {
+    let _ = tx.send(Metrics {
+        elapsed_secs: started_at.elapsed().as_secs_f64(),
+        throughput: 0.0,
+        last_error: Some(reason),
+        fatal: true,
     });
 }
 

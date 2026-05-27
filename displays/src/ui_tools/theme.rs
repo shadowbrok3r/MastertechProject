@@ -82,3 +82,70 @@ pub fn bg_faint(ui: &Ui) -> Color32 {
 pub fn bg_extreme(ui: &Ui) -> Color32 {
     ui.visuals().extreme_bg_color
 }
+
+/// Live chart series colors for resource monitor / stress lab plots.
+pub struct ChartPalette {
+    pub avg_cpu: Color32,
+    pub peak_cpu: Color32,
+    pub clock: Color32,
+    pub memory: Color32,
+    pub page_file: Color32,
+    pub disk: Color32,
+    pub network: Color32,
+    pub process_count: Color32,
+    pub throughput: Color32,
+    pub temperature: Color32,
+    pub whea: Color32,
+}
+
+pub fn chart_palette(ui: &Ui) -> ChartPalette {
+    ChartPalette {
+        avg_cpu: info(ui),
+        peak_cpu: error(ui),
+        clock: success(ui),
+        memory: warn(ui),
+        page_file: accent_secondary(ui),
+        disk: accent(ui),
+        network: accent_secondary_ctx(ui.ctx()).gamma_multiply(0.85),
+        process_count: weak_text(ui),
+        throughput: info(ui),
+        temperature: warn(ui),
+        whea: accent_secondary(ui),
+    }
+}
+
+pub fn usage_level(ui: &Ui, pct: f32) -> Color32 {
+    if pct >= 90.0 {
+        error(ui)
+    } else if pct >= 70.0 {
+        warn(ui)
+    } else {
+        success(ui)
+    }
+}
+
+pub fn temp_level(ui: &Ui, temp_c: f32) -> Color32 {
+    if temp_c >= 90.0 {
+        error(ui)
+    } else if temp_c >= 75.0 {
+        warn(ui)
+    } else {
+        success(ui)
+    }
+}
+
+pub fn result_pass(ui: &Ui) -> Color32 {
+    success(ui)
+}
+
+pub fn result_fail(ui: &Ui) -> Color32 {
+    error(ui)
+}
+
+pub fn result_aborted(ui: &Ui) -> Color32 {
+    warn(ui)
+}
+
+pub fn result_unknown(ui: &Ui) -> Color32 {
+    weak_text(ui)
+}

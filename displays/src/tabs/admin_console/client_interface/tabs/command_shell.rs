@@ -1,5 +1,6 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, TextEdit, Ui, Vec2, Widget};
 use crate::tabs::admin_console::WebSocketClient;
+use crate::ui_tools::icons::{self};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use bincode::{config::standard, serde::*};
 #[cfg(not(target_arch="wasm32"))]
@@ -65,7 +66,7 @@ impl WebSocketClient {
                 ui.add_space(4.);
                 let resp = ui.checkbox(
                     &mut self.use_beta_terminal,
-                    RichText::new("🧪 Beta: Terminal View").color(beta_toggle_color).strong(),
+                    RichText::new(format!("{} Terminal View", icons::BETA)).color(beta_toggle_color).strong(),
                 );
                 if resp.changed() && self.use_beta_terminal {
                     let host = self
@@ -197,7 +198,7 @@ impl WebSocketClient {
             ui.horizontal(|ui| {
                 #[cfg(not(target_arch="wasm32"))]
                 if self.ai_completion_enabled {
-                    ui.label("👾");
+                    ui.label(icons::ROBOT);
                     if ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion").changed() {
                         if !self.ai_completion_enabled {
                             self.command_suggestions.clear();
@@ -213,7 +214,7 @@ impl WebSocketClient {
                         ui.label(RichText::new("Thinking...").weak());
                     }
                 } else {
-                    ui.label("👾");
+                    ui.label(icons::ROBOT);
                     ui.checkbox(&mut self.ai_completion_enabled, "AI Command Completion");
                 }
 
@@ -225,9 +226,9 @@ impl WebSocketClient {
                 
                 #[cfg(not(target_arch="wasm32"))]
                 if self.ai_completion_enabled && !self.command_suggestions.is_empty() {
-                    ui.label(format!("💡 {} suggestions", self.command_suggestions.len()));
+                    ui.label(format!("{} {} suggestions", icons::LIGHTBULB, self.command_suggestions.len()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("🔄 Refresh").clicked() {
+                        if ui.button(format!("{} Refresh", icons::REFRESH)).clicked() {
                             self.get_ai_command_completions();
                         }
                     });
@@ -289,7 +290,7 @@ impl WebSocketClient {
                 ui.add_space(5.);
                 ui.group(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("👾 AI Command Suggestions:").strong().color(Color32::LIGHT_BLUE));
+                        ui.label(RichText::new(format!("{} AI Command Suggestions:", icons::ROBOT)).strong().color(Color32::LIGHT_BLUE));
                         
                         ScrollArea::vertical().max_width(150.).show(ui, |ui| {
                             let len = self.command_suggestions.len();
@@ -327,10 +328,10 @@ impl WebSocketClient {
                         });
                         
                         ui.horizontal(|ui| {
-                            if ui.button("❌ Close").clicked() {
+                            if ui.button(format!("{} Close", icons::CLOSE)).clicked() {
                                 self.show_suggestions = false;
                             }
-                            ui.label(RichText::new("💡 Click suggestion to use, or press Tab to cycle").small().weak());
+                            ui.label(RichText::new(format!("{} Click suggestion to use, or press Tab to cycle", icons::LIGHTBULB)).small().weak());
                         });
                     });
                 });
@@ -574,7 +575,7 @@ impl WebSocketClient {
                                 if is_message_from_myself {
                                     ui.horizontal(|ui| {
                                         let btn_txt_color = ui.global_style().visuals.error_fg_color;
-                                        if Button::new(RichText::new("🗐").color(btn_txt_color))
+                                        if Button::new(RichText::new(icons::COPY).color(btn_txt_color))
                                         .ui(ui)
                                         .on_hover_text(RichText::new("Copy Message"))
                                         .clicked() {
@@ -601,7 +602,7 @@ impl WebSocketClient {
                                         }
 
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                            if Button::new(RichText::new("🗐").color(btn_txt_color))
+                                            if Button::new(RichText::new(icons::COPY).color(btn_txt_color))
                                             .ui(ui)
                                             .clicked(){
                                                 ui.ctx().copy_text(item.message.clone());

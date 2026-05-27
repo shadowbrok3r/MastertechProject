@@ -57,6 +57,7 @@ regex.workspace = true
 rfd = { workspace = true }
 async-openai = { workspace = true }
 log.workspace = true
+egui-phosphor = { version = "0.12.0", default-features = false, features = ["regular"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.image]
 workspace = true

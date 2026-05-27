@@ -7,6 +7,7 @@
 //! - AI-enhanced shell with MCP integration
 
 use crate::{virtual_filesystem::FileSystem, PlatformSpawner, Spawner};
+use crate::ui_tools::icons::{self, menu_item};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{
     utilities::get_connected_clients, ComputerData, ConnectedClient, RecordIdExt, User,
@@ -622,7 +623,7 @@ impl WebConsole {
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(
-                        RichText::new("🖥 Web Console")
+                        RichText::new(menu_item(icons::MONITOR, "Web Console"))
                             .size(16.0)
                             .color(Color32::from_rgb(51, 255, 189)),
                     );
@@ -632,9 +633,9 @@ impl WebConsole {
                     // Toggle side panel
                     if ui
                         .button(if self.show_side_panel {
-                            "◀ Hide Panel"
+                            format!("{} Hide Panel", icons::CARET_LEFT)
                         } else {
-                            "▶ Show Panel"
+                            format!("{} Show Panel", icons::CARET_RIGHT)
                         })
                         .clicked()
                     {
@@ -670,17 +671,16 @@ impl WebConsole {
                                 let shell_selected = current_mode == DetailViewMode::Shell;
                                 let explorer_selected = current_mode == DetailViewMode::FileExplorer;
                                 
-                                if ui.selectable_label(shell_selected, "🖥 Shell").clicked() {
+                                if ui.selectable_label(shell_selected, menu_item(icons::MONITOR, "Shell")).clicked() {
                                     self.detail_view_modes.insert(conn_string.clone(), DetailViewMode::Shell);
                                 }
-                                
-                                if ui.selectable_label(explorer_selected, "📁 Files").clicked() {
+
+                                if ui.selectable_label(explorer_selected, menu_item(icons::FOLDER, "Files")).clicked() {
                                     self.detail_view_modes.insert(conn_string.clone(), DetailViewMode::FileExplorer);
                                 }
-                                
+
                                 ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                    // Close button for detail view
-                                    if ui.small_button("✕").on_hover_text("Close").clicked() {
+                                    if ui.small_button(icons::CLOSE).on_hover_text("Close").clicked() {
                                         self.shell_views.remove(conn_string);
                                         self.file_explorers.remove(conn_string);
                                         self.selected_client = None;

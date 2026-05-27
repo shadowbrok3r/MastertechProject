@@ -7,6 +7,7 @@ use crate::{
     virtual_filesystem::{FileSysHelper, FileSystem},
     Cmd, FileSystemAction,
 };
+use crate::ui_tools::icons::{self, icon_sized};
 use crossbeam::channel::Sender;
 use database::schema::ConnectedClient;
 use eframe::egui::{
@@ -150,9 +151,7 @@ impl FileExplorerView {
                 ui.horizontal(|ui| {
                     // Back button
                     let back_btn = Button::new(
-                        RichText::new("⬅")
-                            .size(14.0)
-                            .color(Color32::from_rgb(200, 205, 215)),
+                        icon_sized(icons::UP, 14.0).color(Color32::from_rgb(200, 205, 215)),
                     )
                     .min_size(Vec2::new(32.0, 28.0));
 
@@ -164,9 +163,7 @@ impl FileExplorerView {
 
                     // Refresh button
                     let refresh_btn = Button::new(
-                        RichText::new("🔄")
-                            .size(14.0)
-                            .color(Color32::from_rgb(100, 180, 255)),
+                        icon_sized(icons::REFRESH, 14.0).color(Color32::from_rgb(100, 180, 255)),
                     )
                     .min_size(Vec2::new(32.0, 28.0));
 

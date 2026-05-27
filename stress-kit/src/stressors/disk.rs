@@ -50,6 +50,7 @@ pub(crate) fn run(
                 elapsed_secs: started_at.elapsed().as_secs_f64(),
                 throughput: mib_per_sec,
                 last_error,
+                fatal: false,
             });
 
             last_bytes = now_bytes;

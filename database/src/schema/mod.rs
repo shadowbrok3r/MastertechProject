@@ -34,6 +34,7 @@ pub mod plugin_registry;
 pub mod build_job;
 pub mod diagnostic;
 pub mod stress_test;
+pub mod stress_test_sql;
 pub mod service_match;
 pub mod entity_link;
 pub mod fleet;

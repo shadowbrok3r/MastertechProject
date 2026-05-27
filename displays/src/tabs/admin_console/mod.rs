@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use client_interface::WebSocketClient;
 use crate::app_state::SharedContext;
 use crate::tabs::tasks::client_cards::should_show_connected_client_in_summaries;
+use crate::ui_tools::icons::{menu_label, GAME};
 use client_action::ClientUiAction;
 use client_interface::TransportKind;
 use serde::Serialize;
@@ -431,7 +432,7 @@ impl SharedContext {
                 }
                 ui.add_space(5.);
                 #[cfg(not(target_arch = "wasm32"))]
-                if Button::new("🎮 AI Playground")
+                if Button::new(format!("{} AI Playground", GAME))
                     .min_size(Vec2::new(95.0, 15.0))
                     .ui(ui)
                     .clicked()
@@ -454,7 +455,7 @@ impl SharedContext {
                 // (rendered later in this top panel) is the only
                 // place that actually dispatches.
                 let open_count = self.web_console_layout.ws_clients.len();
-                let batch_label = format!("Batch ({open_count}) ▾");
+                let batch_label = menu_label(&format!("Batch ({open_count})"));
                 ui.add_enabled_ui(open_count > 0, |ui| {
                     ui.menu_button(
                         RichText::new(batch_label)

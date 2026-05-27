@@ -52,6 +52,7 @@ pub(crate) fn run(
                 elapsed_secs: started_at.elapsed().as_secs_f64(),
                 throughput: mops,
                 last_error: None,
+                fatal: false,
             });
 
             last_ops = now_ops;

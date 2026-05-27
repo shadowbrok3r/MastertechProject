@@ -108,6 +108,7 @@ pub(crate) fn run_core(
                 elapsed_secs: started_at.elapsed().as_secs_f64(),
                 throughput: 0.0,
                 last_error: Some("stress-kit built without 'gpu' feature".into()),
+                fatal: false,
             });
             while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(100));

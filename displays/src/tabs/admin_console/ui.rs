@@ -1,3 +1,4 @@
+use eframe::egui::Shadow;
 use eframe::egui::{
     collapsing_header::CollapsingState, text::LayoutJob, Align, Button, Color32, FontFamily,
     FontId, Frame, Grid, Layout, Margin, RichText, TextFormat, Ui, Vec2, Widget, WidgetText,
@@ -9,7 +10,7 @@ use chrono::{DateTime, Local, Utc};
 use super::ClientUiAction;
 use super::SessionLayout;
 use crate::get_database_users;
-use crate::ui_tools::theme;
+use crate::ui_tools::{icons, theme};
 use crate::{PlatformSpawner, Spawner};
 use log::info;
 
@@ -51,16 +52,16 @@ fn recently_active(client: &ConnectedClient) -> bool {
 /// Returns `(color, symbol)` for the connection status dot.
 ///
 /// Priority:
-/// 1. Active admin session open → green `●`
-/// 2. DB-connected + recent heartbeat + no admin session → yellow `⚠`
-/// 3. Everything else (disconnected or stale) → gray `⊗`
+/// 1. Active admin session open → green `*`
+/// 2. DB-connected + recent heartbeat + no admin session → yellow `!`
+/// 3. Everything else (disconnected or stale) → gray `-`
 fn connection_indicator(is_ws_connected: bool, client: &ConnectedClient) -> (Color32, &'static str) {
     if is_ws_connected {
-        (Color32::from_rgb(50, 205, 50), "●")
+        (Color32::from_rgb(50, 205, 50), icons::STATUS_ON)
     } else if client.connected && recently_active(client) {
-        (Color32::from_rgb(255, 200, 0), "⚠")
+        (Color32::from_rgb(255, 200, 0), icons::STATUS_WARN)
     } else {
-        (Color32::from_rgb(110, 110, 118), "⊗")
+        (Color32::from_rgb(110, 110, 118), icons::STATUS_OFF)
     }
 }
 
@@ -196,6 +197,7 @@ impl AdminConsole {
                     .inner_margin(Margin::same(4))
                     .outer_margin(Margin::ZERO)
                     .corner_radius(eframe::egui::CornerRadius::same(5))
+                    .shadow(Shadow::NONE)
                     .stroke(style.visuals.window_stroke)
                     .show(ui, |ui| {
                 ui.set_width(CLIENT_ROW_CONTENT_W);
@@ -208,7 +210,11 @@ impl AdminConsole {
                 };
                 let (indicator_color, indicator_text) =
                     connection_indicator(is_ws_connected, client);
-                let arrow = if collapse.is_open() { "⏷" } else { "⏵" };
+                let arrow = if collapse.is_open() {
+                    icons::CHEV_OPEN
+                } else {
+                    icons::CHEV_CLOSED
+                };
 
                 ui.allocate_ui_with_layout(
                     Vec2::new(CLIENT_ROW_CONTENT_W, ROW_BTN_H),
@@ -253,7 +259,7 @@ impl AdminConsole {
                         let focus_btn = ui
                             .add_sized(
                                 Vec2::new(ROW_BTN_W, ROW_BTN_H),
-                                Button::new(RichText::new("◉").strong().color(focus_color))
+                                Button::new(RichText::new(icons::FOCUS).strong().color(focus_color))
                                     .fill(ui.style().visuals.window_fill),
                             )
                             .on_hover_text(if is_focused {
@@ -271,7 +277,7 @@ impl AdminConsole {
                             .add_sized(
                                 Vec2::new(ROW_BTN_W, ROW_BTN_H),
                                 Button::new(
-                                    RichText::new("⬈")
+                                    RichText::new(icons::OPEN)
                                         .strong()
                                         .color(ui.style().visuals.warn_fg_color),
                                 )
@@ -334,10 +340,10 @@ impl AdminConsole {
                         .unwrap_or_default();
                     let (float_label, float_tip) = match layout {
                         SessionLayout::Floating => {
-                            ("🔓 Dock", "Floating (unlocked) — click to dock")
+                            ("Dock", "Floating (unlocked) — click to dock")
                         }
                         SessionLayout::Docked => {
-                            ("🔒 Float", "Docked (locked) — click to float")
+                            ("Float", "Docked (locked) — click to float")
                         }
                     };
                     let relink_color = if client.customer_locked {
@@ -347,12 +353,12 @@ impl AdminConsole {
                     };
                     let (relink_label, relink_tip) = if client.customer_locked {
                         (
-                            "🔗 Re-link",
+                            "Re-link",
                             "Customer is locked (manually re-linked).\nClick to change linkage.",
                         )
                     } else {
                         (
-                            "🔍 Re-link",
+                            "Re-link",
                             "Re-link to a different customer\n(used-machine-was-our-customer fix)",
                         )
                     };
@@ -361,7 +367,7 @@ impl AdminConsole {
                         ui.set_max_width(CLIENT_ROW_CONTENT_W);
                         ui.horizontal_wrapped(|ui| {
                         let disconnect = Button::new(
-                            RichText::new("✖ Disconnect")
+                            RichText::new("Disconnect")
                                 .strong()
                                 .color(ui.style().visuals.error_fg_color),
                         )
@@ -401,7 +407,7 @@ impl AdminConsole {
                             let _ = tx.try_send(ClientUiAction::RelinkCustomer(client.clone()));
                         }
                         let link_comp = Button::new(
-                            RichText::new("🖥 Link computer").strong(),
+                            RichText::new("Link computer").strong(),
                         )
                         .fill(ui.style().visuals.window_fill)
                         .min_size(Vec2::new(130., ROW_BTN_H))
@@ -412,7 +418,7 @@ impl AdminConsole {
                         }
 
                         let repair = Button::new(
-                            RichText::new("🔧 Repair links").strong(),
+                            RichText::new("Repair links").strong(),
                         )
                         .fill(ui.style().visuals.window_fill)
                         .min_size(Vec2::new(130., ROW_BTN_H))
@@ -486,7 +492,7 @@ fn client_details_grid(
             );
             if client.customer_locked {
                 ui.label(
-                    RichText::new("🔒 locked")
+                    RichText::new("locked")
                         .small()
                         .color(theme::info(ui)),
                 )
@@ -509,13 +515,13 @@ fn client_details_grid(
                 ui,
                 "Status",
                 if is_ws_connected {
-                    "● connected (active session)"
+                    "* connected (active session)"
                 } else if client.connected && recently_active(client) {
-                    "⚠ online — no active admin session"
+                    "! online — no active admin session"
                 } else if client.connected {
-                    "⊗ stale — DB still connected but no heartbeat for >5 min"
+                    "- stale — DB still connected but no heartbeat for >5 min"
                 } else {
-                    "⊗ disconnected"
+                    "x disconnected"
                 },
                 value_max_w,
             );
@@ -532,11 +538,9 @@ fn client_details_grid(
                     let endpoint = format!("{ip}:{port}");
                     let detail = match reachability {
                         Some(r) if r.reachable => {
-                            format!("{endpoint}  ✓ reachable")
+                            format!("{endpoint}  + reachable")
                         }
                         Some(r) => {
-                            // Truncate the error so a chatty OS
-                            // message doesn't blow up the grid row.
                             let err = r
                                 .error
                                 .as_deref()
@@ -544,7 +548,7 @@ fn client_details_grid(
                                 .chars()
                                 .take(80)
                                 .collect::<String>();
-                            format!("{endpoint}  ✗ {err} (relay still works)")
+                            format!("{endpoint}  x {err} (relay still works)")
                         }
                         None => format!("{endpoint}  (probing…)"),
                     };
@@ -679,8 +683,8 @@ fn render_security_inventory(
 
                 // Column 2: status badge.
                 let (color, text) = match product.active {
-                    Some(true) => (Color32::from_rgb(100, 200, 100), "● Active"),
-                    Some(false) => (Color32::from_rgb(255, 150, 80), "○ Disabled"),
+                    Some(true) => (Color32::from_rgb(100, 200, 100), "* Active"),
+                    Some(false) => (Color32::from_rgb(255, 150, 80), "o Disabled"),
                     None => (Color32::GRAY, "—"),
                 };
                 ui.label(RichText::new(text).small().color(color));

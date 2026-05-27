@@ -23,6 +23,7 @@ use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 
 use crate::{Cmd, InstalledProgram};
+use crate::ui_tools::icons;
 
 const NUM_COLUMNS: usize = 6;
 
@@ -514,12 +515,12 @@ impl RowViewer<InstalledProgram> for InstalledProgramRowViewer {
 
         vec![
             CustomMenuItem::new("uninstall_silent", "Uninstall (silent if possible)")
-                .icon("🗑")
+                .icon(icons::CLOSE)
                 .enabled(has_selection && has_uninstall),
             CustomMenuItem::new("uninstall_interactive", "Uninstall (interactive)")
-                .icon("⚙")
+                .icon("M")
                 .enabled(has_selection && has_uninstall),
-            CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true),
+            CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true),
         ]
     }
 
