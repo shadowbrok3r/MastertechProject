@@ -1,6 +1,6 @@
 use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Key, Layout, RichText, Separator, Stroke, TextEdit, Vec2, Widget, vec2};
 use database::{schema::{utilities::{get_store_users, get_tasks_for_store}, FilterLiveTasks, LiveTaskPayload, Store}, DATABASE};
-use egui::{containers::menu::{MenuButton, MenuConfig}, PopupCloseBehavior, UiKind};
+use egui::{PopupCloseBehavior, UiKind, containers::menu::{MenuButton, MenuConfig}, style::StyleModifier};
 use crate::{tabs::github::{get_github_releases, self_updater::run}};
 use displays::{app_state::{default_tree, AppState, MainPages}, pages::view_menu, plugins::push_widget_anchor, tabs::TabContext, ui_tools::theme, TaskUiActions};
 use crate::app_state::MasterTechApp;
@@ -136,9 +136,12 @@ impl MasterTechApp {
                             ui.add_space(4.0);
                         }
                         
-                        let txt = RichText::new(usr.get_username()).color(theme::accent(ui));
+                        let txt = RichText::new(usr.get_username()).underline().color(theme::accent(ui));
 
-                        MenuButton::new(txt).config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {
+                        MenuButton::new(txt).config(
+                            MenuConfig::new().style(StyleModifier::new(|s| s.visuals.button_frame = false))
+                                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                        ).ui(ui, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
                             ui.vertical_centered_justified(|ui| {
@@ -370,10 +373,10 @@ impl MasterTechApp {
 
                         ui.add_space(20.0);
                         if !self.context.client_friendly_name.is_empty() {
-                            ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_friendly_name.clone()).monospace());
+                            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(self.context.client_friendly_name.clone()).monospace());
                             ui.colored_label(Color32::WHITE, RichText::new("Client: ").monospace());
                         } else {
-                            ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());
+                            ui.colored_label(ui.style().visuals.error_fg_color, RichText::new(self.context.client_title.clone()).monospace());
                             ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
                         }
 
@@ -381,10 +384,10 @@ impl MasterTechApp {
                         let txt = RichText::new(format!(
                             "Mastertech Server {}",
                             env!("CARGO_PKG_VERSION")
-                        )).heading().color(Color32::WHITE);
+                        )).underline().heading().color(Color32::WHITE);
 
                         if ui
-                            .add(Button::new(txt))
+                            .add(Button::new(txt).frame(false))
                             .clicked()
                         {
                             self.context.shared_ctx.state = AppState::Authenticated(MainPages::Tasks);

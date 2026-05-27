@@ -16,6 +16,7 @@ pub mod rerun_mtech;
 pub mod theme;
 pub mod theme_chrome;
 pub mod theme_config;
+pub mod dock_style;
 pub mod notification_center;
 pub mod egui_logger;
 pub mod icons;
