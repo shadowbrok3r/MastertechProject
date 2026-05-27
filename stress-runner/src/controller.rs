@@ -220,18 +220,34 @@ impl RunController {
         let cancel_worker = cancel.clone();
         let running_worker = running.clone();
         let run_id_worker = run_id.clone();
+        // Channel + running flag also referenced from the panic handler so a
+        // worker crash still produces a `RunUpdate::Error` instead of a dead
+        // thread with `running=true` forever (the failure mode that left
+        // sessions with zero stress_test_run / hardware_component records).
+        let update_tx_panic = update_tx.clone();
+        let running_panic = running_worker.clone();
 
         let join = thread::Builder::new()
             .name("stress-runner-controller".into())
             .spawn(move || {
-                worker(
-                    spec,
-                    telemetry,
-                    cancel_worker,
-                    update_tx,
-                    run_id_worker,
-                    running_worker,
-                );
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker(
+                        spec,
+                        telemetry,
+                        cancel_worker,
+                        update_tx,
+                        run_id_worker,
+                        running_worker,
+                    );
+                }));
+                if let Err(payload) = result {
+                    let msg = panic_payload_str(&payload);
+                    log::error!("[stress-runner/worker] worker thread panicked: {msg}");
+                    let _ = update_tx_panic.try_send(RunUpdate::Error {
+                        message: format!("worker thread panicked: {msg}"),
+                    });
+                    running_panic.store(false, Ordering::SeqCst);
+                }
             })
             .expect("stress-runner: failed to spawn controller thread");
 
@@ -292,32 +308,65 @@ fn worker(
     running: Arc<AtomicBool>,
 ) {
     let started_at = Instant::now();
+    log::info!(
+        "[stress-runner/worker] start: computer={:?} target_kind={:?} plan={:?}",
+        spec.computer, spec.target_kind, std::mem::discriminant(&spec.plan)
+    );
 
     // ---- 0. Hardware-component middleware ----
     // Upsert `hardware_component` rows for the CPU + every GPU this machine
     // reports, then patch the spec so the run row links them via
-    // `target_component` / `touched_components`. Best-effort: failures are
-    // logged but don't abort the run — the row would just have a `NONE`
-    // target_component which is permitted by the schema.
-    let snapshot = telemetry.snapshot();
-    let (cpu_component, all_components) =
-        crate::hardware::ensure_components_from_snapshot(&snapshot);
+    // `target_component` / `touched_components`.
+    //
+    // **Required**, not best-effort: every stress_test_run must reference
+    // at least one hardware_component row, otherwise downstream consumers
+    // (compare_to_baseline, hardware_test_baseline view, the QC UI's
+    // "history for this hardware" panel) have no way to interpret the
+    // results. If the middleware can't link anything, refuse to start.
+    let (cpu_component, all_components, hw_notices) =
+        crate::hardware::ensure_components_for_run(&telemetry);
     if spec.target_component.is_none() {
         spec.target_component = cpu_component;
     }
     if spec.touched_components.is_empty() {
         spec.touched_components = all_components;
     }
+    for notice in hw_notices {
+        send(
+            &update_tx,
+            RunUpdate::Warning {
+                message: format!("hardware_component: {notice}"),
+            },
+        );
+    }
+
+    if spec.target_component.is_none() && spec.touched_components.is_empty() {
+        let msg = "refusing to start run: no hardware_component records could be \
+                   created or linked (see warnings above). Every stress_test_run \
+                   must reference at least one hardware_component — otherwise the \
+                   metrics and events have no hardware context.".to_string();
+        log::error!("[stress-runner/worker] {msg}");
+        send(&update_tx, RunUpdate::Error { message: msg });
+        running.store(false, Ordering::SeqCst);
+        return;
+    }
+    log::info!(
+        "[stress-runner/worker] hardware linked: target={:?}, touched={} component(s)",
+        spec.target_component,
+        spec.touched_components.len()
+    );
 
     // ---- 1. Build + persist the StressTestRun row ----
+    // `StressTestRun::create` already does a read-back via `Self::exists`,
+    // so an Ok here proves the row landed in SurrealDB.
     let run = build_run(&spec);
     let run_id_clone = run.id.clone();
-
-    // Clone into the async block so the future is `'static` (required by
-    // the host-runtime path, which spawns + awaits via a oneshot channel).
     let run_for_create = run.clone();
     match runtime::block_on(async move { StressTestRun::create(&run_for_create).await }) {
-        Ok(_) => {
+        Ok(persisted_id) => {
+            log::info!(
+                "[stress-runner/worker] stress_test_run created and verified: {persisted_id:?}"
+            );
             if let Ok(mut guard) = run_id.lock() {
                 *guard = Some(run_id_clone.clone());
             }
@@ -326,11 +375,11 @@ fn worker(
             });
         }
         Err(err) => {
+            let msg = format!("failed to create stress_test_run row: {err}");
+            log::error!("[stress-runner/worker] {msg}");
             send(
                 &update_tx,
-                RunUpdate::Error {
-                    message: format!("failed to create stress_test_run row: {err}"),
-                },
+                RunUpdate::Error { message: msg },
             );
             running.store(false, Ordering::SeqCst);
             return;
@@ -526,6 +575,7 @@ fn drive_single(
         elapsed_secs: 0.0,
         throughput: 0.0,
         last_error: None,
+                fatal: false,
     };
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
 
@@ -547,26 +597,58 @@ fn drive_single(
         }
 
         if let Some(m) = session.try_recv() {
+            if m.fatal {
+                let msg = m
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "run aborted (fatal stressor error)".to_string());
+                send(update_tx, RunUpdate::Error { message: msg });
+                session.stop();
+            }
             latest_metrics = m;
         }
 
         if last_tick.elapsed() >= TICK_INTERVAL {
             last_tick = Instant::now();
             let snapshot = telemetry.snapshot();
-            acc.absorb(&latest_metrics, &snapshot, throughput_unit);
+            if snapshot.is_populated() {
+                acc.absorb(&latest_metrics, &snapshot, throughput_unit);
 
-            let metric = metric_from_snapshot(
-                run_id.clone(),
-                &snapshot,
-                Some(latest_metrics.throughput),
-                Some(throughput_unit),
-                latest_metrics.last_error.as_deref(),
-                None,
-                None,
-            );
-            metric_batch.push(metric);
-            if metric_batch.len() >= METRIC_BATCH_SIZE {
-                flush_metrics(&mut metric_batch);
+                match metric_from_snapshot(
+                    run_id.clone(),
+                    &snapshot,
+                    Some(latest_metrics.throughput),
+                    Some(throughput_unit),
+                    latest_metrics.last_error.as_deref(),
+                    None,
+                    None,
+                ) {
+                    Ok(metric) => {
+                        metric_batch.push(metric);
+                        if metric_batch.len() >= METRIC_BATCH_SIZE {
+                            if let Err(err) = flush_metrics(&mut metric_batch) {
+                                send(
+                                    update_tx,
+                                    RunUpdate::Error {
+                                        message: format!("stress_test_metric persist failed: {err}"),
+                                    },
+                                );
+                                session.stop();
+                                break;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        send(
+                            update_tx,
+                            RunUpdate::Error {
+                                message: format!("invalid telemetry for stress_test_metric: {err}"),
+                            },
+                        );
+                        session.stop();
+                        break;
+                    }
+                }
             }
 
             send(
@@ -585,12 +667,17 @@ fn drive_single(
         let _ = stressor; // captured for future use (e.g. failure rubric)
     }
 
-    flush_metrics(&mut metric_batch);
+    if let Err(err) = flush_metrics(&mut metric_batch) {
+        send(
+            update_tx,
+            RunUpdate::Error {
+                message: format!("stress_test_metric persist failed: {err}"),
+            },
+        );
+    }
 }
 
-/// Drive a scenario run.  ScenarioRunner already does most of the work — we
-/// just translate its events into UI updates + DB events, and overlay our
-/// own 1 Hz telemetry sampling for the per-tick metric rows.
+/// Drive a scenario run.
 fn drive_scenario(
     runner: &ScenarioRunner,
     stage_specs: &[RunStage],
@@ -615,6 +702,7 @@ fn drive_scenario(
         elapsed_secs: 0.0,
         throughput: 0.0,
         last_error: None,
+                fatal: false,
     };
     let mut metric_batch: Vec<StressTestMetric> = Vec::with_capacity(METRIC_BATCH_SIZE);
     let mut finished = false;
@@ -720,20 +808,48 @@ fn drive_scenario(
         if last_tick.elapsed() >= TICK_INTERVAL && current_stage_index.is_some() {
             last_tick = Instant::now();
             let snapshot = telemetry.snapshot();
-            acc.absorb(&latest_metrics, &snapshot, current_unit);
+            if snapshot.is_populated() {
+                acc.absorb(&latest_metrics, &snapshot, current_unit);
 
-            let metric = metric_from_snapshot(
-                run_id.clone(),
-                &snapshot,
-                Some(latest_metrics.throughput),
-                Some(current_unit),
-                latest_metrics.last_error.as_deref(),
-                current_stage_index.map(|i| i as u32),
-                current_stage_label.clone(),
-            );
-            metric_batch.push(metric);
-            if metric_batch.len() >= METRIC_BATCH_SIZE {
-                flush_metrics(&mut metric_batch);
+                match metric_from_snapshot(
+                    run_id.clone(),
+                    &snapshot,
+                    Some(latest_metrics.throughput),
+                    Some(current_unit),
+                    latest_metrics.last_error.as_deref(),
+                    current_stage_index.map(|i| i as u32),
+                    current_stage_label.clone(),
+                ) {
+                    Ok(metric) => {
+                        metric_batch.push(metric);
+                        if metric_batch.len() >= METRIC_BATCH_SIZE {
+                            if let Err(err) = flush_metrics(&mut metric_batch) {
+                                send(
+                                    update_tx,
+                                    RunUpdate::Error {
+                                        message: format!(
+                                            "stress_test_metric persist failed: {err}"
+                                        ),
+                                    },
+                                );
+                                runner.stop();
+                                finished = true;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        send(
+                            update_tx,
+                            RunUpdate::Error {
+                                message: format!(
+                                    "invalid telemetry for stress_test_metric: {err}"
+                                ),
+                            },
+                        );
+                        runner.stop();
+                        finished = true;
+                    }
+                }
             }
 
             send(
@@ -751,7 +867,27 @@ fn drive_scenario(
         thread::sleep(Duration::from_millis(50));
     }
 
-    flush_metrics(&mut metric_batch);
+    if let Err(err) = flush_metrics(&mut metric_batch) {
+        send(
+            update_tx,
+            RunUpdate::Error {
+                message: format!("stress_test_metric persist failed: {err}"),
+            },
+        );
+    }
+}
+
+/// Render a `catch_unwind` payload as a human-readable string. Handles the
+/// two `panic!()`-default payload shapes (`&'static str` and `String`)
+/// and falls back to a generic label for everything else.
+fn panic_payload_str(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "(unknown panic payload)".to_string()
+    }
 }
 
 fn map_finish_reason(reason: SkFinishReason) -> DbFinishReason {
@@ -784,18 +920,17 @@ fn persist_event(
     });
 }
 
-fn flush_metrics(batch: &mut Vec<StressTestMetric>) {
+fn flush_metrics(batch: &mut Vec<StressTestMetric>) -> anyhow::Result<()> {
     if batch.is_empty() {
-        return;
+        return Ok(());
     }
     let take = std::mem::take(batch);
-    runtime::spawn(async move {
+    runtime::block_on(async move {
         for m in &take {
-            if let Err(err) = StressTestMetric::create(m).await {
-                log::warn!("stress-runner: failed to persist metric: {err}");
-            }
+            StressTestMetric::create(m).await?;
         }
-    });
+        Ok::<(), anyhow::Error>(())
+    })
 }
 
 fn send(tx: &Sender<RunUpdate>, update: RunUpdate) {

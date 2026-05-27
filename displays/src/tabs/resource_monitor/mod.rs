@@ -1,7 +1,7 @@
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, ComboBox, FontId, Layout, RichText, ScrollArea, Ui,
-    Vec2, Widget,
+    Align, Button, CentralPanel, ComboBox, FontId, Layout, RichText, ScrollArea, Ui, Vec2, Widget,
 };
+use crate::ui_tools::theme;
 use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -9,6 +9,8 @@ use database::schema::SystemInformation;
 
 pub mod machine_info;
 pub mod process_table;
+#[cfg(feature = "native-telemetry")]
+pub mod chart_board;
 #[cfg(feature = "native-telemetry")]
 pub mod hw_tables;
 #[cfg(feature = "native-telemetry")]
@@ -26,6 +28,22 @@ pub enum ResourceMonitorState {
     Processes,
     RequestingData,
     Stop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LiveTelemetryView {
+    #[default]
+    Charts,
+    Tables,
+}
+
+impl LiveTelemetryView {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Charts => "Charts",
+            Self::Tables => "Tables",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -67,10 +85,13 @@ impl HwView {
 pub struct ResourceMonitor {
     pub state: ResourceMonitorState,
     pub sysinfo_channel: (Sender<SystemInformation>, Receiver<SystemInformation>),
+    live_view: LiveTelemetryView,
     hw_view: HwView,
     filter: String,
     #[cfg(feature = "native-telemetry")]
     telemetry: TelemetrySnapshot,
+    #[cfg(feature = "native-telemetry")]
+    chart_board: chart_board::ChartBoard,
     machine_info: Option<MachineInfo>,
     pub process_table_viewer: ProcessTableViewer,
     pub latest_sysinfo: Option<SystemInformation>,
@@ -82,10 +103,13 @@ impl Default for ResourceMonitor {
         Self {
             sysinfo_channel,
             state: ResourceMonitorState::default(),
+            live_view: LiveTelemetryView::default(),
             hw_view: HwView::default(),
             filter: String::new(),
             #[cfg(feature = "native-telemetry")]
             telemetry: TelemetrySnapshot::default(),
+            #[cfg(feature = "native-telemetry")]
+            chart_board: chart_board::ChartBoard::default(),
             machine_info: None,
             process_table_viewer: ProcessTableViewer::new(),
             latest_sysinfo: None,
@@ -119,6 +143,7 @@ impl ResourceMonitor {
         #[cfg(feature = "native-telemetry")]
         {
             self.telemetry = sysinfo_convert::sysinfo_to_telemetry(&sysinfo);
+            self.chart_board.push(&self.telemetry);
         }
 
         if !matches!(self.state, ResourceMonitorState::Stop) {
@@ -144,14 +169,14 @@ impl ResourceMonitor {
                             ResourceMonitorState::AllCharts | ResourceMonitorState::RequestingData
                         );
 
-                        if Button::new("📊 All Charts")
+                        if Button::new("📊 Live telemetry")
                             .min_size(button_size)
                             .frame(true)
                             .stroke(button_stroke)
                             .fill(if all_charts_selected {
                                 ui.style().visuals.selection.bg_fill
                             } else {
-                                Color32::TRANSPARENT
+                                eframe::egui::Color32::TRANSPARENT
                             })
                             .ui(ui)
                             .clicked()
@@ -167,7 +192,7 @@ impl ResourceMonitor {
                             .fill(if matches!(self.state, ResourceMonitorState::Processes) {
                                 ui.style().visuals.selection.bg_fill
                             } else {
-                                Color32::TRANSPARENT
+                                eframe::egui::Color32::TRANSPARENT
                             })
                             .ui(ui)
                             .clicked()
@@ -204,7 +229,7 @@ impl ResourceMonitor {
 
                         ui.label(
                             RichText::new("Resource monitor")
-                                .color(Color32::LIGHT_RED)
+                                .color(theme::accent(ui))
                                 .heading()
                                 .font(FontId::monospace(20.)),
                         );
@@ -236,30 +261,48 @@ impl ResourceMonitor {
 
     fn show_all_charts(&mut self, ui: &mut Ui) {
         #[allow(deprecated)]
-        eframe::egui::Panel::top("resource_monitor_hw_view")
+        eframe::egui::Panel::top("resource_monitor_live_view")
             .exact_size(34.0)
             .show_inside(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ComboBox::from_id_salt("resource_monitor_hw_view")
-                        .selected_text(self.hw_view.label())
+                    ComboBox::from_id_salt("resource_monitor_live_view")
+                        .selected_text(self.live_view.label())
                         .show_ui(ui, |ui| {
-                            for view in HwView::ALL {
-                                ui.selectable_value(&mut self.hw_view, view, view.label());
-                            }
+                            ui.selectable_value(
+                                &mut self.live_view,
+                                LiveTelemetryView::Charts,
+                                "Charts",
+                            );
+                            ui.selectable_value(
+                                &mut self.live_view,
+                                LiveTelemetryView::Tables,
+                                "Tables",
+                            );
                         });
 
-                    ui.add_space(8.0);
+                    if self.live_view == LiveTelemetryView::Tables {
+                        ui.add_space(8.0);
+                        ComboBox::from_id_salt("resource_monitor_hw_view")
+                            .selected_text(self.hw_view.label())
+                            .show_ui(ui, |ui| {
+                                for view in HwView::ALL {
+                                    ui.selectable_value(&mut self.hw_view, view, view.label());
+                                }
+                            });
 
-                    if matches!(
-                        self.hw_view,
-                        HwView::Cores | HwView::Disks | HwView::Networks
-                    ) {
-                        let _ = ui.add(
-                            eframe::egui::TextEdit::singleline(&mut self.filter)
-                                .hint_text("Filter…")
-                                .desired_width(200.0),
-                        );
+                        ui.add_space(8.0);
+
+                        if matches!(
+                            self.hw_view,
+                            HwView::Cores | HwView::Disks | HwView::Networks
+                        ) {
+                            let _ = ui.add(
+                                eframe::egui::TextEdit::singleline(&mut self.filter)
+                                    .hint_text("Filter…")
+                                    .desired_width(200.0),
+                            );
+                        }
                     }
 
                     #[cfg(feature = "native-telemetry")]
@@ -277,11 +320,17 @@ impl ResourceMonitor {
             });
 
         ScrollArea::vertical().show(ui, |ui| {
+            #[cfg(feature = "native-telemetry")]
+            if self.live_view == LiveTelemetryView::Charts {
+                self.chart_board.show(ui);
+                return;
+            }
+
             if self.hw_view == HwView::Machine {
                 if let Some(info) = self.machine_info.clone() {
                     info.show(ui);
                 } else {
-                    ui.colored_label(Color32::GRAY, "Machine info not available.");
+                    ui.colored_label(theme::weak_text(ui), "Machine info not available.");
                 }
                 return;
             }
@@ -302,8 +351,8 @@ impl ResourceMonitor {
             #[cfg(not(feature = "native-telemetry"))]
             {
                 ui.colored_label(
-                    Color32::GRAY,
-                    "Live telemetry tables require the native build.",
+                    theme::weak_text(ui),
+                    "Live telemetry requires the native build with stress-kit.",
                 );
             }
         });

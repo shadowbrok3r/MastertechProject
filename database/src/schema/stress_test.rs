@@ -20,12 +20,14 @@
 //! throughput are normal or anomalous.
 
 use crate::DATABASE;
+use super::stress_test_sql;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    random_record_id, Datetime, RecordId, SurrealValue, HARDWARE_COMPONENT_TABLE,
-    STRESS_TEST_EVENT_TABLE, STRESS_TEST_METRIC_TABLE, STRESS_TEST_RUN_TABLE,
+    random_record_id, utilities::record_exists, Datetime, RecordId, SurrealValue,
+    HARDWARE_COMPONENT_TABLE, STRESS_TEST_EVENT_TABLE, STRESS_TEST_METRIC_TABLE,
+    STRESS_TEST_RUN_TABLE,
 };
 
 /// SurrealDB CREATE content. Strips empty `embedding` arrays (HNSW rejects len 0).
@@ -174,14 +176,24 @@ impl HardwareComponent {
         }
     }
 
+    /// Text passed to `fn::embed_text` when the row has no embedding yet.
+    pub fn embed_source(&self) -> String {
+        format!(
+            "{} {} {} {}",
+            self.kind.as_str(),
+            self.vendor,
+            self.model,
+            self.display_name
+        )
+    }
+
     /// Upsert + bump occurrence_count + refresh last_seen in one round-trip.
+    /// Verifies via read-back so a silent "query succeeded but row didn't
+    /// land" (permissions, missing table, etc.) becomes a hard error
+    /// rather than a fake Ok the caller can't distinguish from a real one.
     pub async fn upsert_seen(component: &Self) -> anyhow::Result<RecordId> {
-        let sql = "UPSERT $id MERGE { \
-                kind: $kind, vendor: $vendor, model: $model, \
-                sku: $sku, display_name: $display, specs: $specs, \
-                first_seen: time::now(), last_seen: time::now(), \
-                occurrence_count: (occurrence_count ?? 0) + 1 \
-            } RETURN id";
+        let embed_src = component.embed_source();
+        let sql = stress_test_sql::HW_COMPONENT_UPSERT;
         let mut response = DATABASE
             .query(sql)
             .bind(("id", component.id.clone()))
@@ -191,9 +203,29 @@ impl HardwareComponent {
             .bind(("sku", component.sku.clone()))
             .bind(("display", component.display_name.clone()))
             .bind(("specs", component.specs.clone()))
+            .bind(("embed_src", embed_src))
             .await?;
         let ids: Vec<RecordId> = response.take(0)?;
-        Ok(ids.into_iter().next().unwrap_or_else(|| component.id.clone()))
+        if ids.is_empty() {
+            anyhow::bail!(
+                "hardware_component UPSERT for {:?} returned no row id (table missing or permissions?)",
+                component.id
+            );
+        }
+
+        if !Self::exists(&component.id).await? {
+            anyhow::bail!(
+                "hardware_component row {:?} not readable after UPSERT",
+                component.id
+            );
+        }
+
+        Ok(component.id.clone())
+    }
+
+    /// True when the hardware_component row is present in SurrealDB.
+    pub async fn exists(id: &RecordId) -> anyhow::Result<bool> {
+        Ok(matches!(record_exists(id.clone()).await, Ok(Some(true))))
     }
 
     pub async fn list_by_kind(kind: HardwareKind) -> anyhow::Result<Vec<Self>> {
@@ -898,30 +930,72 @@ impl StressTestRun {
         )
     }
 
+}
+
+/// Coerce CREATE content to satisfy `stress_test_run` field types.
+fn ensure_run_content_objects(content: &mut surrealdb::types::Value, run: &StressTestRun) {
+    if let surrealdb::types::Value::Object(obj) = content {
+        if matches!(run.failure_mode, FailureMode::None) {
+            obj.insert(
+                "failure_mode".to_string(),
+                surrealdb::types::Value::Object(
+                    [(
+                        "None".to_string(),
+                        surrealdb::types::Value::Object(Default::default()),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+            );
+        }
+
+        for key in ["bios_settings", "driver_versions", "summary"] {
+            if matches!(obj.get(key), None | Some(surrealdb::types::Value::None)) {
+                obj.insert(
+                    key.to_string(),
+                    surrealdb::types::Value::Object(Default::default()),
+                );
+            }
+        }
+    }
+}
+
+impl StressTestRun {
     pub async fn create(run: &Self) -> anyhow::Result<RecordId> {
-        let content = surreal_create_content(run, run.embedding.is_empty());
-        let mut response = if run.embedding.is_empty() {
-            DATABASE
-                .query(
-                    "CREATE $id CONTENT $content SET embedding = fn::embed_text($embed_src)",
-                )
-                .bind(("id", run.id.clone()))
-                .bind(("content", content))
-                .bind(("embed_src", run.embed_source()))
-                .await?
-        } else {
-            DATABASE
-                .query("CREATE $id CONTENT $content")
-                .bind(("id", run.id.clone()))
-                .bind(("content", content))
-                .await?
-        };
-        let rows: Vec<Self> = response.take(0)?;
-        Ok(rows
-            .into_iter()
-            .next()
-            .map(|c| c.id)
-            .unwrap_or_else(|| run.id.clone()))
+        let mut content = surreal_create_content(run, true);
+        ensure_run_content_objects(&mut content, run);
+        let embed_src = run.embed_source();
+
+        let mut response = DATABASE
+            .query(stress_test_sql::STRESS_RUN_CREATE)
+            .bind(("id", run.id.clone()))
+            .bind(("content", content))
+            .bind(("embed_src", embed_src))
+            .await?;
+
+        let created: Vec<RecordId> = response.take(0).map_err(|e| {
+            anyhow::anyhow!("stress_test_run CREATE for {:?} rejected: {e}", run.id)
+        })?;
+        if created.is_empty() {
+            anyhow::bail!(
+                "stress_test_run CREATE for {:?} returned no row (table missing or permissions?)",
+                run.id
+            );
+        }
+
+        if !Self::exists(&run.id).await? {
+            anyhow::bail!(
+                "stress_test_run row {:?} not readable after CREATE",
+                run.id
+            );
+        }
+
+        Ok(run.id.clone())
+    }
+
+    /// True when the run row is present in SurrealDB.
+    pub async fn exists(id: &RecordId) -> anyhow::Result<bool> {
+        Ok(matches!(record_exists(id.clone()).await, Ok(Some(true))))
     }
 
     /// Insert a completed run and linked events (backfill / hung-run recovery).
@@ -1085,12 +1159,45 @@ impl StressTestMetric {
     }
 
     pub async fn create(metric: &Self) -> anyhow::Result<RecordId> {
+        metric.validate_for_insert().await?;
         let value = surreal_create_content(metric, false);
         let created: Option<Self> = DATABASE
             .create(metric.id.clone())
             .content(value)
             .await?;
         Ok(created.map(|c| c.id).unwrap_or_else(|| metric.id.clone()))
+    }
+
+    /// Reject default-shaped rows and orphan run_ref links before insert.
+    pub fn validate_shape(&self) -> anyhow::Result<()> {
+        if self.cores.is_empty() {
+            anyhow::bail!("stress_test_metric has empty cores (default telemetry snapshot)");
+        }
+        let captured_ms = self.captured_at.timestamp_millis();
+        if captured_ms <= 0 {
+            anyhow::bail!(
+                "stress_test_metric has invalid captured_at (epoch / unset: {captured_ms})"
+            );
+        }
+        if self.memory_used_mb.unwrap_or(0) == 0
+            && self.memory_used_pct.unwrap_or(0.0) <= 0.0
+        {
+            anyhow::bail!(
+                "stress_test_metric has zero memory_used_mb and memory_used_pct (default snapshot)"
+            );
+        }
+        Ok(())
+    }
+
+    async fn validate_for_insert(&self) -> anyhow::Result<()> {
+        self.validate_shape()?;
+        if !StressTestRun::exists(&self.run_ref).await? {
+            anyhow::bail!(
+                "stress_test_metric run_ref {:?} does not exist",
+                self.run_ref
+            );
+        }
+        Ok(())
     }
 
     /// Time-range scan for one run. Uses the (run_ref, captured_at) index.
@@ -1214,6 +1321,12 @@ impl StressTestEvent {
     }
 
     pub async fn create(event: &Self) -> anyhow::Result<RecordId> {
+        if !StressTestRun::exists(&event.run_ref).await? {
+            anyhow::bail!(
+                "stress_test_event run_ref {:?} does not exist",
+                event.run_ref
+            );
+        }
         let value = surreal_create_content(event, false);
         let created: Option<Self> = DATABASE
             .create(event.id.clone())

@@ -99,9 +99,7 @@ pub fn default_target_kind(s: Stressor) -> TargetKind {
     }
 }
 
-/// Build a `StressTestMetric` row from a telemetry snapshot + the latest stress-kit
-/// throughput tick. Caller supplies `run_ref`, `stage_index`/`stage_label` (None for
-/// single-stressor runs), and the throughput unit string.
+/// Build a `StressTestMetric` row from a populated telemetry snapshot + throughput tick.
 pub fn metric_from_snapshot(
     run_ref: RecordId,
     snapshot: &TelemetrySnapshot,
@@ -110,7 +108,9 @@ pub fn metric_from_snapshot(
     last_error: Option<&str>,
     stage_index: Option<u32>,
     stage_label: Option<String>,
-) -> StressTestMetric {
+) -> anyhow::Result<StressTestMetric> {
+    validate_snapshot_for_metric(snapshot)?;
+
     let captured_at = snapshot_to_datetime(snapshot.captured_at_unix_ms);
 
     let cores = snapshot
@@ -145,7 +145,7 @@ pub fn metric_from_snapshot(
         })
         .collect();
 
-    StressTestMetric {
+    Ok(StressTestMetric {
         id: random_record_id(STRESS_TEST_METRIC_TABLE),
         run_ref,
         captured_at,
@@ -164,7 +164,22 @@ pub fn metric_from_snapshot(
             .as_ref()
             .map(|w| w.delta_since_program_start as u32),
         last_error: last_error.map(|s| s.to_string()),
+    })
+}
+
+fn validate_snapshot_for_metric(snapshot: &TelemetrySnapshot) -> anyhow::Result<()> {
+    if snapshot.captured_at_unix_ms == 0 {
+        anyhow::bail!(
+            "telemetry snapshot has captured_at_unix_ms=0 (default/uninitialized)"
+        );
     }
+    if snapshot.cores.is_empty() {
+        anyhow::bail!("telemetry snapshot has no CPU core samples");
+    }
+    if snapshot.memory.total_mb == 0 {
+        anyhow::bail!("telemetry snapshot has memory.total_mb=0 (sysinfo not refreshed)");
+    }
+    Ok(())
 }
 
 /// Unix-ms → `Datetime` (chrono::DateTime<Utc> wrapped by SurrealDB).
@@ -172,6 +187,7 @@ fn snapshot_to_datetime(unix_ms: u64) -> database::schema::Datetime {
     let secs = (unix_ms / 1000) as i64;
     let nanos = ((unix_ms % 1000) * 1_000_000) as u32;
     chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
+        .filter(|dt| dt.timestamp() > 0)
         .unwrap_or_else(chrono::Utc::now)
         .into()
 }

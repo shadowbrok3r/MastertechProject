@@ -1,5 +1,6 @@
 use eframe::egui::{Align, Color32, Id, Layout, RichText, Ui};
 use crate::Cmd;
+use crate::ui_tools::icons::{self, menu_label};
 use crate::EGUI_INPUT_TAG;
 use bincode::config::standard;
 use ewebsock::WsMessage;
@@ -22,6 +23,9 @@ pub enum WsDisplayState {
     Scripts,
     /// Slice 3: Installed Programs viewer (egui_data_table).
     InstalledPrograms,
+    /// Per-client log of MCP tool calls proxied through the admin
+    /// Web Console (read from the global `mcp_tool_log` store).
+    McpToolLog,
 }
 
 impl WebSocketClient {
@@ -59,7 +63,7 @@ impl WebSocketClient {
                 // needs to be able to toggle from this menu, not just
                 // open. The Stop variant only appears when the relevant
                 // stream is already running.
-                ui.menu_button(RichText::new("View ▾").color(btn_color).strong(), |ui| {
+                ui.menu_button(RichText::new(menu_label("View")).color(btn_color).strong(), |ui| {
                     if ui.button("My Tools").clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
                         let _ = self.toolbox.request_contents("/");
@@ -95,7 +99,7 @@ impl WebSocketClient {
                     }
                     ui.separator();
                     if self.live_stats_active {
-                        if ui.button(RichText::new("■ Stop Charts").color(ui.style().visuals.error_fg_color)).clicked() {
+                        if ui.button(RichText::new(format!("{} Stop Charts", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::Quit);
                             self.live_stats_active = false;
                             ui.close();
@@ -107,13 +111,13 @@ impl WebSocketClient {
                         ui.close();
                     }
                     if self.egui_viewer_active {
-                        if ui.button(RichText::new("■ Stop Viewer").color(ui.style().visuals.error_fg_color)).clicked() {
+                        if ui.button(RichText::new(format!("{} Stop Viewer", icons::STOP)).color(ui.style().visuals.error_fg_color)).clicked() {
                             self.egui_viewer_active = false;
                             let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: false });
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                             ui.close();
                         }
-                    } else if ui.button("▶ Start Viewer").clicked() {
+                    } else if ui.button(format!("{} Start Viewer", icons::PLAY)).clicked() {
                         let _ = self.display_state_channel.0.try_send(WsDisplayState::Terminal);
                         self.egui_viewer_active = true;
                         let _ = self.send_cmd_tx.try_send(Cmd::SetFrameCapture { enabled: true });
@@ -126,6 +130,22 @@ impl WebSocketClient {
                             ui.close();
                         }
                     }
+                    ui.separator();
+                    let pending = crate::mcp_tool_log::pending_count(&self.client.connection_string);
+                    let label = if pending > 0 {
+                        format!("MCP Tool Log  ({pending} running)")
+                    } else {
+                        "MCP Tool Log".to_string()
+                    };
+                    let text = if pending > 0 {
+                        RichText::new(label).color(Color32::from_rgb(255, 200, 80))
+                    } else {
+                        RichText::new(label)
+                    };
+                    if ui.button(text).clicked() {
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::McpToolLog);
+                        ui.close();
+                    }
                 });
 
                 // ── Inspect ──────────────────────────────────────────
@@ -133,7 +153,7 @@ impl WebSocketClient {
                 // initial list-fetch if it hasn't been loaded yet,
                 // matching the old per-button behavior.
                 ui.menu_button(
-                    RichText::new("Inspect ▾").color(sys_color).strong(),
+                    RichText::new(menu_label("Inspect")).color(sys_color).strong(),
                     |ui| {
                         if ui.button("Event Log").clicked() {
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::EventLog);
@@ -210,7 +230,7 @@ impl WebSocketClient {
                     );
                 } else {
                     ui.menu_button(
-                        RichText::new("Transfer ▾").color(sys_color).strong(),
+                        RichText::new(menu_label("Transfer")).color(sys_color).strong(),
                         |ui| {
                             #[cfg(not(target_arch = "wasm32"))]
                             {
@@ -227,7 +247,7 @@ impl WebSocketClient {
                                 }
                                 if ui
                                     .button(
-                                        RichText::new("⬆ Deploy MasterTech Update…")
+                                        RichText::new("Deploy MasterTech Update…")
                                             .color(Color32::from_rgb(80, 200, 255)),
                                     )
                                     .on_hover_text(
@@ -261,18 +281,18 @@ impl WebSocketClient {
                 // most disruptive so the destructive ones don't sit at
                 // the top of the menu.
                 ui.menu_button(
-                    RichText::new("Power ▾").color(os_btn_color).strong(),
+                    RichText::new(menu_label("Power")).color(os_btn_color).strong(),
                     |ui| {
-                        if ui.button(RichText::new("🔒 Lock workstation").color(os_btn_color)).clicked() {
+                        if ui.button(RichText::new("Lock workstation").color(os_btn_color)).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::LockWorkstation);
                             ui.close();
                         }
-                        if ui.button(RichText::new("🚪 Log off user").color(os_btn_color)).clicked() {
+                        if ui.button(RichText::new("Log off user").color(os_btn_color)).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::LogOffUser);
                             ui.close();
                         }
                         ui.separator();
-                        if ui.button(RichText::new("🔄 Reboot").color(os_btn_color)).clicked() {
+                        if ui.button(RichText::new("Reboot").color(os_btn_color)).clicked() {
                             let _ = self.send_cmd_tx.try_send(Cmd::RebootSystem {
                                 persist_mastertech: true,
                                 terminal_mode: false,
@@ -280,7 +300,7 @@ impl WebSocketClient {
                             ui.close();
                         }
                         if ui
-                            .button(RichText::new("💻 Switch to Terminal Mode").color(os_btn_color))
+                            .button(RichText::new("Switch to Terminal Mode").color(os_btn_color))
                             .clicked()
                         {
                             let _ = self.send_cmd_tx.try_send(Cmd::LaunchTerminalMode);
@@ -312,6 +332,7 @@ impl WebSocketClient {
                     WsDisplayState::StartupApps   => "Startup Apps",
                     WsDisplayState::Scripts       => "Scripts",
                     WsDisplayState::InstalledPrograms => "Installed Programs",
+                    WsDisplayState::McpToolLog    => "MCP Tool Log",
                 };
                 ui.label(
                     RichText::new(current_view)
@@ -321,32 +342,32 @@ impl WebSocketClient {
 
                 if self.persistent_shell_mode {
                     ui.separator();
-                    ui.colored_label(Color32::YELLOW, "🖳 Persistent Shell");
+                    ui.colored_label(Color32::YELLOW, "Persistent Shell");
                 }
 
                 // ── Right-aligned status indicator ───────────────────
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let (status_color, status_text, status_tooltip) = if !self.client.connected {
-                        (Color32::RED, "✖", "Disconnected")
+                        (Color32::RED, icons::STATUS_ERR, "Disconnected")
                     } else if let Some(last_activity) = &self.client.last_update {
                         let now = chrono::Utc::now();
                         let activity_time = last_activity.to_utc();
                         let elapsed_secs = (now - activity_time).num_seconds();
                         if elapsed_secs < 30 {
-                            (Color32::GREEN, "✔", "Active")
+                            (Color32::GREEN, icons::STATUS_ON, "Active")
                         } else if elapsed_secs < 120 {
-                            (Color32::YELLOW, "⚠", "Stale")
+                            (Color32::YELLOW, icons::STATUS_WARN, "Stale")
                         } else {
-                            (Color32::LIGHT_RED, "⏳", "Inactive")
+                            (Color32::LIGHT_RED, icons::STATUS_WAIT, "Inactive")
                         }
                     } else if self.is_connected {
                         (
                             Color32::from_rgb(100, 200, 100),
-                            "◯",
+                            icons::STATUS_IDLE,
                             "Connected (awaiting activity)",
                         )
                     } else {
-                        (ui.style().visuals.error_fg_color, "✖", "Disconnected")
+                        (ui.style().visuals.error_fg_color, icons::STATUS_ERR, "Disconnected")
                     };
 
                     ui.colored_label(status_color, status_text)
@@ -490,6 +511,10 @@ impl WebSocketClient {
             WsDisplayState::InstalledPrograms => {
                 let cmd_tx = self.send_cmd_tx.clone();
                 self.installed_programs_viewer.display(ui, &cmd_tx);
+            },
+            WsDisplayState::McpToolLog => {
+                let cs = self.client.connection_string.clone();
+                self.mcp_tool_log_viewer.display(ui, &cs);
             },
         };
     }

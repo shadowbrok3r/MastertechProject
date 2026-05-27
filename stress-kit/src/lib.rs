@@ -176,11 +176,16 @@ impl Default for StressConfig {
 }
 
 /// Sample from the supervisor (~500 ms): elapsed wall time, throughput (`Stressor::throughput_unit`), optional worker warning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Metrics {
     pub elapsed_secs: f64,
     pub throughput: f64,
     pub last_error: Option<String>,
+    /// `true` when the stressor is giving up — paired with `last_error`
+    /// carrying the reason. Downstream (scenario, controller, MCP) treats
+    /// this as a stage-level abort signal.
+    #[serde(default)]
+    pub fatal: bool,
 }
 
 /// Background run; [`Drop`] calls [`StressSession::stop`].

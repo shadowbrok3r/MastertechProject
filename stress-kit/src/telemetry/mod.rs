@@ -67,6 +67,13 @@ pub struct TelemetrySnapshot {
     pub tdr: Option<TdrCounters>,
 }
 
+impl TelemetrySnapshot {
+    /// True when the sampler has produced at least one real sysinfo refresh.
+    pub fn is_populated(&self) -> bool {
+        self.captured_at_unix_ms > 0 && !self.cores.is_empty() && self.memory.total_mb > 0
+    }
+}
+
 pub struct TelemetryAgent {
     snapshot: Arc<Mutex<TelemetrySnapshot>>,
     cancel: Arc<AtomicBool>,
@@ -98,6 +105,12 @@ impl TelemetryAgent {
             .unwrap_or_default()
     }
 
+    /// One-shot sysinfo refresh for callers that need CPU/GPU identity before the
+    /// background sampler's first tick (e.g. stress-runner hardware upsert).
+    pub fn capture_now() -> TelemetrySnapshot {
+        capture_snapshot_blocking()
+    }
+
     pub fn stop(&self) {
         self.cancel.store(true, Ordering::SeqCst);
     }
@@ -106,6 +119,34 @@ impl TelemetryAgent {
 impl Drop for TelemetryAgent {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn capture_snapshot_blocking() -> TelemetrySnapshot {
+    let refresh_kind = RefreshKind::nothing()
+        .with_cpu(CpuRefreshKind::everything())
+        .with_memory(MemoryRefreshKind::everything());
+    let mut sys = System::new_with_specifics(refresh_kind);
+    let mut components = Components::new_with_refreshed_list();
+    sys.refresh_cpu_all();
+    sys.refresh_memory();
+    components.refresh(true);
+
+    let captured_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    TelemetrySnapshot {
+        captured_at_unix_ms,
+        cores: core::sample_cores(&sys, &components),
+        memory: memory::sample_memory(&sys),
+        disks: Vec::new(),
+        networks: Vec::new(),
+        processes: Vec::new(),
+        gpus: gpu::sample_gpus(&components),
+        whea: None,
+        tdr: None,
     }
 }
 

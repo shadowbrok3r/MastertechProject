@@ -31,6 +31,7 @@ pub enum TabId {
     Plugins,
     DatabaseEditor,
     FleetDashboard,
+    StressLab,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +80,7 @@ const MT_SERVER_WASM: &[TabId] = &[
     TabId::QueryEditor,
     TabId::Koth,
     TabId::CreatePrestashopOrder,
+    TabId::StressLab,
 ];
 
 const MT_NATIVE: &[TabId] = &[
@@ -108,6 +110,7 @@ const MT_NATIVE: &[TabId] = &[
     TabId::Plugins,
     TabId::DatabaseEditor,
     TabId::FleetDashboard,
+    TabId::StressLab,
 ];
 
 const WH_WASM: &[TabId] = &[
@@ -163,6 +166,7 @@ impl TabId {
             Self::Plugins => "plugins",
             Self::DatabaseEditor => "database_editor",
             Self::FleetDashboard => "fleet_dashboard",
+            Self::StressLab => "stress_lab",
         }
     }
 
@@ -199,6 +203,7 @@ impl TabId {
             Self::Plugins => "Plugins",
             Self::DatabaseEditor => "Database Editor",
             Self::FleetDashboard => "Fleet Dashboard",
+            Self::StressLab => "Stress Lab",
         }
     }
 
@@ -245,6 +250,7 @@ impl TabId {
             "Plugins" => Some(Self::Plugins),
             "Database Editor" | "Database" => Some(Self::DatabaseEditor),
             "Fleet Dashboard" => Some(Self::FleetDashboard),
+            "Stress Lab" => Some(Self::StressLab),
             _ => None,
         }
     }
@@ -280,6 +286,7 @@ impl TabId {
             "plugins" => Some(Self::Plugins),
             "database_editor" => Some(Self::DatabaseEditor),
             "fleet_dashboard" => Some(Self::FleetDashboard),
+            "stress_lab" => Some(Self::StressLab),
             _ => None,
         }
     }

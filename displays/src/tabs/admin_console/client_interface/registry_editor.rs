@@ -8,6 +8,7 @@ use egui_data_table::{
     CustomMenuItem, DataTable, Renderer, RowViewer, SelectionSnapshot, UiAction,
 };
 use egui_extras::Column as TableColumnConfig;
+use crate::ui_tools::icons;
 use serde::Serialize;
 use crate::{Cmd, RegistryEdit, RegistryKeyInfo, RegistryValueEntry, ui_tools::theme};
 use std::collections::{BTreeMap, BTreeSet};
@@ -579,9 +580,9 @@ impl RegistryEditor {
             let arrow = if !has_children {
                 "   "
             } else if is_expanded {
-                " ▼ "
+                " v "
             } else {
-                " ▶ "
+                " > "
             };
 
             if has_children {
@@ -601,7 +602,7 @@ impl RegistryEditor {
             } else {
                 Color32::from_rgb(220, 220, 230)
             };
-            let icon = if is_expanded { "📂" } else { "📁" };
+            let icon = if is_expanded { "/" } else { "." };
             let resp = ui.selectable_label(is_selected, RichText::new(format!("{} {}", icon, node.name)).color(label_color));
             if resp.clicked() {
                 *navigate_to = Some(path.to_string());
@@ -653,7 +654,11 @@ impl RowViewer<RegistryValueEntry> for RegistryValueRowViewer {
         style.interaction.selectable_labels = false;
         match column {
             0 => {
-                let icon = if row.name.is_empty() || row.name == "(Default)" { "🏠" } else { "📋" };
+                let icon = if row.name.is_empty() || row.name == "(Default)" {
+                    icons::HOME
+                } else {
+                    icons::CLIPBOARD
+                };
                 let display_name = if row.name.is_empty() { "(Default)" } else { &row.name };
                 ui.label(RichText::new(format!("{} {}", icon, display_name)).color(Color32::from_rgb(220, 220, 230)));
             }
@@ -751,15 +756,15 @@ impl RowViewer<RegistryValueEntry> for RegistryValueRowViewer {
         let has_selection = !selection.selected_rows.is_empty();
 
         let mut items = Vec::new();
-        items.push(CustomMenuItem::new("edit", "Edit Value").icon("✏").enabled(has_selection));
-        items.push(CustomMenuItem::new("delete", "Delete Value").icon("🗑").enabled(has_selection));
+        items.push(CustomMenuItem::new("edit", "Edit Value").icon(icons::EDIT).enabled(has_selection));
+        items.push(CustomMenuItem::new("delete", "Delete Value").icon(icons::CLOSE).enabled(has_selection));
         items.push(CustomMenuItem::new("new_sz", "New String Value (REG_SZ)").icon("+").enabled(true));
         items.push(CustomMenuItem::new("new_dword", "New DWORD Value").icon("+").enabled(true));
         items.push(CustomMenuItem::new("new_qword", "New QWORD Value").icon("+").enabled(true));
         items.push(CustomMenuItem::new("new_binary", "New Binary Value").icon("+").enabled(true));
         items.push(CustomMenuItem::new("new_multi_sz", "New Multi-String (REG_MULTI_SZ)").icon("+").enabled(true));
         items.push(CustomMenuItem::new("new_expand_sz", "New Expandable String (REG_EXPAND_SZ)").icon("+").enabled(true));
-        items.push(CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true));
+        items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
 

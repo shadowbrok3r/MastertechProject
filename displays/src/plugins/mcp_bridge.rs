@@ -924,6 +924,193 @@ pub struct ScriptsRunRemoteParams {
     pub diagnostic_session_id: Option<String>,
 }
 
+#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+pub struct ScriptsRunStressSuiteRemoteParams {
+    #[schemars(description = "Web Console connection_string of the remote client (from remote_egui_list_targets).")]
+    pub connection_string: String,
+    #[schemars(
+        description = "Service order number — required so every stress_test_run carries service_order / customer / computer linkage."
+    )]
+    pub service_number: String,
+    #[schemars(
+        description = "Optional diagnostic_session id (from create_diagnostic_session). Auto-resolved from the open session for connection_string when omitted."
+    )]
+    pub diagnostic_session_id: Option<String>,
+    #[schemars(
+        description = "Script display names to skip (e.g. ['GPU Stress Test'] when it already ran). Default: run the full StressTests catalog."
+    )]
+    pub skip: Option<Vec<String>>,
+    #[schemars(
+        description = "Per-script timeout override in seconds. When omitted, QC Benchmark uses 900s and all other stress scripts use 300s."
+    )]
+    #[serde(default, deserialize_with = "deserialize_lenient_u64")]
+    pub timeout_secs: Option<u64>,
+}
+
+fn stress_suite_script_names(skip: &[String]) -> Vec<String> {
+    let skip_set: std::collections::HashSet<&str> =
+        skip.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let mut names: Vec<String> = stress_runner::STRESS_SCRIPT_NAMES
+        .iter()
+        .filter(|n| !skip_set.contains(*n))
+        .map(|n| (*n).to_string())
+        .collect();
+    if !skip_set.contains("QC Benchmark") {
+        let insert_at = names
+            .iter()
+            .position(|n| n == "GPU Stress Test")
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        names.insert(insert_at, "QC Benchmark".into());
+    }
+    names
+}
+
+fn default_stress_script_timeout_secs(script_name: &str, override_secs: Option<u64>) -> u64 {
+    if let Some(t) = override_secs {
+        return t;
+    }
+    if script_name == "QC Benchmark" {
+        900
+    } else {
+        300
+    }
+}
+
+async fn execute_one_remote_script(
+    p: ScriptsRunRemoteParams,
+) -> Result<serde_json::Value, ErrorData> {
+    use crate::Cmd;
+
+    let service_number = p.service_number.clone().unwrap_or_default();
+    let customer_email = p.customer_email.clone().unwrap_or_default();
+    let diagnostic_session_id = p
+        .diagnostic_session_id
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
+
+    if stress_runner::is_stress_script(&p.script_name) && service_number.trim().is_empty() {
+        return Err(to_internal(format!(
+            "service_number is required for StressTests scripts (so stress_test_run carries service_order / customer / computer linkage). Pass service_number with script '{}'.",
+            p.script_name
+        )));
+    }
+
+    let cmd = Cmd::RunRemoteScripts {
+        scripts: vec![crate::RemoteScriptItem {
+            name: p.script_name.clone(),
+            category: p.category.clone(),
+            content: None,
+        }],
+        service_number: service_number.clone(),
+        customer_email: customer_email.clone(),
+        diagnostic_session_id: diagnostic_session_id.clone().unwrap_or_default(),
+    };
+    let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
+        .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<super::remote_script_notify::RemoteScriptSession>();
+    {
+        let mut guard = super::remote_script_notify::REMOTE_SCRIPT_PENDING
+            .lock()
+            .map_err(|_| to_internal("REMOTE_SCRIPT_PENDING poisoned"))?;
+        if let Ok(mut accum) = super::remote_script_notify::REMOTE_SCRIPT_ACCUM.lock() {
+            *accum = super::remote_script_notify::RemoteScriptSession::default();
+        }
+        *guard = Some((p.script_name.clone(), tx));
+    }
+
+    super::remote_egui_control::hub()
+        .send_raw_binary(&p.connection_string, serialized)
+        .map_err(to_internal)?;
+
+    let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or(600));
+    let session = match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(_)) => {
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+            return Err(to_internal("Remote script channel closed unexpectedly"));
+        }
+        Err(_) => {
+            let _ = super::remote_script_notify::REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
+            if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
+                let partial_logs = super::remote_script_notify::REMOTE_SCRIPT_ACCUM
+                    .lock()
+                    .ok()
+                    .map(|a| a.logs.clone())
+                    .unwrap_or_default();
+                let run_hint = super::stress_test_verify::extract_stress_run_id_from_logs(
+                    &partial_logs,
+                );
+                let computer_id = super::stress_test_verify::computer_id_for_connection(
+                    &p.connection_string,
+                )
+                .await;
+                let persistence = super::stress_test_verify::verify_stress_test_persistence(
+                    computer_id.as_deref(),
+                    run_hint.as_deref(),
+                    diagnostic_session_id.as_deref(),
+                )
+                .await;
+                return Ok(serde_json::json!({
+                    "script": p.script_name,
+                    "connection_string": p.connection_string,
+                    "success": false,
+                    "timed_out": true,
+                    "message": format!(
+                        "Timed out after {}s — script may still be running or machine hung",
+                        timeout.as_secs()
+                    ),
+                    "logs": partial_logs,
+                    "computer_id": computer_id,
+                    "diagnostic_session_id": diagnostic_session_id,
+                    "stress_test_persistence": persistence,
+                }));
+            }
+            return Err(to_internal(format!(
+                "Timed out after {}s waiting for remote script '{}' to complete.",
+                timeout.as_secs(),
+                p.script_name
+            )));
+        }
+    };
+
+    let overall_success = session
+        .results
+        .iter()
+        .all(|(_, s)| s == "Success" || s == "success");
+    let mut payload = serde_json::json!({
+        "script": p.script_name,
+        "connection_string": p.connection_string,
+        "success": overall_success,
+        "diagnostic_session_id": diagnostic_session_id,
+        "results": session.results.iter().map(|(n, s)| serde_json::json!({"name": n, "status": s})).collect::<Vec<_>>(),
+        "logs": session.logs,
+    });
+
+    if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
+        let run_hint =
+            super::stress_test_verify::extract_stress_run_id_from_logs(&session.logs);
+        let computer_id =
+            super::stress_test_verify::computer_id_for_connection(&p.connection_string).await;
+        let persistence = super::stress_test_verify::verify_stress_test_persistence(
+            computer_id.as_deref(),
+            run_hint.as_deref(),
+            diagnostic_session_id.as_deref(),
+        )
+        .await;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("stress_test_persistence".into(), persistence);
+            if let Some(cid) = computer_id {
+                obj.insert("computer_id".into(), serde_json::json!(cid));
+            }
+        }
+    }
+
+    Ok(payload)
+}
+
 fn default_remote_egui_true() -> bool {
     true
 }
@@ -1779,15 +1966,19 @@ impl PluginToolProvider {
     ) -> Result<CallToolResult, ErrorData> {
         let request_id = format!("rpt-{}", uuid::Uuid::new_v4());
         let args = p.args.unwrap_or(serde_json::json!({}));
+        let args_json = serde_json::to_string(&args).map_err(|e| to_internal(e.to_string()))?;
 
         let cmd = crate::Cmd::CallRemotePluginTool {
             request_id: request_id.clone(),
             plugin_id: p.plugin_id.clone(),
             tool_name: p.tool_name.clone(),
-            args_json: serde_json::to_string(&args).map_err(|e| to_internal(e.to_string()))?,
+            args_json: args_json.clone(),
         };
         let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
             .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
+        // (MCP-level start_call is fired by the `call_tool` interceptor on
+        // the `ServerHandler` impl — no per-tool hook needed here.)
+        let _ = args_json; // consumed by `cmd` above
 
         let rx = register_pending_request(request_id.clone());
         // RAII: registry slot evaporates on any exit path (Ok, Err,
@@ -2965,138 +3156,87 @@ impl PluginToolProvider {
         &self,
         Parameters(p): Parameters<ScriptsRunRemoteParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        use crate::Cmd;
+        let payload = execute_one_remote_script(p).await?;
+        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+    }
 
-        let service_number = p.service_number.clone().unwrap_or_default();
-        let customer_email = p.customer_email.clone().unwrap_or_default();
+    #[tool(
+        name = "scripts_run_stress_suite_remote",
+        description = "Run the full StressTests catalog sequentially on a remote client (GPU Stress Test, QC Benchmark, and every 'Stress: …' single). Each script persists stress_test_run, stress_test_event, stress_test_metric, and hardware_component via stress-runner. Use `skip` to omit scripts that already ran. Returns per-script results plus suite summary counts."
+    )]
+    async fn scripts_run_stress_suite_remote(
+        &self,
+        Parameters(p): Parameters<ScriptsRunStressSuiteRemoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if p.service_number.trim().is_empty() {
+            return Err(to_internal(
+                "service_number is required for stress suite runs (stress_test_run.service_order linkage).",
+            ));
+        }
+
+        let skip = p.skip.unwrap_or_default();
+        let scripts = stress_suite_script_names(&skip);
+        if scripts.is_empty() {
+            return Err(to_internal(
+                "No stress scripts left to run after applying skip list.",
+            ));
+        }
+
         let diagnostic_session_id = p
             .diagnostic_session_id
             .clone()
             .filter(|s| !s.trim().is_empty())
             .or_else(|| super::diagnostic_session_registry::get(&p.connection_string));
 
-        if stress_runner::is_stress_script(&p.script_name) && service_number.trim().is_empty() {
-            return Err(to_internal(format!(
-                "service_number is required for StressTests scripts (so stress_test_run carries service_order / customer / computer linkage). Pass service_number with script '{}'.",
-                p.script_name
-            )));
+        let mut runs = Vec::with_capacity(scripts.len());
+        let mut passed = 0u32;
+        let mut failed = 0u32;
+        let mut persistence_verified = 0u32;
+
+        for script_name in &scripts {
+            let timeout_secs =
+                default_stress_script_timeout_secs(script_name, p.timeout_secs);
+            let one = execute_one_remote_script(ScriptsRunRemoteParams {
+                connection_string: p.connection_string.clone(),
+                category: "StressTests".into(),
+                script_name: script_name.clone(),
+                service_number: Some(p.service_number.clone()),
+                customer_email: None,
+                timeout_secs: Some(timeout_secs),
+                diagnostic_session_id: diagnostic_session_id.clone(),
+            })
+            .await?;
+            let success = one.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            if success {
+                passed += 1;
+            } else {
+                failed += 1;
+            }
+            if one
+                .get("stress_test_persistence")
+                .and_then(|v| v.get("verified"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                persistence_verified += 1;
+            }
+            runs.push(one);
         }
 
-        // Build the RunRemoteScripts command with a single named script.
-        let cmd = Cmd::RunRemoteScripts {
-            scripts: vec![crate::RemoteScriptItem {
-                name: p.script_name.clone(),
-                category: p.category.clone(),
-                content: None,
-            }],
-            service_number: service_number.clone(),
-            customer_email: customer_email.clone(),
-            diagnostic_session_id: diagnostic_session_id.clone().unwrap_or_default(),
-        };
-        let serialized = bincode::serde::encode_to_vec(&cmd, bincode::config::standard())
-            .map_err(|e| to_internal(format!("bincode serialize: {e}")))?;
-
-        // Register a pending oneshot for this script run.
-        let (tx, rx) = tokio::sync::oneshot::channel::<RemoteScriptSession>();
-        {
-            let mut guard = REMOTE_SCRIPT_PENDING
-                .lock()
-                .map_err(|_| to_internal("REMOTE_SCRIPT_PENDING poisoned"))?;
-            // Clear any stale accumulator from a previous run.
-            if let Ok(mut accum) = REMOTE_SCRIPT_ACCUM.lock() {
-                *accum = RemoteScriptSession::default();
-            }
-            *guard = Some((p.script_name.clone(), tx));
-        }
-
-        super::remote_egui_control::hub()
-            .send_raw_binary(&p.connection_string, serialized)
-            .map_err(to_internal)?;
-
-        let timeout = std::time::Duration::from_secs(p.timeout_secs.unwrap_or(600));
-        let session = match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(s)) => s,
-            Ok(Err(_)) => {
-                let _ = REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
-                return Err(to_internal("Remote script channel closed unexpectedly"));
-            }
-            Err(_) => {
-                let _ = REMOTE_SCRIPT_PENDING.lock().map(|mut g| g.take());
-                if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
-                    let partial_logs = REMOTE_SCRIPT_ACCUM
-                        .lock()
-                        .ok()
-                        .map(|a| a.logs.clone())
-                        .unwrap_or_default();
-                    let run_hint = super::stress_test_verify::extract_stress_run_id_from_logs(
-                        &partial_logs,
-                    );
-                    let computer_id = super::stress_test_verify::computer_id_for_connection(
-                        &p.connection_string,
-                    )
-                    .await;
-                    let persistence = super::stress_test_verify::verify_stress_test_persistence(
-                        computer_id.as_deref(),
-                        run_hint.as_deref(),
-                        diagnostic_session_id.as_deref(),
-                    )
-                    .await;
-                    return Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
-                        "script": p.script_name,
-                        "connection_string": p.connection_string,
-                        "success": false,
-                        "timed_out": true,
-                        "message": format!(
-                            "Timed out after {}s — script may still be running or machine hung",
-                            timeout.as_secs()
-                        ),
-                        "logs": partial_logs,
-                        "computer_id": computer_id,
-                        "diagnostic_session_id": diagnostic_session_id,
-                        "stress_test_persistence": persistence,
-                    }))
-                    .map_err(to_internal)?]));
-                }
-                return Err(to_internal(format!(
-                    "Timed out after {}s waiting for remote script '{}' to complete.",
-                    timeout.as_secs(),
-                    p.script_name
-                )));
-            }
-        };
-
-        let overall_success = session.results.iter().all(|(_, s)| s == "Success" || s == "success");
-        let mut payload = serde_json::json!({
-            "script": p.script_name,
+        Ok(CallToolResult::success(vec![Content::json(serde_json::json!({
             "connection_string": p.connection_string,
-            "success": overall_success,
+            "service_number": p.service_number,
             "diagnostic_session_id": diagnostic_session_id,
-            "results": session.results.iter().map(|(n, s)| serde_json::json!({"name": n, "status": s})).collect::<Vec<_>>(),
-            "logs": session.logs,
-        });
-
-        if super::stress_test_verify::is_persisted_stress_script(&p.script_name) {
-            let run_hint =
-                super::stress_test_verify::extract_stress_run_id_from_logs(&session.logs);
-            let computer_id = super::stress_test_verify::computer_id_for_connection(
-                &p.connection_string,
-            )
-            .await;
-            let persistence = super::stress_test_verify::verify_stress_test_persistence(
-                computer_id.as_deref(),
-                run_hint.as_deref(),
-                diagnostic_session_id.as_deref(),
-            )
-            .await;
-            if let Some(obj) = payload.as_object_mut() {
-                obj.insert("stress_test_persistence".into(), persistence);
-                if let Some(cid) = computer_id {
-                    obj.insert("computer_id".into(), serde_json::json!(cid));
-                }
-            }
-        }
-
-        Ok(CallToolResult::success(vec![Content::json(payload).map_err(to_internal)?]))
+            "scripts_requested": scripts,
+            "summary": {
+                "total": runs.len(),
+                "passed": passed,
+                "failed": failed,
+                "persistence_verified": persistence_verified,
+            },
+            "runs": runs,
+        }))
+        .map_err(to_internal)?]))
     }
 
     // ── Remote build workers (no local Rust toolchain required) ────────
@@ -3692,6 +3832,12 @@ Tools:
   For any StressTests script, always inspect `stress_test_persistence.verified` — if false after a hang,
   call `record_stress_test_run` to backfill before closing the diagnostic session.
   Use this for ALL QC / Tuneup activation steps on customer machines.
+- scripts_run_stress_suite_remote — run the FULL StressTests catalog sequentially on a remote
+  client (GPU Stress Test, QC Benchmark, every "Stress: …" single). Args: connection_string,
+  service_number, optional diagnostic_session_id, optional skip[] (names to omit),
+  optional timeout_secs (per-script override; default QC Benchmark=900s, others=300s).
+  Returns { summary: { total, passed, failed, persistence_verified }, runs[] }.
+  Use this instead of external scripts or repeated scripts_run_remote loops.
 
 Workflow integration (customer QC / New Computer build on a REMOTE client):
 - Use scripts_run_remote for every QC step: Activate CPS, Activate SEB, Install Windows
@@ -3826,6 +3972,68 @@ impl ServerHandler for PluginToolProvider {
         .with_instructions(INSTRUCTIONS.to_string())
         .with_server_info(Implementation::from_build_env())
         .with_protocol_version(ProtocolVersion::LATEST)
+    }
+
+    /// Intercept every tool invocation so the admin's MCP Tool Log captures
+    /// what the AI is asking for and what came back — same shape as Claude
+    /// Desktop's expandable tool-call rows. Without this override the
+    /// `#[tool_handler]` macro would just forward to the router and the log
+    /// would never see anything except the special `call_remote_plugin_tool`
+    /// proxy path.
+    ///
+    /// Routing key: if the tool's arguments carry a `connection_string`
+    /// field (every `remote_egui_*` tool, `call_remote_plugin_tool`, the
+    /// stress runners, etc.) the entry lands under that client so the
+    /// per-client viewer shows it. Otherwise it goes under
+    /// [`mcp_tool_log::GLOBAL_KEY`] and the viewer's `get_for_client`
+    /// merges those in alongside the per-client list.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        let tool_name = request.name.to_string();
+        let args_value: serde_json::Value = request
+            .arguments
+            .as_ref()
+            .map(|a| serde_json::Value::Object(a.clone()))
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let connection_string = args_value
+            .get("connection_string")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| crate::mcp_tool_log::GLOBAL_KEY.to_string());
+
+        let request_id = format!("mcp-{}", uuid::Uuid::new_v4());
+        let args_pretty = serde_json::to_string_pretty(&args_value).unwrap_or_default();
+        crate::mcp_tool_log::start_call(
+            &connection_string,
+            request_id.clone(),
+            "mcp".to_string(),
+            tool_name.clone(),
+            args_pretty,
+        );
+
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let result = Self::tool_router().call(tcc).await;
+
+        match &result {
+            Ok(call_result) => {
+                let body = serde_json::to_string_pretty(call_result)
+                    .unwrap_or_else(|_| "{}".to_string());
+                crate::mcp_tool_log::finish_call(&request_id, true, body);
+            }
+            Err(err) => {
+                let body = serde_json::to_string_pretty(&serde_json::json!({
+                    "error": err.message,
+                    "code": err.code.0,
+                }))
+                .unwrap_or_else(|_| format!("{{\"error\":{:?}}}", err.message));
+                crate::mcp_tool_log::finish_call(&request_id, false, body);
+            }
+        }
+
+        result
     }
 }
 

@@ -1,31 +1,13 @@
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use stress_kit::telemetry::{
     DiskRateSample, GpuSample, MemorySample, NetworkRateSample, ProcessSample, TelemetrySnapshot,
     WheaCounters,
 };
 
+use crate::ui_tools::theme;
+
 const ROW_HEIGHT: f32 = 18.0;
-
-pub fn usage_color(pct: f32) -> Color32 {
-    if pct >= 90.0 {
-        Color32::from_rgb(220, 80, 60)
-    } else if pct >= 70.0 {
-        Color32::from_rgb(230, 180, 60)
-    } else {
-        Color32::from_rgb(100, 200, 100)
-    }
-}
-
-pub fn temp_color(temp: f32) -> Color32 {
-    if temp >= 90.0 {
-        Color32::from_rgb(220, 80, 60)
-    } else if temp >= 75.0 {
-        Color32::from_rgb(230, 180, 60)
-    } else {
-        Color32::from_rgb(100, 200, 100)
-    }
-}
 
 pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str) {
     let filter_lower = filter.to_lowercase();
@@ -79,7 +61,7 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
                     });
                     r.col(|ui| {
                         ui.colored_label(
-                            usage_color(c.usage_pct),
+                            theme::usage_level(ui, c.usage_pct),
                             format!("{:.1}%", c.usage_pct),
                         );
                     });
@@ -88,10 +70,10 @@ pub fn show_cores(ui: &mut egui::Ui, snapshot: &TelemetrySnapshot, filter: &str)
                     });
                     r.col(|ui| match c.temp_c {
                         Some(t) => {
-                            ui.colored_label(temp_color(t), format!("{t:.1} °C"));
+                            ui.colored_label(theme::temp_level(ui, t), format!("{t:.1} °C"));
                         }
                         None => {
-                            ui.colored_label(Color32::GRAY, "N/A");
+                            ui.colored_label(theme::weak_text(ui), "N/A");
                         }
                     });
                 });
@@ -123,12 +105,12 @@ pub fn show_memory(ui: &mut egui::Ui, m: &MemorySample) {
             match m.vmmem_mb {
                 Some(mb) => {
                     ui.colored_label(
-                        Color32::from_rgb(140, 180, 230),
+                        theme::info(ui),
                         format!("{mb} MB resident (WSL / Hyper-V)"),
                     );
                 }
                 None => {
-                    ui.colored_label(Color32::GRAY, "not running");
+                    ui.colored_label(theme::weak_text(ui), "not running");
                 }
             }
         });
@@ -222,15 +204,15 @@ pub fn show_whea(ui: &mut egui::Ui, whea: &Option<WheaCounters>) {
     match whea {
         None => {
             ui.colored_label(
-                Color32::GRAY,
+                theme::weak_text(ui),
                 "WHEA counters unavailable on this platform.",
             );
         }
         Some(w) => {
             let delta_color = if w.delta_since_program_start > 0 {
-                Color32::from_rgb(220, 80, 60)
+                theme::error(ui)
             } else {
-                Color32::from_rgb(140, 200, 140)
+                theme::success(ui)
             };
             ui.vertical(|ui| {
                 ui.label(
@@ -249,7 +231,7 @@ pub fn show_whea(ui: &mut egui::Ui, whea: &Option<WheaCounters>) {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Absolute since last boot:").strong());
                     ui.colored_label(
-                        Color32::from_rgb(180, 180, 200),
+                        theme::weak_text(ui),
                         format!("{}", w.absolute_since_boot),
                     );
                 });
@@ -297,7 +279,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
                     });
                     r.col(|ui| {
                         ui.colored_label(
-                            usage_color(p.cpu_pct.min(100.0)),
+                            theme::usage_level(ui, p.cpu_pct.min(100.0)),
                             format!("{:.1}", p.cpu_pct),
                         );
                     });
@@ -309,7 +291,7 @@ pub fn show_processes(ui: &mut egui::Ui, procs: &[ProcessSample], filter: &str) 
                             ui.label(format!("{pp}"));
                         }
                         None => {
-                            ui.colored_label(Color32::GRAY, "—");
+                            ui.colored_label(theme::weak_text(ui), "—");
                         }
                     });
                 });
@@ -355,18 +337,18 @@ pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
                     });
                     r.col(|ui| match g.temp_c {
                         Some(t) => {
-                            ui.colored_label(temp_color(t), format!("{t:.1} °C"));
+                            ui.colored_label(theme::temp_level(ui, t), format!("{t:.1} °C"));
                         }
                         None => {
-                            ui.colored_label(Color32::GRAY, "N/A");
+                            ui.colored_label(theme::weak_text(ui), "N/A");
                         }
                     });
                     r.col(|ui| match g.usage_pct {
                         Some(u) => {
-                            ui.colored_label(usage_color(u), format!("{u:.1}"));
+                            ui.colored_label(theme::usage_level(ui, u), format!("{u:.1}"));
                         }
                         None => {
-                            ui.colored_label(Color32::GRAY, "—");
+                            ui.colored_label(theme::weak_text(ui), "—");
                         }
                     });
                     r.col(|ui| match (g.memory_used_mb, g.memory_total_mb) {
@@ -377,7 +359,7 @@ pub fn show_gpus(ui: &mut egui::Ui, gpus: &[GpuSample]) {
                             ui.label(format!("{u} MB"));
                         }
                         _ => {
-                            ui.colored_label(Color32::GRAY, "—");
+                            ui.colored_label(theme::weak_text(ui), "—");
                         }
                     });
                 });
@@ -391,12 +373,12 @@ fn header_label(ui: &mut egui::Ui, text: &str) {
 
 fn empty_state(ui: &mut egui::Ui, msg: &str) {
     ui.add_space(12.0);
-    ui.colored_label(Color32::GRAY, msg);
+    ui.colored_label(theme::weak_text(ui), msg);
 }
 
-fn bar_row(ui: &mut egui::Ui, label: &str, value: &str, pct: f32) {
+fn bar_row(ui: &mut Ui, label: &str, value: &str, pct: f32) {
     let pct = pct.clamp(0.0, 100.0);
-    let color = usage_color(pct);
+    let color = theme::usage_level(ui, pct);
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).strong());
         ui.add_space(8.0);

@@ -1,6 +1,7 @@
-use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Spinner, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, Frame, Layout, Margin, NumExt, Popup, PopupCloseBehavior, RectAlign, RichText, ScrollArea, Shadow, Spinner, TextEdit, Ui, Vec2, Widget};
 use database::{self, DATABASE, SurrealValue, schema::{LiveTaskPayload, Record, SortDirection, Sortable, Store, TaskNotePayload, User}};
 use crate::{PlatformSpawner, Spawner, Displayable, TaskUiActions, tabs::tasks::client_cards::ClientCardData};
+use crate::ui_tools::icons;
 use std::{collections::{BTreeMap, HashMap, HashSet}, f32};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::BTreeSet;
@@ -303,6 +304,7 @@ impl TaskLayout {
             .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6))
             .corner_radius(style.visuals.menu_corner_radius)
+            .shadow(Shadow::NONE)
             .stroke(style.visuals.window_stroke);
 
         let header_frame = Frame::default()
@@ -353,9 +355,9 @@ impl TaskLayout {
                                 hui.vertical(|hui| {
                                     hui.horizontal(|hui| {
                                         let label_text = if filter_query.is_empty() {
-                                            format!("🖥 Connected Clients ({total})")
+                                            format!("{} Connected Clients ({total})", icons::MONITOR)
                                         } else {
-                                            format!("🖥 Connected Clients ({shown}/{total})")
+                                            format!("{} Connected Clients ({shown}/{total})", icons::MONITOR)
                                         };
                                         hui.label(
                                             RichText::new(label_text)

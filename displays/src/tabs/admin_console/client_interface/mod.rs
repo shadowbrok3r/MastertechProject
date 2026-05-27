@@ -12,6 +12,7 @@ use installed_programs_viewer::InstalledProgramsViewer;
 use registry_editor::RegistryEditor;
 use startup_apps_viewer::StartupAppsViewer;
 use remote_scripts_viewer::RemoteScriptsViewer;
+use tabs::mcp_tool_log_viewer::McpToolLogViewer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ui::WsDisplayState;
@@ -160,6 +161,7 @@ pub struct WebSocketClient {
     pub registry_editor: RegistryEditor,
     pub startup_apps_viewer: StartupAppsViewer,
     pub remote_scripts_viewer: RemoteScriptsViewer,
+    pub mcp_tool_log_viewer: McpToolLogViewer,
     /// Whether the remote egui frame capture is actively streaming.
     pub egui_viewer_active: bool,
     /// File transfer progress: (filename, chunks_sent, total_chunks)
@@ -324,6 +326,7 @@ Get-WmiObject")
             registry_editor: RegistryEditor::new(),
             startup_apps_viewer: StartupAppsViewer::new(),
             remote_scripts_viewer: RemoteScriptsViewer::new(),
+            mcp_tool_log_viewer: McpToolLogViewer::new(),
             egui_viewer_active: false,
             file_transfer_progress: None,
             #[cfg(not(target_arch = "wasm32"))]

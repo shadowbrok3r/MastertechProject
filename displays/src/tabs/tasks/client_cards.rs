@@ -9,6 +9,7 @@
 
 use crate::TaskUiActions;
 use crate::ui_tools::theme;
+use crate::ui_tools::icons::{self, menu_item};
 use crossbeam::channel::Sender;
 use database::schema::{
     client::ClientKind, ComputerData, ConnectedClient, LiveTaskPayload, RecordIdExt,
@@ -315,12 +316,12 @@ impl ClientCardData {
 
     fn button_row(&self, ui: &mut Ui, tx: &Sender<TaskUiActions>) {
         ui.horizontal(|ui| {
-            if Button::new("🔬 Diagnostics").small().ui(ui).clicked() {
+            if Button::new(menu_item(icons::DIAGNOSTICS, "Diagnostics")).small().ui(ui).clicked() {
                 let _ = tx.try_send(TaskUiActions::OpenClientDiagnostics(
                     self.client.connection_string.clone(),
                 ));
             }
-            if Button::new("🖥 Open Console").small().ui(ui).clicked() {
+            if Button::new(menu_item(icons::MONITOR, "Open Console")).small().ui(ui).clicked() {
                 let _ = tx.try_send(TaskUiActions::OpenAdminConsole(
                     self.client.connection_string.clone(),
                 ));

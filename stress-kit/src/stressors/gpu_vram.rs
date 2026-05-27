@@ -10,7 +10,11 @@ use wgpu::util::DeviceExt;
 
 use crate::Metrics;
 
-use super::gpu_common::{emit_tick, run_unsupported, GpuContext, TICK};
+use super::gpu_common::{emit_fatal_tick, emit_tick, run_unsupported, GpuContext, TICK};
+
+/// Bail out after this many consecutive readback failures. See the same
+/// constant in `gpu_pcie.rs` for the rationale.
+const MAX_CONSECUTIVE_READBACK_ERRORS: u32 = 3;
 
 const WG_SIZE: u32 = 64;
 const MIN_BUFFER_BYTES: u64 = 16 * 1024 * 1024;
@@ -146,6 +150,7 @@ pub(crate) fn run(
     let mut last_tick = Instant::now();
     let mut bytes_touched_in_tick: u64 = 0;
     let mut total_errors_observed: u64 = 0;
+    let mut consecutive_readback_errors: u32 = 0;
 
     while !cancel.load(Ordering::Relaxed) {
         params.seed = params.seed.wrapping_mul(1103515245).wrapping_add(12345);
@@ -188,10 +193,26 @@ pub(crate) fn run(
                 let count = u32::from_le_bytes([view[0], view[1], view[2], view[3]]) as u64;
                 drop(view);
                 readback_buf.unmap();
+                consecutive_readback_errors = 0;
                 count
             }
             _ => {
-                emit_tick(tx, started_at, 0.0, Some("readback map failed".into()));
+                // map_async arms map_context.initial_range before the callback
+                // fires; unmap() must reset it on failure or the next iteration
+                // panics with "Buffer is already mapped".
+                readback_buf.unmap();
+                consecutive_readback_errors += 1;
+                if consecutive_readback_errors >= MAX_CONSECUTIVE_READBACK_ERRORS {
+                    let msg = format!(
+                        "gpu_vram: {consecutive_readback_errors} consecutive readback failures; aborting stage"
+                    );
+                    log::error!("[stress-kit/gpu_vram] {msg}");
+                    emit_fatal_tick(tx, started_at, msg);
+                    return;
+                }
+                emit_tick(tx, started_at, 0.0, Some(format!(
+                    "readback map failed ({consecutive_readback_errors}/{MAX_CONSECUTIVE_READBACK_ERRORS})"
+                )));
                 continue;
             }
         };

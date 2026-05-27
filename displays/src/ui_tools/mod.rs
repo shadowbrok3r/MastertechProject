@@ -18,6 +18,7 @@ pub mod theme_chrome;
 pub mod theme_config;
 pub mod notification_center;
 pub mod egui_logger;
+pub mod icons;
 
 const ZSTD_LEVEL: i32 = 9;
 

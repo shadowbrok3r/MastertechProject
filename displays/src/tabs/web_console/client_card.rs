@@ -16,6 +16,7 @@ use eframe::egui::{
     Align, Button, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Ui, Vec2,
 };
 use crate::ui_tools::theme;
+use crate::ui_tools::icons::{self, icon_sized};
 use std::collections::HashMap;
 
 /// A card component displaying a single connected client
@@ -218,9 +219,7 @@ impl ClientCard {
 
                     // Shell button with dropdown for shell type
                     let shell_btn = Button::new(
-                        RichText::new("🖥")
-                            .size(14.0)
-                            .color(theme::info(ui)),
+                        icon_sized(icons::MONITOR, 14.0).color(theme::info(ui)),
                     )
                     .min_size(btn_size)
                     .fill(Color32::from_rgb(35, 40, 50));
@@ -270,9 +269,7 @@ impl ClientCard {
 
                     // File Explorer button
                     let explorer_btn = Button::new(
-                        RichText::new("📁")
-                            .size(14.0)
-                            .color(Color32::from_rgb(255, 200, 100)),
+                        icon_sized(icons::FOLDER, 14.0).color(Color32::from_rgb(255, 200, 100)),
                     )
                     .min_size(btn_size)
                     .fill(Color32::from_rgb(35, 40, 50));
@@ -285,9 +282,7 @@ impl ClientCard {
 
                     // Create TUR button
                     let tur_btn = Button::new(
-                        RichText::new("📋")
-                            .size(14.0)
-                            .color(Color32::from_rgb(150, 255, 150)),
+                        icon_sized(icons::CLIPBOARD, 14.0).color(Color32::from_rgb(150, 255, 150)),
                     )
                     .min_size(btn_size)
                     .fill(Color32::from_rgb(35, 40, 50));
@@ -299,9 +294,7 @@ impl ClientCard {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // Delete button (right-aligned, danger color)
                         let delete_btn = Button::new(
-                            RichText::new("🗑")
-                                .size(14.0)
-                                .color(theme::error(ui)),
+                            icon_sized(icons::TRASH, 14.0).color(theme::error(ui)),
                         )
                         .min_size(btn_size)
                         .fill(Color32::from_rgb(45, 30, 35));
@@ -472,13 +465,13 @@ impl ClientCard {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // Quick action buttons with unique IDs
-                        if ui.small_button("🗑").on_hover_text("Delete").clicked() {
+                        if ui.small_button(icons::TRASH).on_hover_text("Delete").clicked() {
                             let _ = action_tx.send(WebConsoleAction::DeleteClient(client.clone()));
                         }
-                        if ui.small_button("📋").on_hover_text("TUR").clicked() {
+                        if ui.small_button(icons::CLIPBOARD).on_hover_text("TUR").clicked() {
                             let _ = action_tx.send(WebConsoleAction::OpenTurModal(client.clone()));
                         }
-                        if ui.small_button("🖥").on_hover_text("Shell").clicked() {
+                        if ui.small_button(icons::MONITOR).on_hover_text("Shell").clicked() {
                             let default_shell = if cfg!(target_os = "linux") {
                                 ShellType::Bash
                             } else {
@@ -489,7 +482,7 @@ impl ClientCard {
                                 default_shell,
                             ));
                         }
-                        if ui.small_button("📁").on_hover_text("Files").clicked() {
+                        if ui.small_button(icons::FOLDER).on_hover_text("Files").clicked() {
                             let _ = action_tx.send(WebConsoleAction::OpenFileExplorer(client.clone()));
                         }
                     });

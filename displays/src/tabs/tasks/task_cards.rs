@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CollapsingHeader, Widget, Vec2, Color32, Frame, Margin, RichText, Ui};
+use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, RichText, Shadow, Ui, Vec2, Widget};
 use database::schema::{LiveTaskPayload, RecordIdExt, TaskNotePayload, User};
 use crossbeam::channel::Sender;
 use chrono::{DateTime, Utc};
@@ -24,6 +24,7 @@ impl Displayable for LiveTaskPayload {
             .inner_margin(Margin::same(8))
             .outer_margin(Margin::same(5))
             .corner_radius(eframe::egui::CornerRadius::same(15))
+            .shadow(Shadow::NONE)
             .begin(ui);
 
         {

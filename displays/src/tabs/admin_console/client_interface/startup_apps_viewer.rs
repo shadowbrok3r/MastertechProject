@@ -10,6 +10,7 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, StartupApp};
+use crate::ui_tools::icons;
 
 const NUM_COLUMNS: usize = 5;
 
@@ -365,9 +366,9 @@ impl RowViewer<StartupApp> for StartupAppRowViewer {
         let is_disabled = first.map(|r| r.state.contains("Disabled")).unwrap_or(false);
 
         let mut items = Vec::new();
-        items.push(CustomMenuItem::new("enable", "Enable").icon("●").enabled(has_selection && is_disabled));
-        items.push(CustomMenuItem::new("disable", "Disable").icon("○").enabled(has_selection && is_enabled));
-        items.push(CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true));
+        items.push(CustomMenuItem::new("enable", "Enable").icon(icons::STATUS_ON).enabled(has_selection && is_disabled));
+        items.push(CustomMenuItem::new("disable", "Disable").icon(icons::STATUS_IDLE).enabled(has_selection && is_enabled));
+        items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
 

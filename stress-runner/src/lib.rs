@@ -34,7 +34,7 @@ mod mapping;
 mod runtime;
 mod script_catalog;
 
-pub use hardware::ensure_components_from_snapshot;
+pub use hardware::{ensure_components_for_run, ensure_components_from_snapshot};
 
 pub use controller::{RunController, RunPlan, RunSpec, RunStage, RunUpdate, RunVerdict};
 pub use drive::drive_blocking;

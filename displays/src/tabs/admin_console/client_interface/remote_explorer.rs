@@ -23,6 +23,7 @@ use egui_data_table::{
 use egui_extras::Column as TableColumnConfig;
 use serde::Serialize;
 use crate::{Cmd, RemoteDirEntry, PlatformSpawner, Spawner};
+use crate::ui_tools::icons::{self, menu_label};
 use database::schema::file_storage::{self, FileEntry};
 
 /// Common folder shortcuts
@@ -182,7 +183,7 @@ impl RowCodec<RemoteDirEntry> for RemoteFileCodec {
 
     fn encode_column(&mut self, row: &RemoteDirEntry, column: usize, dst: &mut String) {
         match column {
-            0 => dst.push_str(get_file_icon(&row.name, row.is_directory)),
+            0 => dst.push_str(icons::file_icon(&row.name, row.is_directory)),
             1 => dst.push_str(&row.name),
             2 => dst.push_str(row.modified.as_deref().unwrap_or("")),
             3 => {
@@ -286,16 +287,23 @@ impl Default for RemoteExplorer {
 impl RemoteExplorer {
     pub fn new() -> Self {
         // Default shortcuts - the Mastertech client will resolve these using Windows API
-        let shortcuts = vec![
-            FolderShortcut { name: "Desktop".to_string(), icon: "🖥", path: "Desktop".to_string() },
-            FolderShortcut { name: "Documents".to_string(), icon: "📄", path: "Documents".to_string() },
-            FolderShortcut { name: "Downloads".to_string(), icon: "📥", path: "Downloads".to_string() },
-            FolderShortcut { name: "Pictures".to_string(), icon: "🖼", path: "Pictures".to_string() },
-            FolderShortcut { name: "Music".to_string(), icon: "🎵", path: "Music".to_string() },
-            FolderShortcut { name: "Videos".to_string(), icon: "🎬", path: "Videos".to_string() },
-            FolderShortcut { name: "AppData".to_string(), icon: "⚙", path: "AppData".to_string() },
-            FolderShortcut { name: "LocalAppData".to_string(), icon: "💾", path: "LocalAppData".to_string() },
-        ];
+        let shortcuts = [
+            ("Desktop", "Desktop"),
+            ("Documents", "Documents"),
+            ("Downloads", "Downloads"),
+            ("Pictures", "Pictures"),
+            ("Music", "Music"),
+            ("Videos", "Videos"),
+            ("AppData", "AppData"),
+            ("LocalAppData", "LocalAppData"),
+        ]
+        .into_iter()
+        .map(|(name, path)| FolderShortcut {
+            name: name.to_string(),
+            icon: icons::folder_shortcut_icon(path),
+            path: path.to_string(),
+        })
+        .collect();
         
         let (action_tx, action_rx) = crossbeam::channel::unbounded();
         let mut file_viewer = RemoteFileRowViewer::default();
@@ -738,7 +746,7 @@ impl RemoteExplorer {
                     if ui
                         .add_sized(
                             [NAV_BTN_W, NAV_BTN_W],
-                            egui::Button::new(RichText::new("⬆").size(16.0)),
+                            egui::Button::new(RichText::new(icons::UP).size(16.0)),
                         )
                         .on_hover_text("Up to parent folder (Alt+Up)")
                         .clicked()
@@ -755,7 +763,7 @@ impl RemoteExplorer {
                     if ui
                         .add_sized(
                             [NAV_BTN_W, NAV_BTN_W],
-                            egui::Button::new(RichText::new("🏠").size(16.0)),
+                            egui::Button::new(RichText::new(icons::HOME).size(16.0)),
                         )
                         .on_hover_text("Home")
                         .clicked()
@@ -767,7 +775,7 @@ impl RemoteExplorer {
                     if ui
                         .add_sized(
                             [NAV_BTN_W, NAV_BTN_W],
-                            egui::Button::new(RichText::new("⟲").size(16.0)),
+                            egui::Button::new(RichText::new(icons::REFRESH).size(16.0)),
                         )
                         .on_hover_text("Refresh (F5)")
                         .clicked()
@@ -796,7 +804,7 @@ impl RemoteExplorer {
 
                     // View menu — pane toggles, right-aligned.
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.menu_button(RichText::new("View ▾"), |ui| {
+                        ui.menu_button(RichText::new(menu_label("View")), |ui| {
                             if ui
                                 .add(
                                     egui::Button::new("Navigation sidebar")
@@ -863,7 +871,7 @@ impl RemoteExplorer {
                     // Quick access first — matches Windows File Explorer's
                     // navigation-pane ordering. ⭐ is BMP (U+2B50) and
                     // renders in the default proportional font.
-                    ui.label(RichText::new("⭐ Quick Access").strong().color(Color32::LIGHT_GRAY));
+                    ui.label(RichText::new(format!("{} Quick Access", icons::STAR)).strong().color(Color32::LIGHT_GRAY));
                     ui.add_space(4.);
 
                     for shortcut in &self.shortcuts {
@@ -882,7 +890,8 @@ impl RemoteExplorer {
                         ui.add_space(4.);
 
                         for drive in &self.drives {
-                            if sidebar_row(ui, entry_w, ENTRY_H, false, drive.clone()).clicked() {
+                            let label = format!("{} {drive}", icons::HARD_DRIVE);
+                            if sidebar_row(ui, entry_w, ENTRY_H, false, label).clicked() {
                                 navigate_to_path = Some(drive.clone());
                             }
                         }
@@ -938,10 +947,10 @@ impl RemoteExplorer {
                                     .color(Color32::from_rgb(200, 180, 255)),
                             );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui.small_button("⟲").on_hover_text("Refresh").clicked() {
+                                if ui.small_button(icons::REFRESH).on_hover_text("Refresh").clicked() {
                                     self.refresh_tools_async();
                                 }
-                                if ui.small_button("+").on_hover_text("Upload file").clicked() {
+                                if ui.small_button(icons::PLUS).on_hover_text("Upload file").clicked() {
                                     self.upload_tool_dialog();
                                 }
                             });
@@ -970,7 +979,11 @@ impl RemoteExplorer {
                                     // emoji too — swap to BMP markers so
                                     // every entry reliably gets an icon
                                     // (◈ = text doc, ◆ = binary blob).
-                                    let icon = if tool.is_text { "◈" } else { "◆" };
+                                    let icon = if tool.is_text {
+                                        icons::FILE_TEXT
+                                    } else {
+                                        icons::PACKAGE
+                                    };
                                     let label = format!("{} {}", icon, tool.name);
 
                                     let response =
@@ -1038,21 +1051,21 @@ impl RemoteExplorer {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Preview".to_string());
             
-            ui.label(RichText::new(format!("📄 {}", filename)).strong());
+            ui.label(RichText::new(format!("{} {}", icons::FILE, filename)).strong());
             
             if self.preview.modified {
-                ui.label(RichText::new("●").color(Color32::YELLOW));
+                ui.label(RichText::new(icons::STATUS_DOT).color(Color32::YELLOW));
             }
             
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.small_button("✖").on_hover_text("Close preview").clicked() {
+                                if ui.small_button(icons::CLOSE).on_hover_text("Close preview").clicked() {
                     self.preview_visible = false;
                     self.preview.clear();
                 }
                 
                 // Save button for text content
                 if self.preview.text_content.is_some() && self.preview.modified {
-                    if ui.small_button("💾 Save").clicked() {
+                    if ui.small_button(format!("{} Save", icons::SAVE)).clicked() {
                         if let Some(content) = &self.preview.text_content {
                             let _ = cmd_tx.try_send(Cmd::SaveRemoteFile(
                                 self.preview.path.clone(),
@@ -1119,7 +1132,7 @@ impl RemoteExplorer {
         if self.file_table.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(50.);
-                ui.label(RichText::new("📂 Empty directory").heading());
+                ui.label(RichText::new("Empty directory").heading());
                 ui.add_space(10.);
                 if ui.button("Refresh").clicked() {
                     self.refresh(cmd_tx);
@@ -1349,8 +1362,13 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
         style.interaction.selectable_labels = false;
         match column {
             0 => {
-                let icon = get_file_icon(&row.name, row.is_directory);
-                ui.label(icon);
+                let glyph = icons::file_icon(&row.name, row.is_directory);
+                let color = if row.is_directory {
+                    Color32::from_rgb(130, 170, 255)
+                } else {
+                    ui.style().visuals.text_color()
+                };
+                ui.label(icons::icon_sized(glyph, 14.0).color(color));
             }
             1 => {
                 let name_color = if row.is_directory {
@@ -1470,8 +1488,8 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
     fn column_render_config(&mut self, column: usize, _is_editing: bool) -> TableColumnConfig {
         let base = TableColumnConfig::auto();
         match column {
-            0 => base.at_least(30.).at_most(35.),                    // icon
-            1 => base.at_least(200.).clip(true).resizable(true),     // name
+            0 => base.at_least(30.).at_most(35.),
+            1 => TableColumnConfig::remainder().at_least(120.).clip(true).resizable(true),
             2 => base.at_least(140.).at_most(160.).resizable(true),  // modified
             3 => base.at_least(80.).at_most(100.),                   // size
             4 => base.at_least(60.).at_most(80.),                    // type
@@ -1492,20 +1510,20 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
         let mut items = Vec::new();
 
         if first_is_dir {
-            items.push(CustomMenuItem::new("open_dir", "Open").icon("📂").enabled(has_selection));
+            items.push(CustomMenuItem::new("open_dir", "Open").icon(icons::FOLDER_OPEN).enabled(has_selection));
         } else {
-            items.push(CustomMenuItem::new("execute", "Execute / Open").icon("▶").enabled(has_selection));
-            items.push(CustomMenuItem::new("download", "Download").icon("📥").enabled(has_selection));
+            items.push(CustomMenuItem::new("execute", "Execute / Open").icon(icons::PLAY).enabled(has_selection));
+            items.push(CustomMenuItem::new("download", "Download").icon(icons::DOWNLOAD).enabled(has_selection));
             if first_is_text {
-                items.push(CustomMenuItem::new("preview_text", "Preview").icon("👁").enabled(true));
+                items.push(CustomMenuItem::new("preview_text", "Preview").icon(icons::EYE).enabled(true));
             }
             if first_is_image {
-                items.push(CustomMenuItem::new("preview_image", "View Thumbnail").icon("🖼").enabled(true));
+                items.push(CustomMenuItem::new("preview_image", "View Thumbnail").icon(icons::IMAGE).enabled(true));
             }
-            items.push(CustomMenuItem::new("copy_to_tools", "Copy to My Tools").icon("🧰").enabled(has_selection));
+            items.push(CustomMenuItem::new("copy_to_tools", "Copy to My Tools").icon(icons::UPLOAD).enabled(has_selection));
         }
-        items.push(CustomMenuItem::new("delete", "Delete").icon("🗑").enabled(has_selection));
-        items.push(CustomMenuItem::new("refresh", "Refresh").icon("⟲").enabled(true));
+        items.push(CustomMenuItem::new("delete", "Delete").icon(icons::CLOSE).enabled(has_selection));
+        items.push(CustomMenuItem::new("refresh", "Refresh").icon(icons::REFRESH).enabled(true));
         items
     }
 
@@ -1561,70 +1579,6 @@ impl RowViewer<RemoteDirEntry> for RemoteFileRowViewer {
             }
             _ => {}
         }
-    }
-}
-
-/// Get an appropriate icon for a file based on its extension
-fn get_file_icon(filename: &str, is_directory: bool) -> &'static str {
-    if is_directory {
-        return "📁";
-    }
-    
-    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-    
-    match ext.as_str() {
-        // Scripts
-        "ps1" | "psm1" | "psd1" => "📜",
-        "bat" | "cmd" => "📜",
-        "sh" | "bash" | "zsh" => "📜",
-        "py" | "pyw" => "🐍",
-        "rb" => "💎",
-        "js" | "ts" | "mjs" => "📜",
-        
-        // Documents
-        "txt" | "log" | "md" | "rst" => "📝",
-        "doc" | "docx" => "📘",
-        "pdf" => "📕",
-        "xls" | "xlsx" | "csv" => "📊",
-        "ppt" | "pptx" => "📽",
-        
-        // Code
-        "rs" => "🦀",
-        "c" | "cpp" | "h" | "hpp" => "⚙",
-        "java" | "kt" => "☕",
-        "go" => "🔵",
-        "cs" => "💜",
-        "html" | "htm" => "🌐",
-        "css" | "scss" | "sass" => "🎨",
-        "json" | "yaml" | "yml" | "toml" | "xml" => "📋",
-        
-        // Images
-        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "ico" => "🖼",
-        "svg" => "🎨",
-        "psd" | "ai" => "🎨",
-        "raw" | "arw" | "cr2" | "nef" | "dng" => "📷",
-        
-        // Audio/Video
-        "mp3" | "wav" | "flac" | "ogg" | "m4a" => "🎵",
-        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "webm" => "🎬",
-        
-        // Archives
-        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" => "📦",
-        
-        // Executables
-        "exe" | "msi" => "⚡",
-        "dll" | "so" | "dylib" => "🔧",
-        
-        // Config
-        "ini" | "cfg" | "conf" | "config" => "⚙",
-        "reg" => "📋",
-        
-        // Misc
-        "iso" | "img" => "💿",
-        "db" | "sqlite" | "mdb" => "🗃",
-        "lnk" => "🔗",
-        
-        _ => "📄",
     }
 }
 

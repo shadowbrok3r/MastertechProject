@@ -8,6 +8,7 @@ use eframe::egui::{
     TextEdit, Ui, Vec2,
 };
 use crate::ui_tools::theme;
+use crate::ui_tools::icons::{self, icon_sized};
 
 /// Grid/List view component for displaying clients
 pub struct ClientGrid;
@@ -62,9 +63,7 @@ impl ClientGrid {
                 ui.horizontal(|ui| {
                     // Refresh button
                     let refresh_btn = Button::new(
-                        RichText::new("🔄")
-                            .size(14.0)
-                            .color(theme::info(ui)),
+                        icon_sized(icons::REFRESH, 14.0).color(theme::info(ui)),
                     )
                     .min_size(Vec2::new(32.0, 28.0));
 
@@ -75,7 +74,7 @@ impl ClientGrid {
                     ui.add_space(12.0);
 
                     // Search input
-                    ui.label(RichText::new("🔍").size(14.0));
+                    ui.label(icon_sized(icons::SEARCH, 14.0));
                     let search_edit = TextEdit::singleline(&mut console.search_query)
                         .hint_text("Search clients...")
                         .desired_width(200.0);
@@ -119,13 +118,11 @@ impl ClientGrid {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // View mode toggle
                         let grid_btn = Button::new(
-                            RichText::new("▦")
-                                .size(16.0)
-                                .color(if console.view_mode == ViewMode::Grid {
-                                    Color32::WHITE
-                                } else {
-                                    Color32::GRAY
-                                }),
+                            icon_sized(icons::GRID, 16.0).color(if console.view_mode == ViewMode::Grid {
+                                Color32::WHITE
+                            } else {
+                                Color32::GRAY
+                            }),
                         )
                         .min_size(Vec2::new(28.0, 28.0))
                         .fill(if console.view_mode == ViewMode::Grid {
@@ -139,13 +136,11 @@ impl ClientGrid {
                         }
 
                         let list_btn = Button::new(
-                            RichText::new("≡")
-                                .size(16.0)
-                                .color(if console.view_mode == ViewMode::List {
-                                    Color32::WHITE
-                                } else {
-                                    Color32::GRAY
-                                }),
+                            icon_sized(icons::LIST, 16.0).color(if console.view_mode == ViewMode::List {
+                                Color32::WHITE
+                            } else {
+                                Color32::GRAY
+                            }),
                         )
                         .min_size(Vec2::new(28.0, 28.0))
                         .fill(if console.view_mode == ViewMode::List {
