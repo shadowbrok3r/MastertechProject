@@ -1,5 +1,5 @@
 use egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, RowViewer, UiAction};
-use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, OpenUrl, Response, RichText, Ui, Widget};
+use eframe::egui::{Button, Color32, Hyperlink, KeyboardShortcut, Link, OpenUrl, Response, RichText, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
 use database::schema::{ComputerData, RecordId};
@@ -235,9 +235,12 @@ impl RowViewer<SerialsData> for SerialsViewer {
             3 => {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(5.);
+                    // egui::Link gives hyperlink-style affordances for
+                    // free: PointingHand cursor on hover, hover color
+                    // change, underline — same look as the Cost
+                    // Breakdown Odoo/Presta ID columns.
                     let label = RichText::new(&row.4).color(Color32::from_rgb(42, 195, 222));
-                    let res = Button::new(label)
-                        .frame(false)
+                    let res = Link::new(label)
                         .ui(ui)
                         .on_hover_text("Click to open Odoo movement history");
                     if res.clicked() {

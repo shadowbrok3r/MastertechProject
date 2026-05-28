@@ -1,9 +1,10 @@
-use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
+use eframe::egui::{Align2, Area, Button, CentralPanel, Color32, ComboBox, Frame, Hyperlink, Id, Key, Link, Order, Panel, RichText, ScrollArea, Spinner, TextEdit, Ui, Widget, scroll_area};
 use crate::tabs::stock::store_inventory_viewer::{ExtraInventoryData, StockQuantityData, StockQuantityViewer};
 use crate::tabs::stock::everest_lookup::{EverestItemRow, EverestItemViewer, EverestLookupResult, EverestOrder, OdooSerialHistory, lookup_everest_order, fetch_serial_movement, order_to_rows, order_totals};
 use crate::tabs::stock::inventory_audit::{
-    list_audits, load_audit, lookup_serials_in_odoo, mark_found, render_history_windows,
-    save_audit, AuditSerialRow, HistoryWindow, InventoryAuditMeta, InventoryView,
+    format_date_long, format_date_short, list_audits, load_audit, lookup_serials_in_odoo,
+    mark_found, render_history_windows, save_audit, AuditSerialRow, HistoryWindow,
+    InventoryAuditMeta, InventoryView,
 };
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -147,6 +148,10 @@ pub struct StockTable {
     scan_feedback: Option<(String, Color32)>,
     /// Floating Odoo-history Windows. One per clicked serial.
     history_windows: Vec<HistoryWindow>,
+    /// Raw Odoo timestamps the user has clicked in the right-side history
+    /// panel. Cells in this set render with the time appended; others
+    /// render as MM/DD/YYYY only.
+    expanded_history_dates: std::collections::HashSet<String>,
     /// Cache of item-code → (std_price, list_price) populated from the
     /// Company Stock pull. Reused both to fill the Std/List columns on
     /// the live Store Inventory view, and to seed the same columns when
@@ -294,6 +299,7 @@ impl Default for StockTable {
             scan_input: String::new(),
             scan_feedback: None,
             history_windows: Vec::new(),
+            expanded_history_dates: std::collections::HashSet::new(),
             extra_stock_prices: HashMap::new(),
             audit_list_channel,
             audit_lookup_channel,
@@ -1364,10 +1370,31 @@ impl StockTable {
                 })
                 .body(|mut body| {
                     for m in history.moves.iter() {
+                        // Trimmed raw timestamp ("YYYY-MM-DD HH:MM:SS")
+                        // is the stable key for the expanded-dates set
+                        // and the input to the formatters.
+                        let raw_date = {
+                            let s = m.date.clone().unwrap_or_default();
+                            s.split('.').next().unwrap_or(&s).to_string()
+                        };
                         body.row(20., |mut row| {
                             row.col(|ui| {
-                                let s = m.date.clone().unwrap_or_default();
-                                ui.label(s.split('.').next().unwrap_or(&s).to_string());
+                                let expanded = self.expanded_history_dates.contains(&raw_date);
+                                let display = if expanded {
+                                    format_date_long(&raw_date)
+                                } else {
+                                    format_date_short(&raw_date)
+                                };
+                                let res = Link::new(display)
+                                    .ui(ui)
+                                    .on_hover_text("Click to toggle time");
+                                if res.clicked() {
+                                    if expanded {
+                                        self.expanded_history_dates.remove(&raw_date);
+                                    } else {
+                                        self.expanded_history_dates.insert(raw_date.clone());
+                                    }
+                                }
                             });
                             row.col(|ui| {
                                 let state = m.state.clone().unwrap_or_default();

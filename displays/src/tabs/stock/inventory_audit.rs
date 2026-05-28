@@ -14,7 +14,7 @@ use crossbeam::channel::Sender;
 use database::schema::{random_record_id, Datetime, RecordId, Store};
 use database::SurrealValue;
 use database::{DATABASE, ODOO_API_KEY, ODOO_JSONRPC_URL};
-use eframe::egui::{Button, Color32, OpenUrl, Response, RichText, Spinner, Ui, Widget};
+use eframe::egui::{Button, Color32, Link, OpenUrl, Response, RichText, Spinner, Ui, Widget};
 use egui_data_table::{
     viewer::{DecodeErrorBehavior, RowCodec},
     RowViewer,
@@ -168,9 +168,40 @@ impl SerialHistoryRow {
     }
 }
 
+/// "2025-12-22 18:09:29" → "12/22/2025". Falls back to the raw string
+/// if the input doesn't parse as `YYYY-MM-DD ...`.
+pub fn format_date_short(odoo: &str) -> String {
+    let date_part = odoo.split_whitespace().next().unwrap_or(odoo);
+    let segs: Vec<&str> = date_part.split('-').collect();
+    if segs.len() == 3 && segs[0].len() == 4 {
+        format!("{}/{}/{}", segs[1], segs[2], segs[0])
+    } else {
+        date_part.to_string()
+    }
+}
+
+/// "2025-12-22 18:09:29" → "12/22/2025 18:09:29". Date-only inputs
+/// round-trip identically to `format_date_short`.
+pub fn format_date_long(odoo: &str) -> String {
+    let mut parts = odoo.splitn(2, char::is_whitespace);
+    let date_part = parts.next().unwrap_or(odoo);
+    let time_part = parts.next().unwrap_or("");
+    let short = format_date_short(date_part);
+    if time_part.is_empty() {
+        short
+    } else {
+        format!("{short} {time_part}")
+    }
+}
+
 #[derive(Default, Serialize)]
 pub struct SerialHistoryViewer {
     pub filter: String,
+    /// Raw Odoo timestamps the user has clicked to expand. Cells in
+    /// `expanded_dates` render with the time appended; others render as
+    /// MM/DD/YYYY only.
+    #[serde(skip)]
+    pub expanded_dates: std::collections::HashSet<String>,
 }
 
 impl RowViewer<SerialHistoryRow> for SerialHistoryViewer {
@@ -204,7 +235,24 @@ impl RowViewer<SerialHistoryRow> for SerialHistoryViewer {
         style.interaction.multi_widget_text_select = false;
         style.interaction.selectable_labels = false;
         match column {
-            0 => { ui.label(&row.date); }
+            0 => {
+                let expanded = self.expanded_dates.contains(&row.date);
+                let display = if expanded {
+                    format_date_long(&row.date)
+                } else {
+                    format_date_short(&row.date)
+                };
+                let res = Link::new(display)
+                    .ui(ui)
+                    .on_hover_text("Click to toggle time");
+                if res.clicked() {
+                    if expanded {
+                        self.expanded_dates.remove(&row.date);
+                    } else {
+                        self.expanded_dates.insert(row.date.clone());
+                    }
+                }
+            }
             1 => {
                 let color = match row.state.as_str() {
                     "done" => Color32::LIGHT_GREEN,
@@ -225,7 +273,15 @@ impl RowViewer<SerialHistoryRow> for SerialHistoryViewer {
     fn show_cell_editor(&mut self, ui: &mut Ui, row: &mut SerialHistoryRow, column: usize) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
             match column {
-                0 => ui.label(&row.date),
+                0 => {
+                    let expanded = self.expanded_dates.contains(&row.date);
+                    let display = if expanded {
+                        format_date_long(&row.date)
+                    } else {
+                        format_date_short(&row.date)
+                    };
+                    ui.label(display)
+                }
                 1 => ui.label(&row.state),
                 2 => ui.label(&row.from),
                 3 => ui.label(&row.to),
@@ -265,7 +321,9 @@ impl RowViewer<SerialHistoryRow> for SerialHistoryViewer {
     fn column_render_config(&mut self, column: usize, _: bool) -> TableColumnConfig {
         let c = TableColumnConfig::auto();
         match column {
-            0 => c.resizable(true).at_least(120.).at_most(160.),
+            // Date column needs to fit both "12/22/2025" (collapsed) and
+            // "12/22/2025 18:09:29" (expanded after a click).
+            0 => c.resizable(true).at_least(90.).at_most(200.),
             1 => c.resizable(true).at_least(70.).at_most(90.),
             2 => c.resizable(true).at_least(130.).at_most(180.),
             3 => c.resizable(true).at_least(130.).at_most(180.),

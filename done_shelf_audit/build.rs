@@ -1,6 +1,9 @@
 use dotenvy::dotenv;
 
+include!("../build_hash.rs");
+
 fn main() {
+    emit_build_hash();
     dotenv().ok();
     // Pass environment variables to the compiler
     for (key, value) in std::env::vars() {

@@ -121,7 +121,7 @@ impl SharedContext {
                             ui.add_space(50.0);
                             let font = FontId::monospace(30.0);
                             ui.style_mut().override_font_id = Some(font);
-                            ui.label(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")));
+                            ui.label(format!("Mastertech Server {}", database::version_with_build!()));
                         });
                         s.strip(|s| {
                             s.cell_layout(Layout::centered_and_justified(Direction::TopDown))

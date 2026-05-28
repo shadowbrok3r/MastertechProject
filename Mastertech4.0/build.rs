@@ -4,11 +4,15 @@ extern crate embed_resource;
 #[cfg(windows)]
 extern crate winres;
 
+include!("../build_hash.rs");
+
 // #[cfg(windows)]
 // use embed_manifest::{embed_manifest, new_manifest};
 
 
 fn main() {
+    emit_build_hash();
+
     #[cfg(windows)]
     {
         static_vcruntime::metabuild();

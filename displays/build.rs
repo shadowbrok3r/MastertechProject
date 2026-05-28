@@ -1,6 +1,10 @@
 use std::{env, path::PathBuf};
 
+include!("../build_hash.rs");
+
 fn main() {
+    emit_build_hash();
+
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let env_path = PathBuf::from(&manifest_dir).join("..").join(".env");
 
